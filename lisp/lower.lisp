@@ -48,8 +48,8 @@
 (defun rt-print () (module-import-func "kiln_rt_print" 2 1))
 (defun rt-error () (module-import-func "kiln_rt_error" 3 0 :unwinds :noreturn))
 (defun rt-poll () (module-import-func "kiln_rt_poll" 1 0 :unwinds))
-(defun rt-throw () (module-import-func "kiln_rt_throw" 3 0 :unwinds :noreturn))
-(defun rt-exit-to () (module-import-func "kiln_rt_exit_to" 3 0 :unwinds :noreturn))
+(defun rt-throw () (module-import-func "kiln_rt_throw" 4 0 :unwinds :noreturn))
+(defun rt-exit-to () (module-import-func "kiln_rt_exit_to" 4 0 :unwinds :noreturn))
 (defun rt-continue-unwind ()
   (module-import-func "kiln_rt_continue_unwind" 2 0 :unwinds :noreturn))
 (defun rt-alloc () (module-import-func "kiln_rt_alloc" 3 1 :unwinds))
@@ -231,12 +231,35 @@ region; code inside it runs with the region pushed on *REGIONS*."
 Unwinds to other entries of this frame are dispatched outward."
   (start-block (region-handler region))
   (let ((outer (new-block)))
-    (br `(:eq :exn0 (:slot ,(region-slot region))) land outer)
+    ;; Bit 0 of exn0 flags packed multiple values (see EMIT-UNWIND-VALUES).
+    (br `(:eq (:and :exn0 -2) (:slot ,(region-slot region))) land outer)
     (start-block outer)
     (let ((h (let ((*regions* (region-outer region))) (handler))))
       (if (eq h :nil)
           (emit '(:trap))
           (emit `(:jump ,h))))))
+
+(defun emit-unwind-values (v n)
+  "Operands for passing the values (V, N) through an unwind: the value
+word and the packed flag. With more or fewer than one value, the value
+word is a list of them and the flag is 1."
+  (if (eql n 1)
+      (values v 0)
+      (values (emit-save-values v n) (copy-to-var `(:ne ,n 1) :raw))))
+
+(defun emit-landed-values ()
+  "In a landing block: the values passed by the unwind (exn0, exn1)."
+  (let ((v (new-var)) (n (new-var :raw))
+        (packed (new-block)) (single (new-block)) (join (new-block)))
+    (br `(:and :exn0 1) packed single)
+    (start-block single)
+    (set-mv v n :exn1 1)
+    (jump join)
+    (start-block packed)
+    (multiple-value-call #'set-mv v n (emit-list-to-values :exn1))
+    (jump join)
+    (start-block join)
+    (values v n)))
 
 ;;; Variables. Closure conversion guarantees that a variable is only
 ;;; referenced in the function that defines it.
@@ -948,10 +971,9 @@ be confused with a later activation at the same address."
           (pop-entry region)
           (jump exit)
           (start-dispatch region land)
-          ;; The runtime has unlinked the entry. Non-local exits pass one
-          ;; value so far.
+          ;; The runtime has unlinked the entry.
           (start-block land)
-          (set-mv r n :exn1 1)
+          (multiple-value-call #'set-mv r n (emit-landed-values))
           (jump exit)))
     (start-block exit)
     (values r n)))
@@ -973,9 +995,10 @@ be confused with a later activation at the same address."
                   (set-mv r rn v n)
                   (emit-local-exit target)))
             (jump (exit-info-exit info))))
-        (let ((v (copy-to-var (lower-or-nil (ico:form-ast ast))))
-              (token (lower (ico:variable-reference-ast ast))))
-          (emit `(:call-rt ,(rt-exit-to) () (:ctx ,token ,v) ,(handler)))
+        (multiple-value-bind (v packed)
+            (multiple-value-call #'emit-unwind-values (lower-or-nil-mv (ico:form-ast ast)))
+          (let ((token (lower (ico:variable-reference-ast ast))))
+            (emit `(:call-rt ,(rt-exit-to) () (:ctx ,token ,v ,packed) ,(handler))))
           (emit '(:trap))))
     (nil-value)))
 
@@ -1037,7 +1060,7 @@ be confused with a later activation at the same address."
         (let* ((segments (ico:segment-asts (ico:tagbody-ast (ico:segment-ast def))))
                (index (position (ico:segment-ast def) segments))
                (token (lower (ico:variable-reference-ast ast))))
-          (emit `(:call-rt ,(rt-exit-to) () (:ctx ,token ,(ash index +fixnum-shift+)) ,(handler)))
+          (emit `(:call-rt ,(rt-exit-to) () (:ctx ,token ,(ash index +fixnum-shift+) 0) ,(handler)))
           (emit '(:trap))))
     (nil-value)))
 
@@ -1052,17 +1075,18 @@ be confused with a later activation at the same address."
     (pop-entry region)
     (jump exit)
     (start-dispatch region land)
-    ;; The runtime has unlinked the entry. THROW passes one value so far.
+    ;; The runtime has unlinked the entry.
     (start-block land)
-    (set-mv r n :exn1 1)
+    (multiple-value-call #'set-mv r n (emit-landed-values))
     (jump exit)
     (start-block exit)
     (values r n)))
 
 (defmethod lower ((ast ico:throw-ast))
-  (let* ((tv (copy-to-var (lower (ico:tag-form-ast ast))))
-         (vv (lower (ico:form-ast ast))))
-    (emit `(:call-rt ,(rt-throw) () (:ctx ,tv ,vv) ,(handler)))
+  (let ((tv (copy-to-var (lower (ico:tag-form-ast ast)))))
+    (multiple-value-bind (vv packed)
+        (multiple-value-call #'emit-unwind-values (lower-mv (ico:form-ast ast)))
+      (emit `(:call-rt ,(rt-throw) () (:ctx ,tv ,vv ,packed) ,(handler))))
     (emit '(:trap))
     (nil-value)))
 

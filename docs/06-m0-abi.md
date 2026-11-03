@@ -86,7 +86,7 @@ Rust: kiln-launcher           staticlib，提供 C main，链接 kiln-rt
 ### 6.2 调用点
 
 - 在有活跃条目的区域里，所有可能展开的调用都编译成 `try_call`，带一个 default handler。可能展开的调用包括：Lisp 函数调用，以及声明为 `unwinds` 的 runtime 函数。
-- 每个调用点只有一个 handler。handler 收到两个 payload：`exn0` 是目标条目的地址，`exn1` 是传递的值。handler 先把 `exn0` 和本区域的条目比较：相同就进入本区域的落地代码，否则跳到同一帧里外层区域的 handler。所以同一帧里嵌套多个区域也能正确分派。
+- 每个调用点只有一个 handler。handler 收到两个 payload：`exn0` 是目标条目的地址，`exn1` 是传递的值。（M2：`exn0` 的第 0 位表示 `exn1` 是打包成列表的多值，比较前要屏蔽，见 [08 §5.3](08-m2-front-end.md#53-多值)。）handler 先把 `exn0` 和本区域的条目比较：相同就进入本区域的落地代码，否则跳到同一帧里外层区域的 handler。所以同一帧里嵌套多个区域也能正确分派。
 - kiln-cg 编译完每个函数后，从 Cranelift 读出带 handler 的调用点，记录（返回地址偏移、handler 偏移、frame_offset）。
   - JIT：直接用绝对地址注册到 runtime。
   - AOT：写进目标文件的 `kiln_callsites` 表（函数地址用重定位），由 `kiln_module_info` 指向，启动时注册。

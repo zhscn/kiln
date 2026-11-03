@@ -47,3 +47,18 @@
 ;; Many values through a list conversion under GC pressure.
 (defun lots () (values (list 1) (list 2) (list 3) (list 4) (list 5) (list 6) (list 7) (list 8)))
 (print (multiple-value-list (multiple-value-prog1 (lots) (%gc))))
+
+;; Values through THROW and non-local RETURN-FROM, with cleanups and GC
+;; on the way.
+(defun call (f) (funcall f))
+(print (multiple-value-list (catch 'k (throw 'k (values 1 2 3)))))
+(print (multiple-value-list (catch 'k (throw 'k (values)))))
+(print (multiple-value-list (catch 'k (throw 'k 'one))))
+(print (multiple-value-list
+        (catch 'k
+          (unwind-protect (throw 'k (values (list 'a) (list 'b)))
+            (noisy) (%gc)))))
+(defun nonlocal ()
+  (block b
+    (call (lambda () (return-from b (values 'x 'y 'z))))))
+(print (multiple-value-list (nonlocal)))

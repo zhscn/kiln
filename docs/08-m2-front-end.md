@@ -109,7 +109,7 @@ Common-boot 本身的顶层处理不完整：`*compile-time-too*` 从来不会�
 - `ctx.values` 会被下一次调用覆盖。需要跨过可能调用函数的代码保留多值时（cleanup、`multiple-value-prog1` 的其余形式、`return-from` 途经的 cleanup、为 `multiple-value-call` 收集参数），只有一个值就直接保存它，否则先把值转成列表，事后再展开回 `ctx.values`。
 - 转成列表要分配，而值还在 `ctx.values` 里：转换期间 `ctx.values_live` 是值的个数减一，GC 把这些字当作 root。平时它是 0，GC 不扫描 `ctx.values`（那里多半是失效的旧值）。
 - `multiple-value-call` 把所有值收集成一个列表，再按 `apply` 的方式调用。
-- **还没做**：`throw` 和闭包里的非局部 `return-from` 只传递主值。runtime 的待传值只有一个字（`pend_value`），要传多值得在展开前把值转成列表。
+- **经过展开传递多值**（`throw`、闭包里的 `return-from`）：runtime 的待传值只有一个字。值的个数不是 1 时，先像跨 cleanup 时那样把值转成列表，再传这个列表，并带一个“已打包”标志。标志放在目标条目地址的第 0 位（条目 8 字节对齐）：到达时在 payload 寄存器 exn0 里，cleanup 拦截期间在 `pend_target` 里。handler 分派时先屏蔽这一位再比较条目，落地代码看到标志就把列表展开回多值。`go` 传递的段下标不打包。
 
 ### 5.4 lambda list
 
@@ -158,7 +158,7 @@ Common-boot 本身的顶层处理不完整：`*compile-time-too*` 从来不会�
 按计划的顺序：
 
 1. ~~特殊变量的动态绑定~~（已完成，§5.2）。TLS 表的大小是固定的，以后需要能扩容。
-2. ~~多值~~（已完成，§5.3）。`throw` 和闭包里的非局部 `return-from` 还只传递主值。
+2. ~~多值~~（已完成，§5.3），包括经过 `throw` 和非局部 `return-from`。
 3. ~~lambda list~~（已完成，§5.4）。`&aux` 还没有确认 `lexify-lambda-list` 之后的形式。
 4. **顶层的 `locally`、`macrolet`、`symbol-macrolet`**：主体应按顶层形式处理。
 5. ~~`load-time-value`~~（已完成，§5.5）。字符串和字符常量要等 M3 定下它们的对象表示。

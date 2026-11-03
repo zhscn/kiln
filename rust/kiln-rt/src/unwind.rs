@@ -110,7 +110,18 @@ unsafe fn resume_in_frame(start_fp: usize, frame_fp: usize, p0: u64, p1: u64) ->
 /// its entry still linked (marked DYN_CLEANUP_RUNNING, holding the pending
 /// target and value, which the GC updates) and ends by calling
 /// `kiln_rt_continue_unwind`.
-unsafe fn unwind_to(ctx: *mut Context, target: *mut DynEntry, value: u64, start_fp: usize) -> ! {
+///
+/// `packed` (0 or 1) says that `value` is a list of multiple values. It
+/// travels in bit 0 of the target address (entries are 8-byte aligned):
+/// in the payload register exn0 on arrival, and in `pend_target` while a
+/// cleanup runs. Compiled code masks it off before comparing entries.
+unsafe fn unwind_to(
+    ctx: *mut Context,
+    target: *mut DynEntry,
+    value: u64,
+    packed: u64,
+    start_fp: usize,
+) -> ! {
     let mut start_fp = start_fp;
     unsafe {
         loop {
@@ -120,11 +131,11 @@ unsafe fn unwind_to(ctx: *mut Context, target: *mut DynEntry, value: u64, start_
             }
             if top == target {
                 (*ctx).dynenv = (*top).prev;
-                resume_in_frame(start_fp, (*top).fp, top as u64, value);
+                resume_in_frame(start_fp, (*top).fp, top as u64 | packed, value);
             }
             if (*top).kind == DYN_UNWIND_PROTECT {
                 (*top).kind = DYN_CLEANUP_RUNNING;
-                (*top).pend_target = target;
+                (*top).pend_target = (target as u64 | packed) as *mut DynEntry;
                 (*top).pend_value = value;
                 resume_in_frame(start_fp, (*top).fp, top as u64, 0);
             }
@@ -150,12 +161,18 @@ unsafe fn unwind_to(ctx: *mut Context, target: *mut DynEntry, value: u64, start_
 /// # Safety
 /// Must be called by compiled code with a valid context.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn kiln_rt_throw(ctx: *mut Context, tag: u64, value: u64, fp: usize) -> ! {
+pub unsafe extern "C" fn kiln_rt_throw(
+    ctx: *mut Context,
+    tag: u64,
+    value: u64,
+    packed: u64,
+    fp: usize,
+) -> ! {
     unsafe {
         let mut e = (*ctx).dynenv;
         while !e.is_null() {
             if (*e).kind == DYN_CATCH && (*e).tag == tag {
-                unwind_to(ctx, e, value, fp);
+                unwind_to(ctx, e, value, packed, fp);
             }
             e = (*e).prev;
         }
@@ -174,12 +191,18 @@ pub unsafe extern "C" fn kiln_rt_throw(ctx: *mut Context, tag: u64, value: u64, 
 /// # Safety
 /// Must be called by compiled code with a valid context.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn kiln_rt_exit_to(ctx: *mut Context, token: u64, value: u64, fp: usize) -> ! {
+pub unsafe extern "C" fn kiln_rt_exit_to(
+    ctx: *mut Context,
+    token: u64,
+    value: u64,
+    packed: u64,
+    fp: usize,
+) -> ! {
     unsafe {
         let mut e = (*ctx).dynenv;
         while !e.is_null() {
             if (*e).kind == DYN_EXIT_POINT && (*e).tag == token {
-                unwind_to(ctx, e, value, fp);
+                unwind_to(ctx, e, value, packed, fp);
             }
             e = (*e).prev;
         }
@@ -202,6 +225,7 @@ pub unsafe extern "C" fn kiln_rt_continue_unwind(
             fatal("continue_unwind: cleanup entry is not innermost");
         }
         (*ctx).dynenv = (*entry).prev;
-        unwind_to(ctx, (*entry).pend_target, (*entry).pend_value, fp)
+        let target = (*entry).pend_target as u64;
+        unwind_to(ctx, (target & !1) as *mut DynEntry, (*entry).pend_value, target & 1, fp)
     }
 }
