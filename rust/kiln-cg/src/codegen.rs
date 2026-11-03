@@ -25,10 +25,20 @@ pub struct CallSiteInfo {
     pub frame_offset: u32,
 }
 
+/// Slots holding Lisp objects at one call site, as offsets from the SP at
+/// the call.
+#[derive(Debug, Clone)]
+pub struct StackMapInfo {
+    pub func: FuncId,
+    pub ret_off: u32,
+    pub offsets: Vec<u32>,
+}
+
 pub struct Output {
     pub enter: FuncId,
     pub init_data: DataId,
     pub callsites: Vec<CallSiteInfo>,
+    pub stackmaps: Vec<StackMapInfo>,
 }
 
 #[derive(Clone, Copy)]
@@ -171,6 +181,7 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
     let mut ctx = module.make_context();
     let mut fctx = FunctionBuilderContext::new();
     let mut callsites = Vec::new();
+    let mut stackmaps = Vec::new();
     for (f, &id) in kir.funcs.iter().zip(&func_ids) {
         ctx.func.signature = lisp_sig.clone();
         let mut lw = FuncLowering {
@@ -196,6 +207,7 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
             .define_function(id, &mut ctx)
             .map_err(|e| format!("func {}: {e:?}", f.name))?;
         collect_callsites(&ctx, id, &mut callsites)?;
+        collect_stackmaps(&ctx, id, &mut stackmaps)?;
         module.clear_context(&mut ctx);
     }
 
@@ -239,12 +251,20 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
         b.append_block_params_for_function_params(blk);
         b.switch_to_block(blk);
         let p = b.block_params(blk).to_vec();
+        // Record this frame as the base of the Lisp frames for the GC stack
+        // walk, restoring the previous base afterwards.
+        let off = kiln_rt::context::CTX_STACK_BASE_FP;
+        let mf = MemFlagsData::trusted();
+        let old_base = b.ins().load(I64, mf, p[0], off);
+        let fp = b.ins().get_frame_pointer(I64);
+        b.ins().store(mf, fp, p[0], off);
         let zero = b.ins().iconst(I64, 0);
         let mut args = vec![p[0], p[1], zero];
         args.extend((0..kir::REG_ARGS).map(|_| zero));
         let sigref = b.import_signature(lisp_sig.clone());
         let call = b.ins().call_indirect(sigref, p[2], &args);
         let v0 = b.inst_results(call)[0];
+        b.ins().store(mf, old_base, p[0], off);
         b.ins().return_(&[v0]);
         b.seal_all_blocks();
         b.finalize(module.target_config());
@@ -259,6 +279,7 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
         enter,
         init_data,
         callsites,
+        stackmaps,
     })
 }
 
@@ -285,6 +306,27 @@ fn collect_callsites(ctx: &Context, func: FuncId, out: &mut Vec<CallSiteInfo>) -
     Ok(())
 }
 
+fn collect_stackmaps(ctx: &Context, func: FuncId, out: &mut Vec<StackMapInfo>) -> R<()> {
+    let code = ctx.compiled_code().ok_or("no compiled code")?;
+    let call_rets: std::collections::HashSet<u32> =
+        code.buffer.call_sites().map(|cs| cs.ret_addr).collect();
+    for (offset, _span, map) in code.buffer.user_stack_maps() {
+        // The GC finds stack maps by return address.
+        if !call_rets.contains(offset) {
+            return Err(format!("stack map at {offset:#x} is not at a call return address"));
+        }
+        let offsets: Vec<u32> = map.entries().map(|(_ty, off)| off).collect();
+        if !offsets.is_empty() {
+            out.push(StackMapInfo {
+                func,
+                ret_off: *offset,
+                offsets,
+            });
+        }
+    }
+    Ok(())
+}
+
 /// Emits the call-site table and `kiln_module_info` for AOT objects.
 pub fn emit_module_info<M: Module>(module: &mut M, out: &Output) -> R<()> {
     let table = module
@@ -304,14 +346,48 @@ pub fn emit_module_info<M: Module>(module: &mut M, out: &Output) -> R<()> {
     desc.define(bytes.into_boxed_slice());
     module.define_data(table, &desc).map_err(err)?;
 
+    // Stack maps: records point into one array of u32 offsets.
+    let offsets_id = module
+        .declare_data("kiln_stackmap_offsets", Linkage::Local, false, false)
+        .map_err(err)?;
+    let mut offsets: Vec<u8> = Vec::new();
+    let maps = module
+        .declare_data("kiln_stackmaps", Linkage::Local, false, false)
+        .map_err(err)?;
+    let mut mdesc = DataDescription::new();
+    mdesc.set_align(8);
+    let mut mbytes = vec![0u8; out.stackmaps.len() * 24 + 8];
+    let ogv = module.declare_data_in_data(offsets_id, &mut mdesc);
+    for (i, sm) in out.stackmaps.iter().enumerate() {
+        let off = i * 24;
+        let fr = module.declare_func_in_data(sm.func, &mut mdesc);
+        mdesc.write_function_addr(off as u32, fr);
+        mbytes[off + 8..off + 12].copy_from_slice(&sm.ret_off.to_le_bytes());
+        mbytes[off + 12..off + 16].copy_from_slice(&(sm.offsets.len() as u32).to_le_bytes());
+        mdesc.write_data_addr((off + 16) as u32, ogv, offsets.len() as i64);
+        for o in &sm.offsets {
+            offsets.extend_from_slice(&o.to_le_bytes());
+        }
+    }
+    mdesc.define(mbytes.into_boxed_slice());
+    module.define_data(maps, &mdesc).map_err(err)?;
+    let mut odesc = DataDescription::new();
+    odesc.set_align(8);
+    offsets.extend_from_slice(&[0; 8]);
+    odesc.define(offsets.into_boxed_slice());
+    module.define_data(offsets_id, &odesc).map_err(err)?;
+
     let info = module
         .declare_data(MODULE_INFO_NAME, Linkage::Export, false, false)
         .map_err(err)?;
     let mut desc = DataDescription::new();
     desc.set_align(8);
-    let mut bytes = vec![0u8; 32];
+    let mut bytes = vec![0u8; 48];
     bytes[24..32].copy_from_slice(&(out.callsites.len() as u64).to_le_bytes());
+    bytes[40..48].copy_from_slice(&(out.stackmaps.len() as u64).to_le_bytes());
     desc.define(bytes.into_boxed_slice());
+    let gv = module.declare_data_in_data(maps, &mut desc);
+    desc.write_data_addr(32, gv, 0);
     let fr = module.declare_func_in_data(out.enter, &mut desc);
     desc.write_function_addr(0, fr);
     let gv = module.declare_data_in_data(out.init_data, &mut desc);
@@ -370,7 +446,7 @@ impl<M: Module> FuncLowering<'_, M> {
         b.append_block_params_for_function_params(entry);
         b.switch_to_block(entry);
         let params = b.block_params(entry).to_vec();
-        for (i, name) in ["ctx", "self", "nargs", "a0", "a1", "a2", "a3"].iter().enumerate() {
+        for (i, name) in ["ctx", "self", "nargs", "a0", "a1", "a2"].iter().enumerate() {
             b.def_var(self.vars[*name], params[i]);
         }
         let zero = b.ins().iconst(I64, 0);

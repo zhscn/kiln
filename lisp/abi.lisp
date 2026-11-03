@@ -2,14 +2,25 @@
 
 ;;;; Must match rust/kiln-rt. See docs/06-m0-abi.md.
 
-;;; Values: fixnum when the low bit is 0 (value = word >> 1);
-;;; general object pointer when the low 3 bits are #b101.
+;;; Values: fixnum when the low bit is 0 (value = word >> 1); cons pointer
+;;; when the low 3 bits are #b001; other object pointer when #b101.
 (defconstant +fixnum-shift+ 1)
+(defconstant +tag-mask+ 7)
+(defconstant +tag-cons+ 1)
 (defconstant +tag-general+ 5)
 
-;;; Header word of a general object.
+;;; Every object starts with a header word: kind in bits 0-7, payload length
+;;; in words above that for variable-length kinds.
+(defconstant +kind-mask+ #xff)
 (defconstant +kind-symbol+ 1)
 (defconstant +kind-function+ 2)
+(defconstant +kind-cons+ 3)
+(defconstant +kind-simple-vector+ 4)
+
+;;; Cons layout: [header, car, cdr].
+(defconstant +cons-bytes+ 24)
+(defconstant +cons-car+ (- 8 +tag-cons+))
+(defconstant +cons-cdr+ (- 16 +tag-cons+))
 
 ;;; Context field offsets.
 (defconstant +ctx-poll-flag+ 0)
@@ -23,6 +34,8 @@
 (defconstant +dyn-prev+ 8)
 (defconstant +dyn-fp+ 16)
 (defconstant +dyn-tag+ 24)
+(defconstant +dyn-pend-target+ 32)
+(defconstant +dyn-pend-value+ 40)
 
 ;;; Offset of the entry address from a tagged function object pointer.
 (defconstant +fobj-entry+ (- 8 +tag-general+))
@@ -31,6 +44,8 @@
 (defconstant +err-not-fixnum+ 1)
 (defconstant +err-overflow+ 2)
 (defconstant +err-wrong-nargs+ 3)
+(defconstant +err-not-list+ 4)
+(defconstant +err-not-function+ 5)
 
 ;;; Argument registers in the Lisp calling convention.
-(defconstant +reg-args+ 4)
+(defconstant +reg-args+ 3)

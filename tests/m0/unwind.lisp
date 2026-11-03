@@ -37,3 +37,13 @@
 
 ;; Nested catches with the same tag: the innermost wins.
 (print (catch 'x (+ 100 (catch 'x (throw 'x 1)))))
+
+;; A local exit out of a cleanup that an unwind is running abandons the
+;; unwind; the dynamic environment must be clean afterwards.
+(defun abandon ()
+  (block b
+    (catch 'never
+      (unwind-protect (throw 'never 1)
+        (return-from b 'abandoned)))))
+(print (abandon))
+(print (catch 'z (throw 'z 'clean)))

@@ -11,7 +11,7 @@
 //! register as clobbered on the exceptional edge, so no callee-saved register
 //! needs restoring: setting PC, SP and FP is enough.
 
-use crate::context::{Context, DYN_CATCH, DYN_UNWIND_PROTECT, DynEntry};
+use crate::context::{Context, DYN_CATCH, DYN_CLEANUP_RUNNING, DYN_UNWIND_PROTECT, DynEntry};
 use std::sync::RwLock;
 
 /// One call site with an exception handler, in absolute addresses.
@@ -103,8 +103,10 @@ unsafe fn resume_in_frame(start_fp: usize, frame_fp: usize, p0: u64, p1: u64) ->
     }
 }
 
-/// Unwind to `target`, running intervening cleanups. Each cleanup resumes
-/// back into the runtime through `kiln_rt_continue_unwind`.
+/// Unwind to `target`, running intervening cleanups. A cleanup runs with
+/// its entry still linked (marked DYN_CLEANUP_RUNNING, holding the pending
+/// target and value, which the GC updates) and ends by calling
+/// `kiln_rt_continue_unwind`.
 unsafe fn unwind_to(ctx: *mut Context, target: *mut DynEntry, value: u64, start_fp: usize) -> ! {
     unsafe {
         loop {
@@ -112,15 +114,18 @@ unsafe fn unwind_to(ctx: *mut Context, target: *mut DynEntry, value: u64, start_
             if top.is_null() {
                 fatal("unwind target is not in the dynamic environment");
             }
-            (*ctx).dynenv = (*top).prev;
             if top == target {
+                (*ctx).dynenv = (*top).prev;
                 resume_in_frame(start_fp, (*top).fp, top as u64, value);
             }
             if (*top).kind == DYN_UNWIND_PROTECT {
+                (*top).kind = DYN_CLEANUP_RUNNING;
                 (*top).pend_target = target;
                 (*top).pend_value = value;
                 resume_in_frame(start_fp, (*top).fp, top as u64, 0);
             }
+            // A catch, or a cleanup abandoned by this unwind.
+            (*ctx).dynenv = (*top).prev;
         }
     }
 }
@@ -155,5 +160,11 @@ pub unsafe extern "C" fn kiln_rt_continue_unwind(
     entry: *mut DynEntry,
     fp: usize,
 ) -> ! {
-    unsafe { unwind_to(ctx, (*entry).pend_target, (*entry).pend_value, fp) }
+    unsafe {
+        if (*ctx).dynenv != entry {
+            fatal("continue_unwind: cleanup entry is not innermost");
+        }
+        (*ctx).dynenv = (*entry).prev;
+        unwind_to(ctx, (*entry).pend_target, (*entry).pend_value, fp)
+    }
 }

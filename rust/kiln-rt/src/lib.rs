@@ -1,6 +1,7 @@
 //! kiln runtime.
 
 pub mod context;
+pub mod gc;
 pub mod object;
 pub mod rtfun;
 pub mod unwind;
@@ -20,6 +21,8 @@ pub struct ModuleInfo {
     pub init_fobj: u64,
     pub callsites: *const CallSiteRecord,
     pub ncallsites: u64,
+    pub stackmaps: *const gc::StackMapRecord,
+    pub nstackmaps: u64,
 }
 
 /// # Safety
@@ -36,6 +39,8 @@ pub unsafe fn run_module(info: &ModuleInfo) -> i32 {
     unsafe {
         let records = std::slice::from_raw_parts(info.callsites, info.ncallsites as usize);
         unwind::register_callsites(records);
+        let maps = std::slice::from_raw_parts(info.stackmaps, info.nstackmaps as usize);
+        gc::register_stack_maps(maps);
         let mut ctx = Context::new();
         let entry = function_entry(info.init_fobj);
         (info.enter)(&mut *ctx, info.init_fobj, entry);
@@ -53,6 +58,9 @@ pub fn symbols() -> Vec<(&'static str, *const u8)> {
         ("kiln_rt_print", rtfun::kiln_rt_print as *const u8),
         ("kiln_rt_error", rtfun::kiln_rt_error as *const u8),
         ("kiln_rt_poll", rtfun::kiln_rt_poll as *const u8),
+        ("kiln_rt_alloc", gc::kiln_rt_alloc as *const u8),
+        ("kiln_rt_gc", gc::kiln_rt_gc as *const u8),
+        ("kiln_rt_gc_count", gc::kiln_rt_gc_count as *const u8),
         ("kiln_rt_throw", unwind::kiln_rt_throw as *const u8),
         (
             "kiln_rt_continue_unwind",

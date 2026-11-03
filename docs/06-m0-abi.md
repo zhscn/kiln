@@ -1,6 +1,6 @@
 # 06 M0：ABI 与 KIR
 
-**状态**：M0 已完成（2026-11）。本文记录 M0 定下来的 ABI 决定，以及 SBCL 侧编译器和 Rust 侧代码生成器之间的交换格式 KIR。这些决定在 M1 之后都会继续沿用；M0 的前端只是脚手架，到 M2 会换成基于 Common-boot 的前端。
+**状态**：M0 已完成（2026-11）。M1 对其中几处做了修订，以 [07-m1-gc.md](07-m1-gc.md) 为准：寄存器参数改为 3 个、context 布局、cleanup 运行期间的条目。本文记录 M0 定下来的 ABI 决定，以及 SBCL 侧编译器和 Rust 侧代码生成器之间的交换格式 KIR。这些决定在 M1 之后都会继续沿用；M0 的前端只是脚手架，到 M2 会换成基于 Common-boot 的前端。
 
 ## 1. 组成
 
@@ -26,7 +26,7 @@ Rust: kiln-launcher           staticlib，提供 C main，链接 kiln-rt
 - **对象布局的知识留在 Lisp 侧。** KIR 是接近 Cranelift 的低级 IR：tag、偏移、kind 编号都由 Lisp 编译器决定。kiln-cg 只负责调用约定、`try_call` 和异常表、栈图声明、trampoline。以后编译器自举进 kiln 时，kiln-cg 作为 runtime 里的代码生成库继续使用，不用改。
 - 调试时仍然可以看 CLIF：`kiln-cg jit FILE.kir --dump-clif`。
 
-## 3. 值的表示（M0 子集）
+## 3. 值的表示（M0 子集，M1 已扩展，见 [07 §1](07-m1-gc.md#1-值和对象的表示)）
 
 | 低位 | 含义 |
 |---|---|
@@ -40,11 +40,11 @@ Rust: kiln-launcher           staticlib，提供 C main，链接 kiln-rt
 ## 4. 调用约定
 
 - **所有 Lisp 函数使用 Cranelift 的 `tail` 调用约定。** 它支持尾调用。更关键的是，`try_call` 调用 `tail` 函数时，异常边上所有寄存器都视为被破坏，所以 unwinder 恢复时不需要还原 callee-saved 寄存器。
-- **统一签名**：`(ctx, self, nargs, a0, a1, a2, a3) -> (v0, nvals)`，全部是 i64。
+- **统一签名**：`(ctx, self, nargs, a0, a1, a2) -> (v0, nvals)`，全部是 i64。M0 时是 4 个寄存器参数，M1 改成 3 个，原因见 [07 §5](07-m1-gc.md#5-调用约定的修订3-个寄存器参数)。
   - `ctx`：context 指针（C1），作为显式的第一个参数。没有用 Cranelift 的 pinned register，这样更可移植，调用 Rust 时也不用特殊处理。
   - `self`：被调用的函数对象，以后闭包从这里取环境。
   - `nargs`：实际参数个数（裸整数）。被调方在入口检查。
-  - `a0`–`a3`：前 4 个参数，多余的寄存器传 0。超过 4 个参数时放进 context 里的溢出区，**M1 再实现**，M0 的前端会直接报错。
+  - `a0`–`a2`：前 3 个参数，多余的寄存器传 0。超过 3 个参数时放进 context 里的溢出区，**还没有实现**，前端会直接报错。
   - 返回 `v0` 和 `nvals`：主值和值的个数。第二个及之后的值放在 `ctx.values` 里，**多值在 M0 里还没用到**。
 - **调用全局函数**：从函数 cell 读出函数对象，从函数对象读出入口地址，再 `call_indirect`。重定义时只改 cell。call-site manager 留到以后（[05 §3.5](05-sicl-survey.md#35-call-site-manager只有设计代码是空壳)）。
 - **帧指针**：`preserve_frame_pointers = true`。unwinder 依靠 FP 链遍历栈帧，以后 GC 扫描栈也要用。
@@ -56,7 +56,10 @@ Rust: kiln-launcher           staticlib，提供 C main，链接 kiln-rt
 |---|---|---|
 | 0 | `poll_flag` | 非零时 poll 点进入慢路径（C4） |
 | 8 | `dynenv` | 最内层的动态环境条目 |
-| 16 | `values[64]` | 第二个及之后的返回值（M0 未使用） |
+| 16 | `stack_base_fp` | `kiln_enter` 帧的帧指针，GC 栈遍历的终点（M1） |
+| 24 | `safepoint_fp` | 最近一次 safepoint 的 trampoline 帧指针，GC 栈遍历的起点（M1） |
+| 32 | `mutator` | MMTk mutator（M1） |
+| 40 | `values[64]` | 第二个及之后的返回值（未使用） |
 
 两侧的定义：`rust/kiln-rt/src/context.rs` 和 `lisp/abi.lisp`，修改时必须同步。
 
@@ -70,12 +73,12 @@ Rust: kiln-launcher           staticlib，提供 C main，链接 kiln-rt
 
 | 偏移 | 字段 |
 |---|---|
-| 0 | kind：1 是 catch，2 是 unwind-protect |
+| 0 | kind：1 是 catch，2 是 unwind-protect，3 是 cleanup 运行中（M1，见 [07 §7](07-m1-gc.md#7-修复cleanup-运行期间条目留在链上)） |
 | 8 | prev |
 | 16 | fp：建立条目那一帧的帧指针（`get_frame_pointer`） |
-| 24 | tag（只有 catch 用） |
+| 24 | tag（只有 catch 用；GC root，不用时写 0） |
 | 32 | 待继续的展开目标（cleanup 运行期间使用） |
-| 40 | 待继续的展开值 |
+| 40 | 待继续的展开值（GC root，不用时写 0） |
 
 ### 6.2 调用点
 
@@ -89,7 +92,8 @@ Rust: kiln-launcher           staticlib，提供 C main，链接 kiln-rt
 
 1. 从 `ctx.dynenv` 栈顶开始逐个弹出条目，直到目标：
    - 中间的 catch：跳过；
-   - 中间的 unwind-protect：把展开目标和值保存在这个条目里，然后恢复进它所在的帧，执行 cleanup。cleanup 结束时调用 `kiln_rt_continue_unwind`，继续展开；
+   - 中间的 unwind-protect：把展开目标和值保存在这个条目里，把它标记为 cleanup 运行中（条目留在链上），然后恢复进它所在的帧，执行 cleanup。cleanup 结束时调用 `kiln_rt_continue_unwind`，摘掉条目，继续展开；
+   - 已标记为 cleanup 运行中的条目：直接摘掉（原来那次展开被放弃）；
    - 到达目标 catch：恢复进它所在的帧，`exn1` 就是 catch 的返回值。
 2. **恢复进一个帧**：从 trampoline 的帧指针出发沿 FP 链往上走，找到“调用者 FP 等于目标帧 FP”的那一帧，取它的返回地址，也就是目标帧当前活跃的调用点。查表得到 handler 和 frame_offset，然后设置 SP = FP − frame_offset、FP、两个 payload 寄存器（x86-64 上是 rax、rdx），跳转到 handler。做法和 wasmtime 的 unwinder 一致。
 
@@ -153,12 +157,12 @@ Rust: kiln-launcher           staticlib，提供 C main，链接 kiln-rt
 
 `defun`（最多 4 个必需参数）、`if`、`let`、`let*`、`setq`、`progn`、`block`、`return-from`、`tagbody`、`go`、`catch`、`throw`、`unwind-protect`、`quote`（fixnum 和 symbol）、同一文件内定义的函数调用，以及原语 `+ - * < > <= >= = eq null not print`。只有词法变量，没有闭包。
 
-## 10. 遗留到 M1 的事项
+## 10. 遗留事项（M0 结束时；M1 的进展见 [07 §9](07-m1-gc.md#9-遗留事项)）
 
-- MMTk 接入、对象分配、cons，以及完整的对象表示和 tag 方案。
-- 栈图已经声明（obj 变量调用了 `declare_var_needs_stack_map`），但还没有导出给 runtime，GC 也还没有用它。要和调用点表合并成统一的“调用点描述符”。
+- ~~MMTk 接入、对象分配、cons~~（M1 完成）。完整的对象表示（rack 等）留到 M4。
+- ~~栈图导出给 runtime~~（M1 完成）。还要和调用点表合并成统一的“调用点描述符”。
 - C8 的 `%switch-stack` 测试。
-- 超过 4 个参数时的溢出区、`&optional`/`&rest`/`&key`、多值。
+- 超过 3 个参数时的溢出区、`&optional`/`&rest`/`&key`、多值。
 - special 变量（TLS 索引，C1），以及绑定在展开时的恢复（动态环境条目再加一种 kind）。
 - 跨函数的 `return-from`。
 - 多模块：trampoline 和 `kiln_enter` 目前每个模块各生成一份，`kiln_module_info` 也只支持一个模块。

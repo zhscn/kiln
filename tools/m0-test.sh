@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Runs the M0 end-to-end tests: SBCL compiles each tests/m0/*.lisp to KIR,
-# then kiln-cg runs it with the JIT and builds/runs an AOT executable.
+# then kiln-cg runs it with the JIT (normally and under GC stress) and
+# builds/runs an AOT executable.
 # Each output must match the .expected file.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -34,6 +35,13 @@ for src in "${sources[@]}"; do
     echo "PASS jit $name"
   else
     echo "FAIL jit $name"; fail=1
+  fi
+  # GC stress: a 1 MiB heap forces frequent moving collections.
+  if MMTK_GC_TRIGGER=FixedHeapSize:1048576 "$cg" jit "$kir" >"$build/$name.stress.out" 2>&1 \
+     && diff -u "$expected" "$build/$name.stress.out"; then
+    echo "PASS gc-stress $name"
+  else
+    echo "FAIL gc-stress $name"; fail=1
   fi
   if "$cg" obj "$kir" -o "$build/$name.o" \
      && cc "$build/$name.o" "$launcher" -o "$build/$name" -lpthread -ldl -lm \

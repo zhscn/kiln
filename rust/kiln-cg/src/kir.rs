@@ -153,13 +153,14 @@ pub const PREDEFINED_VARS: &[(&str, VarKind)] = &[
     ("a0", VarKind::Obj),
     ("a1", VarKind::Obj),
     ("a2", VarKind::Obj),
-    ("a3", VarKind::Obj),
     ("exn0", VarKind::Raw),
     ("exn1", VarKind::Obj),
 ];
 
-/// Number of argument registers in the Lisp calling convention.
-pub const REG_ARGS: usize = 4;
+/// Number of argument registers in the Lisp calling convention. With ctx,
+/// self and nargs this keeps every argument in a register on x86-64, which
+/// the GC stack walk relies on (see kiln-rt gc.rs).
+pub const REG_ARGS: usize = 3;
 
 type R<T> = Result<T, String>;
 

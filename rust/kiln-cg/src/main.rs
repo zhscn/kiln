@@ -56,6 +56,16 @@ fn run_jit(kir: &kir::Module, opts: &Options) -> Result<i32, String> {
             _pad: 0,
         })
         .collect();
+    let maps: Vec<kiln_rt::gc::StackMapRecord> = out
+        .stackmaps
+        .iter()
+        .map(|sm| kiln_rt::gc::StackMapRecord {
+            func: module.get_finalized_function(sm.func) as usize,
+            ret_off: sm.ret_off,
+            count: sm.offsets.len() as u32,
+            offsets: sm.offsets.as_ptr(),
+        })
+        .collect();
     let enter = module.get_finalized_function(out.enter);
     let (init, _) = module.get_finalized_data(out.init_data);
     let info = kiln_rt::ModuleInfo {
@@ -63,6 +73,8 @@ fn run_jit(kir: &kir::Module, opts: &Options) -> Result<i32, String> {
         init_fobj: init as u64 + kiln_rt::object::TAG_GENERAL,
         callsites: records.as_ptr(),
         ncallsites: records.len() as u64,
+        stackmaps: maps.as_ptr(),
+        nstackmaps: maps.len() as u64,
     };
     Ok(unsafe { kiln_rt::run_module(&info) })
 }

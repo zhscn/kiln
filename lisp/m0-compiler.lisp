@@ -1,12 +1,13 @@
 (in-package #:kiln.m0)
 
-;;;; M0 scaffolding compiler: a small Lisp subset straight to KIR.
+;;;; Scaffolding compiler (M0/M1): a small Lisp subset straight to KIR.
 ;;;;
-;;;; Supported: DEFUN (up to 4 required parameters), IF, LET, LET*, SETQ,
+;;;; Supported: DEFUN (up to 3 required parameters), IF, LET, LET*, SETQ,
 ;;;; PROGN, BLOCK, RETURN-FROM, TAGBODY, GO, CATCH, THROW, UNWIND-PROTECT,
-;;;; QUOTE of fixnums and symbols, calls to functions defined in the same
-;;;; file, and the primitives + - * < > <= >= = EQ NULL NOT PRINT.
-;;;; Lexical variables only; no closures.
+;;;; FUNCTION of a global function name, QUOTE of fixnums and symbols, calls
+;;;; to functions defined in the same file, and the primitives
+;;;; + - * < > <= >= = EQ NULL NOT CONS CAR CDR CONSP ATOM LIST FUNCALL PRINT
+;;;; %GC %GC-COUNT. Lexical variables only; no closures.
 ;;;;
 ;;;; The point of M0 is to exercise the ABI (docs/06-m0-abi.md): calling
 ;;;; convention, context pointer, poll points, and non-local exit through
@@ -40,6 +41,9 @@
 (defun rt-throw () (module-import-func "kiln_rt_throw" 3 0 :unwinds :noreturn))
 (defun rt-continue-unwind ()
   (module-import-func "kiln_rt_continue_unwind" 2 0 :unwinds :noreturn))
+(defun rt-alloc () (module-import-func "kiln_rt_alloc" 3 1 :unwinds))
+(defun rt-gc () (module-import-func "kiln_rt_gc" 1 1 :unwinds))
+(defun rt-gc-count () (module-import-func "kiln_rt_gc_count" 1 1))
 
 ;;; Constants
 
@@ -72,7 +76,7 @@
 ;;; Lexical environment
 
 (defstruct region
-  kind            ; :catch or :unwind-protect
+  kind            ; :catch, :unwind-protect, or :cleanup-running
   slot            ; stack slot holding the dynamic-environment entry
   handler         ; block that dispatches exceptional entry into this frame
   cleanup         ; unwind-protect cleanup forms
@@ -86,7 +90,7 @@
 
 (defun handler (env)
   (let ((r (first (env-regions env))))
-    (if r (kiln.kir::kblock-name (region-handler r)) :nil)))
+    (if (and r (region-handler r)) (kiln.kir::kblock-name (region-handler r)) :nil)))
 
 (defun bname (b) (kiln.kir::kblock-name b))
 
@@ -177,6 +181,25 @@
     ((null not) (destructuring-bind (a) args
                   (let ((a (compile-form a env)))
                     (copy-to-var `(:select (:eq ,a ,(nil-value)) ,(t-value) ,(nil-value))))))
+    (cons (destructuring-bind (a b) args
+            (compile-cons (compile-form a env) (compile-form b env) env)))
+    (car (destructuring-bind (a) args (compile-car-cdr (compile-form a env) +cons-car+ env)))
+    (cdr (destructuring-bind (a) args (compile-car-cdr (compile-form a env) +cons-cdr+ env)))
+    ((consp atom)
+     (destructuring-bind (a) args
+       (let ((a (compile-form a env))
+             (yes (t-value)) (no (nil-value)))
+         (when (eq op 'atom) (rotatef yes no))
+         (copy-to-var `(:select (:eq (:and ,a ,+tag-mask+) ,+tag-cons+) ,yes ,no)))))
+    (list (compile-form (if args `(cons ,(first args) (list ,@(rest args))) nil) env))
+    (function (compile-function-ref args))
+    (funcall (compile-funcall args env))
+    (%gc (let ((r (new-var)))
+           (emit `(:call-rt ,(rt-gc) (,r) (:ctx) ,(handler env)))
+           r))
+    (%gc-count (let ((r (new-var)))
+                 (emit `(:call-rt ,(rt-gc-count) (,r) (:ctx) :nil))
+                 r))
     (print (destructuring-bind (a) args
              (let ((a (compile-form a env)) (r (new-var)))
                (emit `(:call-rt ,(rt-print) (,r) (:ctx ,a) :nil))
@@ -277,8 +300,10 @@ Returns the region and the environment for code inside it."
     (emit `(:store (:slot ,slot) ,+dyn-kind+ ,(if (eq kind :catch) +dyn-catch+ +dyn-unwind-protect+)))
     (emit `(:store (:slot ,slot) ,+dyn-prev+ (:load :ctx ,+ctx-dynenv+)))
     (emit `(:store (:slot ,slot) ,+dyn-fp+ (:fp)))
-    (when tag
-      (emit `(:store (:slot ,slot) ,+dyn-tag+ ,tag)))
+    ;; Tag and pending value are GC roots: always initialize them.
+    (emit `(:store (:slot ,slot) ,+dyn-tag+ ,(or tag 0)))
+    (emit `(:store (:slot ,slot) ,+dyn-pend-target+ 0))
+    (emit `(:store (:slot ,slot) ,+dyn-pend-value+ 0))
     (emit `(:store :ctx ,+ctx-dynenv+ (:slot ,slot)))
     (push region (env-regions inner))
     (values region inner)))
@@ -329,10 +354,17 @@ Entries of this frame other than REGION's are dispatched outward."
         (compile-progn cleanup env)
         (jump cont)
         (start-dispatch region env land)
-        ;; Entered by an unwind passing through: the runtime has unlinked the
-        ;; entry and saved the pending target in it.
+        ;; Entered by an unwind passing through: the entry stays linked,
+        ;; marked as running its cleanup, with the pending target in it.
+        ;; The cleanup runs in a region that only unlinks it on a local exit;
+        ;; calls in it use the outer handler.
         (start-block land)
-        (compile-progn cleanup env)
+        (let ((running-env (copy-env env)))
+          (push (make-region :kind :cleanup-running :slot (region-slot region)
+                             :handler (let ((outer (first (env-regions env))))
+                                        (and outer (region-handler outer))))
+                (env-regions running-env))
+          (compile-progn cleanup running-env))
         (emit `(:call-rt ,(rt-continue-unwind) () (:ctx (:slot ,(region-slot region)))
                          ,(handler env)))
         (emit '(:trap))
@@ -366,17 +398,70 @@ Entries of this frame other than REGION's are dispatched outward."
     (copy-to-var `(:select (,(ecase op (< :lt) (> :gt) (<= :le) (>= :ge) (= :eq)) ,a ,b)
                            ,(t-value) ,(nil-value)))))
 
+(defun compile-cons (a b env)
+  ;; A and B are live across the allocation, a GC safepoint: if they are
+  ;; variables they are spilled and reloaded around it (stack maps).
+  (let ((a (if (integerp a) a (copy-to-var a)))
+        (b (if (integerp b) b (copy-to-var b)))
+        (p (new-var :raw)))
+    (emit `(:call-rt ,(rt-alloc) (,p) (:ctx ,+cons-bytes+ ,+kind-cons+) ,(handler env)))
+    ;; No safepoint between here and tagging P.
+    (emit `(:store ,p 8 ,a))
+    (emit `(:store ,p 16 ,b))
+    (copy-to-var `(:add ,p ,+tag-cons+))))
+
+(defun compile-car-cdr (x offset env)
+  (let ((r (new-var))
+        (is-cons (new-block)) (other (new-block)) (is-nil (new-block))
+        (bad (new-block)) (join (new-block)))
+    (br `(:eq (:and ,x ,+tag-mask+) ,+tag-cons+) is-cons other)
+    (start-block is-cons)
+    (emit `(:set ,r (:load ,x ,offset)))
+    (jump join)
+    (start-block other)
+    (br `(:eq ,x ,(nil-value)) is-nil bad)
+    (start-block is-nil)
+    (emit `(:set ,r ,(nil-value)))
+    (jump join)
+    (start-block bad)
+    (emit-error +err-not-list+ x env)
+    (start-block join)
+    r))
+
+(defun compile-function-ref (args)
+  (let ((name (first args)))
+    (unless (and (symbolp name) (gethash name *functions*))
+      (fail "FUNCTION of ~S: only global functions defined in this file" name))
+    (setf (gethash name *called*) t)
+    (copy-to-var `(:load (:addr ,(fcell-name name)) 0))))
+
+(defun emit-lisp-call (fobj entry vals env)
+  (when (> (length vals) +reg-args+)
+    (fail "calls with more than ~D arguments are not supported yet" +reg-args+))
+  (let ((v0 (new-var)) (nv (new-var :raw)))
+    (emit `(:call-lisp ,v0 ,nv ,entry (:ctx ,fobj ,(length vals) ,@vals) ,(handler env)))
+    v0))
+
+(defun compile-funcall (args env)
+  (let* ((f (copy-to-var (compile-form (first args) env)))
+         (vals (mapcar (lambda (a) (compile-form a env)) (rest args)))
+         (general (new-block)) (bad (new-block)) (ok (new-block)))
+    (br `(:eq (:and ,f ,+tag-mask+) ,+tag-general+) general bad)
+    (start-block general)
+    (br `(:eq (:and (:load ,f ,(- +tag-general+)) ,+kind-mask+) ,+kind-function+) ok bad)
+    (start-block bad)
+    (emit-error +err-not-function+ f env)
+    (start-block ok)
+    (emit-lisp-call f (copy-to-var `(:load ,f ,+fobj-entry+) :raw) vals env)))
+
 (defun compile-call (op args env)
   (let ((n (gethash op *functions*)))
     (unless (= n (length args))
       (fail "~S called with ~D arguments, takes ~D" op (length args) n)))
   (setf (gethash op *called*) t)
   (let* ((vals (mapcar (lambda (a) (compile-form a env)) args))
-         (fobj (copy-to-var `(:load (:addr ,(fcell-name op)) 0)))
-         (entry (copy-to-var `(:load ,fobj ,+fobj-entry+) :raw))
-         (v0 (new-var)) (nv (new-var :raw)))
-    (emit `(:call-lisp ,v0 ,nv ,entry (:ctx ,fobj ,(length args) ,@vals) ,(handler env)))
-    v0))
+         (fobj (copy-to-var `(:load (:addr ,(fcell-name op)) 0))))
+    (emit-lisp-call fobj (copy-to-var `(:load ,fobj ,+fobj-entry+) :raw) vals env)))
 
 (defun compile-function (name params body)
   (let ((env (make-env)) (n (length params)))
@@ -388,7 +473,7 @@ Entries of this frame other than REGION's are dispatched outward."
         (emit-error +err-wrong-nargs+ `(:shl :nargs ,+fixnum-shift+) env)
         (start-block ok))
       (loop for p in params
-            for reg in '(:a0 :a1 :a2 :a3)
+            for reg in '(:a0 :a1 :a2)
             do (push (cons p (copy-to-var reg)) (env-vars env)))
       (emit `(:return ,(compile-progn body env) 1)))))
 
@@ -398,7 +483,7 @@ Entries of this frame other than REGION's are dispatched outward."
 
 (defun check-lambda-list (name params)
   (when (> (length params) +reg-args+)
-    (fail "~S: more than ~D parameters are not supported in M0" name +reg-args+))
+    (fail "~S: more than ~D parameters are not supported yet" name +reg-args+))
   (dolist (p params)
     (when (or (not (symbolp p)) (member p lambda-list-keywords))
       (fail "~S: only required parameters are supported in M0" name))))

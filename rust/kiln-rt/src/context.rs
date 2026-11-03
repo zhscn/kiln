@@ -1,6 +1,8 @@
 //! The context object (constraint C1): all dynamic state hangs off it.
 //! Compiled code receives a pointer to it as the first argument.
-//! Field offsets are part of the ABI; see docs/06-m0-abi.md.
+//! Field offsets are part of the ABI; see docs/06-m0-abi.md and docs/07-m1-gc.md.
+
+use crate::gc::KilnMutator;
 
 pub const VALUES_MAX: usize = 64;
 
@@ -10,37 +12,57 @@ pub struct Context {
     pub poll_flag: u64,
     /// Offset 8. Innermost dynamic-environment entry, or null.
     pub dynenv: *mut DynEntry,
-    /// Offset 16. Extra return values beyond the first (unused in M0).
+    /// Offset 16. Frame pointer of the `kiln_enter` frame that started the
+    /// current stack's Lisp frames; the GC stack walk stops there.
+    pub stack_base_fp: usize,
+    /// Offset 24. Frame pointer of the trampoline through which compiled code
+    /// last entered the runtime at a GC safepoint; the GC stack walk starts there.
+    pub safepoint_fp: usize,
+    /// Offset 32. MMTk mutator of this context.
+    pub mutator: *mut KilnMutator,
+    /// Offset 40. Extra return values beyond the first (unused so far).
     pub values: [u64; VALUES_MAX],
 }
 
+pub const CTX_STACK_BASE_FP: i32 = core::mem::offset_of!(Context, stack_base_fp) as i32;
+
 impl Context {
     pub fn new() -> Box<Context> {
-        Box::new(Context {
+        let mut ctx = Box::new(Context {
             poll_flag: 0,
             dynenv: core::ptr::null_mut(),
+            stack_base_fp: 0,
+            safepoint_fp: 0,
+            mutator: core::ptr::null_mut(),
             values: [0; VALUES_MAX],
-        })
+        });
+        ctx.mutator = crate::gc::bind_mutator(&mut *ctx);
+        ctx
     }
 }
 
 pub const DYN_CATCH: u64 = 1;
 pub const DYN_UNWIND_PROTECT: u64 = 2;
+/// An unwind-protect whose cleanup is running because an unwind passed
+/// through it. It stays linked so that the GC sees the pending value; an
+/// unwind that passes it again just unlinks it.
+pub const DYN_CLEANUP_RUNNING: u64 = 3;
 
 /// A dynamic-environment entry. Allocated in a stack slot of the frame that
 /// establishes it, and linked through `prev`. Layout is part of the ABI.
 #[repr(C)]
 pub struct DynEntry {
-    /// Offset 0: DYN_CATCH or DYN_UNWIND_PROTECT.
+    /// Offset 0: DYN_CATCH, DYN_UNWIND_PROTECT or DYN_CLEANUP_RUNNING.
     pub kind: u64,
     /// Offset 8: enclosing entry.
     pub prev: *mut DynEntry,
     /// Offset 16: frame pointer of the establishing frame.
     pub fp: usize,
-    /// Offset 24: catch tag (catch entries only).
+    /// Offset 24: catch tag (catch entries only). A Lisp object: the GC
+    /// updates it (entries are roots, see gc.rs).
     pub tag: u64,
     /// Offset 32: pending unwind target while a cleanup runs.
     pub pend_target: *mut DynEntry,
-    /// Offset 40: pending unwind value while a cleanup runs.
+    /// Offset 40: pending unwind value while a cleanup runs. A Lisp object.
     pub pend_value: u64,
 }
