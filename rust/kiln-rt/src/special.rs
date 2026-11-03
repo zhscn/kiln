@@ -63,3 +63,20 @@ pub unsafe fn unbind(ctx: *mut Context, entry: *mut DynEntry) {
         *(*ctx).tls.add(index) = (*entry).pend_value;
     }
 }
+
+/// Undoes the bindings of a `progv` entry (called by the unwinder).
+///
+/// # Safety
+/// `entry` must be a DYN_PROGV entry of `ctx`.
+pub unsafe fn unbind_progv(ctx: *mut Context, entry: *mut DynEntry) {
+    use crate::object::{car, cdr, is_cons};
+    unsafe {
+        let mut l = (*entry).tag;
+        while is_cons(l) {
+            let pair = car(l);
+            let index = *((untag(car(pair)) + SYMBOL_TLS_INDEX) as *const u64) as usize;
+            *(*ctx).tls.add(index) = cdr(pair);
+            l = cdr(l);
+        }
+    }
+}

@@ -196,8 +196,9 @@ one (bindings have none)."
   (loop for regions on *regions*
         until (eq regions target-regions)
         do (let ((r (first regions)))
-             (when (eq (region-kind r) :bind)
-               (emit-unbind r))
+             (case (region-kind r)
+               (:bind (emit-unbind r))
+               (:progv (emit-unbind-progv r)))
              (pop-entry r)
              (when (eq (region-kind r) :unwind-protect)
                (let ((*regions* (region-outer r)))
@@ -208,13 +209,14 @@ one (bindings have none)."
 region; code inside it runs with the region pushed on *REGIONS*."
   (let* ((slot (new-slot +dynentry-size+))
          (region (make-region :kind kind :slot slot
-                              :handler (if (eq kind :bind) nil (new-block))
+                              :handler (if (member kind '(:bind :progv)) nil (new-block))
                               :outer *regions*)))
     (emit `(:store (:slot ,slot) ,+dyn-kind+ ,(ecase kind
                                                  (:catch +dyn-catch+)
                                                  (:unwind-protect +dyn-unwind-protect+)
                                                  (:exit-point +dyn-exit-point+)
-                                                 (:bind +dyn-bind+))))
+                                                 (:bind +dyn-bind+)
+                                                 (:progv +dyn-progv+))))
     (emit `(:store (:slot ,slot) ,+dyn-prev+ (:load :ctx ,+ctx-dynenv+)))
     (emit `(:store (:slot ,slot) ,+dyn-fp+ (:fp)))
     ;; Tag and pending value are GC roots: always initialize them.
@@ -336,6 +338,8 @@ visited once."
 (define-mv-lowering ico:progn-ast (ast) (lower-progn-mv (ico:form-asts ast)))
 (define-mv-lowering ico:locally-ast (ast) (lower-progn-mv (ico:form-asts ast)))
 (define-mv-lowering ico:the-ast (ast) (lower-mv (ico:form-ast ast)))
+;;; The expansions have already replaced the symbol macros.
+(define-mv-lowering ico:symbol-macrolet-ast (ast) (lower-progn-mv (ico:form-asts ast)))
 
 (define-mv-lowering ico:eval-when-ast (ast)
   ;; Not at top level: only :EXECUTE matters.
@@ -463,14 +467,7 @@ has never been bound). The table does not move."
          (name (ico:name (ico:variable-name-ast binding)))
          (v (copy-to-var (lower (ico:form-ast binding))))
          (sym (constant-object name))
-         (index (copy-to-var `(:load ,sym ,+symbol-tls-index+) :raw))
-         (assign (new-block)) (have (new-block)))
-    ;; Assign an index on first binding (not a safepoint).
-    (br `(:eq ,index 0) assign have)
-    (start-block assign)
-    (emit `(:call-rt ,(rt-tls-index) (,index) (:ctx ,sym) :nil))
-    (jump have)
-    (start-block have)
+         (index (emit-tls-index sym)))
     (let* ((addr (copy-to-var `(:add (:load :ctx ,+ctx-tls+) (:shl ,index 3)) :raw))
            (region (establish-entry :bind sym))
            (s `(:slot ,(region-slot region)))
@@ -485,6 +482,103 @@ has never been bound). The table does not move."
       (emit-unbind region)
       (pop-entry region)
       (values r n))))
+
+(defun emit-tls-index (sym)
+  "Raw variable holding the TLS index of the symbol operand SYM, assigned
+if needed (not a safepoint)."
+  (let ((index (copy-to-var `(:load ,sym ,+symbol-tls-index+) :raw))
+        (assign (new-block)) (have (new-block)))
+    (br `(:eq ,index 0) assign have)
+    (start-block assign)
+    (emit `(:call-rt ,(rt-tls-index) (,index) (:ctx ,sym) :nil))
+    (jump have)
+    (start-block have)
+    index))
+
+(defun emit-unbind-progv (region)
+  "Restores the bindings saved in the progv entry of REGION. No calls."
+  (let ((l (copy-to-var `(:load (:slot ,(region-slot region)) ,+dyn-tag+)))
+        (head (new-block)) (body (new-block)) (done (new-block)))
+    (jump head)
+    (start-block head)
+    (br `(:eq ,l ,(nil-value)) done body)
+    (start-block body)
+    (let ((pair (copy-to-var `(:load ,l ,+cons-car+))))
+      (emit `(:store (:add (:load :ctx ,+ctx-tls+)
+                           (:shl (:load (:load ,pair ,+cons-car+) ,+symbol-tls-index+) 3))
+                     0 (:load ,pair ,+cons-cdr+))))
+    (emit `(:set ,l (:load ,l ,+cons-cdr+)))
+    (jump head)
+    (start-block done)))
+
+(define-mv-lowering ico:progv-ast (ast)
+  (let* ((symbols (copy-to-var (lower (ico:symbols-ast ast))))
+         (vals (copy-to-var (lower (ico:values-ast ast))))
+         (saved (copy-to-var (nil-value))))
+    (emit-check-proper-list symbols)
+    (emit-check-proper-list vals)
+    ;; Save the old values first, then link the entry, then bind: an
+    ;; unwind then always finds the complete list.
+    (let ((cur (copy-to-var symbols))
+          (head (new-block)) (body (new-block)) (done (new-block)))
+      (jump head)
+      (start-block head)
+      (br `(:eq ,cur ,(nil-value)) done body)
+      (start-block body)
+      (let* ((sym (copy-to-var `(:load ,cur ,+cons-car+)))
+             (index (progn (emit-check-symbol sym) (emit-tls-index sym)))
+             (old (copy-to-var `(:load (:add (:load :ctx ,+ctx-tls+) (:shl ,index 3)) 0))))
+        (emit `(:set ,saved ,(emit-cons (emit-cons sym old) saved))))
+      (emit `(:set ,cur (:load ,cur ,+cons-cdr+)))
+      (jump head)
+      (start-block done))
+    (let ((region (establish-entry :progv saved))
+          (cur (copy-to-var symbols)) (vcur (copy-to-var vals))
+          (head (new-block)) (body (new-block)) (done (new-block))
+          (r (new-var)) (n (new-var :raw)))
+      (jump head)
+      (start-block head)
+      (br `(:eq ,cur ,(nil-value)) done body)
+      (start-block body)
+      ;; Symbols without a value become unbound.
+      (let ((v (copy-to-var `(:select (:eq ,vcur ,(nil-value)) ,+unbound+ (:load ,vcur ,+cons-car+)))))
+        (emit `(:store (:add (:load :ctx ,+ctx-tls+)
+                             (:shl (:load (:load ,cur ,+cons-car+) ,+symbol-tls-index+) 3))
+                       0 ,v)))
+      (emit `(:set ,cur (:load ,cur ,+cons-cdr+)))
+      (emit `(:set ,vcur (:select (:eq ,vcur ,(nil-value)) ,vcur (:load ,vcur ,+cons-cdr+))))
+      (jump head)
+      (start-block done)
+      (let ((*regions* (cons region *regions*)))
+        (multiple-value-call #'set-mv r n (lower-progn-mv (ico:form-asts ast))))
+      (emit-unbind-progv region)
+      (pop-entry region)
+      (values r n))))
+
+;;; LOAD-TIME-VALUE: the forms are evaluated by the module's init function
+;;; just before the top-level form that contains them, and kept in static
+;;; root cells.
+
+(defvar *load-time-values*)             ; load-time-value AST -> cell data name
+
+(defun emit-load-time-values (toplevel-ast)
+  (let ((ltvs '()))
+    (walk (lambda (node inside)
+            (declare (ignore inside))
+            (when (typep node 'ico:load-time-value-ast)
+              (push node ltvs)))
+          toplevel-ast)
+    (dolist (ltv (nreverse ltvs))
+      (let ((cell (fresh-label "kiln_ltv_")))
+        (module-data cell `(:words 0))
+        (module-root cell 0)
+        (emit `(:store (:addr ,cell) 0 ,(lower (ico:form-ast ltv))))
+        (setf (gethash ltv *load-time-values*) cell)))))
+
+(defmethod lower ((ast ico:load-time-value-ast))
+  (let ((cell (or (gethash ast *load-time-values*)
+                  (fail "LOAD-TIME-VALUE not seen at top level"))))
+    (copy-to-var `(:load (:addr ,cell) 0))))
 
 ;;; Allocation
 
@@ -1006,6 +1100,17 @@ be confused with a later activation at the same address."
 
 ;;; Module
 
+(defun compile-toplevel-function (asts)
+  "The module's init function: runs the top-level forms in order."
+  (let ((*regions* '()))
+    (with-function ("kiln_toplevel")
+      (let ((*self* (copy-to-var :self)))
+        (emit-poll)
+        (dolist (ast asts)
+          (emit-load-time-values ast)
+          (lower ast))
+        (emit `(:return ,(nil-value) 1))))))
+
 (defun compile-module (asts module-name)
   "Compiles the simplified top-level ASTS into a KIR module."
   (let ((*module* (make-kmodule module-name))
@@ -1014,7 +1119,8 @@ be confused with a later activation at the same address."
         (*exits* (make-hash-table :test 'eq))
         (*constants* (make-hash-table :test 'eq))
         (*primitive-functions* (make-hash-table :test 'equal)))
-    (compile-function "kiln_toplevel" (make-parsed-lambda-list) asts)
+    (let ((*load-time-values* (make-hash-table :test 'eq)))
+      (compile-toplevel-function asts))
     (module-data "kiln_toplevel_fobj" `(:words ,+kind-function+ (:func "kiln_toplevel")))
     (module-init "kiln_toplevel_fobj")
     *module*))

@@ -12,7 +12,7 @@
 //! needs restoring: setting PC, SP and FP is enough.
 
 use crate::context::{
-    Context, DYN_BIND, DYN_CATCH, DYN_CLEANUP_RUNNING, DYN_EXIT_POINT, DYN_STACK_BOUNDARY, DYN_UNWIND_PROTECT,
+    Context, DYN_BIND, DYN_CATCH, DYN_PROGV, DYN_CLEANUP_RUNNING, DYN_EXIT_POINT, DYN_STACK_BOUNDARY, DYN_UNWIND_PROTECT,
     DynEntry,
 };
 use std::sync::RwLock;
@@ -130,6 +130,9 @@ unsafe fn unwind_to(ctx: *mut Context, target: *mut DynEntry, value: u64, start_
             }
             if (*top).kind == DYN_BIND {
                 crate::special::unbind(ctx, top);
+            }
+            if (*top).kind == DYN_PROGV {
+                crate::special::unbind_progv(ctx, top);
             }
             if (*top).kind == DYN_STACK_BOUNDARY {
                 // Leave the current stack; continue on the one below.

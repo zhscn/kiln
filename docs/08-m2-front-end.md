@@ -1,6 +1,6 @@
 # 08 M2：Common-boot 前端和 AST 降级
 
-**状态**：M2 进行中（2026-11）。前端已经换成 Eclector + Common-boot + Iconoclast，M0 的脚手架编译器已删除，M0、M1 的测试全部改走新前端。特殊变量的动态绑定（§5.2）、多值（§5.3）、`&optional`/`&rest`/`&key`（§5.4）已经实现。剩下的见 §7。
+**状态**：M2 进行中（2026-11）。前端已经换成 Eclector + Common-boot + Iconoclast，M0 的脚手架编译器已删除，M0、M1 的测试全部改走新前端。特殊变量的动态绑定（§5.2）、多值（§5.3）、`&optional`/`&rest`/`&key`（§5.4）已经实现，CL 的 25 个特殊操作符都能降级（§5.5）。剩下的见 §7。
 
 ## 1. 流水线
 
@@ -122,6 +122,15 @@ Common-boot 本身的顶层处理不完整：`*compile-time-too*` 从来不会�
 
 原语作为函数对象使用时，`list` 和 `values` 这类可变参数原语的包装函数也用同样的方式构造参数列表。
 
+### 5.5 `progv`、`load-time-value` 和其他特殊操作符
+
+- **`progv`**：绑定的个数运行期才知道，没法每个绑定占一个栈上条目。所以只建立一个 progv 条目（动态环境条目 kind 7），tag 是一个 `(symbol . 旧 TLS 值)` 的列表。先把所有旧值存进列表，再链接条目，最后写入新值，所以展开时看到的列表总是完整的。值不够时，多出来的 symbol 变为未绑定。离开时（正常、本地退出、unwinder）按列表恢复。
+- **`load-time-value`**：降级每个顶层形式之前，先找出其中所有的 `load-time-value`，在模块的 init 函数里求值，存进静态 root cell；引用处读这个 cell。所以它在包含它的顶层形式执行之前、在空词法环境里求值一次。
+- **`symbol-macrolet`**：简化之后展开已经代入，只剩主体。`macrolet` 被 `macrolet-to-locally` 变成 `locally`。`flet`、`let`、`let*`、`function` 都被简化掉了。
+- **Common-boot 的缺口**：对 symbol macro 做 `setq`（以及会展开成 `setq` 的 `setf`）在 Common-boot 里没有对应的方法（`finalize-variable-name-ast-from-description` 不接受 `local-symbol-macro-description`）。CLHS 要求这时按 `setf` 展开式处理。要在 kiln 的 client 里补，或者向上游提。
+
+`tests/m2/special-forms.lisp` 在非顶层位置覆盖了全部 25 个特殊操作符。
+
 ### 5.1 原语
 
 `lisp/primitives.lisp` 定义了编译器直接展开的函数（另有 `values`、`values-list`、`apply`、`nth`、`nthcdr`）：fixnum 的 `+ - * 1+ 1- < > <= >= = zerop plusp minusp`，`eq eql null not`，类型谓词，cons 操作（`cons car cdr first rest second cadr cddr endp rplaca rplacd list list*`），`funcall`、`fdefinition`、`(setf fdefinition)`、`symbol-value`、`(setf symbol-value)`、`boundp`、`print`，以及 `kiln.sys` 里的测试用原语。
@@ -139,6 +148,7 @@ Common-boot 本身的顶层处理不完整：`*compile-time-too*` 从来不会�
 - `macros.lisp`：用户宏、编译期定义的辅助函数、`cond`/`dolist`/`dotimes`/`and`/`or`/`when`/`unless`/`case`/`push`、`defvar`/`defparameter`；
 - `values.lisp`：多值经过各种形式和 cleanup、`multiple-value-call`/`-prog1`/`-bind`、`nth-value`、`values-list`、`apply`、GC 期间的多值列表；
 - `lambda-lists.lisp`：`&optional`（默认值引用前面的参数和特殊变量）、`&rest`（含传递区里的参数、GC）、`&key`（重复关键字、改名、`:allow-other-keys`）、闭包的 lambda list；
+- `special-forms.lisp`：全部特殊操作符，含 `progv`（值不够时变为未绑定、`throw` 穿过时恢复）、`load-time-value` 只求值一次；
 - `specials.lisp`：嵌套绑定、绑定内的 `setq`、经过 `throw`/非局部和本地 `return-from`/`go` 退出时恢复绑定、闭包不捕获动态绑定、`boundp`、跨栈展开时恢复绑定、cleanup 里的绑定。
 
 本地开发时用 `KILN_DEPS_DIR` 或 `deps` 符号链接指向依赖目录，见 [04 的 Lisp 依赖](04-bootstrap.md#lisp-依赖)一节。
@@ -147,10 +157,12 @@ Common-boot 本身的顶层处理不完整：`*compile-time-too*` 从来不会�
 
 按计划的顺序：
 
-1. ~~特殊变量的动态绑定~~（已完成，§5.2）。`progv` 还没有做；TLS 表的大小是固定的，以后需要能扩容。
+1. ~~特殊变量的动态绑定~~（已完成，§5.2）。TLS 表的大小是固定的，以后需要能扩容。
 2. ~~多值~~（已完成，§5.3）。`throw` 和闭包里的非局部 `return-from` 还只传递主值。
 3. ~~lambda list~~（已完成，§5.4）。`&aux` 还没有确认 `lexify-lambda-list` 之后的形式。
 4. **顶层的 `locally`、`macrolet`、`symbol-macrolet`**：主体应按顶层形式处理。
-5. `load-time-value`、字符串和字符常量。
+5. ~~`load-time-value`~~（已完成，§5.5）。字符串和字符常量要等 M3 定下它们的对象表示。
+8. 对 symbol macro 的 `setq`（§5.5，Common-boot 的缺口）。
+9. `progv`：已完成（§5.5）。
 6. 跨环境的符号：现在目标符号就是宿主符号（在 `kiln-user` 包里读入），包系统等 M3 用 Parcl 做。
 7. 运行期的宏环境：`(setf macro-function)`、`proclaim` 目前是空操作。

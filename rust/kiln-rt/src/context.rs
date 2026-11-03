@@ -78,6 +78,9 @@ pub const DYN_EXIT_POINT: u64 = 5;
 /// `pend_target` its TLS index (a raw integer), `pend_value` the value to
 /// restore. Leaving it, normally or by an unwind, restores the old value.
 pub const DYN_BIND: u64 = 6;
+/// The bindings of a `progv`. `tag` is a list of (symbol . old TLS value)
+/// conses; leaving restores each.
+pub const DYN_PROGV: u64 = 7;
 
 /// A dynamic-environment entry. Allocated in a stack slot of the frame that
 /// establishes it, and linked through `prev`. Layout is part of the ABI.
