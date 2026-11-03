@@ -61,7 +61,8 @@ Rust: kiln-launcher           staticlib，提供 C main，链接 kiln-rt
 | 32 | `mutator` | MMTk mutator（M1） |
 | 40 | `segments` | 挂起的栈段链（M1，见 [07 §8](07-m1-gc.md#8-栈和栈段c2c8)） |
 | 48 | `tls` | 特殊变量的 TLS 表（M2，见 [08 §5.2](08-m2-front-end.md#52-特殊变量c1-的-tls-下标方案)） |
-| 56 | `values[64]` | 传递区：第 4 个及之后的参数（M2，见 [08 §4](08-m2-front-end.md#4-调用约定的补充超过-3-个参数)），以后也放第二个及之后的返回值 |
+| 56 | `values[64]` | 传递区：第 4 个及之后的参数，第二个及之后的返回值（M2，见 [08 §4](08-m2-front-end.md#4-调用约定的补充超过-3-个参数)、[§5.3](08-m2-front-end.md#53-多值)） |
+| 568 | `values_live` | `values` 里有多少个字当前是 GC root，平时为 0（M2） |
 
 两侧的定义：`rust/kiln-rt/src/context.rs` 和 `lisp/abi.lisp`，修改时必须同步。
 

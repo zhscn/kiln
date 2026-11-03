@@ -7,7 +7,7 @@
            #:+symbol-function+ #:+symbol-value+ #:+symbol-tls-index+ #:+unbound+
            #:+length-shift+ #:+fobj-env+
            #:+cons-bytes+ #:+cons-car+ #:+cons-cdr+
-           #:+ctx-poll-flag+ #:+ctx-dynenv+ #:+ctx-values+ #:+values-max+ #:+ctx-tls+ #:+no-tls-value+
+           #:+ctx-poll-flag+ #:+ctx-dynenv+ #:+ctx-values+ #:+values-max+ #:+ctx-values-live+ #:+ctx-tls+ #:+no-tls-value+
            #:+dyn-catch+ #:+dyn-unwind-protect+ #:+dyn-exit-point+ #:+dyn-bind+ #:+dynentry-size+
            #:+dyn-kind+ #:+dyn-prev+ #:+dyn-fp+ #:+dyn-tag+
            #:+dyn-pend-target+ #:+dyn-pend-value+
@@ -15,6 +15,7 @@
            #:+err-not-fixnum+ #:+err-overflow+ #:+err-wrong-nargs+
            #:+err-not-list+ #:+err-not-function+
            #:+err-undefined-function+ #:+err-unbound-variable+ #:+err-not-symbol+
+           #:+err-odd-keywords+ #:+err-unknown-keyword+
            #:+reg-args+))
 
 (defpackage #:kiln.kir

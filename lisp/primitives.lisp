@@ -26,8 +26,29 @@
      ,@(when arity `((setf (gethash ',name *primitive-arity*) ,arity)))
      (setf (gethash ',name *primitives*) (lambda (,vals) ,@body))))
 
+(defvar *primitive-rest* (make-hash-table :test 'equal)
+  "Function name -> function of the list operand of all arguments, for
+primitives whose wrapper takes any number of arguments.")
+
+(defun variadic-primitive-function (name label)
+  (let ((*regions* '()))
+    (with-function (label)
+      (let* ((*self* (copy-to-var :self))
+             (args (loop for reg in '(:a0 :a1 :a2) collect (copy-to-var reg)))
+             (list (emit-rest-list args 0)))
+        (declare (ignorable *self*))
+        (multiple-value-bind (v n) (funcall (gethash name *primitive-rest*) list)
+          (emit `(:return ,v ,(or n 1))))))))
+
 (defun primitive-function-object (name)
   (or (gethash name *primitive-functions*)
+      (and (gethash name *primitive-rest*)
+           (let ((label (fresh-label (format nil "kiln_prim_~A_" (mangle (princ-to-string name)))))
+                 (data nil))
+             (variadic-primitive-function name label)
+             (setf data (format nil "~A_fobj" label))
+             (module-data data `(:words ,+kind-function+ (:func ,label)))
+             (setf (gethash name *primitive-functions*) `(:addr ,data ,+tag-general+))))
       (let ((arity (or (gethash name *primitive-arity*)
                        (fail "~S cannot be used as a function object yet" name)))
             (label (fresh-label (format nil "kiln_prim_~A_" (mangle (princ-to-string name))))))
@@ -43,7 +64,8 @@
               (let ((vals (loop for reg in '(:a0 :a1 :a2)
                                 repeat arity
                                 collect (copy-to-var reg))))
-                (emit `(:return ,(funcall (gethash name *primitives*) vals) 1))))))
+                (multiple-value-bind (v n) (funcall (gethash name *primitives*) vals)
+                  (emit `(:return ,v ,(or n 1))))))))
         (let ((data (format nil "~A_fobj" label)))
           (module-data data `(:words ,+kind-function+ (:func ,label)))
           (setf (gethash name *primitive-functions*) `(:addr ,data ,+tag-general+))))))
@@ -179,6 +201,23 @@
     (start-block join)
     r))
 
+(defun emit-nthcdr (n list)
+  (emit-check-fixnums n n)
+  (let ((i (copy-to-var n)) (cur (copy-to-var list))
+        (head (new-block)) (body (new-block)) (done (new-block)))
+    (jump head)
+    (start-block head)
+    (br `(:gt ,i 0) body done)
+    (start-block body)
+    (emit `(:set ,cur ,(emit-car-cdr cur +cons-cdr+)))
+    (emit `(:set ,i (:sub ,i ,(ash 1 +fixnum-shift+))))
+    (jump head)
+    (start-block done)
+    cur))
+
+(define-primitive nthcdr (n list) (emit-nthcdr n list))
+(define-primitive nth (n list) (emit-car-cdr (emit-nthcdr n list) +cons-car+))
+
 (defun emit-check-cons (x)
   (let ((bad (new-block)) (ok (new-block)))
     (br `(:eq (:and ,x ,+tag-mask+) ,+tag-cons+) ok bad)
@@ -196,13 +235,36 @@
       (setf r (emit-cons v r)))))
 
 (define-nary-primitive list (vals) (emit-list vals (nil-value)))
+(setf (gethash 'list *primitive-rest*) #'identity)
 (define-nary-primitive list* (vals)
   (when (null vals) (fail "LIST* needs at least one argument"))
   (emit-list (butlast vals) (car (last vals))))
 
+;;; Primitives may return a second value, the number of values (docs/08
+;;; §5.3); those that return one value omit it.
+
 (define-nary-primitive values (vals)
-  ;; Multiple values are not implemented yet: only the primary value.
-  (if vals (first vals) (nil-value)))
+  (when (> (length vals) (1+ +values-max+))
+    (fail "VALUES with more than ~D arguments" (1+ +values-max+)))
+  ;; All arguments are evaluated: store the values after the first.
+  (loop for v in (rest vals)
+        for i from 0
+        do (emit `(:store :ctx ,(+ +ctx-values+ (* 8 i)) ,v)))
+  (values (if vals (first vals) (nil-value)) (length vals)))
+
+(setf (gethash 'values *primitive-rest*) #'emit-list-to-values)
+
+(define-primitive values-list (list)
+  (emit-check-proper-list list)
+  (emit-list-to-values list))
+
+(define-nary-primitive apply (vals)
+  (when (< (length vals) 2) (fail "APPLY needs a function and a list"))
+  (let ((f (first vals))
+        (list (emit-list (butlast (rest vals)) (car (last vals)))))
+    (emit-check-function f)
+    (emit-check-proper-list list)
+    (emit-apply f list)))
 
 (define-primitive print (a)
   (let ((r (new-var)))
@@ -210,6 +272,23 @@
     r))
 
 ;;; Functions and symbols
+
+(defun emit-check-proper-list (list)
+  "Signals an error unless LIST is a proper list (no cycle check yet)."
+  (let ((cur (copy-to-var list))
+        (head (new-block)) (cons-b (new-block)) (other (new-block))
+        (bad (new-block)) (done (new-block)))
+    (jump head)
+    (start-block head)
+    (br `(:eq (:and ,cur ,+tag-mask+) ,+tag-cons+) cons-b other)
+    (start-block cons-b)
+    (emit `(:set ,cur (:load ,cur ,+cons-cdr+)))
+    (jump head)
+    (start-block other)
+    (br `(:eq ,cur ,(nil-value)) done bad)
+    (start-block bad)
+    (emit-error +err-not-list+ list)
+    (start-block done)))
 
 (define-nary-primitive funcall (vals)
   (when (null vals) (fail "FUNCALL needs a function"))

@@ -1,6 +1,6 @@
 # 08 M2：Common-boot 前端和 AST 降级
 
-**状态**：M2 进行中（2026-11）。前端已经换成 Eclector + Common-boot + Iconoclast，M0 的脚手架编译器已删除，M0、M1 的测试全部改走新前端。特殊变量的动态绑定已经实现（§5.2）。多值、`&optional`/`&rest`/`&key` 还没有做，见 §7。
+**状态**：M2 进行中（2026-11）。前端已经换成 Eclector + Common-boot + Iconoclast，M0 的脚手架编译器已删除，M0、M1 的测试全部改走新前端。特殊变量的动态绑定（§5.2）、多值（§5.3）、`&optional`/`&rest`/`&key`（§5.4）已经实现。剩下的见 §7。
 
 ## 1. 流水线
 
@@ -72,7 +72,9 @@ Common-boot 本身的顶层处理不完整：`*compile-time-too*` 从来不会�
 - 被调方在入口处、第一个 safepoint 之前（poll 和参数个数检查的出错路径之前）把它们读进自己的变量。
 - 这段时间里没有 safepoint，所以这些字不需要作为 GC root。以后多值返回也用这块区域，两者的使用时段不重叠。
 
-上限是 3 + 64 = 67 个参数。`apply` 和 `&rest` 实现时要重新考虑这个上限（CLHS 要求 `call-arguments-limit` 至少 50，所以够用）。
+上限是 3 + 64 = 67 个参数（CLHS 要求 `call-arguments-limit` 至少 50）。`apply` 和 `multiple-value-call` 在运行期按列表长度分配寄存器和传递区，超过上限时报错。
+
+`&rest` 的列表在入口处构造，这会分配内存，而传递区里还有没读出的参数。所以构造期间把 `ctx.values_live`（偏移 568）设为传递区里的参数个数，GC 把这些字当作 root，构造完再清零（§5.3）。
 
 ## 5. 降级
 
@@ -100,9 +102,29 @@ Common-boot 本身的顶层处理不完整：`*compile-time-too*` 从来不会�
 - GC 扫描每个 context 的 TLS 表里已分配的项。
 - 切换 context（以后的线程、fiber）只需换一张表，O(1)，符合 C1。
 
+### 5.3 多值
+
+- **返回约定**沿用 [06 §4](06-m0-abi.md#4-调用约定)：返回主值和值的个数，第二个及之后的值在 `ctx.values` 里。`(values)` 的主值是 NIL。
+- **编译器**：`lower-mv` 返回主值的操作数和值的个数（整数或 raw 变量）。会把值传递出去的形式（`progn`、`if`、`let`、`labels`、`block`、`catch`、`unwind-protect`、绑定、函数调用等）实现 `lower-mv`，它们的 `lower` 只取主值。函数体用 `lower-mv`，所以函数返回它最后一个形式的全部值。
+- `ctx.values` 会被下一次调用覆盖。需要跨过可能调用函数的代码保留多值时（cleanup、`multiple-value-prog1` 的其余形式、`return-from` 途经的 cleanup、为 `multiple-value-call` 收集参数），只有一个值就直接保存它，否则先把值转成列表，事后再展开回 `ctx.values`。
+- 转成列表要分配，而值还在 `ctx.values` 里：转换期间 `ctx.values_live` 是值的个数减一，GC 把这些字当作 root。平时它是 0，GC 不扫描 `ctx.values`（那里多半是失效的旧值）。
+- `multiple-value-call` 把所有值收集成一个列表，再按 `apply` 的方式调用。
+- **还没做**：`throw` 和闭包里的非局部 `return-from` 只传递主值。runtime 的待传值只有一个字（`pend_value`），要传多值得在展开前把值转成列表。
+
+### 5.4 lambda list
+
+`lexify-lambda-list` 之后，每个 `&optional` 和 `&key` 参数都有 supplied-p 变量，默认值在函数体里根据 supplied-p 计算，所以函数入口只需要：
+
+1. 读出位置参数：必需参数和 `&optional` 参数，按 `nargs` 选择实参或 NIL，同时设置 supplied-p。这一步在第一个 safepoint 之前，因为后面的参数在传递区里。
+2. 检查参数个数。
+3. 有 `&rest` 或 `&key` 时构造剩余参数的列表（§4）。
+4. `&key`：检查列表长度是偶数；没有 `&allow-other-keys` 时，除非参数里有 `:allow-other-keys` 且值为真，否则遇到未知关键字报错；每个关键字参数取第一次出现的值。
+
+原语作为函数对象使用时，`list` 和 `values` 这类可变参数原语的包装函数也用同样的方式构造参数列表。
+
 ### 5.1 原语
 
-`lisp/primitives.lisp` 定义了编译器直接展开的函数：fixnum 的 `+ - * 1+ 1- < > <= >= = zerop plusp minusp`，`eq eql null not`，类型谓词，cons 操作（`cons car cdr first rest second cadr cddr endp rplaca rplacd list list*`），`funcall`、`fdefinition`、`(setf fdefinition)`、`symbol-value`、`(setf symbol-value)`、`boundp`、`print`，以及 `kiln.sys` 里的测试用原语。
+`lisp/primitives.lisp` 定义了编译器直接展开的函数（另有 `values`、`values-list`、`apply`、`nth`、`nthcdr`）：fixnum 的 `+ - * 1+ 1- < > <= >= = zerop plusp minusp`，`eq eql null not`，类型谓词，cons 操作（`cons car cdr first rest second cadr cddr endp rplaca rplacd list list*`），`funcall`、`fdefinition`、`(setf fdefinition)`、`symbol-value`、`(setf symbol-value)`、`boundp`、`print`，以及 `kiln.sys` 里的测试用原语。
 
 - CL 的函数不能被重定义（CLHS 11.1.2.1.2），所以内联是合法的。
 - 原语被当作函数对象使用时（`#'car`），按它的自然参数个数生成一个包装函数。
@@ -115,6 +137,8 @@ Common-boot 本身的顶层处理不完整：`*compile-time-too*` 从来不会�
 - `closures.lisp`：计数器、共享 cell 的两个闭包、递归和互相递归的局部函数、跨 GC 存活的闭包列表、原语和全局函数作为值；
 - `exits.lisp`：闭包里的非局部 `return-from`、`go`，非局部退出经过 `unwind-protect`，`catch` 和 `unwind-protect` 里的本地退出；
 - `macros.lisp`：用户宏、编译期定义的辅助函数、`cond`/`dolist`/`dotimes`/`and`/`or`/`when`/`unless`/`case`/`push`、`defvar`/`defparameter`；
+- `values.lisp`：多值经过各种形式和 cleanup、`multiple-value-call`/`-prog1`/`-bind`、`nth-value`、`values-list`、`apply`、GC 期间的多值列表；
+- `lambda-lists.lisp`：`&optional`（默认值引用前面的参数和特殊变量）、`&rest`（含传递区里的参数、GC）、`&key`（重复关键字、改名、`:allow-other-keys`）、闭包的 lambda list；
 - `specials.lisp`：嵌套绑定、绑定内的 `setq`、经过 `throw`/非局部和本地 `return-from`/`go` 退出时恢复绑定、闭包不捕获动态绑定、`boundp`、跨栈展开时恢复绑定、cleanup 里的绑定。
 
 本地开发时用 `KILN_DEPS_DIR` 或 `deps` 符号链接指向依赖目录，见 [04 的 Lisp 依赖](04-bootstrap.md#lisp-依赖)一节。
@@ -124,8 +148,8 @@ Common-boot 本身的顶层处理不完整：`*compile-time-too*` 从来不会�
 按计划的顺序：
 
 1. ~~特殊变量的动态绑定~~（已完成，§5.2）。`progv` 还没有做；TLS 表的大小是固定的，以后需要能扩容。
-2. **多值**：`values`、`multiple-value-call`、`multiple-value-prog1`，`return-from`/`throw` 传递多值。返回约定已经预留了 `(v0, nvals)` 和 `ctx.values`。
-3. **lambda list**：`&optional`、`&rest`、`&key`。`lexify-lambda-list` 之后的形式还要确认。
+2. ~~多值~~（已完成，§5.3）。`throw` 和闭包里的非局部 `return-from` 还只传递主值。
+3. ~~lambda list~~（已完成，§5.4）。`&aux` 还没有确认 `lexify-lambda-list` 之后的形式。
 4. **顶层的 `locally`、`macrolet`、`symbol-macrolet`**：主体应按顶层形式处理。
 5. `load-time-value`、字符串和字符常量。
 6. 跨环境的符号：现在目标符号就是宿主符号（在 `kiln-user` 包里读入），包系统等 M3 用 Parcl 做。

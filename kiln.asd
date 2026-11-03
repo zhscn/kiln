@@ -13,6 +13,7 @@
                (:file "abi")
                (:file "kir")
                (:file "lower")
+               (:file "values")
                (:file "primitives")
                (:file "front")
                (:file "driver")))

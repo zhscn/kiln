@@ -15,7 +15,7 @@ kiln 是一个现代 Common Lisp 实现：开发时是完整的活 image，交�
 
 ## 状态
 
-M0、M1 已完成：SBCL → KIR → Cranelift（JIT 和 AOT），MMTk 移动式 GC 和精确栈图，多栈段和跨栈展开。M2 进行中：前端已换成 Eclector + Common-boot，支持闭包、非局部退出、编译期宏、特殊变量的动态绑定；下一步是多值和完整的 lambda list（[08 §7](08-m2-front-end.md#7-遗留事项)）。各文档的“待定问题”一节列出尚未决定的事项。
+M0、M1 已完成：SBCL → KIR → Cranelift（JIT 和 AOT），MMTk 移动式 GC 和精确栈图，多栈段和跨栈展开。M2 进行中：前端已换成 Eclector + Common-boot，支持闭包、非局部退出、编译期宏、特殊变量的动态绑定、多值、`&optional`/`&rest`/`&key`；剩下的见 [08 §7](08-m2-front-end.md#7-遗留事项)。各文档的“待定问题”一节列出尚未决定的事项。
 
 ## 约定
 

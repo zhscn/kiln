@@ -30,9 +30,17 @@ pub struct Context {
     /// Offset 56. Transfer area: arguments beyond the register arguments,
     /// and later extra return values.
     pub values: [u64; VALUES_MAX],
+    /// Offset 568. Number of words of `values` that the GC must treat as
+    /// roots. Normally 0: values are consumed right after a return. Set
+    /// while compiled code turns multiple values into a list, which
+    /// allocates.
+    pub values_live: u64,
 }
 
 pub const CTX_STACK_BASE_FP: i32 = core::mem::offset_of!(Context, stack_base_fp) as i32;
+const _: () = assert!(core::mem::offset_of!(Context, tls) == 48);
+const _: () = assert!(core::mem::offset_of!(Context, values) == 56);
+const _: () = assert!(core::mem::offset_of!(Context, values_live) == 568);
 
 impl Context {
     pub fn new() -> Box<Context> {
@@ -45,6 +53,7 @@ impl Context {
             segments: core::ptr::null_mut(),
             tls: crate::special::new_tls_table(),
             values: [0; VALUES_MAX],
+            values_live: 0,
         });
         ctx.mutator = crate::gc::bind_mutator(&mut *ctx);
         ctx

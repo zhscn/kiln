@@ -16,6 +16,8 @@ pub const ERR_NOT_FUNCTION: u64 = 5;
 pub const ERR_UNDEFINED_FUNCTION: u64 = 6;
 pub const ERR_UNBOUND_VARIABLE: u64 = 7;
 pub const ERR_NOT_SYMBOL: u64 = 8;
+pub const ERR_ODD_KEYWORDS: u64 = 9;
+pub const ERR_UNKNOWN_KEYWORD: u64 = 10;
 
 pub fn error_exit(msg: &str) -> ! {
     let _ = std::io::stdout().flush();
@@ -56,6 +58,8 @@ pub unsafe extern "C" fn kiln_rt_error(_ctx: *mut Context, code: u64, obj: u64, 
         ERR_UNDEFINED_FUNCTION => format!("the function {s} is undefined"),
         ERR_UNBOUND_VARIABLE => format!("the variable {s} is unbound"),
         ERR_NOT_SYMBOL => format!("the value {s} is not of type SYMBOL"),
+        ERR_ODD_KEYWORDS => format!("odd number of keyword arguments: {s}"),
+        ERR_UNKNOWN_KEYWORD => format!("unknown keyword argument {s}"),
         _ => format!("error code {code}, object {s}"),
     };
     error_exit(&msg)

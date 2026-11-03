@@ -46,6 +46,8 @@
 ;;; Empty TLS slot: the symbol is not bound in this context.
 (defconstant +no-tls-value+ #x23)
 (defconstant +values-max+ 64)
+;;; Number of words of the transfer area that are GC roots (normally 0).
+(defconstant +ctx-values-live+ 568)
 
 ;;; Dynamic-environment entries (stack-allocated in the establishing frame).
 (defconstant +dyn-catch+ 1)
@@ -72,6 +74,8 @@
 (defconstant +err-undefined-function+ 6)
 (defconstant +err-unbound-variable+ 7)
 (defconstant +err-not-symbol+ 8)
+(defconstant +err-odd-keywords+ 9)
+(defconstant +err-unknown-keyword+ 10)
 
 ;;; Argument registers in the Lisp calling convention.
 (defconstant +reg-args+ 3)
