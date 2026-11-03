@@ -1,0 +1,14 @@
+[package]
+name = "kiln-launcher"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+# Static library linked with AOT-compiled Lisp objects. Provides C `main`.
+[lib]
+crate-type = ["staticlib"]
+test = false
+doctest = false
+
+[dependencies]
+kiln-rt.workspace = true

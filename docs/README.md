@@ -9,10 +9,11 @@ kiln 是一个现代 Common Lisp 实现：开发时是完整的活 image，交�
 | [03-async.md](03-async.md) | 异步模型：一次性定界续延和 condition 系统的统一，以及被否决的方案 |
 | [04-bootstrap.md](04-bootstrap.md) | 复用与自研的划分、借助 SBCL 的自举路线、里程碑 |
 | [05-sicl-survey.md](05-sicl-survey.md) | SICL 现状调研（2026-11）：自举、编译器、对象表示、模块生态、ANSI 覆盖情况、对 kiln 的影响 |
+| [06-m0-abi.md](06-m0-abi.md) | M0 定下的 ABI：值表示、调用约定、context 布局、非局部退出（try_call + unwinder）、poll 点、KIR 语法 |
 
 ## 状态
 
-设计阶段。各文档的“待定问题”一节列出尚未决定的事项。
+M0 已完成（SBCL → KIR → Cranelift，JIT 和 AOT 两条路径），下一步是 M1。各文档的“待定问题”一节列出尚未决定的事项。
 
 ## 约定
 

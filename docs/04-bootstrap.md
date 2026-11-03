@@ -81,8 +81,8 @@ kiln0  ──编译自己──▶ kiln1 ──编译自己──▶ kiln2   （
 
    **编译期的 CLOS**：被交叉编译的库在编译期需要 `defclass`、`defgeneric`、`define-condition` 的副作用，这部分直接用宿主 CLOS（通过 closer-mop），并且和 image 里的目标 metaobject 严格分开。SICL 的 E1 就是这样做的。
 
-2. **早期用 CLIF 文本作为交换格式。**
-   `cranelift-reader` 能直接解析，出错时可以手看、手改。等稳定了再换成二进制格式或 FFI 直连。
+2. **交换格式是 KIR（M0 修订）。**
+   原计划用 CLIF 文本，M0 改成了 KIR：一种 s-expression 形式的低级 IR，由 kiln-cg 通过 cranelift-frontend 构建 Cranelift IR，这样能直接用上 SSA 构建和栈图溢出。原因和语法见 [06-m0-abi.md](06-m0-abi.md)。需要看 CLIF 时用 `--dump-clif`。
 
 3. **初始堆由启动时的 init 函数构建，不做堆快照。**
    符号、包、初始 metaobject 都按顶层形式的顺序，在 kiln0 启动时创建，类似按顺序执行 fasl。这样和 MMTk 配合最简单。以后想加快启动，再把常量数据放进 `.rodata`。
@@ -125,7 +125,7 @@ kernel 原语和 primop（cons/symbol/vector/funcall/闭包/GC）
 
 | 阶段 | 内容 | 主要验证点 |
 |---|---|---|
-| M0 | SBCL 生成 CLIF，Rust 编译，跑通几个函数 | 调用约定、context 寄存器、非局部退出方案（C3 待定项） |
+| M0 ✅ | SBCL 生成 KIR，Rust 编译，跑通几个函数 | 调用约定、context 寄存器、非局部退出方案。已完成，见 [06-m0-abi.md](06-m0-abi.md) |
 | M1 | kernel 原语和 MMTk，加上 `%switch-stack` 测试 | 精确栈图、多栈扫描、展开到分界点（C2、C3、C5、C8） |
 | M2 | 前端接入：Eclector、CST、Trucler、Common-boot/Iconoclast 和 Clostrum 目标环境 | 所有特殊形式都能降级，宏在宿主中执行 |
 | M3 | ANSI 核心库交叉编译 | 数值塔、符号、Unicode 字符、字符串、pathname 都要自己写，工作量比原先估计的大 |
@@ -141,15 +141,18 @@ kernel 原语和 primop（cons/symbol/vector/funcall/闭包/GC）
 
 ```
 kiln/
-├── docs/            设计文档
-├── lisp/            Lisp 源码
-│   ├── host/        只在 SBCL 宿主中运行的部分（交叉编译驱动、Clostrum 环境）
-│   ├── compiler/    编译器（宿主和目标共用，必须是可移植 CL）
-│   └── target/      目标端标准库（kernel、数值、condition、CLOS……）
-├── rust/            Rust workspace
-│   ├── kiln-cg/     代码生成：CLIF → Cranelift（JIT / object）
-│   └── kiln-rt/     runtime：MMTk、context、栈、FFI trampoline
-└── kiln.asd         SBCL 端的 ASDF 系统
+├── docs/              设计文档
+├── lisp/              Lisp 源码（M0 时还是平铺的，M2 起按下面的划分拆分）
+│   ├── host/          只在 SBCL 宿主中运行的部分（交叉编译驱动、Clostrum 环境）
+│   ├── compiler/      编译器（宿主和目标共用，必须是可移植 CL）
+│   └── target/        目标端标准库（kernel、数值、condition、CLOS……）
+├── rust/              Rust workspace（根目录的 Cargo.toml）
+│   ├── kiln-cg/       代码生成：KIR → Cranelift（JIT / object）
+│   ├── kiln-rt/       runtime：context、unwinder，以后加 MMTk、栈、FFI trampoline
+│   └── kiln-launcher/ AOT 可执行文件的 C main
+├── tests/m0/          M0 端到端测试
+├── tools/m0-test.sh   测试脚本
+└── kiln.asd           SBCL 端的 ASDF 系统
 ```
 
 ## 待定问题
@@ -158,4 +161,4 @@ kiln/
 - 自举完成前的运行期 `compile` 由谁提供（见上文“新风险”）。
 - 对象表示：采用 rack 间接。类指针放在 header 还是 rack 里？倾向放进 rack，header 空出的字存身份哈希。
 - 远程 JIT 模式的协议：自定义二进制协议，还是复用 SLYNK 通道？
-- SBCL 和 Rust 之间：M0 用文件交换 CLIF，之后是改成 socket，还是通过 FFI 把 kiln-cg 作为 cdylib 载入 SBCL？
+- SBCL 和 Rust 之间：M0 用文件交换 KIR，之后是改成 socket，还是通过 FFI 把 kiln-cg 作为 cdylib 载入 SBCL？

@@ -1,0 +1,23 @@
+[workspace]
+resolver = "3"
+members = ["rust/kiln-rt", "rust/kiln-cg", "rust/kiln-launcher"]
+
+[workspace.package]
+edition = "2024"
+version = "0.0.0"
+license = "BSD-2-Clause"
+
+[workspace.dependencies]
+kiln-rt = { path = "rust/kiln-rt" }
+cranelift-codegen = "0.137"
+cranelift-frontend = "0.137"
+cranelift-module = "0.137"
+cranelift-jit = "0.137"
+cranelift-object = "0.137"
+cranelift-native = "0.137"
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"

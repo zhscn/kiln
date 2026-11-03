@@ -43,7 +43,7 @@
 - 不能依赖“栈底就是线程入口”之类的假设。
 - 展开时按顺序执行沿途的 `unwind-protect` cleanup、恢复 special 绑定、弹出 handler 和 restart。
 
-**待定**：非局部退出在 Cranelift 上的实现方式，在 M0 阶段决定。
+**已决定（M0）**：用 Cranelift 的 `try_call` 和异常表，加上 kiln 自己的 unwinder，详见 [06-m0-abi.md §6](06-m0-abi.md#6-非局部退出c3-的决定)。下表保留当时的比较。
 
 | 方案 | 优点 | 缺点 |
 |---|---|---|
