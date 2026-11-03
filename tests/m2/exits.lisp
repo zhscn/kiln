@@ -44,3 +44,14 @@
     (catch 'k
       (unwind-protect (return-from b 'out) (print 'cleanup-2)))))
 (print (local-exit))
+
+;; Each activation has its own exit point: the closure from the first,
+;; finished activation must not return into the second one.
+(defvar *saved* nil)
+(defun nest (depth)
+  (block b
+    (if (= depth 0)
+        (setq *saved* (lambda () (return-from b 'stale)))
+        (call (lambda () (return-from b depth))))))
+(print (functionp (nest 0)))
+(print (nest 2))

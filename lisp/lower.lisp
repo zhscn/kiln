@@ -112,7 +112,8 @@ its first env word. Every function cell starts out holding one."
                                     (:data ,obj ,+tag-general+)))
         (module-data obj `(:words ,+kind-symbol+ (:data ,str) ,(length name)
                                   (:data ,undef ,+tag-general+)
-                                  ,(if (keywordp sym) `(:data ,obj ,+tag-general+) +unbound+)))
+                                  ,(if (keywordp sym) `(:data ,obj ,+tag-general+) +unbound+)
+                                  0))
         (module-root obj 3)
         (module-root obj 4)))
     obj))
@@ -161,8 +162,10 @@ its first env word. Every function cell starts out holding one."
 (defvar *regions* '())
 
 (defun handler ()
-  (let ((r (first *regions*)))
-    (if (and r (region-handler r)) (kiln.kir::kblock-name (region-handler r)) :nil)))
+  "The handler block for calls here: that of the innermost region that has
+one (bindings have none)."
+  (let ((r (find-if #'region-handler *regions*)))
+    (if r (kiln.kir::kblock-name (region-handler r)) :nil)))
 
 (defun bname (b) (kiln.kir::kblock-name b))
 (defun jump (b) (emit `(:jump ,(bname b))))
@@ -193,6 +196,8 @@ its first env word. Every function cell starts out holding one."
   (loop for regions on *regions*
         until (eq regions target-regions)
         do (let ((r (first regions)))
+             (when (eq (region-kind r) :bind)
+               (emit-unbind r))
              (pop-entry r)
              (when (eq (region-kind r) :unwind-protect)
                (let ((*regions* (region-outer r)))
@@ -202,12 +207,14 @@ its first env word. Every function cell starts out holding one."
   "Links a new dynamic-environment entry into the context. Returns its
 region; code inside it runs with the region pushed on *REGIONS*."
   (let* ((slot (new-slot +dynentry-size+))
-         (region (make-region :kind kind :slot slot :handler (new-block)
+         (region (make-region :kind kind :slot slot
+                              :handler (if (eq kind :bind) nil (new-block))
                               :outer *regions*)))
     (emit `(:store (:slot ,slot) ,+dyn-kind+ ,(ecase kind
                                                  (:catch +dyn-catch+)
                                                  (:unwind-protect +dyn-unwind-protect+)
-                                                 (:exit-point +dyn-exit-point+))))
+                                                 (:exit-point +dyn-exit-point+)
+                                                 (:bind +dyn-bind+))))
     (emit `(:store (:slot ,slot) ,+dyn-prev+ (:load :ctx ,+ctx-dynenv+)))
     (emit `(:store (:slot ,slot) ,+dyn-fp+ (:fp)))
     ;; Tag and pending value are GC roots: always initialize them.
@@ -355,31 +362,100 @@ visited once."
     (start-block join)
     r))
 
-;;; Special variables. Only global values so far: dynamic binding (TLS
-;;; indexes, C1) is not implemented yet, so SPECIAL-VARIABLE-BIND-AST is
-;;; rejected and references read the symbol's value cell.
+;;; Special variables: TLS-index scheme (C1, rust/kiln-rt/src/special.rs).
+;;; A symbol's value in a context is its slot in the context's TLS table if
+;;; that holds a value, else its global value. Slot 0 is always empty, so a
+;;; symbol that was never bound (index 0) needs no test.
 
-(defun symbol-value-operand (name)
-  (if (or (null name) (eq name t) (keywordp name))
-      (constant-object name)
-      `(:load (:addr ,(symbol-data name)) 32)))
+(defun rt-tls-index () (module-import-func "kiln_rt_tls_index" 2 1))
+
+(defun emit-tls-slot (sym)
+  "Raw address of the TLS slot of the symbol operand SYM (index 0 if it
+has never been bound). The table does not move."
+  (copy-to-var `(:add (:load :ctx ,+ctx-tls+) (:shl (:load ,sym ,+symbol-tls-index+) 3)) :raw))
+
+(defun emit-symbol-value (sym)
+  "Current value of the symbol operand SYM, possibly UNBOUND."
+  (let ((addr (emit-tls-slot sym))
+        (v (new-var))
+        (global (new-block)) (join (new-block)))
+    (emit `(:set ,v (:load ,addr 0)))
+    (br `(:eq ,v ,+no-tls-value+) global join)
+    (start-block global)
+    (emit `(:set ,v (:load ,sym ,+symbol-value+)))
+    (jump join)
+    (start-block join)
+    v))
+
+(defun emit-set-symbol-value (sym value)
+  (let ((addr (emit-tls-slot sym))
+        (global (new-block)) (local (new-block)) (join (new-block)))
+    (br `(:eq (:load ,addr 0) ,+no-tls-value+) global local)
+    (start-block global)
+    (emit `(:store ,sym ,+symbol-value+ ,value))
+    (jump join)
+    (start-block local)
+    (emit `(:store ,addr 0 ,value))
+    (jump join)
+    (start-block join)))
+
+(defun emit-check-bound (v sym)
+  (let ((bad (new-block)) (ok (new-block)))
+    (br `(:eq ,v ,+unbound+) bad ok)
+    (start-block bad)
+    (emit-error +err-unbound-variable+ sym)
+    (start-block ok)))
+
+(defun constant-symbol-p (name)
+  (or (null name) (eq name t) (keywordp name)))
 
 (defmethod lower ((ast ico:special-variable-reference-ast))
-  (let* ((name (ico:name ast))
-         (v (copy-to-var (symbol-value-operand name))))
-    (unless (or (null name) (eq name t) (keywordp name))
-      (let ((bad (new-block)) (ok (new-block)))
-        (br `(:eq ,v ,+unbound+) bad ok)
-        (start-block bad)
-        (emit-error +err-unbound-variable+ (constant-object name))
-        (start-block ok)))
-    v))
+  (let ((name (ico:name ast)))
+    (if (constant-symbol-p name)
+        (constant-object name)
+        (let* ((sym (constant-object name))
+               (v (emit-symbol-value sym)))
+          (emit-check-bound v sym)
+          v))))
 
 (defmethod lower ((ast ico:special-variable-setq-ast))
   (let ((name (ico:name (ico:variable-name-ast ast)))
         (v (copy-to-var (lower (ico:value-ast ast)))))
-    (emit `(:store (:addr ,(symbol-data name)) 32 ,v))
+    (emit-set-symbol-value (constant-object name) v)
     v))
+
+(defun emit-unbind (region)
+  "Restores the value saved in the binding entry of REGION."
+  (let ((s `(:slot ,(region-slot region))))
+    (emit `(:store (:add (:load :ctx ,+ctx-tls+) (:shl (:load ,s ,+dyn-pend-target+) 3))
+                   0 (:load ,s ,+dyn-pend-value+)))))
+
+(defmethod lower ((ast ico:special-variable-bind-ast))
+  (let* ((binding (ico:binding-ast ast))
+         (name (ico:name (ico:variable-name-ast binding)))
+         (v (copy-to-var (lower (ico:form-ast binding))))
+         (sym (constant-object name))
+         (index (copy-to-var `(:load ,sym ,+symbol-tls-index+) :raw))
+         (assign (new-block)) (have (new-block)))
+    ;; Assign an index on first binding (not a safepoint).
+    (br `(:eq ,index 0) assign have)
+    (start-block assign)
+    (emit `(:call-rt ,(rt-tls-index) (,index) (:ctx ,sym) :nil))
+    (jump have)
+    (start-block have)
+    (let* ((addr (copy-to-var `(:add (:load :ctx ,+ctx-tls+) (:shl ,index 3)) :raw))
+           (region (establish-entry :bind sym))
+           (s `(:slot ,(region-slot region)))
+           (r (new-var)))
+      ;; No safepoint between linking the entry and filling it in.
+      (emit `(:store ,s ,+dyn-pend-target+ ,index))
+      (emit `(:store ,s ,+dyn-pend-value+ (:load ,addr 0)))
+      (emit `(:store ,addr 0 ,v))
+      (let ((*regions* (cons region *regions*)))
+        (emit `(:set ,r ,(lower-progn (ico:form-asts ast)))))
+      (emit-unbind region)
+      (pop-entry region)
+      r)))
 
 ;;; Allocation
 
@@ -584,6 +660,13 @@ safepoint (docs/08 §4)."
 
 (defvar *exits*)                        ; block/tag definition AST -> exit-info
 
+(defun emit-exit-token ()
+  "A fresh object identifying one activation of a block or tagbody that a
+closure may exit to. The closure holds it rather than the entry's stack
+address: heap objects must not point into frames (C5), and a token cannot
+be confused with a later activation at the same address."
+  (emit-cons (nil-value) (nil-value)))
+
 (defmethod lower ((ast ico:block-with-variable-ast))
   (let* ((def (ico:name-ast ast))
          (body (ico:form-asts ast))
@@ -600,11 +683,10 @@ safepoint (docs/08 §4)."
           (bind-var (ico:variable-definition-ast ast) 0)
           (emit `(:set ,r ,(lower-progn body)))
           (jump exit))
-        (let ((region (establish-entry :exit-point))
-              (land (new-block)))
-          ;; The entry's address is a stack address, 8-byte aligned: the GC
-          ;; sees it as a fixnum when a closure holds it.
-          (bind-var (ico:variable-definition-ast ast) `(:slot ,(region-slot region)))
+        (let* ((token (emit-exit-token))
+               (region (establish-entry :exit-point token))
+               (land (new-block)))
+          (bind-var (ico:variable-definition-ast ast) token)
           (let ((*regions* (cons region *regions*)))
             (emit `(:set ,r ,(lower-progn body))))
           (pop-entry region)
@@ -625,8 +707,8 @@ safepoint (docs/08 §4)."
           (emit `(:set ,(exit-info-result info) ,v))
           (emit-local-exit (exit-info-regions info))
           (jump (exit-info-exit info)))
-        (let ((entry (lower (ico:variable-reference-ast ast))))
-          (emit `(:call-rt ,(rt-exit-to) () (:ctx ,entry ,v) ,(handler)))
+        (let ((token (lower (ico:variable-reference-ast ast))))
+          (emit `(:call-rt ,(rt-exit-to) () (:ctx ,token ,v) ,(handler)))
           (emit '(:trap))))
     (nil-value)))
 
@@ -642,9 +724,10 @@ safepoint (docs/08 §4)."
                            (member (ico:tag-definition-ast (ico:tag-ast node)) defs)))))
          (blocks (mapcar (lambda (s) (declare (ignore s)) (new-block)) segments))
          (exit (new-block))
-         (region (and nonlocal (establish-entry :exit-point)))
+         (token (and nonlocal (emit-exit-token)))
+         (region (and nonlocal (establish-entry :exit-point token)))
          (inner (if region (cons region *regions*) *regions*)))
-    (bind-var (ico:variable-definition-ast ast) (if region `(:slot ,(region-slot region)) 0))
+    (bind-var (ico:variable-definition-ast ast) (or token 0))
     (loop for def in defs
           for b in blocks
           when def
@@ -686,8 +769,8 @@ safepoint (docs/08 §4)."
           (jump (exit-info-block info)))
         (let* ((segments (ico:segment-asts (ico:tagbody-ast (ico:segment-ast def))))
                (index (position (ico:segment-ast def) segments))
-               (entry (lower (ico:variable-reference-ast ast))))
-          (emit `(:call-rt ,(rt-exit-to) () (:ctx ,entry ,(ash index +fixnum-shift+)) ,(handler)))
+               (token (lower (ico:variable-reference-ast ast))))
+          (emit `(:call-rt ,(rt-exit-to) () (:ctx ,token ,(ash index +fixnum-shift+)) ,(handler)))
           (emit '(:trap))))
     (nil-value)))
 
@@ -733,7 +816,7 @@ safepoint (docs/08 §4)."
     ;; use the outer handler.
     (start-block land)
     (let ((*regions* (cons (make-region :kind :cleanup-running :slot (region-slot region)
-                                        :handler (let ((outer (first *regions*)))
+                                        :handler (let ((outer (find-if #'region-handler *regions*)))
                                                    (and outer (region-handler outer)))
                                         :outer *regions*)
                            *regions*)))

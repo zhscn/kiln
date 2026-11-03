@@ -4,11 +4,11 @@
   (:export #:+fixnum-shift+ #:+tag-mask+ #:+tag-cons+ #:+tag-general+
            #:+kind-mask+ #:+kind-symbol+ #:+kind-function+ #:+kind-cons+
            #:+kind-simple-vector+
-           #:+symbol-function+ #:+symbol-value+ #:+unbound+
+           #:+symbol-function+ #:+symbol-value+ #:+symbol-tls-index+ #:+unbound+
            #:+length-shift+ #:+fobj-env+
            #:+cons-bytes+ #:+cons-car+ #:+cons-cdr+
-           #:+ctx-poll-flag+ #:+ctx-dynenv+ #:+ctx-values+ #:+values-max+
-           #:+dyn-catch+ #:+dyn-unwind-protect+ #:+dyn-exit-point+ #:+dynentry-size+
+           #:+ctx-poll-flag+ #:+ctx-dynenv+ #:+ctx-values+ #:+values-max+ #:+ctx-tls+ #:+no-tls-value+
+           #:+dyn-catch+ #:+dyn-unwind-protect+ #:+dyn-exit-point+ #:+dyn-bind+ #:+dynentry-size+
            #:+dyn-kind+ #:+dyn-prev+ #:+dyn-fp+ #:+dyn-tag+
            #:+dyn-pend-target+ #:+dyn-pend-value+
            #:+fobj-entry+

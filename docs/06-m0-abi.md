@@ -60,7 +60,8 @@ Rust: kiln-launcher           staticlib，提供 C main，链接 kiln-rt
 | 24 | `safepoint_fp` | 最近一次 safepoint 的 trampoline 帧指针，GC 栈遍历的起点（M1） |
 | 32 | `mutator` | MMTk mutator（M1） |
 | 40 | `segments` | 挂起的栈段链（M1，见 [07 §8](07-m1-gc.md#8-栈和栈段c2c8)） |
-| 48 | `values[64]` | 传递区：第 4 个及之后的参数（M2，见 [08 §4](08-m2-front-end.md#4-调用约定的补充超过-3-个参数)），以后也放第二个及之后的返回值 |
+| 48 | `tls` | 特殊变量的 TLS 表（M2，见 [08 §5.2](08-m2-front-end.md#52-特殊变量c1-的-tls-下标方案)） |
+| 56 | `values[64]` | 传递区：第 4 个及之后的参数（M2，见 [08 §4](08-m2-front-end.md#4-调用约定的补充超过-3-个参数)），以后也放第二个及之后的返回值 |
 
 两侧的定义：`rust/kiln-rt/src/context.rs` 和 `lisp/abi.lisp`，修改时必须同步。
 
@@ -74,7 +75,7 @@ Rust: kiln-launcher           staticlib，提供 C main，链接 kiln-rt
 
 | 偏移 | 字段 |
 |---|---|
-| 0 | kind：1 是 catch，2 是 unwind-protect，3 是 cleanup 运行中（M1，见 [07 §7](07-m1-gc.md#7-修复cleanup-运行期间条目留在链上)），4 是栈边界（M1，见 [07 §8](07-m1-gc.md#8-栈和栈段c2c8)），5 是闭包非局部退出的目标 block/tagbody（M2，见 [08 §5](08-m2-front-end.md#5-降级)） |
+| 0 | kind：1 是 catch，2 是 unwind-protect，3 是 cleanup 运行中（M1，见 [07 §7](07-m1-gc.md#7-修复cleanup-运行期间条目留在链上)），4 是栈边界（M1，见 [07 §8](07-m1-gc.md#8-栈和栈段c2c8)），5 是闭包非局部退出的目标 block/tagbody，6 是特殊变量绑定（M2，见 [08 §5](08-m2-front-end.md#5-降级)） |
 | 8 | prev |
 | 16 | fp：建立条目那一帧的帧指针（`get_frame_pointer`） |
 | 24 | tag（只有 catch 用；GC root，不用时写 0） |

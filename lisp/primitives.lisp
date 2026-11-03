@@ -229,22 +229,18 @@
 
 (define-primitive symbol-value (name)
   (emit-check-symbol name)
-  (let ((v (copy-to-var `(:load ,name ,+symbol-value+)))
-        (bad (new-block)) (ok (new-block)))
-    (br `(:eq ,v ,+unbound+) bad ok)
-    (start-block bad)
-    (emit-error +err-unbound-variable+ name)
-    (start-block ok)
+  (let ((v (emit-symbol-value name)))
+    (emit-check-bound v name)
     v))
 
 (define-primitive (setf symbol-value) (value name)
   (emit-check-symbol name)
-  (emit `(:store ,name ,+symbol-value+ ,value))
+  (emit-set-symbol-value name value)
   value)
 
 (define-primitive boundp (name)
   (emit-check-symbol name)
-  (boolean-value `(:ne (:load ,name ,+symbol-value+) ,+unbound+)))
+  (boolean-value `(:ne ,(emit-symbol-value name) ,+unbound+)))
 
 ;;; Macro definitions and proclamations take effect at compile time (front
 ;;; end); the run-time image has no macro environment yet.

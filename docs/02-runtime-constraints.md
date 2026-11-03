@@ -12,7 +12,7 @@
 - 编译后的代码通过固定寄存器或第一个隐式参数拿到 `context`。
 - runtime 不能用 Rust 的 `thread_local!` 或全局变量保存上述状态。
 
-**special 变量的实现**：采用 TLS 索引方案（参考 SBCL）。
+**special 变量的实现**：采用 TLS 索引方案（参考 SBCL）。M2 已实现，见 [08 §5.2](08-m2-front-end.md#52-特殊变量c1-的-tls-下标方案)。
 
 - 每个 symbol 在第一次被动态绑定时分配一个 index。
 - 每个 context 有一张动态值表，按 index 查找。表项为空时回退到 symbol 的全局值。

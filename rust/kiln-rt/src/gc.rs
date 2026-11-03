@@ -133,6 +133,10 @@ unsafe fn stack_slots(ctx: &Context, out: &mut Vec<KilnSlot>) {
             seg = (*seg).prev;
         }
     }
+    // Thread-local values of special variables.
+    for i in 1..crate::special::tls_used() {
+        out.push(KilnSlot(unsafe { Address::from_mut_ptr(ctx.tls.add(i)) }));
+    }
     let mut e = ctx.dynenv;
     while !e.is_null() {
         unsafe {

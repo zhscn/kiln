@@ -4,6 +4,7 @@ pub mod context;
 pub mod gc;
 pub mod object;
 pub mod rtfun;
+pub mod special;
 pub mod stack;
 pub mod unwind;
 
@@ -80,6 +81,7 @@ pub fn symbols() -> Vec<(&'static str, *const u8)> {
             stack::kiln_rt_call_on_new_stack as *const u8,
         ),
         ("kiln_rt_throw", unwind::kiln_rt_throw as *const u8),
+        ("kiln_rt_tls_index", special::kiln_rt_tls_index as *const u8),
         ("kiln_rt_exit_to", unwind::kiln_rt_exit_to as *const u8),
         (
             "kiln_rt_continue_unwind",

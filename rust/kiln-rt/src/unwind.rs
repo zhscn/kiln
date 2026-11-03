@@ -12,7 +12,7 @@
 //! needs restoring: setting PC, SP and FP is enough.
 
 use crate::context::{
-    Context, DYN_CATCH, DYN_CLEANUP_RUNNING, DYN_EXIT_POINT, DYN_STACK_BOUNDARY, DYN_UNWIND_PROTECT,
+    Context, DYN_BIND, DYN_CATCH, DYN_CLEANUP_RUNNING, DYN_EXIT_POINT, DYN_STACK_BOUNDARY, DYN_UNWIND_PROTECT,
     DynEntry,
 };
 use std::sync::RwLock;
@@ -128,11 +128,15 @@ unsafe fn unwind_to(ctx: *mut Context, target: *mut DynEntry, value: u64, start_
                 (*top).pend_value = value;
                 resume_in_frame(start_fp, (*top).fp, top as u64, 0);
             }
+            if (*top).kind == DYN_BIND {
+                crate::special::unbind(ctx, top);
+            }
             if (*top).kind == DYN_STACK_BOUNDARY {
                 // Leave the current stack; continue on the one below.
                 start_fp = crate::stack::leave_stack(ctx, top);
             }
-            // A catch, a cleanup abandoned by this unwind, or a boundary.
+            // A catch, a binding, a cleanup abandoned by this unwind, or a
+            // boundary.
             (*ctx).dynenv = (*top).prev;
         }
     }
@@ -158,23 +162,20 @@ pub unsafe extern "C" fn kiln_rt_throw(ctx: *mut Context, tag: u64, value: u64, 
     }
 }
 
-/// Non-local `return-from` or `go`: unwind to the block or tagbody entry
-/// `entry` (taken from a closure), passing `value` (the block's value, or
-/// the tag index). Called through a trampoline; `fp` is its frame pointer.
+/// Non-local `return-from` or `go`: unwind to the block or tagbody whose
+/// exit-point entry has the tag `token` (a fresh heap object per
+/// activation, taken from a closure; heap objects never hold stack
+/// addresses, C5), passing `value` (the block's value, or the tag index).
+/// Called through a trampoline; `fp` is its frame pointer.
 ///
 /// # Safety
 /// Must be called by compiled code with a valid context.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn kiln_rt_exit_to(
-    ctx: *mut Context,
-    entry: *mut DynEntry,
-    value: u64,
-    fp: usize,
-) -> ! {
+pub unsafe extern "C" fn kiln_rt_exit_to(ctx: *mut Context, token: u64, value: u64, fp: usize) -> ! {
     unsafe {
         let mut e = (*ctx).dynenv;
         while !e.is_null() {
-            if e == entry && (*e).kind == DYN_EXIT_POINT {
+            if (*e).kind == DYN_EXIT_POINT && (*e).tag == token {
                 unwind_to(ctx, e, value, fp);
             }
             e = (*e).prev;

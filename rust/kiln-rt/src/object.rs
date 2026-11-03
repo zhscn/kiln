@@ -31,7 +31,7 @@ pub const CONS_BYTES: usize = 24;
 /// GC ignores it.
 pub const UNBOUND: u64 = 0x13;
 
-/// Layout: [header, name pointer, name length, function, value].
+/// Layout: [header, name pointer, name length, function, value, tls index].
 /// Statically allocated. `function` is the global function cell (a
 /// function object, or the module's undefined-function object); `value`
 /// is the global value or UNBOUND. Both may point into the heap, so the
@@ -43,6 +43,8 @@ pub struct SymbolObj {
     pub len: u64,
     pub function: u64,
     pub value: u64,
+    /// TLS index for dynamic bindings, 0 until first bound (special.rs).
+    pub tls_index: u64,
 }
 
 unsafe impl Sync for SymbolObj {}
@@ -64,6 +66,7 @@ pub static kiln_nil: SymbolObj = SymbolObj {
     len: 3,
     function: 0,
     value: 0, // NIL's value is NIL; never read through this slot.
+    tls_index: 0,
 };
 
 #[unsafe(no_mangle)]
@@ -73,6 +76,7 @@ pub static kiln_t: SymbolObj = SymbolObj {
     len: 1,
     function: 0,
     value: 0,
+    tls_index: 0,
 };
 
 pub fn tag_general<T>(p: *const T) -> u64 {
@@ -115,7 +119,7 @@ pub fn object_bytes(header: u64) -> usize {
     match header & KIND_MASK {
         KIND_CONS => CONS_BYTES,
         KIND_SIMPLE_VECTOR => 8 + 8 * (header >> LENGTH_SHIFT) as usize,
-        KIND_SYMBOL => 40,
+        KIND_SYMBOL => 48,
         KIND_FUNCTION => 16 + 8 * (header >> LENGTH_SHIFT) as usize,
         k => panic!("object_bytes: unknown kind {k}"),
     }

@@ -1,6 +1,6 @@
 # 08 M2：Common-boot 前端和 AST 降级
 
-**状态**：M2 第一步已完成（2026-11）。前端已经换成 Eclector + Common-boot + Iconoclast，M0 的脚手架编译器已删除，M0、M1 的测试全部改走新前端。特殊变量的动态绑定、多值、`&optional`/`&rest`/`&key` 还没有做，见 §7。
+**状态**：M2 进行中（2026-11）。前端已经换成 Eclector + Common-boot + Iconoclast，M0 的脚手架编译器已删除，M0、M1 的测试全部改走新前端。特殊变量的动态绑定已经实现（§5.2）。多值、`&optional`/`&rest`/`&key` 还没有做，见 §7。
 
 ## 1. 流水线
 
@@ -55,7 +55,7 @@ Common-boot 本身的顶层处理不完整：`*compile-time-too*` 从来不会�
 
 | kind | 布局 |
 |---|---|
-| symbol | `[header, 名字指针, 名字长度, function, value]`，40 字节，仍然只有静态分配 |
+| symbol | `[header, 名字指针, 名字长度, function, value, TLS 下标]`，48 字节，仍然只有静态分配 |
 | function | `[header(env 长度 << 8), 入口地址, env...]`，GC 扫描 env，跳过入口地址 |
 
 - **函数 cell 就是 symbol 的 `function` 槽。** 调用全局函数：从 symbol 读出函数对象，再读入口地址，`call_indirect`。`(setf fdefinition)` 直接写这个槽，重定义因此立即生效。`(setf f)` 形式的函数名各有一个单独的静态 cell。
@@ -66,7 +66,7 @@ Common-boot 本身的顶层处理不完整：`*compile-time-too*` 从来不会�
 
 ## 4. 调用约定的补充：超过 3 个参数
 
-[06 §4](06-m0-abi.md#4-调用约定) 预留的溢出区现在实现了，复用 context 的 `values` 区（偏移 48，64 个字）：
+[06 §4](06-m0-abi.md#4-调用约定) 预留的溢出区现在实现了，复用 context 的 `values` 区（偏移 56，64 个字）：
 
 - 调用方先求出所有参数，然后把第 4 个及之后的参数写进 `ctx.values[0..]`，紧接着调用。
 - 被调方在入口处、第一个 safepoint 之前（poll 和参数个数检查的出错路径之前）把它们读进自己的变量。
@@ -83,10 +83,22 @@ Common-boot 本身的顶层处理不完整：`*compile-time-too*` 从来不会�
 - **cell**：用一个 cons，car 存值。
 - **`block`/`tagbody`**：先扫描主体，看有没有来自嵌套函数（闭包）的 `return-from`/`go`。
   - 没有：只用本地跳转，和 M0 一样，跳转前弹出途经的条目，内联执行 cleanup。
-  - 有：建立一个退出点条目（动态环境条目 kind 5），把条目地址存进 block 的变量，闭包通过静态环境拿到它。闭包里的 `return-from`/`go` 调用 `kiln_rt_exit_to(ctx, entry, value)`：runtime 先确认这个条目还在动态环境链上（否则报错：退出点已失效），再按 [06 §6.3](06-m0-abi.md#63-展开算法rustkiln-rtsrcunwindrs) 展开到它。`go` 传递的值是目标标签所在段的下标；落地后 tagbody 把条目重新链上（runtime 展开到目标时会摘掉它），再按下标分派。
-  - 条目地址是 8 字节对齐的栈地址，低位为 0，GC 把它当作 fixnum，不会处理。
+  - 有：每次进入时分配一个新的**令牌**（一个 cons），建立一个退出点条目（动态环境条目 kind 5），tag 就是令牌；令牌存进 block 的变量，闭包通过静态环境拿到它。闭包里的 `return-from`/`go` 调用 `kiln_rt_exit_to(ctx, token, value)`：runtime 在动态环境链上找 tag 为这个令牌的退出点条目，找不到就报错（退出点已失效），找到了就按 [06 §6.3](06-m0-abi.md#63-展开算法rustkiln-rtsrcunwindrs) 展开到它。`go` 传递的值是目标标签所在段的下标；落地后 tagbody 把条目重新链上（runtime 展开到目标时会摘掉它），再按下标分派。
+  - **为什么不直接让闭包持有条目的栈地址**：那样堆对象就指向了栈帧内部，违反 C5，以后拷栈（fiber、续延）时无法修正。而且同一个栈地址会被后来的另一次进入重用，已经失效的闭包会错误地退出到新的那次进入里。令牌只在需要非局部退出的 block 上分配，代价是每次进入一个 cons。
 - **`catch`/`throw`/`unwind-protect`**：沿用 M0 的做法（[06 §6](06-m0-abi.md#6-非局部退出c3-的决定)）。
-- **特殊变量**：引用和 `setq` 直接读写 symbol 的 `value` 槽，读到 `UNBOUND` 时报错。动态绑定还没有实现。
+- **特殊变量**：见 §5.2。
+
+### 5.2 特殊变量（C1 的 TLS 下标方案）
+
+`rust/kiln-rt/src/special.rs`。
+
+- symbol 第一次被动态绑定时，runtime（`kiln_rt_tls_index`）给它分配一个 TLS 下标，写进 symbol 的第 6 个字。下标从 1 开始，0 表示还没有分配。
+- 每个 context 有一张 TLS 表（`ctx.tls`，偏移 48，目前固定 4096 项）。表项是 `NO_TLS_VALUE`（`0x23`，立即数）表示这个 context 里没有绑定，回退到 symbol 的全局值。第 0 项永远是 `NO_TLS_VALUE`，所以读一个从没被绑定过的 symbol 时不需要先判断下标是否为 0。
+- **读**：`v = tls[sym.index]`，是 `NO_TLS_VALUE` 就读 `sym.value`，最后检查 `UNBOUND`。**写**（`setq`、`(setf symbol-value)`）：TLS 表项有值就写表项，否则写全局值。
+- **绑定**：在栈上建立一个绑定条目（动态环境条目 kind 6）：tag 是 symbol，`pend_target` 是下标，`pend_value` 是旧的表项（GC root）。然后写入新值。正常离开和本地退出（`return-from`、`go`）时从条目恢复旧值；展开经过绑定条目时，unwinder 恢复旧值。
+- 绑定条目没有 handler，它所在区域里的调用使用外层区域的 handler。
+- GC 扫描每个 context 的 TLS 表里已分配的项。
+- 切换 context（以后的线程、fiber）只需换一张表，O(1)，符合 C1。
 
 ### 5.1 原语
 
@@ -102,7 +114,8 @@ Common-boot 本身的顶层处理不完整：`*compile-time-too*` 从来不会�
 
 - `closures.lisp`：计数器、共享 cell 的两个闭包、递归和互相递归的局部函数、跨 GC 存活的闭包列表、原语和全局函数作为值；
 - `exits.lisp`：闭包里的非局部 `return-from`、`go`，非局部退出经过 `unwind-protect`，`catch` 和 `unwind-protect` 里的本地退出；
-- `macros.lisp`：用户宏、编译期定义的辅助函数、`cond`/`dolist`/`dotimes`/`and`/`or`/`when`/`unless`/`case`/`push`、`defvar`/`defparameter`。
+- `macros.lisp`：用户宏、编译期定义的辅助函数、`cond`/`dolist`/`dotimes`/`and`/`or`/`when`/`unless`/`case`/`push`、`defvar`/`defparameter`；
+- `specials.lisp`：嵌套绑定、绑定内的 `setq`、经过 `throw`/非局部和本地 `return-from`/`go` 退出时恢复绑定、闭包不捕获动态绑定、`boundp`、跨栈展开时恢复绑定、cleanup 里的绑定。
 
 本地开发时用 `KILN_DEPS_DIR` 或 `deps` 符号链接指向依赖目录，见 [04 的 Lisp 依赖](04-bootstrap.md#lisp-依赖)一节。
 
@@ -110,7 +123,7 @@ Common-boot 本身的顶层处理不完整：`*compile-time-too*` 从来不会�
 
 按计划的顺序：
 
-1. **特殊变量的动态绑定**：按 C1 用 TLS 索引方案，展开时恢复绑定（动态环境再加一种条目）。`progv` 同时实现。
+1. ~~特殊变量的动态绑定~~（已完成，§5.2）。`progv` 还没有做；TLS 表的大小是固定的，以后需要能扩容。
 2. **多值**：`values`、`multiple-value-call`、`multiple-value-prog1`，`return-from`/`throw` 传递多值。返回约定已经预留了 `(v0, nvals)` 和 `ctx.values`。
 3. **lambda list**：`&optional`、`&rest`、`&key`。`lexify-lambda-list` 之后的形式还要确认。
 4. **顶层的 `locally`、`macrolet`、`symbol-macrolet`**：主体应按顶层形式处理。

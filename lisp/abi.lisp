@@ -17,10 +17,12 @@
 (defconstant +kind-cons+ 3)
 (defconstant +kind-simple-vector+ 4)
 
-;;; Symbol layout: [header, name pointer, name length, function, value].
+;;; Symbol layout: [header, name pointer, name length, function, value,
+;;; TLS index].
 ;;; Offsets from a tagged pointer.
 (defconstant +symbol-function+ (- 24 +tag-general+))
 (defconstant +symbol-value+ (- 32 +tag-general+))
+(defconstant +symbol-tls-index+ (- 40 +tag-general+))
 ;;; Unbound value marker (an immediate the GC ignores).
 (defconstant +unbound+ #x13)
 
@@ -38,13 +40,18 @@
 (defconstant +ctx-dynenv+ 8)
 ;;; Transfer area: arguments beyond the register arguments, and (later)
 ;;; values beyond the first. VALUES_MAX words.
-(defconstant +ctx-values+ 48)
+(defconstant +ctx-values+ 56)
+;;; Pointer to the context's TLS table of special variable values.
+(defconstant +ctx-tls+ 48)
+;;; Empty TLS slot: the symbol is not bound in this context.
+(defconstant +no-tls-value+ #x23)
 (defconstant +values-max+ 64)
 
 ;;; Dynamic-environment entries (stack-allocated in the establishing frame).
 (defconstant +dyn-catch+ 1)
 (defconstant +dyn-unwind-protect+ 2)
 (defconstant +dyn-exit-point+ 5)
+(defconstant +dyn-bind+ 6)
 (defconstant +dynentry-size+ 48)
 (defconstant +dyn-kind+ 0)
 (defconstant +dyn-prev+ 8)

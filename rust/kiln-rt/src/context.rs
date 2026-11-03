@@ -23,7 +23,12 @@ pub struct Context {
     pub mutator: *mut KilnMutator,
     /// Offset 40. Suspended segments of Lisp frames (see stack.rs).
     pub segments: *mut Segment,
-    /// Offset 48. Extra return values beyond the first (unused so far).
+    /// Offset 48. Thread-local values of special variables, indexed by
+    /// the symbol's TLS index (see special.rs). NO_TLS_VALUE means unbound
+    /// in this context: use the global value.
+    pub tls: *mut u64,
+    /// Offset 56. Transfer area: arguments beyond the register arguments,
+    /// and later extra return values.
     pub values: [u64; VALUES_MAX],
 }
 
@@ -38,6 +43,7 @@ impl Context {
             safepoint_fp: 0,
             mutator: core::ptr::null_mut(),
             segments: core::ptr::null_mut(),
+            tls: crate::special::new_tls_table(),
             values: [0; VALUES_MAX],
         });
         ctx.mutator = crate::gc::bind_mutator(&mut *ctx);
@@ -56,8 +62,13 @@ pub const DYN_CLEANUP_RUNNING: u64 = 3;
 /// owns the new stack.
 pub const DYN_STACK_BOUNDARY: u64 = 4;
 /// A block or tagbody that is the target of a non-local exit from a
-/// closure (`kiln_rt_exit_to`). The closure holds the entry's address.
+/// closure (`kiln_rt_exit_to`). `tag` is a token unique to the activation;
+/// the closure holds the token.
 pub const DYN_EXIT_POINT: u64 = 5;
+/// A dynamic binding of a special variable. `tag` is the symbol,
+/// `pend_target` its TLS index (a raw integer), `pend_value` the value to
+/// restore. Leaving it, normally or by an unwind, restores the old value.
+pub const DYN_BIND: u64 = 6;
 
 /// A dynamic-environment entry. Allocated in a stack slot of the frame that
 /// establishes it, and linked through `prev`. Layout is part of the ABI.
