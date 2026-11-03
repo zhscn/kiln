@@ -40,6 +40,8 @@ pub struct Output {
     pub init_data: DataId,
     pub callsites: Vec<CallSiteInfo>,
     pub stackmaps: Vec<StackMapInfo>,
+    /// Static GC roots: (data object, byte offset).
+    pub roots: Vec<(DataId, u32)>,
 }
 
 #[derive(Clone, Copy)]
@@ -276,11 +278,19 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
     let Some(Ref::Data(init_data)) = names.get(&kir.init).copied() else {
         return Err(format!("init {} is not a data object", kir.init));
     };
+    let mut roots = Vec::new();
+    for (name, index) in &kir.roots {
+        let Some(Ref::Data(id)) = names.get(name).copied() else {
+            return Err(format!("root: {name} is not a data object"));
+        };
+        roots.push((id, index * 8));
+    }
     Ok(Output {
         enter,
         init_data,
         callsites,
         stackmaps,
+        roots,
     })
 }
 
@@ -378,12 +388,27 @@ pub fn emit_module_info<M: Module>(module: &mut M, out: &Output) -> R<()> {
     odesc.define(offsets.into_boxed_slice());
     module.define_data(offsets_id, &odesc).map_err(err)?;
 
+    let roots = module
+        .declare_data("kiln_roots", Linkage::Local, false, false)
+        .map_err(err)?;
+    let mut rdesc = DataDescription::new();
+    rdesc.set_align(8);
+    for (i, (id, off)) in out.roots.iter().enumerate() {
+        let gv = module.declare_data_in_data(*id, &mut rdesc);
+        rdesc.write_data_addr((i * 8) as u32, gv, *off as i64);
+    }
+    rdesc.define(vec![0u8; out.roots.len() * 8 + 8].into_boxed_slice());
+    module.define_data(roots, &rdesc).map_err(err)?;
+
     let info = module
         .declare_data(MODULE_INFO_NAME, Linkage::Export, false, false)
         .map_err(err)?;
     let mut desc = DataDescription::new();
     desc.set_align(8);
-    let mut bytes = vec![0u8; 48];
+    let mut bytes = vec![0u8; 64];
+    bytes[56..64].copy_from_slice(&(out.roots.len() as u64).to_le_bytes());
+    let gv = module.declare_data_in_data(roots, &mut desc);
+    desc.write_data_addr(48, gv, 0);
     bytes[24..32].copy_from_slice(&(out.callsites.len() as u64).to_le_bytes());
     bytes[40..48].copy_from_slice(&(out.stackmaps.len() as u64).to_le_bytes());
     desc.define(bytes.into_boxed_slice());

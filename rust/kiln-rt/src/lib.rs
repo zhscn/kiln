@@ -32,6 +32,9 @@ pub struct ModuleInfo {
     pub ncallsites: u64,
     pub stackmaps: *const gc::StackMapRecord,
     pub nstackmaps: u64,
+    /// Addresses of static words that are GC roots.
+    pub roots: *const usize,
+    pub nroots: u64,
 }
 
 /// # Safety
@@ -50,6 +53,7 @@ pub unsafe fn run_module(info: &ModuleInfo) -> i32 {
         unwind::register_callsites(records);
         let maps = std::slice::from_raw_parts(info.stackmaps, info.nstackmaps as usize);
         gc::register_stack_maps(maps);
+        gc::register_static_roots(std::slice::from_raw_parts(info.roots, info.nroots as usize));
         let _ = ENTER.set(info.enter);
         let mut ctx = Context::new();
         let entry = function_entry(info.init_fobj);
@@ -76,6 +80,7 @@ pub fn symbols() -> Vec<(&'static str, *const u8)> {
             stack::kiln_rt_call_on_new_stack as *const u8,
         ),
         ("kiln_rt_throw", unwind::kiln_rt_throw as *const u8),
+        ("kiln_rt_exit_to", unwind::kiln_rt_exit_to as *const u8),
         (
             "kiln_rt_continue_unwind",
             unwind::kiln_rt_continue_unwind as *const u8,

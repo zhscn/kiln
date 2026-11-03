@@ -1,11 +1,11 @@
 # 06 M0：ABI 与 KIR
 
-**状态**：M0 已完成（2026-11）。M1 对其中几处做了修订，以 [07-m1-gc.md](07-m1-gc.md) 为准：寄存器参数改为 3 个、context 布局、cleanup 运行期间的条目。本文记录 M0 定下来的 ABI 决定，以及 SBCL 侧编译器和 Rust 侧代码生成器之间的交换格式 KIR。这些决定在 M1 之后都会继续沿用；M0 的前端只是脚手架，到 M2 会换成基于 Common-boot 的前端。
+**状态**：M0 已完成（2026-11）。M1 对其中几处做了修订，以 [07-m1-gc.md](07-m1-gc.md) 为准：寄存器参数改为 3 个、context 布局、cleanup 运行期间的条目。M2 又补充了 symbol 和函数对象的布局、超过 3 个参数的传递、退出点条目和静态 root，见 [08-m2-front-end.md](08-m2-front-end.md)；M0 的脚手架编译器已被 Common-boot 前端取代。本文记录 M0 定下来的 ABI 决定，以及 SBCL 侧编译器和 Rust 侧代码生成器之间的交换格式 KIR。这些决定在 M1 之后都会继续沿用；M0 的前端只是脚手架，到 M2 会换成基于 Common-boot 的前端。
 
 ## 1. 组成
 
 ```
-SBCL: lisp/m0-compiler.lisp   M0 子集 → KIR（s-expression 文本）
+SBCL: lisp/front.lisp, lower.lisp   源文件 → KIR（s-expression 文本；M2 起，见 08）
         ↓ .kir
 Rust: kiln-cg                 KIR → Cranelift
         ├─ jit：cranelift-jit，在进程内运行（链接 kiln-rt）
@@ -16,7 +16,7 @@ Rust: kiln-rt                 runtime：context、unwinder、运行时函数
 Rust: kiln-launcher           staticlib，提供 C main，链接 kiln-rt
 ```
 
-运行测试：`tools/m0-test.sh`。它用 SBCL 把 `tests/m0/*.lisp` 编译成 KIR，再分别走 JIT 和 AOT 两条路径运行，并和 `.expected` 比对。
+运行测试：`tools/test.sh`。它用 SBCL 把 `tests/*/*.lisp` 编译成 KIR，再分别走 JIT 和 AOT 两条路径运行，并和 `.expected` 比对。
 
 ## 2. 决定：交换格式用 KIR，不用 CLIF 文本
 
@@ -60,7 +60,7 @@ Rust: kiln-launcher           staticlib，提供 C main，链接 kiln-rt
 | 24 | `safepoint_fp` | 最近一次 safepoint 的 trampoline 帧指针，GC 栈遍历的起点（M1） |
 | 32 | `mutator` | MMTk mutator（M1） |
 | 40 | `segments` | 挂起的栈段链（M1，见 [07 §8](07-m1-gc.md#8-栈和栈段c2c8)） |
-| 48 | `values[64]` | 第二个及之后的返回值（未使用） |
+| 48 | `values[64]` | 传递区：第 4 个及之后的参数（M2，见 [08 §4](08-m2-front-end.md#4-调用约定的补充超过-3-个参数)），以后也放第二个及之后的返回值 |
 
 两侧的定义：`rust/kiln-rt/src/context.rs` 和 `lisp/abi.lisp`，修改时必须同步。
 
@@ -74,7 +74,7 @@ Rust: kiln-launcher           staticlib，提供 C main，链接 kiln-rt
 
 | 偏移 | 字段 |
 |---|---|
-| 0 | kind：1 是 catch，2 是 unwind-protect，3 是 cleanup 运行中（M1，见 [07 §7](07-m1-gc.md#7-修复cleanup-运行期间条目留在链上)），4 是栈边界（M1，见 [07 §8](07-m1-gc.md#8-栈和栈段c2c8)） |
+| 0 | kind：1 是 catch，2 是 unwind-protect，3 是 cleanup 运行中（M1，见 [07 §7](07-m1-gc.md#7-修复cleanup-运行期间条目留在链上)），4 是栈边界（M1，见 [07 §8](07-m1-gc.md#8-栈和栈段c2c8)），5 是闭包非局部退出的目标 block/tagbody（M2，见 [08 §5](08-m2-front-end.md#5-降级)） |
 | 8 | prev |
 | 16 | fp：建立条目那一帧的帧指针（`get_frame_pointer`） |
 | 24 | tag（只有 catch 用；GC root，不用时写 0） |
@@ -123,6 +123,7 @@ Rust: kiln-launcher           staticlib，提供 C main，链接 kiln-rt
   (import-data "名字")
   (data "名字" (words W ...))      ; W: 整数 | (data "名字" [addend]) | (func "名字")
   (data "名字" (bytes "..."))      ; 末尾自动补 NUL
+  (root "数据名" 字下标)            ; 静态 GC root（M2）
   (func "名字"
     (vars (v obj|raw) ...)         ; obj 会登记进栈图
     (slots (s 字节数) ...)
@@ -154,7 +155,7 @@ Rust: kiln-launcher           staticlib，提供 C main，链接 kiln-rt
 | `(slot s)` | 栈槽地址 |
 | `(select C A B)` | |
 
-## 9. M0 前端支持的子集
+## 9. M0 前端支持的子集（已被 M2 前端取代，见 08）
 
 `defun`（最多 4 个必需参数）、`if`、`let`、`let*`、`setq`、`progn`、`block`、`return-from`、`tagbody`、`go`、`catch`、`throw`、`unwind-protect`、`quote`（fixnum 和 symbol）、同一文件内定义的函数调用，以及原语 `+ - * < > <= >= = eq null not print`。只有词法变量，没有闭包。
 

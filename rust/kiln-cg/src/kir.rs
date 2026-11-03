@@ -13,6 +13,8 @@ pub struct Module {
     pub import_funcs: Vec<ImportFunc>,
     pub import_data: Vec<String>,
     pub data: Vec<Data>,
+    /// Static GC roots: (data name, word index).
+    pub roots: Vec<(String, u32)>,
     pub funcs: Vec<Func>,
 }
 
@@ -222,6 +224,7 @@ pub fn parse_module(s: &Sexp) -> R<Module> {
         import_funcs: vec![],
         import_data: vec![],
         data: vec![],
+        roots: vec![],
         funcs: vec![],
     };
     for d in decls {
@@ -268,6 +271,10 @@ pub fn parse_module(s: &Sexp) -> R<Module> {
                     _ => return Err(format!("data: unknown contents {kind}")),
                 };
                 m.data.push(Data { name, contents });
+            }
+            "root" => {
+                arity(h, rest, 2)?;
+                m.roots.push((string(&rest[0])?.to_string(), int(&rest[1])? as u32));
             }
             "func" => m.funcs.push(parse_func(rest)?),
             _ => return Err(format!("unknown module declaration {h}")),

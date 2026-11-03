@@ -68,6 +68,11 @@ fn run_jit(kir: &kir::Module, opts: &Options) -> Result<i32, String> {
         .collect();
     let enter = module.get_finalized_function(out.enter);
     let (init, _) = module.get_finalized_data(out.init_data);
+    let roots: Vec<usize> = out
+        .roots
+        .iter()
+        .map(|(id, off)| module.get_finalized_data(*id).0 as usize + *off as usize)
+        .collect();
     let info = kiln_rt::ModuleInfo {
         enter: unsafe { std::mem::transmute::<*const u8, kiln_rt::EnterFn>(enter) },
         init_fobj: init as u64 + kiln_rt::object::TAG_GENERAL,
@@ -75,6 +80,8 @@ fn run_jit(kir: &kir::Module, opts: &Options) -> Result<i32, String> {
         ncallsites: records.len() as u64,
         stackmaps: maps.as_ptr(),
         nstackmaps: maps.len() as u64,
+        roots: roots.as_ptr(),
+        nroots: roots.len() as u64,
     };
     Ok(unsafe { kiln_rt::run_module(&info) })
 }

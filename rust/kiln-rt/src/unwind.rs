@@ -12,7 +12,8 @@
 //! needs restoring: setting PC, SP and FP is enough.
 
 use crate::context::{
-    Context, DYN_CATCH, DYN_CLEANUP_RUNNING, DYN_STACK_BOUNDARY, DYN_UNWIND_PROTECT, DynEntry,
+    Context, DYN_CATCH, DYN_CLEANUP_RUNNING, DYN_EXIT_POINT, DYN_STACK_BOUNDARY, DYN_UNWIND_PROTECT,
+    DynEntry,
 };
 use std::sync::RwLock;
 
@@ -154,6 +155,31 @@ pub unsafe extern "C" fn kiln_rt_throw(ctx: *mut Context, tag: u64, value: u64, 
         let mut s = String::new();
         crate::object::write_object(&mut s, tag);
         crate::rtfun::error_exit(&format!("attempt to throw to a nonexistent tag: {s}"));
+    }
+}
+
+/// Non-local `return-from` or `go`: unwind to the block or tagbody entry
+/// `entry` (taken from a closure), passing `value` (the block's value, or
+/// the tag index). Called through a trampoline; `fp` is its frame pointer.
+///
+/// # Safety
+/// Must be called by compiled code with a valid context.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kiln_rt_exit_to(
+    ctx: *mut Context,
+    entry: *mut DynEntry,
+    value: u64,
+    fp: usize,
+) -> ! {
+    unsafe {
+        let mut e = (*ctx).dynenv;
+        while !e.is_null() {
+            if e == entry && (*e).kind == DYN_EXIT_POINT {
+                unwind_to(ctx, e, value, fp);
+            }
+            e = (*e).prev;
+        }
+        crate::rtfun::error_exit("attempt to exit to a block or tagbody that is no longer active");
     }
 }
 

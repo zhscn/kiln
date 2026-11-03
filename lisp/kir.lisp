@@ -15,6 +15,7 @@
   (import-data '())
   (data '())
   (funcs '())
+  (roots '())
   (defined (make-hash-table :test 'equal)))
 
 (defun make-kmodule (name)
@@ -43,6 +44,10 @@
   (when (declare-once name)
     (push `(:data ,name ,contents) (kmodule-data *module*)))
   name)
+
+(defun module-root (data index)
+  "Declares word INDEX of the data object DATA a GC root."
+  (push `(:root ,data ,index) (kmodule-roots *module*)))
 
 (defun module-init (name)
   (setf (kmodule-init *module*) name))
@@ -152,6 +157,7 @@ entry block current. Unterminated blocks end with a trap."
   (dolist (group (list (reverse (kmodule-imports module))
                        (reverse (kmodule-import-data module))
                        (reverse (kmodule-data module))
+                       (reverse (kmodule-roots module))
                        (reverse (kmodule-funcs module))))
     (dolist (form group)
       (format stream "~%  ")

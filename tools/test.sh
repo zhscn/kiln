@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# Runs the M0 end-to-end tests: SBCL compiles each tests/m0/*.lisp to KIR,
+# Runs the end-to-end tests: SBCL compiles each tests/*/*.lisp to KIR,
 # then kiln-cg runs it with the JIT (normally and under GC stress) and
 # builds/runs an AOT executable.
 # Each output must match the .expected file.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
-build=$root/build/m0
+build=$root/build/test
 mkdir -p "$build"
 cd "$root"
 cargo build -q
 cg=$root/target/debug/kiln-cg
 launcher=$root/target/debug/libkiln_launcher.a
 
-sources=("${@:-$root/tests/m0/*.lisp}")
+sources=("${@:-$root/tests/*/*.lisp}")
 # shellcheck disable=SC2206
 sources=(${sources[@]})
 
@@ -21,10 +21,9 @@ for src in "${sources[@]}"; do
   args+=(--eval "(kiln:compile-file-to-kir \"$src\" \"$build/$(basename "${src%.lisp}").kir\")")
 done
 sbcl --noinform --non-interactive \
-  --eval '(require :asdf)' \
-  --eval "(asdf:load-asd \"$root/kiln.asd\")" \
-  --eval '(asdf:load-system :kiln)' \
-  "${args[@]}" >/dev/null
+  --load "$root/tools/env.lisp" \
+  --eval '(ql:quickload "kiln" :silent t)' \
+  "${args[@]}" >"$build/compile.log" 2>&1 || { cat "$build/compile.log"; exit 1; }
 
 fail=0
 for src in "${sources[@]}"; do

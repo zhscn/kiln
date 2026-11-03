@@ -4,14 +4,17 @@
   (:export #:+fixnum-shift+ #:+tag-mask+ #:+tag-cons+ #:+tag-general+
            #:+kind-mask+ #:+kind-symbol+ #:+kind-function+ #:+kind-cons+
            #:+kind-simple-vector+
+           #:+symbol-function+ #:+symbol-value+ #:+unbound+
+           #:+length-shift+ #:+fobj-env+
            #:+cons-bytes+ #:+cons-car+ #:+cons-cdr+
-           #:+ctx-poll-flag+ #:+ctx-dynenv+
-           #:+dyn-catch+ #:+dyn-unwind-protect+ #:+dynentry-size+
+           #:+ctx-poll-flag+ #:+ctx-dynenv+ #:+ctx-values+ #:+values-max+
+           #:+dyn-catch+ #:+dyn-unwind-protect+ #:+dyn-exit-point+ #:+dynentry-size+
            #:+dyn-kind+ #:+dyn-prev+ #:+dyn-fp+ #:+dyn-tag+
            #:+dyn-pend-target+ #:+dyn-pend-value+
            #:+fobj-entry+
            #:+err-not-fixnum+ #:+err-overflow+ #:+err-wrong-nargs+
            #:+err-not-list+ #:+err-not-function+
+           #:+err-undefined-function+ #:+err-unbound-variable+ #:+err-not-symbol+
            #:+reg-args+))
 
 (defpackage #:kiln.kir
@@ -20,7 +23,7 @@
   (:export #:kmodule #:make-kmodule #:kmodule-name
            #:*module* #:*func*
            #:module-import-func #:module-import-data #:module-data
-           #:module-func #:module-init
+           #:module-func #:module-init #:module-root
            #:with-function #:new-var #:new-block #:new-slot
            #:emit #:start-block #:current-block-terminated-p
            #:print-module))
@@ -30,11 +33,16 @@
   (:documentation "Implementation-specific operators available to compiled code.")
   (:export #:%gc #:%gc-count #:%call-on-new-stack))
 
-(defpackage #:kiln.m0
-  (:use #:cl #:kiln.abi #:kiln.kir #:kiln.sys)
-  (:documentation "Scaffolding compiler for a small Lisp subset (M0/M1).
-It will be replaced by the Common-boot based front end in M2.")
-  (:export #:compile-forms #:m0-compile-error))
+(defpackage #:kiln.compiler
+  (:use #:cl #:kiln.abi #:kiln.kir)
+  (:local-nicknames (#:ico #:iconoclast)
+                    (#:cb #:common-boot)
+                    (#:cbe #:common-boot-hir-evaluator)
+                    (#:cbah #:common-boot-ast-to-hir)
+                    (#:cmd #:common-macro-definitions)
+                    (#:clo #:clostrum))
+  (:documentation "The compiler: Common-boot front end, lowering to KIR.")
+  (:export #:front-end #:compile-module #:kiln-compile-error))
 
 (defpackage #:kiln
   (:use #:cl)
@@ -42,4 +50,4 @@ It will be replaced by the Common-boot based front end in M2.")
 
 (defpackage #:kiln-user
   (:use #:cl #:kiln.sys)
-  (:documentation "Package in which M0 test sources are read."))
+  (:documentation "Package in which test sources are read."))

@@ -127,7 +127,7 @@ kernel 原语和 primop（cons/symbol/vector/funcall/闭包/GC）
 |---|---|---|
 | M0 ✅ | SBCL 生成 KIR，Rust 编译，跑通几个函数 | 调用约定、context 寄存器、非局部退出方案。已完成，见 [06-m0-abi.md](06-m0-abi.md) |
 | M1 ✅ | kernel 原语和 MMTk，加上 `%switch-stack` 测试 | 精确栈图、多栈扫描、展开到分界点（C2、C3、C5、C8）。已完成，见 [07-m1-gc.md](07-m1-gc.md) |
-| M2 | 前端接入：Eclector、CST、Trucler、Common-boot/Iconoclast 和 Clostrum 目标环境 | 所有特殊形式都能降级，宏在宿主中执行 |
+| M2 | 前端接入：Eclector、CST、Trucler、Common-boot/Iconoclast 和 Clostrum 目标环境（进行中，见 [08](08-m2-front-end.md)） | 所有特殊形式都能降级，宏在宿主中执行 |
 | M3 | ANSI 核心库交叉编译 | 数值塔、符号、Unicode 字符、字符串、pathname 都要自己写，工作量比原先估计的大 |
 | M4 | CLOS 引导，接入打印器、FORMAT、LOOP | 目标端 MOP 能自洽，重定义屏障（C4），自举完成前的运行期 `compile` 方案 |
 | M5 | 编译器自身交叉编译，kiln0 → kiln1 → kiln2 | 两代产物一致 |
@@ -159,8 +159,8 @@ kiln/
 │   ├── kiln-cg/       代码生成：KIR → Cranelift（JIT / object）
 │   ├── kiln-rt/       runtime：context、unwinder，以后加 MMTk、栈、FFI trampoline
 │   └── kiln-launcher/ AOT 可执行文件的 C main
-├── tests/m0/          M0 端到端测试
-├── tools/m0-test.sh   测试脚本
+├── tests/m0/、m2/     端到端测试
+├── tools/test.sh      测试脚本
 └── kiln.asd           SBCL 端的 ASDF 系统
 ```
 

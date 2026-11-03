@@ -13,6 +13,9 @@ pub const ERR_OVERFLOW: u64 = 2;
 pub const ERR_WRONG_NARGS: u64 = 3;
 pub const ERR_NOT_LIST: u64 = 4;
 pub const ERR_NOT_FUNCTION: u64 = 5;
+pub const ERR_UNDEFINED_FUNCTION: u64 = 6;
+pub const ERR_UNBOUND_VARIABLE: u64 = 7;
+pub const ERR_NOT_SYMBOL: u64 = 8;
 
 pub fn error_exit(msg: &str) -> ! {
     let _ = std::io::stdout().flush();
@@ -50,6 +53,9 @@ pub unsafe extern "C" fn kiln_rt_error(_ctx: *mut Context, code: u64, obj: u64, 
         ERR_WRONG_NARGS => format!("invalid number of arguments: {}", obj >> 1),
         ERR_NOT_LIST => format!("the value {s} is not of type LIST"),
         ERR_NOT_FUNCTION => format!("the value {s} is not of type FUNCTION"),
+        ERR_UNDEFINED_FUNCTION => format!("the function {s} is undefined"),
+        ERR_UNBOUND_VARIABLE => format!("the variable {s} is unbound"),
+        ERR_NOT_SYMBOL => format!("the value {s} is not of type SYMBOL"),
         _ => format!("error code {code}, object {s}"),
     };
     error_exit(&msg)

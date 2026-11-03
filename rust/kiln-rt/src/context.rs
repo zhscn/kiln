@@ -55,6 +55,9 @@ pub const DYN_CLEANUP_RUNNING: u64 = 3;
 /// the frame to continue unwinding from on the old stack; `pend_target`
 /// owns the new stack.
 pub const DYN_STACK_BOUNDARY: u64 = 4;
+/// A block or tagbody that is the target of a non-local exit from a
+/// closure (`kiln_rt_exit_to`). The closure holds the entry's address.
+pub const DYN_EXIT_POINT: u64 = 5;
 
 /// A dynamic-environment entry. Allocated in a stack slot of the frame that
 /// establishes it, and linked through `prev`. Layout is part of the ABI.

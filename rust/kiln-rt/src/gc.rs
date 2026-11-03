@@ -13,7 +13,7 @@
 //!   safepoint when MMTk stops it.
 
 use crate::context::Context;
-use crate::object::{self, KIND_CONS, KIND_MASK, KIND_SIMPLE_VECTOR, LENGTH_SHIFT};
+use crate::object::{self, KIND_CONS, KIND_FUNCTION, KIND_MASK, KIND_SIMPLE_VECTOR, LENGTH_SHIFT};
 use mmtk::util::copy::{CopySemantics, GCWorkerCopyContext};
 use mmtk::util::opaque_pointer::{OpaquePointer, VMMutatorThread, VMThread, VMWorkerThread};
 use mmtk::util::{Address, ObjectReference};
@@ -159,6 +159,14 @@ unsafe fn segment_slots(maps: &[StackMap], top: usize, base: usize, out: &mut Ve
     }
 }
 
+/// Addresses of static words holding Lisp values that may point into the
+/// heap (symbol function and value cells), registered per module.
+static STATIC_ROOTS: std::sync::RwLock<Vec<usize>> = std::sync::RwLock::new(Vec::new());
+
+pub fn register_static_roots(addrs: &[usize]) {
+    STATIC_ROOTS.write().unwrap().extend_from_slice(addrs);
+}
+
 // ---------------------------------------------------------------------------
 // Slots
 
@@ -280,20 +288,31 @@ impl Scanning<Kiln> for KilnScanning {
         factory.create_process_roots_work(slots);
     }
 
-    fn scan_vm_specific_roots(_tls: VMWorkerThread, _factory: impl RootsWorkFactory<KilnSlot>) {
-        // No static objects point into the heap yet.
+    fn scan_vm_specific_roots(_tls: VMWorkerThread, mut factory: impl RootsWorkFactory<KilnSlot>) {
+        let slots: Vec<KilnSlot> = STATIC_ROOTS
+            .read()
+            .unwrap()
+            .iter()
+            .map(|a| KilnSlot(unsafe { Address::from_usize(*a) }))
+            .collect();
+        if !slots.is_empty() {
+            factory.create_process_roots_work(slots);
+        }
     }
 
     fn scan_object<SV: SlotVisitor<KilnSlot>>(_tls: VMWorkerThread, object: ObjectReference, visitor: &mut SV) {
         let base = object.to_raw_address();
         let h = header_of(object);
-        let fields = match h & KIND_MASK {
-            KIND_CONS => 2,
-            KIND_SIMPLE_VECTOR => (h >> LENGTH_SHIFT) as usize,
+        // (offset of the first Lisp field, number of fields)
+        let (first, fields) = match h & KIND_MASK {
+            KIND_CONS => (8, 2),
+            KIND_SIMPLE_VECTOR => (8, (h >> LENGTH_SHIFT) as usize),
+            // Skip the entry address; the env words are Lisp values.
+            KIND_FUNCTION => (16, (h >> LENGTH_SHIFT) as usize),
             k => panic!("scan_object: unexpected kind {k} in the heap"),
         };
         for i in 0..fields {
-            visitor.visit_slot(KilnSlot(base + (8 + 8 * i)));
+            visitor.visit_slot(KilnSlot(base + (first + 8 * i)));
         }
     }
 

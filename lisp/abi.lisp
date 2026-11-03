@@ -17,6 +17,17 @@
 (defconstant +kind-cons+ 3)
 (defconstant +kind-simple-vector+ 4)
 
+;;; Symbol layout: [header, name pointer, name length, function, value].
+;;; Offsets from a tagged pointer.
+(defconstant +symbol-function+ (- 24 +tag-general+))
+(defconstant +symbol-value+ (- 32 +tag-general+))
+;;; Unbound value marker (an immediate the GC ignores).
+(defconstant +unbound+ #x13)
+
+;;; Function object layout: [header (env length << 8), entry, env...].
+(defconstant +length-shift+ 8)
+(defconstant +fobj-env+ (- 16 +tag-general+))
+
 ;;; Cons layout: [header, car, cdr].
 (defconstant +cons-bytes+ 24)
 (defconstant +cons-car+ (- 8 +tag-cons+))
@@ -25,10 +36,15 @@
 ;;; Context field offsets.
 (defconstant +ctx-poll-flag+ 0)
 (defconstant +ctx-dynenv+ 8)
+;;; Transfer area: arguments beyond the register arguments, and (later)
+;;; values beyond the first. VALUES_MAX words.
+(defconstant +ctx-values+ 48)
+(defconstant +values-max+ 64)
 
 ;;; Dynamic-environment entries (stack-allocated in the establishing frame).
 (defconstant +dyn-catch+ 1)
 (defconstant +dyn-unwind-protect+ 2)
+(defconstant +dyn-exit-point+ 5)
 (defconstant +dynentry-size+ 48)
 (defconstant +dyn-kind+ 0)
 (defconstant +dyn-prev+ 8)
@@ -46,6 +62,9 @@
 (defconstant +err-wrong-nargs+ 3)
 (defconstant +err-not-list+ 4)
 (defconstant +err-not-function+ 5)
+(defconstant +err-undefined-function+ 6)
+(defconstant +err-unbound-variable+ 7)
+(defconstant +err-not-symbol+ 8)
 
 ;;; Argument registers in the Lisp calling convention.
 (defconstant +reg-args+ 3)

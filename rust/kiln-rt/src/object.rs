@@ -27,17 +27,28 @@ pub const LENGTH_SHIFT: u32 = 8;
 /// Layout: [header, car, cdr].
 pub const CONS_BYTES: usize = 24;
 
-/// Layout: [header, name pointer, name length]. Statically allocated.
+/// Marks an unbound symbol value. An immediate (low bits 0b011), so the
+/// GC ignores it.
+pub const UNBOUND: u64 = 0x13;
+
+/// Layout: [header, name pointer, name length, function, value].
+/// Statically allocated. `function` is the global function cell (a
+/// function object, or the module's undefined-function object); `value`
+/// is the global value or UNBOUND. Both may point into the heap, so the
+/// compiler registers them as static roots.
 #[repr(C)]
 pub struct SymbolObj {
     pub header: u64,
     pub name: *const u8,
     pub len: u64,
+    pub function: u64,
+    pub value: u64,
 }
 
 unsafe impl Sync for SymbolObj {}
 
-/// Layout: [header, entry address].
+/// Layout: [header (env length << 8), entry address, env...]. The env
+/// words hold the closed-over values of a closure.
 #[repr(C)]
 pub struct FunctionObj {
     pub header: u64,
@@ -51,6 +62,8 @@ pub static kiln_nil: SymbolObj = SymbolObj {
     header: KIND_SYMBOL,
     name: b"NIL".as_ptr(),
     len: 3,
+    function: 0,
+    value: 0, // NIL's value is NIL; never read through this slot.
 };
 
 #[unsafe(no_mangle)]
@@ -58,6 +71,8 @@ pub static kiln_t: SymbolObj = SymbolObj {
     header: KIND_SYMBOL,
     name: b"T".as_ptr(),
     len: 1,
+    function: 0,
+    value: 0,
 };
 
 pub fn tag_general<T>(p: *const T) -> u64 {
@@ -100,8 +115,8 @@ pub fn object_bytes(header: u64) -> usize {
     match header & KIND_MASK {
         KIND_CONS => CONS_BYTES,
         KIND_SIMPLE_VECTOR => 8 + 8 * (header >> LENGTH_SHIFT) as usize,
-        KIND_SYMBOL => 24,
-        KIND_FUNCTION => 16,
+        KIND_SYMBOL => 40,
+        KIND_FUNCTION => 16 + 8 * (header >> LENGTH_SHIFT) as usize,
         k => panic!("object_bytes: unknown kind {k}"),
     }
 }
