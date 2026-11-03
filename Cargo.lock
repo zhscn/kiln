@@ -573,6 +573,7 @@ dependencies = [
 name = "kiln-rt"
 version = "0.0.0"
 dependencies = [
+ "libc",
  "mmtk",
 ]
 

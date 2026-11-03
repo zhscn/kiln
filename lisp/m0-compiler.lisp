@@ -7,7 +7,7 @@
 ;;;; FUNCTION of a global function name, QUOTE of fixnums and symbols, calls
 ;;;; to functions defined in the same file, and the primitives
 ;;;; + - * < > <= >= = EQ NULL NOT CONS CAR CDR CONSP ATOM LIST FUNCALL PRINT
-;;;; %GC %GC-COUNT. Lexical variables only; no closures.
+;;;; %GC %GC-COUNT %CALL-ON-NEW-STACK. Lexical variables only; no closures.
 ;;;;
 ;;;; The point of M0 is to exercise the ABI (docs/06-m0-abi.md): calling
 ;;;; convention, context pointer, poll points, and non-local exit through
@@ -44,6 +44,8 @@
 (defun rt-alloc () (module-import-func "kiln_rt_alloc" 3 1 :unwinds))
 (defun rt-gc () (module-import-func "kiln_rt_gc" 1 1 :unwinds))
 (defun rt-gc-count () (module-import-func "kiln_rt_gc_count" 1 1))
+(defun rt-call-on-new-stack ()
+  (module-import-func "kiln_rt_call_on_new_stack" 3 1 :unwinds))
 
 ;;; Constants
 
@@ -197,6 +199,14 @@
     (%gc (let ((r (new-var)))
            (emit `(:call-rt ,(rt-gc) (,r) (:ctx) ,(handler env)))
            r))
+    (%call-on-new-stack
+     (destructuring-bind (f arg) args
+       (let ((f (copy-to-var (compile-form f env)))
+             (a (compile-form arg env))
+             (r (new-var)))
+         (emit-check-function f env)
+         (emit `(:call-rt ,(rt-call-on-new-stack) (,r) (:ctx ,f ,a) ,(handler env)))
+         r)))
     (%gc-count (let ((r (new-var)))
                  (emit `(:call-rt ,(rt-gc-count) (,r) (:ctx) :nil))
                  r))
@@ -442,16 +452,19 @@ Entries of this frame other than REGION's are dispatched outward."
     (emit `(:call-lisp ,v0 ,nv ,entry (:ctx ,fobj ,(length vals) ,@vals) ,(handler env)))
     v0))
 
-(defun compile-funcall (args env)
-  (let* ((f (copy-to-var (compile-form (first args) env)))
-         (vals (mapcar (lambda (a) (compile-form a env)) (rest args)))
-         (general (new-block)) (bad (new-block)) (ok (new-block)))
+(defun emit-check-function (f env)
+  (let ((general (new-block)) (bad (new-block)) (ok (new-block)))
     (br `(:eq (:and ,f ,+tag-mask+) ,+tag-general+) general bad)
     (start-block general)
     (br `(:eq (:and (:load ,f ,(- +tag-general+)) ,+kind-mask+) ,+kind-function+) ok bad)
     (start-block bad)
     (emit-error +err-not-function+ f env)
-    (start-block ok)
+    (start-block ok)))
+
+(defun compile-funcall (args env)
+  (let* ((f (copy-to-var (compile-form (first args) env)))
+         (vals (mapcar (lambda (a) (compile-form a env)) (rest args))))
+    (emit-check-function f env)
     (emit-lisp-call f (copy-to-var `(:load ,f ,+fobj-entry+) :raw) vals env)))
 
 (defun compile-call (op args env)

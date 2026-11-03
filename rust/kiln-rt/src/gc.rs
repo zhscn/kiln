@@ -125,8 +125,28 @@ pub fn register_stack_maps(records: &[StackMapRecord]) {
 /// saved frame pointer).
 unsafe fn stack_slots(ctx: &Context, out: &mut Vec<KilnSlot>) {
     let maps = STACK_MAPS.read().unwrap();
-    let mut fp = ctx.safepoint_fp;
-    while fp != ctx.stack_base_fp {
+    unsafe {
+        segment_slots(&maps, ctx.safepoint_fp, ctx.stack_base_fp, out);
+        let mut seg = ctx.segments;
+        while !seg.is_null() {
+            segment_slots(&maps, (*seg).top_fp, (*seg).base_fp, out);
+            seg = (*seg).prev;
+        }
+    }
+    let mut e = ctx.dynenv;
+    while !e.is_null() {
+        unsafe {
+            out.push(KilnSlot(Address::from_mut_ptr(&mut (*e).tag)));
+            out.push(KilnSlot(Address::from_mut_ptr(&mut (*e).pend_value)));
+            e = (*e).prev;
+        }
+    }
+}
+
+/// Slots of the Lisp frames between the frame `top` and the base frame `base`.
+unsafe fn segment_slots(maps: &[StackMap], top: usize, base: usize, out: &mut Vec<KilnSlot>) {
+    let mut fp = top;
+    while fp != base {
         assert!(fp != 0, "GC stack walk ran off the stack");
         let ret = unsafe { *((fp + 8) as *const usize) };
         let sp = fp + 16;
@@ -136,14 +156,6 @@ unsafe fn stack_slots(ctx: &Context, out: &mut Vec<KilnSlot>) {
             }
         }
         fp = unsafe { *(fp as *const usize) };
-    }
-    let mut e = ctx.dynenv;
-    while !e.is_null() {
-        unsafe {
-            out.push(KilnSlot(Address::from_mut_ptr(&mut (*e).tag)));
-            out.push(KilnSlot(Address::from_mut_ptr(&mut (*e).pend_value)));
-            e = (*e).prev;
-        }
     }
 }
 

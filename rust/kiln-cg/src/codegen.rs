@@ -12,7 +12,8 @@ use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
 use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
 use std::collections::HashMap;
 
-/// Exported System V entry trampoline: (ctx, fobj, entry) -> primary value.
+/// Exported System V entry trampoline: (ctx, fobj, entry, nargs, a0) ->
+/// primary value.
 pub const ENTER_NAME: &str = "kiln_enter";
 pub const MODULE_INFO_NAME: &str = "kiln_module_info";
 
@@ -129,7 +130,7 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
         names.insert(f.name.clone(), Ref::Func(id));
         func_ids.push(id);
     }
-    let enter_sig = word_signature(sysv, 3, 1);
+    let enter_sig = word_signature(sysv, 5, 1);
     let enter = module
         .declare_function(ENTER_NAME, Linkage::Export, &enter_sig)
         .map_err(err)?;
@@ -259,8 +260,8 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
         let fp = b.ins().get_frame_pointer(I64);
         b.ins().store(mf, fp, p[0], off);
         let zero = b.ins().iconst(I64, 0);
-        let mut args = vec![p[0], p[1], zero];
-        args.extend((0..kir::REG_ARGS).map(|_| zero));
+        let mut args = vec![p[0], p[1], p[3], p[4]];
+        args.extend((1..kir::REG_ARGS).map(|_| zero));
         let sigref = b.import_signature(lisp_sig.clone());
         let call = b.ins().call_indirect(sigref, p[2], &args);
         let v0 = b.inst_results(call)[0];

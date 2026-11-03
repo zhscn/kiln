@@ -14,7 +14,7 @@ kiln 是一个现代 Common Lisp 实现：开发时是完整的活 image，交�
 
 ## 状态
 
-M0 已完成（SBCL → KIR → Cranelift，JIT 和 AOT 两条路径）。M1 进行中：MMTk 和精确栈图已完成，接下来是多栈切换测试（C8）。各文档的“待定问题”一节列出尚未决定的事项。
+M0、M1 已完成：SBCL → KIR → Cranelift（JIT 和 AOT），MMTk 移动式 GC 和精确栈图，多栈段和跨栈展开。下一步是 M2（接入 Common-boot 前端和 Clostrum 目标环境）。各文档的“待定问题”一节列出尚未决定的事项。
 
 ## 约定
 

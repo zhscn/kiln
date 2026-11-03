@@ -9,3 +9,4 @@ crate-type = ["rlib"]
 
 [dependencies]
 mmtk.workspace = true
+libc.workspace = true

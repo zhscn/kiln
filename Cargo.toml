@@ -10,6 +10,7 @@ license = "BSD-2-Clause"
 [workspace.dependencies]
 kiln-rt = { path = "rust/kiln-rt" }
 mmtk = { version = "0.33", default-features = false }
+libc = "0.2"
 cranelift-codegen = "0.137"
 cranelift-frontend = "0.137"
 cranelift-module = "0.137"

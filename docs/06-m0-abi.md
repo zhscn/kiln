@@ -48,7 +48,7 @@ Rust: kiln-launcher           staticlib，提供 C main，链接 kiln-rt
   - 返回 `v0` 和 `nvals`：主值和值的个数。第二个及之后的值放在 `ctx.values` 里，**多值在 M0 里还没用到**。
 - **调用全局函数**：从函数 cell 读出函数对象，从函数对象读出入口地址，再 `call_indirect`。重定义时只改 cell。call-site manager 留到以后（[05 §3.5](05-sicl-survey.md#35-call-site-manager只有设计代码是空壳)）。
 - **帧指针**：`preserve_frame_pointers = true`。unwinder 依靠 FP 链遍历栈帧，以后 GC 扫描栈也要用。
-- **从 runtime 进入 Lisp**：kiln-cg 在每个模块里生成 System V 调用约定的 `kiln_enter(ctx, fobj, entry)`，在里面转成 `tail` 约定调用。
+- **从 runtime 进入 Lisp**：kiln-cg 在每个模块里生成 System V 调用约定的 `kiln_enter(ctx, fobj, entry, nargs, a0)`，在里面转成 `tail` 约定调用，并把自己的帧记为当前栈段的段底（M1）。
 
 ## 5. Context 布局（C1）
 
@@ -59,7 +59,8 @@ Rust: kiln-launcher           staticlib，提供 C main，链接 kiln-rt
 | 16 | `stack_base_fp` | `kiln_enter` 帧的帧指针，GC 栈遍历的终点（M1） |
 | 24 | `safepoint_fp` | 最近一次 safepoint 的 trampoline 帧指针，GC 栈遍历的起点（M1） |
 | 32 | `mutator` | MMTk mutator（M1） |
-| 40 | `values[64]` | 第二个及之后的返回值（未使用） |
+| 40 | `segments` | 挂起的栈段链（M1，见 [07 §8](07-m1-gc.md#8-栈和栈段c2c8)） |
+| 48 | `values[64]` | 第二个及之后的返回值（未使用） |
 
 两侧的定义：`rust/kiln-rt/src/context.rs` 和 `lisp/abi.lisp`，修改时必须同步。
 
@@ -73,7 +74,7 @@ Rust: kiln-launcher           staticlib，提供 C main，链接 kiln-rt
 
 | 偏移 | 字段 |
 |---|---|
-| 0 | kind：1 是 catch，2 是 unwind-protect，3 是 cleanup 运行中（M1，见 [07 §7](07-m1-gc.md#7-修复cleanup-运行期间条目留在链上)） |
+| 0 | kind：1 是 catch，2 是 unwind-protect，3 是 cleanup 运行中（M1，见 [07 §7](07-m1-gc.md#7-修复cleanup-运行期间条目留在链上)），4 是栈边界（M1，见 [07 §8](07-m1-gc.md#8-栈和栈段c2c8)） |
 | 8 | prev |
 | 16 | fp：建立条目那一帧的帧指针（`get_frame_pointer`） |
 | 24 | tag（只有 catch 用；GC root，不用时写 0） |
@@ -161,7 +162,7 @@ Rust: kiln-launcher           staticlib，提供 C main，链接 kiln-rt
 
 - ~~MMTk 接入、对象分配、cons~~（M1 完成）。完整的对象表示（rack 等）留到 M4。
 - ~~栈图导出给 runtime~~（M1 完成）。还要和调用点表合并成统一的“调用点描述符”。
-- C8 的 `%switch-stack` 测试。
+- ~~C8 的多栈测试~~（M1 完成，`%call-on-new-stack`）。
 - 超过 3 个参数时的溢出区、`&optional`/`&rest`/`&key`、多值。
 - special 变量（TLS 索引，C1），以及绑定在展开时的恢复（动态环境条目再加一种 kind）。
 - 跨函数的 `return-from`。

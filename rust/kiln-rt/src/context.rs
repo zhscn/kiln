@@ -3,6 +3,7 @@
 //! Field offsets are part of the ABI; see docs/06-m0-abi.md and docs/07-m1-gc.md.
 
 use crate::gc::KilnMutator;
+use crate::stack::Segment;
 
 pub const VALUES_MAX: usize = 64;
 
@@ -20,7 +21,9 @@ pub struct Context {
     pub safepoint_fp: usize,
     /// Offset 32. MMTk mutator of this context.
     pub mutator: *mut KilnMutator,
-    /// Offset 40. Extra return values beyond the first (unused so far).
+    /// Offset 40. Suspended segments of Lisp frames (see stack.rs).
+    pub segments: *mut Segment,
+    /// Offset 48. Extra return values beyond the first (unused so far).
     pub values: [u64; VALUES_MAX],
 }
 
@@ -34,6 +37,7 @@ impl Context {
             stack_base_fp: 0,
             safepoint_fp: 0,
             mutator: core::ptr::null_mut(),
+            segments: core::ptr::null_mut(),
             values: [0; VALUES_MAX],
         });
         ctx.mutator = crate::gc::bind_mutator(&mut *ctx);
@@ -47,6 +51,10 @@ pub const DYN_UNWIND_PROTECT: u64 = 2;
 /// through it. It stays linked so that the GC sees the pending value; an
 /// unwind that passes it again just unlinks it.
 pub const DYN_CLEANUP_RUNNING: u64 = 3;
+/// Marks where `%call-on-new-stack` switched stacks (see stack.rs). `fp` is
+/// the frame to continue unwinding from on the old stack; `pend_target`
+/// owns the new stack.
+pub const DYN_STACK_BOUNDARY: u64 = 4;
 
 /// A dynamic-environment entry. Allocated in a stack slot of the frame that
 /// establishes it, and linked through `prev`. Layout is part of the ABI.

@@ -28,7 +28,7 @@
 (defpackage #:kiln.sys
   (:use)
   (:documentation "Implementation-specific operators available to compiled code.")
-  (:export #:%gc #:%gc-count))
+  (:export #:%gc #:%gc-count #:%call-on-new-stack))
 
 (defpackage #:kiln.m0
   (:use #:cl #:kiln.abi #:kiln.kir #:kiln.sys)

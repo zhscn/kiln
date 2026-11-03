@@ -11,7 +11,9 @@
 //! register as clobbered on the exceptional edge, so no callee-saved register
 //! needs restoring: setting PC, SP and FP is enough.
 
-use crate::context::{Context, DYN_CATCH, DYN_CLEANUP_RUNNING, DYN_UNWIND_PROTECT, DynEntry};
+use crate::context::{
+    Context, DYN_CATCH, DYN_CLEANUP_RUNNING, DYN_STACK_BOUNDARY, DYN_UNWIND_PROTECT, DynEntry,
+};
 use std::sync::RwLock;
 
 /// One call site with an exception handler, in absolute addresses.
@@ -108,6 +110,7 @@ unsafe fn resume_in_frame(start_fp: usize, frame_fp: usize, p0: u64, p1: u64) ->
 /// target and value, which the GC updates) and ends by calling
 /// `kiln_rt_continue_unwind`.
 unsafe fn unwind_to(ctx: *mut Context, target: *mut DynEntry, value: u64, start_fp: usize) -> ! {
+    let mut start_fp = start_fp;
     unsafe {
         loop {
             let top = (*ctx).dynenv;
@@ -124,7 +127,11 @@ unsafe fn unwind_to(ctx: *mut Context, target: *mut DynEntry, value: u64, start_
                 (*top).pend_value = value;
                 resume_in_frame(start_fp, (*top).fp, top as u64, 0);
             }
-            // A catch, or a cleanup abandoned by this unwind.
+            if (*top).kind == DYN_STACK_BOUNDARY {
+                // Leave the current stack; continue on the one below.
+                start_fp = crate::stack::leave_stack(ctx, top);
+            }
+            // A catch, a cleanup abandoned by this unwind, or a boundary.
             (*ctx).dynenv = (*top).prev;
         }
     }
