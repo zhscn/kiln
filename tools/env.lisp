@@ -1,0 +1,20 @@
+;;;; Load into SBCL (with Quicklisp already set up, e.g. from ~/.sbclrc) to
+;;;; make kiln and its dependencies loadable:
+;;;;
+;;;;   sbcl --load tools/env.lisp --eval '(ql:quickload "kiln")'
+;;;;
+;;;; Pinned dependencies (deps.lock) are searched in $KILN_DEPS_DIR, default
+;;;; deps/ in the repository (see tools/fetch-deps.sh); everything else comes
+;;;; from the Quicklisp dist.
+
+(let* ((root (merge-pathnames "../" (make-pathname :name nil :type nil
+                                                   :defaults *load-truename*)))
+       (env (uiop:getenv "KILN_DEPS_DIR"))
+       (deps (if (and env (plusp (length env)))
+                 (uiop:ensure-directory-pathname env)
+                 (merge-pathnames "deps/" root))))
+  (asdf:initialize-source-registry
+   `(:source-registry
+     (:directory ,(truename root))
+     (:tree ,deps)
+     :inherit-configuration)))

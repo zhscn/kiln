@@ -2,3 +2,4 @@
 *.kir
 *.o
 /build
+/deps

@@ -137,6 +137,15 @@ kernel 原语和 primop（cons/symbol/vector/funcall/闭包/GC）
 
 **风险最大的是 M0 和 M1**：调用约定和栈图一旦定错，后面全部要返工，所以要最早验证。**工作量最大的是 M3 和 M4**，但基本是体力活。
 
+## Lisp 依赖
+
+- SICL 生态的模块和 Quicklisp 里没有的传递依赖，按 URL、分支、commit 固定在仓库根目录的 `deps.lock` 里。`tools/fetch-deps.sh` 把它们 clone 到 `deps/`（不提交；可以用 `KILN_DEPS_DIR` 指向别处），`--check` 只检查 commit 是否一致。
+- 其余依赖（closer-mop、let-plus、more-conditions 等）从 Quicklisp 获取。
+- `tools/env.lisp` 设置 ASDF 的 source registry，之后用 `ql:quickload` 加载。
+- 不用 submodule，也不 vendor 进仓库：部分模块没有许可证文件（见 05 §7.3）。
+- **s-expression-syntax 必须用 `beach` 分支**。Common-macros 和 Common-boot 用到的 `ses:unparse` 只在这个分支上，默认分支 `builder-protocol` 没有。SICL 的 `get-dependencies.sh` 没有写明这一点。
+- parser.packrat 不在 Quicklisp 里，s-expression-syntax 依赖它（它自己的 CI 也是单独 clone 的）。
+
 ## 仓库结构（初步）
 
 ```
