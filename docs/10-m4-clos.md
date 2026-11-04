@@ -64,3 +64,19 @@
 ## 6. M4.2：编译 Clostrophilia 之前的准备
 
 - **LOOP**：Clostrophilia 有 75 处 `loop`。在宿主里加载 khazern-extrinsic，把它的 `loop`、`loop-finish` 宏函数装进编译期环境作为 `cl:loop`、`cl:loop-finish`。Khazern 的展开结果只用标准运算符，不引用它自己的运行期函数，所以目标端不需要加载 Khazern。`tests/m3/loop-macro.lisp`。
+
+## 7. 引导方案（M4.3、M4.4 的设计）
+
+按 PCL 的思路，在目标端用 early 函数引导，顺序参照 SICL 的 Phase 4（`Code/New-boot/Phase-4/boot.lisp`），但只有一个环境：
+
+1. **宿主侧准备**：目标源码里的 `defpackage` 在宿主里执行，只是为了读入后面的源码（运行期仍然没有包，M4.5 接入 Parcl 后补上）。
+2. **kernel 的 CLOS 原语**：`allocate-general-instance`、`standard-instance-access`、`stamp`、`small-integer=`/`<`、`+unbound-slot-value+`、方法组合模板的登记表（symbol 的 plist）、`find-class`（类名到类对象，也放在 symbol 的 plist）、`+1` 别名。
+3. **early `ensure-class`**：`defclass` 由 Common-macros 展开成对 `ensure-class` 的调用。加载 Clostrophilia 的 `Class-hierarchy` 时，early `ensure-class` 只记录类的描述（名字、直接超类、直接槽、元类、default initargs），不创建对象。
+4. **建 braid**：类层次全部记录之后，一次性创建所有类的元对象：
+   - 按 Clostrophilia 的算法计算每个类的优先级列表和有效槽（必须和它的 `compute-class-precedence-list`、`compute-slots` 给出相同的结果，因为以后真正的 MOP 会基于这些槽位置）；
+   - 每个元对象按它的元类的有效槽分配，用 early `make-instance` 填写：对每个有效槽，从 initarg 取值，否则调用 initfunction。槽定义对象、类对象都这样建；
+   - 再按槽名直接填写派生的槽：优先级列表、有效槽、实例大小、唯一编号（stamp）、已终结标志、直接子类。
+5. **early 泛函**：`defgeneric`/`defmethod` 展开成 `ensure-generic-function`/`ensure-method`。early 版本用 early `make-instance` 创建泛函（funcallable instance）和方法，并安装一个 **early 判别函数**：按每个必需参数的 `class-of` 和优先级列表计算适用方法，按特化程度排序，按 standard 方法组合执行（around、before、primary、after）。它很慢，但已经是完整的分派，足以运行 Clostrophilia 自己的初始化和终结方法。
+6. **加载 Clostrophilia 的其余部分**：槽访问、对象初始化、类终结、方法组合、泛函调用（已打上解释执行的补丁）。
+7. **切换**：对所有泛函做 satiation（用 Clostrophilia 的 `compute-discriminating-function`，此时它不再需要编译器），安装真正的判别函数；early 访问器换成真正的泛函。之后 `defclass` 走真正的 `ensure-class`。
+8. **内建类**：kiln 自己定义 `t`、`symbol`、`cons`、`fixnum`、`integer`、`character`、`string` 等内建类（元类 `built-in-class`），`class-of` 按对象的 tag 和 kind 查表。
