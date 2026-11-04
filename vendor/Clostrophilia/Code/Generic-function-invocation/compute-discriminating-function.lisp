@@ -270,39 +270,46 @@
 ;;; combination and the short forms.  Long-form DEFINE-METHOD-COMBINATION
 ;;; bodies that produce other code need the compiler.
 
+(defun effective-method-body (effective-method)
+  (if (and (consp effective-method)
+           (eq (first effective-method) 'lambda)
+           (consp (third effective-method))
+           (eq (first (third effective-method)) 'macrolet)
+           (consp (third (third effective-method)))
+           (eq (first (third (third effective-method))) 'macrolet))
+      (third (third (third effective-method)))
+      (error "unsupported effective method form" effective-method)))
+
 (defun effective-method-function (generic-function effective-method)
-  (let ((form (if (and (consp effective-method)
-                       (eq (first effective-method) 'lambda)
-                       (consp (third effective-method))
-                       (eq (first (third effective-method)) 'macrolet)
-                       (consp (third (third effective-method)))
-                       (eq (first (third (third effective-method))) 'macrolet))
-                  (third (third (third effective-method)))
-                  (error "unsupported effective method form" effective-method))))
-    (effective-method-closure
-     form (generic-function-method-class generic-function))))
+  (effective-method-closure
+   (effective-method-body effective-method)
+   (generic-function-method-class generic-function)))
 
 (defun make-method-form-p (form)
   (and (consp form) (eq (first form) 'make-method)))
+
+;;; The next methods of a CALL-METHOD form: MAKE-METHOD forms become
+;;; methods whose function interprets the form.
+(defun resolve-next-methods (next-methods method-class)
+  (loop for next in next-methods
+        collect
+        (if (make-method-form-p next)
+            (let ((closure (effective-method-closure (second next) method-class)))
+              (make-method-instance method-class
+                :qualifiers '()
+                :lambda-list '()
+                :specializers '()
+                :function (lambda (arguments next-methods)
+                            (declare (ignore next-methods))
+                            (funcall closure arguments))))
+            next)))
 
 (defun call-method-closure (method next-methods method-class)
   (if (make-method-form-p method)
       (effective-method-closure (second method) method-class)
       (let ((function (method-function method))
             (keyp (member '&key (method-lambda-list method)))
-            (next-methods
-              (loop for next in next-methods
-                    collect
-                    (if (make-method-form-p next)
-                        (let ((closure (effective-method-closure (second next) method-class)))
-                          (make-method-instance method-class
-                            :qualifiers '()
-                            :lambda-list '()
-                            :specializers '()
-                            :function (lambda (arguments next-methods)
-                                        (declare (ignore next-methods))
-                                        (funcall closure arguments))))
-                        next))))
+            (next-methods (resolve-next-methods next-methods method-class)))
         (if keyp
             (lambda (arguments)
               (funcall function (append arguments '(:allow-other-keys t)) next-methods))
@@ -433,9 +440,17 @@
                   generic-function
                   method-combination
                   final-methods))
-               ;; kiln: interpreted.
+               ;; kiln: interpreted; called with the arguments themselves
+               ;; when the generic function has only required
+               ;; parameters (SPREAD-ARITY).
                (effective-method-function
-                 (effective-method-function generic-function effective-method)))
+                 (let ((list-function
+                         (effective-method-function generic-function effective-method))
+                       (arity (spread-arity generic-function)))
+                   (if arity
+                       (spread-effective-method-function
+                        generic-function arity effective-method list-function)
+                       list-function))))
           ;; Add a new call cache to the call history.
           (setf (call-history generic-function)
                 (cons (make-call-cache relevant-classes
@@ -515,26 +530,29 @@
       ;; argument itself if it is one of their objects (upstream computes
       ;; it at each call).
       #+kiln
-      (let* ((cache (eql-dispatch-cache generic-function))
-             (key (eql-dispatch-key (car cache) required-arguments classes profile))
-             (hit (assoc key (cdr cache) :test #'equal)))
-        (when hit
+      (let ((cache (eql-dispatch-cache generic-function))
+            (applicable-methods
+              (compute-applicable-methods generic-function arguments)))
+        (when (null applicable-methods)
+          (apply #'no-applicable-method generic-function arguments))
+        (let* ((effective-method
+                 (compute-effective-method
+                  generic-function
+                  (generic-function-method-combination generic-function)
+                  (final-methods applicable-methods classes)))
+               (list-function
+                 (effective-method-function generic-function effective-method))
+               (arity (spread-arity generic-function)))
+          (when (< (length (cdr cache)) 256)
+            (push (make-eql-dispatch-entry
+                   (if arity
+                       (spread-effective-method-function
+                        generic-function arity effective-method list-function)
+                       list-function)
+                   (car cache) required-arguments profile)
+                  (cdr cache)))
           (return-from default-discriminating-function
-            (funcall (cdr hit) arguments)))
-        (let ((applicable-methods
-                (compute-applicable-methods generic-function arguments)))
-          (when (null applicable-methods)
-            (apply #'no-applicable-method generic-function arguments))
-          (let ((effective-method-function
-                  (effective-method-function
-                   generic-function
-                   (compute-effective-method
-                    generic-function
-                    (generic-function-method-combination generic-function)
-                    (final-methods applicable-methods classes)))))
-            (push (cons key effective-method-function) (cdr cache))
-            (return-from default-discriminating-function
-              (funcall effective-method-function arguments)))))
+            (funcall list-function arguments))))
       (let ((applicable-methods
               (compute-applicable-methods generic-function arguments)))
         (when (null applicable-methods)
@@ -552,35 +570,43 @@
           (funcall effective-method-function arguments))))))
 
 ;;; kiln: caches of the effective methods of generic functions with EQL
-;;; specializers (see DEFAULT-DISCRIMINATING-FUNCTION): an alist from
-;;; generic functions to (EQL-OBJECTS . ENTRIES), where EQL-OBJECTS lists
-;;; the objects of the EQL specializers of each required parameter and
-;;; ENTRIES maps keys to effective method functions. Emptied by
-;;; INVALIDATE-DISCRIMINATING-FUNCTION. (Hash tables do not exist yet
+;;; specializers, for the calls whose applicable methods the classes of
+;;; the arguments do not determine (see DEFAULT-DISCRIMINATING-FUNCTION;
+;;; upstream computes them at each call).  An alist from generic
+;;; functions to (EQL-OBJECTS . ENTRIES): EQL-OBJECTS lists the objects
+;;; of the EQL specializers of each required parameter, and an entry is a
+;;; simple vector of the effective method function (spread, see
+;;; SPREAD-ARITY, or of the list of arguments) and one specifier for each
+;;; required argument: NIL for unspecialized parameters, (OBJECT) for an
+;;; argument EQL to OBJECT, one of the EQL objects, and otherwise the
+;;; stamp of the argument's class (the argument then is none of the EQL
+;;; objects).  The discriminating function looks the entries up (see
+;;; MAKE-DISCRIMINATING-CLOSURE).  Emptied by
+;;; INVALIDATE-DISCRIMINATING-FUNCTION.  (Hash tables do not exist yet
 ;;; when this file is loaded.)
 (defvar *eql-dispatch-caches* '())
 
+(defun eql-specializer-objects (generic-function)
+  (let* ((methods (%slot generic-function '%methods))
+         (eql-specializer-class (find-class 'eql-specializer))
+         (count (length (%slot (first methods) '%specializers))))
+    (loop for i from 0 below count
+          collect (loop for method in methods
+                        for specializer = (nth i (%slot method '%specializers))
+                        when (eq (class-of specializer) eql-specializer-class)
+                          collect (%slot specializer '%object)))))
+
 (defun eql-dispatch-cache (generic-function)
   (or (cdr (assoc generic-function *eql-dispatch-caches* :test #'eq))
-      (let* ((methods (generic-function-methods generic-function))
-             (count (length (method-specializers (first methods))))
-             (objects (loop for i from 0 below count
-                            collect (loop for method in methods
-                                          for specializer = (nth i (method-specializers method))
-                                          unless (classp specializer)
-                                            collect (eql-specializer-object specializer))))
-             (cache (cons objects '())))
+      (let ((cache (cons (eql-specializer-objects generic-function) '())))
         (push (cons generic-function cache) *eql-dispatch-caches*)
         cache)))
 
-(defun eql-dispatch-key (objects arguments classes profile)
-  (loop for argument in arguments
-        for class in classes
-        for p in profile
-        for eql-objects in objects
-        collect (if (and p (member argument eql-objects :test #'eql))
-                    (list :eql argument)
-                    class)))
+;;; The cache of GENERIC-FUNCTION if it has methods with EQL specializers.
+(defun eql-dispatch-cache-if-any (generic-function)
+  (and (%slot generic-function '%methods)
+       (some #'identity (eql-specializer-objects generic-function))
+       (eql-dispatch-cache generic-function)))
 
 (defun forget-eql-dispatch-cache (generic-function)
   (setf *eql-dispatch-caches*
@@ -588,12 +614,11 @@
 
 ;;; kiln: the discriminating function interprets the automaton instead
 ;;; of compiling the TAGBODY that COMPUTE-DISCRIMINATING-TAGBODY makes.  An
-;;; internal state is a simple vector of entries (START END TARGET),
-;;; sorted by START, for the stamps START <= stamp < END (the transfer
-;;; groups of MAKE-TRANSFER-GROUPS); a final state is (:FINAL . effective
-;;; method).  Each specialized required argument takes one transition,
-;;; found by binary search; a miss calls the default discriminating
-;;; function.
+;;; internal state is a simple vector of triples START END TARGET, sorted
+;;; by START, for the stamps START <= stamp < END (the transfer groups of
+;;; MAKE-TRANSFER-GROUPS); a final state is (:FINAL . effective method).
+;;; Each specialized required argument takes one transition, found by
+;;; binary search; a miss calls the default discriminating function.
 
 (defun automaton-states (info)
   ;; Returns the initial state.
@@ -607,66 +632,249 @@
                                       (coerce
                                        (loop for ((start . end) . target)
                                                in (make-transfer-groups content)
-                                             collect (list start end
-                                                           (cdr (assoc target states))))
+                                             collect start
+                                             collect end
+                                             collect (cdr (assoc target states)))
                                        'simple-vector)))
                             states))
              (setf final-layer-p nil))
     (cdr (first states))))
 
-(defun automaton-transition (state stamp)
-  ;; Open-coded fixnum arithmetic: this runs at every call of a generic
-  ;; function.
-  (let ((low 0)
-        (high (length state)))
-    (loop while (< low high)
-          do (let* ((middle (kiln.sys:%primop :fixnum-quotient (+ low high) 2))
-                    (entry (svref state middle)))
-               (cond ((< stamp (first entry))
-                      (setf high middle))
-                     ((< stamp (second entry))
-                      (return-from automaton-transition (third entry)))
-                     (t
-                      (setf low (+ middle 1))))))
-    nil))
+;;; The target of the transition of STATE on STAMP, or NIL. Open-coded
+;;; fixnum arithmetic: this runs at every call of a generic function.
+(defmacro automaton-transition (state-form stamp-form)
+  (let ((state (gensym)) (stamp (gensym)) (low (gensym)) (high (gensym))
+        (middle (gensym)) (index (gensym)) (block (gensym)))
+    `(let* ((,state ,state-form) (,stamp ,stamp-form) (,low 0)
+            (,high (kiln.sys:%primop :fixnum-quotient (length ,state) 3)))
+       (block ,block
+         ;; LOW, HIGH and MIDDLE count triples; INDEX is MIDDLE's first
+         ;; element.
+         (loop while (< ,low ,high)
+               do (let* ((,middle (kiln.sys:%primop :fixnum-quotient (+ ,low ,high) 2))
+                         (,index (+ ,middle ,middle ,middle)))
+                    (cond ((< ,stamp (svref ,state ,index))
+                           (setf ,high ,middle))
+                          ((< ,stamp (svref ,state (+ ,index 1)))
+                           (return-from ,block (svref ,state (+ ,index 2))))
+                          (t
+                           (setf ,low (+ ,middle 1))))))
+         nil))))
 
-(defun argument-stamp (object)
-  (if (or (kiln.sys:%primop :standard-instance-p object)
-          (kiln.sys:%primop :funcallable-instance-p object))
-      (kiln.sys:%primop :standard-instance-access object -2)
-      (stamp+1 object)))
+(defmacro argument-stamp (object-form)
+  (let ((object (gensym)))
+    `(let ((,object ,object-form))
+       (if (or (kiln.sys:%primop :standard-instance-p ,object)
+               (kiln.sys:%primop :funcallable-instance-p ,object))
+           (kiln.sys:%primop :standard-instance-access ,object -2)
+           (stamp+1 ,object)))))
+
+(defun make-eql-dispatch-entry (effective-method-function objects arguments profile)
+  (let ((entry (kiln.kernel::make-simple-vector (+ 1 (length profile)) nil)))
+    (setf (svref entry 0) effective-method-function)
+    (loop for argument in arguments
+          for p in profile
+          for eql-objects in objects
+          for i from 1
+          do (setf (svref entry i)
+                   (cond ((not p) nil)
+                         ((member argument eql-objects) (list argument))
+                         (t (argument-stamp argument)))))
+    entry))
+
+;;; Does the specifier SPEC of an entry match ARGUMENT, whose stamp is
+;;; STAMP? EQL-OBJECTS are the EQL objects of the parameter.
+(defmacro eql-dispatch-match (spec-form argument stamp eql-objects)
+  (let ((spec (gensym)))
+    `(let ((,spec ,spec-form))
+       (cond ((null ,spec) t)
+             ((consp ,spec) (eql ,argument (car ,spec)))
+             (t (and (eql ,stamp ,spec)
+                     (not (member ,argument ,eql-objects))))))))
+
+(defun eql-dispatch-lookup (cache arguments)
+  (loop for entry in (cdr cache)
+        when (loop for argument in arguments
+                   for eql-objects in (car cache)
+                   for i from 1 below (length entry)
+                   always (eql-dispatch-match (svref entry i) argument
+                                              (argument-stamp argument) eql-objects))
+          return (svref entry 0)))
+
+;;; kiln: generic functions whose lambda lists have only required
+;;; parameters, at most six, are called without making a list of the
+;;; arguments: the discriminating function has those parameters, and so
+;;; do the effective method functions of their call histories (docs/10
+;;; §26 of kiln).
+
+;;; The slots are read directly (kiln's %SLOT): these functions run when
+;;; a generic function misses, and the readers are generic functions.
+(defun spread-arity (generic-function)
+  (let ((lambda-list (%slot generic-function '%lambda-list)))
+    (and (consp lambda-list)
+         (<= (length lambda-list) 6)
+         (loop for parameter in lambda-list
+               never (member parameter lambda-list-keywords))
+         (length lambda-list))))
+
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (defun spread-parameters (n)
+    (loop for i from 0 below n
+          collect (intern (format nil "A~D" i) '#:clostrophilia)))
+
+  ;; FORM with each %ARGUMENTS in a list replaced by PARAMETERS.
+  (defun splice-arguments (form parameters)
+    (if (atom form)
+        form
+        (loop for x in form
+              append (if (eq x '%arguments)
+                         (copy-list parameters)
+                         (list (splice-arguments x parameters)))))))
+
+;;; (SPREAD-CASE N FORM) evaluates FORM with %ARGUMENTS spliced into the
+;;; parameters A0 ... A(N-1), for N from 1 to 6.
+(defmacro spread-case (n form)
+  `(ecase ,n
+     ,@(loop for i from 1 to 6
+             collect `(,i ,(splice-arguments form (spread-parameters i))))))
+
+(defun spread-list-function (arity list-function)
+  (spread-case arity
+    (lambda (%arguments) (funcall list-function (list %arguments)))))
+
+;;; An effective method that is one method: an accessor method that
+;;; MAYBE-REPLACE-METHOD made, which accesses the slot directly, or a
+;;; method with a fast function. Anything else goes through the list.
+(defun spread-effective-method-function
+    (generic-function arity effective-method list-function)
+  (let ((form (effective-method-body effective-method))
+        (method-class (generic-function-method-class generic-function)))
+    (or (and (consp form)
+             (eq (first form) 'call-method)
+             (not (make-method-form-p (second form)))
+             (spread-method-call (second form)
+                                 (resolve-next-methods (third form) method-class)
+                                 arity))
+        (spread-list-function arity list-function))))
+
+(defun spread-method-call (method next-methods arity)
+  (let ((class (class-of method)))
+    (cond ((and (eq class (find-class 'standard-reader-method)) (= arity 1))
+           (let ((location (%slot method '%slot-location))
+                 (name (%slot (%slot method '%slot-definition) '%name)))
+             (if (consp location)
+                 (lambda (a0) (declare (ignore a0)) (car location))
+                 (lambda (a0)
+                   (let ((value (kiln.sys:%primop :standard-instance-access a0 location)))
+                     (if (eq value +unbound-slot-value+)
+                         (slot-unbound (class-of a0) a0 name)
+                         value))))))
+          ((and (eq class (find-class 'standard-writer-method)) (= arity 2))
+           (let ((location (%slot method '%slot-location)))
+             (if (consp location)
+                 (lambda (a0 a1) (declare (ignore a1)) (setf (car location) a0))
+                 (lambda (a0 a1)
+                   (kiln.sys:%primop :set-standard-instance-access a1 location a0)
+                   a0))))
+          (t
+           (let ((fast (kiln.sys:%method-fast-function method)))
+             (and fast
+                  (spread-case arity
+                    (lambda (%arguments) (funcall fast next-methods %arguments)))))))))
+
+(defun make-spread-discriminating-closure
+    (generic-function arity profile initial eql-cache)
+  (let ((p0 (nth 0 profile)) (p1 (nth 1 profile)) (p2 (nth 2 profile))
+        (p3 (nth 3 profile)) (p4 (nth 4 profile)) (p5 (nth 5 profile))
+        (o0 (nth 0 (car eql-cache))) (o1 (nth 1 (car eql-cache)))
+        (o2 (nth 2 (car eql-cache))) (o3 (nth 3 (car eql-cache)))
+        (o4 (nth 4 (car eql-cache))) (o5 (nth 5 (car eql-cache))))
+    (declare (ignorable p0 p1 p2 p3 p4 p5 o0 o1 o2 o3 o4 o5))
+    (macrolet ((discriminator (n)
+                 (let* ((parameters (spread-parameters n))
+                        (flags (subseq '(p0 p1 p2 p3 p4 p5) 0 n))
+                        (objects (subseq '(o0 o1 o2 o3 o4 o5) 0 n))
+                        (stamps (loop for i from 0 below n
+                                      collect (intern (format nil "S~D" i)
+                                                      '#:clostrophilia))))
+                   `(lambda ,parameters
+                      (let ((state initial))
+                        ,@(loop for parameter in parameters
+                                for flag in flags
+                                collect `(when (and ,flag state)
+                                           (setf state (automaton-transition
+                                                        state (argument-stamp ,parameter)))))
+                        (if (consp state)
+                            (funcall (cdr state) ,@parameters)
+                            (let ((function
+                                    (and eql-cache
+                                         (let ,(loop for stamp in stamps
+                                                     for flag in flags
+                                                     for parameter in parameters
+                                                     collect `(,stamp (if ,flag
+                                                                          (argument-stamp ,parameter)
+                                                                          0)))
+                                           (loop for entry in (cdr eql-cache)
+                                                 when (and ,@(loop for parameter in parameters
+                                                                   for stamp in stamps
+                                                                   for object in objects
+                                                                   for i from 1
+                                                                   collect `(eql-dispatch-match
+                                                                             (svref entry ,i)
+                                                                             ,parameter ,stamp
+                                                                             ,object)))
+                                                   return (svref entry 0))))))
+                              (if function
+                                  (funcall function ,@parameters)
+                                  (default-discriminating-function
+                                   generic-function (list ,@parameters) profile)))))))))
+      (ecase arity
+        (1 (discriminator 1)) (2 (discriminator 2)) (3 (discriminator 3))
+        (4 (discriminator 4)) (5 (discriminator 5)) (6 (discriminator 6))))))
 
 (defun make-discriminating-closure (generic-function)
   (let* ((specializer-profile (specializer-profile generic-function))
          (active-arg-count (loop for x in specializer-profile count x))
-         (call-history (call-history generic-function)))
-    (when (null call-history)
+         (call-history (call-history generic-function))
+         (arity (spread-arity generic-function))
+         (eql-cache (eql-dispatch-cache-if-any generic-function)))
+    (when (and (null call-history) (null eql-cache))
       (return-from make-discriminating-closure
         (lambda (&rest arguments)
           (default-discriminating-function
            generic-function arguments (specializer-profile generic-function)))))
-    (when (small-integer= active-arg-count 0)
+    (when (and call-history (small-integer= active-arg-count 0))
       (let ((effective-method (effective-method-cache (first call-history))))
         (return-from make-discriminating-closure
+          (if arity
+              effective-method
+              (lambda (&rest arguments)
+                (funcall effective-method arguments))))))
+    (let ((initial
+            (and call-history
+                 (let ((automaton (make-automaton (1+ active-arg-count))))
+                   (loop for call-cache in call-history
+                         do (add-path automaton
+                                      (class-cache call-cache)
+                                      (effective-method-cache call-cache)))
+                   (automaton-states (extract-transition-information automaton))))))
+      (if arity
+          (make-spread-discriminating-closure
+           generic-function arity specializer-profile initial eql-cache)
           (lambda (&rest arguments)
-            (funcall effective-method arguments)))))
-    (let ((automaton (make-automaton (1+ active-arg-count))))
-      (loop for call-cache in call-history
-            do (add-path automaton
-                         (class-cache call-cache)
-                         (effective-method-cache call-cache)))
-      (let ((initial (automaton-states (extract-transition-information automaton))))
-        (lambda (&rest arguments)
-          (let ((state initial))
-            (loop for p in specializer-profile
-                  for remaining on arguments
-                  when p
-                    do (setf state (automaton-transition state (argument-stamp (car remaining))))
-                       (when (null state) (loop-finish)))
-            (if (and (consp state) (eq (car state) :final))
-                (funcall (cdr state) arguments)
-                (default-discriminating-function
-                 generic-function arguments specializer-profile))))))))
+            (let ((state initial))
+              (loop for p in specializer-profile
+                    for remaining on arguments
+                    when (and p state)
+                      do (setf state (automaton-transition
+                                      state (argument-stamp (car remaining)))))
+              (if (consp state)
+                  (funcall (cdr state) arguments)
+                  (let ((function (and eql-cache (eql-dispatch-lookup eql-cache arguments))))
+                    (if function
+                        (funcall function arguments)
+                        (default-discriminating-function
+                         generic-function arguments specializer-profile))))))))))
 
 (defun make-cdr (n)
   (if (small-integer= n 0)

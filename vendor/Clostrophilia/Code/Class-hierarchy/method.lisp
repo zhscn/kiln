@@ -52,4 +52,12 @@
    (%documentation 
     :initform nil
     :initarg :documentation
-    :accessor documentation)))
+    :accessor documentation)
+   ;; kiln: a function of the next methods and the required arguments
+   ;; themselves (no list), for methods with only required parameters;
+   ;; or NIL.
+   #+kiln
+   (%fast-function
+    :initform nil
+    :initarg :fast-function
+    :reader method-fast-function)))
