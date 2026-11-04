@@ -13,6 +13,16 @@
 (defun kiln-clos-file (name)
   (asdf:system-relative-pathname "kiln" (format nil "lisp/target/clos/~A.lisp" name)))
 
+(defun clostrophilia-files (groups)
+  "GROUPS: lists (DIRECTORY FILE...); a FILE is a name or
+(:COMPILE-TIME-TOO name)."
+  (loop for (directory . files) in groups
+        append (loop for file in files
+                     collect (if (consp file)
+                                 (list :compile-time-too
+                                       (clostrophilia-file directory (second file)))
+                                 (clostrophilia-file directory file)))))
+
 (defparameter *clos-files*
   (append
    (list (clostrophilia-file "Package" "packages")
@@ -28,7 +38,50 @@
              "funcallable-standard-class" "built-in-class" "funcallable-standard-object"
              "simple-function" "generic-function" "standard-generic-function"))
    (list (kiln-clos-file "built-in-classes")
-         (kiln-clos-file "braid")))
+         (kiln-clos-file "braid")
+         (kiln-clos-file "ecclesia")
+         (kiln-clos-file "support"))
+   (clostrophilia-files
+    '(("Instance-structure" "slot-value-etc" "slot-value-etc-using-location")
+      ("Method-combination" "condition-types"
+       "accessor-defgenerics" "method-combination-template-defclass"
+       "ensure-method-combination"
+       ;; The functions DEFINE-METHOD-COMBINATION's expander calls.
+       (:compile-time-too "method-group-specifier") (:compile-time-too "method-discriminator")
+       (:compile-time-too "long-form-expansion") (:compile-time-too "short-form-expansion")
+       "find-method-combination-defun" "define-method-combination-defmacro"
+       "standard-method-combination" "built-in-method-combinations")
+      ("Instance-structure" "slot-missing" "slot-unbound" "slot-boundp-using-class"
+       "slot-value-using-class" "slot-makunbound-using-class" "find-slot"
+       "slot-value-etc-using-only-class" "condition-types")
+      ("Standard-object-initialization" "shared-initialize" "initialize-instance"
+       "reinitialize-instance" "shared-initialize-aux")
+      ("Class-finalization" "generic-functions" "compute-class-precedence-list"
+       "compute-default-initargs" "effective-slot-definition-class"
+       "compute-effective-slots" "finalize-inheritance")
+      ("Generic-function-invocation" "classp" "sub-specializer-p" "specializer-profile"
+       "compute-applicable-methods-using-classes" "compute-applicable-methods"
+       "compute-effective-method" "discriminating-automaton" "discriminating-tagbody"
+       "maybe-replace-method" "no-applicable-method" "standard-accessor-method-p"
+       "compute-discriminating-function" "add-remove-direct-method"
+       "invalidate-discriminating-function" "add-remove-method" "condition-types")
+      ("Dependent-maintenance" "generic-functions" "methods")
+      ("Generic-function-initialization" "check-declarations" "check-documentation"
+       "method-combination-p" "initialize-instance-methods"
+       "reinitialize-instance-methods" "shared-initialize-methods" "condition-types")
+      ("Class-initialization" "remove-direct-subclass-defgeneric"
+       "remove-direct-subclass-defmethod" "add-direct-subclass-defgeneric"
+       "add-direct-subclass-defmethod" "default-superclasses"
+       "direct-slot-definition-class" "reader-method-class" "writer-method-class"
+       "validate-superclass-defgeneric" "validate-superclass-defmethods"
+       "check-direct-default-initargs-defun" "check-superclass-list-defun"
+       "add-accessor-method" "special-variables" "initialize-instance-defmethods"
+       "reinitialize-instance-defmethods" "shared-initialize-methods"
+       "allocate-instance" "allocate-instance-using-class" "condition-types")
+      ("Method-initialization" "condition-types" "direct-slot-definition-p"
+       "initialize-instance-methods" "reinitialize-instance-methods")
+      ("Slot-definition-initialization" "condition-types" "initialize-instance-methods"
+       "reinitialize-instance-methods"))))
   "Sources of the CLOS module, in load order (docs/10 §7).")
 
 (defun write-module (module output)

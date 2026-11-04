@@ -164,6 +164,11 @@
           (macro-function 'eclector.reader:quasiquote))
     (setf (clo:fdefinition client genv 'eclector.reader::expand)
           (fdefinition 'eclector.reader::expand))
+    ;; Ecclesia, for macro expanders such as Clostrophilia's
+    ;; DEFINE-METHOD-COMBINATION.
+    (do-external-symbols (s '#:ecclesia)
+      (when (and (fboundp s) (not (macro-function s)))
+        (setf (clo:fdefinition client genv s) (fdefinition s))))
     ;; LOOP is Khazern's, expanded in the host; its expansions use only
     ;; standard operators.
     (setf (clo:macro-function client genv 'loop)
@@ -348,7 +353,8 @@ programs compiled after it."
     (%make-session :client client :environment (make-compile-environment client))))
 
 (defun front-end (paths &optional (session (make-session)))
-  "Reads and processes the top-level forms of the files PATHS, in order,
+  "Reads and processes the top-level forms of the files PATHS (or
+(:COMPILE-TIME-TOO path) elements), in order,
 as one compilation unit, in SESSION. Returns the simplified ASTs of the
 forms to compile, in order."
   (let* ((*client* (session-client session))
@@ -363,8 +369,13 @@ forms to compile, in order."
                      (lambda (w)
                        (setf (gethash (cb::name w) *referenced-functions*) t)
                        (muffle-warning w))))
+      ;; A path (:COMPILE-TIME-TOO path) is processed as if its forms
+      ;; were in (EVAL-WHEN (:COMPILE-TOPLEVEL :LOAD-TOPLEVEL :EXECUTE)):
+      ;; for the functions that macro expanders call.
       (dolist (path paths)
-        (map-file-csts (lambda (cst) (process-toplevel cst nil)) path)))
+        (if (and (consp path) (eq (first path) :compile-time-too))
+            (map-file-csts (lambda (cst) (process-toplevel cst t)) (second path))
+            (map-file-csts (lambda (cst) (process-toplevel cst nil)) path))))
     (let ((undefined (loop for name being the hash-keys of *referenced-functions*
                            unless (or (gethash name *defined-functions*)
                                       (gethash name *primitives*)

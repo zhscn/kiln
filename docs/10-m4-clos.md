@@ -101,4 +101,10 @@ CLOS 是单独的模块（`kiln:compile-clos`，在 kernel 之后加载），源
 - **braid**（`braid.lisp`）：Clostrophilia 的类层次加上 kiln 的内建类（`built-in-classes.lisp`），一次建好，再执行推迟的定义。之后每个 early `defclass` 单独走 `build-classes`，暂不支持类的重定义。
 - **early 泛函**：它们是真正的 `standard-generic-function` 实例（funcallable instance），判别函数是 `early-discriminate`：按优先级列表计算适用方法，按 standard 方法组合执行，不缓存。braid 里的类，其访问器方法是真正的 `standard-reader-method`/`standard-writer-method`，方法函数按槽名读写。
 - **`class-of`**：实例取 rack 里的类；其他对象按 tag 和 kind 对应到内建类。`stamp`：实例取 rack 里的 stamp，其他对象取它的类的 unique number。
-- `tests/m4/clos-braid.lisp`：优先级列表、有效槽的顺序和位置、元类、`class-of`、访问器的分派。
+- **Clostrophilia 的其余部分**：braid 之后按 SICL Phase 4 的顺序加载，包括槽访问、方法组合、对象初始化、类终结、泛函调用、dependent 维护，以及泛函、类、方法、槽定义的初始化。它们的 `defgeneric`/`defmethod` 都成为 early 泛函和方法。在 early 阶段，`make-instance` 只按 initarg 和 initform 填槽，不调用 `initialize-instance`。
+- **编译期也求值的文件**：`define-method-combination` 的展开函数要调用 Clostrophilia 自己的函数（`short-form-expander` 等），这几个文件以 `(:compile-time-too 路径)` 的形式给出，前端把它们的形式当作在 `(eval-when (:compile-toplevel :load-toplevel :execute))` 里处理。宿主的 Ecclesia 函数也导入了编译期环境。
+- **Ecclesia**：它的实现要用哈希表和 `ignore-errors`，暂时编译不了。Clostrophilia 运行期要用的四个函数（`proper-list-p`、两个 `canonicalize-*-lambda-list`、`extract-required`）先用 `clos/ecclesia.lisp` 的简化版代替，它们不检查 lambda list。
+- **实现方提供的函数**（`clos/support.lisp`）：`make-instance`（early 版）、`make-method-instance`、`allocate-general-instance`、方法组合模板的登记和查找（放在 symbol 的 plist 上）、`subtypep-1`（只用于类）、`shared-initialize-aux-1`。`compile` 目前是调用即报错的桩，M4.4 的解释执行补丁会去掉对它的调用。
+- **名字冲突**：kiln 的引导代码和 Clostrophilia 在同一个包里，引导代码自己的辅助函数都以 `early-` 开头。`method-more-specific-p` 曾经和 Clostrophilia 的同名函数冲突。
+- **Clostrophilia 的补丁**（`vendor/README.md`）：`*class-unique-number*` 改为 `defvar`，因为 braid 的类在这个文件加载之前就已经编号；`add-method` 的 `(setf documentation)` 不求值。
+- 测试：`tests/m4/clos-braid.lisp` 检查优先级列表、有效槽的顺序和位置、元类、`class-of`、访问器的分派。`tests/m4/clos-early.lisp` 在用户程序里用 `defclass`/`defgeneric`/`defmethod`，覆盖 before、after、around 方法，`call-next-method`、`next-method-p`，EQL 特化，setf 泛函，以及经过 Clostrophilia 的 `slot-value`、`slot-boundp`。

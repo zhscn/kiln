@@ -648,7 +648,7 @@ superclasses and metaclasses come first or are built already."
       (eql (%slot specializer '%object) argument)
       (member specializer (%slot (class-of argument) '%precedence-list))))
 
-(defun method-more-specific-p (m1 m2 arguments)
+(defun early-method-more-specific-p (m1 m2 arguments)
   (loop for s1 in (%slot m1 '%specializers)
         for s2 in (%slot m2 '%specializers)
         for argument in arguments
@@ -672,7 +672,7 @@ superclasses and metaclasses come first or are built already."
                             for argument in arguments
                             always (specializer-applicable-p specializer argument))
                    collect method))
-         (sorted (sort applicable (lambda (m1 m2) (method-more-specific-p m1 m2 arguments))))
+         (sorted (sort applicable (lambda (m1 m2) (early-method-more-specific-p m1 m2 arguments))))
          (around '()) (before '()) (primary '()) (after '()))
     (dolist (method sorted)
       (let ((qualifiers (%slot method '%qualifiers)))
