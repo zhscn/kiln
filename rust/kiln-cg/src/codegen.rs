@@ -37,7 +37,7 @@ pub struct StackMapInfo {
 
 pub struct Output {
     pub enter: FuncId,
-    pub init_data: DataId,
+    pub inits: Vec<DataId>,
     pub callsites: Vec<CallSiteInfo>,
     pub stackmaps: Vec<StackMapInfo>,
     /// Static GC roots: (data object, byte offset).
@@ -275,9 +275,13 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
     module.define_function(enter, &mut ctx).map_err(|e| format!("{e:?}"))?;
     module.clear_context(&mut ctx);
 
-    let Some(Ref::Data(init_data)) = names.get(&kir.init).copied() else {
-        return Err(format!("init {} is not a data object", kir.init));
-    };
+    let mut inits = Vec::new();
+    for name in &kir.inits {
+        let Some(Ref::Data(id)) = names.get(name).copied() else {
+            return Err(format!("init {name} is not a data object"));
+        };
+        inits.push(id);
+    }
     let mut roots = Vec::new();
     for (name, index) in &kir.roots {
         let Some(Ref::Data(id)) = names.get(name).copied() else {
@@ -287,7 +291,7 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
     }
     Ok(Output {
         enter,
-        init_data,
+        inits,
         callsites,
         stackmaps,
         roots,
@@ -400,26 +404,40 @@ pub fn emit_module_info<M: Module>(module: &mut M, out: &Output) -> R<()> {
     rdesc.define(vec![0u8; out.roots.len() * 8 + 8].into_boxed_slice());
     module.define_data(roots, &rdesc).map_err(err)?;
 
+    let inits = module
+        .declare_data("kiln_inits", Linkage::Local, false, false)
+        .map_err(err)?;
+    let mut idesc = DataDescription::new();
+    idesc.set_align(8);
+    for (i, id) in out.inits.iter().enumerate() {
+        let gv = module.declare_data_in_data(*id, &mut idesc);
+        idesc.write_data_addr((i * 8) as u32, gv, kiln_rt::object::TAG_GENERAL as i64);
+    }
+    idesc.define(vec![0u8; out.inits.len() * 8 + 8].into_boxed_slice());
+    module.define_data(inits, &idesc).map_err(err)?;
+
+    // Layout: kiln_rt::ModuleInfo.
     let info = module
         .declare_data(MODULE_INFO_NAME, Linkage::Export, false, false)
         .map_err(err)?;
     let mut desc = DataDescription::new();
     desc.set_align(8);
-    let mut bytes = vec![0u8; 64];
-    bytes[56..64].copy_from_slice(&(out.roots.len() as u64).to_le_bytes());
+    let mut bytes = vec![0u8; 72];
+    bytes[64..72].copy_from_slice(&(out.roots.len() as u64).to_le_bytes());
     let gv = module.declare_data_in_data(roots, &mut desc);
-    desc.write_data_addr(48, gv, 0);
-    bytes[24..32].copy_from_slice(&(out.callsites.len() as u64).to_le_bytes());
-    bytes[40..48].copy_from_slice(&(out.stackmaps.len() as u64).to_le_bytes());
+    desc.write_data_addr(56, gv, 0);
+    bytes[16..24].copy_from_slice(&(out.inits.len() as u64).to_le_bytes());
+    let gv = module.declare_data_in_data(inits, &mut desc);
+    desc.write_data_addr(8, gv, 0);
+    bytes[32..40].copy_from_slice(&(out.callsites.len() as u64).to_le_bytes());
+    bytes[48..56].copy_from_slice(&(out.stackmaps.len() as u64).to_le_bytes());
     desc.define(bytes.into_boxed_slice());
     let gv = module.declare_data_in_data(maps, &mut desc);
-    desc.write_data_addr(32, gv, 0);
+    desc.write_data_addr(40, gv, 0);
     let fr = module.declare_func_in_data(out.enter, &mut desc);
     desc.write_function_addr(0, fr);
-    let gv = module.declare_data_in_data(out.init_data, &mut desc);
-    desc.write_data_addr(8, gv, kiln_rt::object::TAG_GENERAL as i64);
     let gv = module.declare_data_in_data(table, &mut desc);
-    desc.write_data_addr(16, gv, 0);
+    desc.write_data_addr(24, gv, 0);
     module.define_data(info, &desc).map_err(err)?;
     Ok(())
 }

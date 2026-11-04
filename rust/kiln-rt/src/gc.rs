@@ -175,7 +175,11 @@ unsafe fn segment_slots(maps: &[StackMap], top: usize, base: usize, out: &mut Ve
 static STATIC_ROOTS: std::sync::RwLock<Vec<usize>> = std::sync::RwLock::new(Vec::new());
 
 pub fn register_static_roots(addrs: &[usize]) {
-    STATIC_ROOTS.write().unwrap().extend_from_slice(addrs);
+    let mut roots = STATIC_ROOTS.write().unwrap();
+    roots.extend_from_slice(addrs);
+    // Modules may share symbols: scan each word once.
+    roots.sort_unstable();
+    roots.dedup();
 }
 
 // ---------------------------------------------------------------------------

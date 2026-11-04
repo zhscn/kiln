@@ -16,6 +16,7 @@
   (data '())
   (funcs '())
   (roots '())
+  (shared '())
   (defined (make-hash-table :test 'equal)))
 
 (defun make-kmodule (name)
@@ -48,6 +49,13 @@
 (defun module-root (data index)
   "Declares word INDEX of the data object DATA a GC root."
   (push `(:root ,data ,index) (kmodule-roots *module*)))
+
+(defun module-shared (name)
+  "Declares the data object or function NAME shared: other modules may
+define it identically (symbols and what belongs to them), and kiln-cg
+keeps one definition."
+  (push name (kmodule-shared *module*))
+  name)
 
 (defun module-init (name)
   (setf (kmodule-init *module*) name))
@@ -154,6 +162,9 @@ entry block current. Unterminated blocks end with a trap."
   (print-kir (kmodule-name module) stream)
   (format stream "~%  ")
   (print-kir `(:init ,(kmodule-init module)) stream)
+  (when (kmodule-shared module)
+    (format stream "~%  ")
+    (print-kir `(:shared ,@(reverse (kmodule-shared module))) stream))
   (dolist (group (list (reverse (kmodule-imports module))
                        (reverse (kmodule-import-data module))
                        (reverse (kmodule-data module))

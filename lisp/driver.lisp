@@ -2,15 +2,24 @@
 
 (defparameter *kernel-files*
   (list (asdf:system-relative-pathname "kiln" "lisp/target/kernel.lisp"))
-  "Target kernel sources, compiled ahead of every program until modules
-can be linked separately (docs/09, M3.2).")
+  "Target kernel sources, compiled into the kernel module.")
 
-(defun compile-file-to-kir (input output &key (prelude *kernel-files*))
-  "Compiles the source file INPUT, after the files PRELUDE, to the KIR
-file OUTPUT."
-  (let ((module (kiln.compiler:compile-module
-                 (kiln.compiler:front-end (append prelude (list input)))
-                 (pathname-name input))))
-    (with-open-file (out output :direction :output :if-exists :supersede)
-      (kiln.kir:print-module module out))
-    output))
+(defun write-module (module output)
+  (with-open-file (out output :direction :output :if-exists :supersede)
+    (kiln.kir:print-module module out))
+  output)
+
+(defun compile-kernel (output &key (session (kiln.compiler:make-session)))
+  "Compiles the kernel to the KIR module OUTPUT. Programs compiled later
+in SESSION see its macros and definitions."
+  (write-module (kiln.compiler:compile-module
+                 (kiln.compiler:front-end *kernel-files* session) "kernel")
+                output))
+
+(defun compile-file-to-kir (input output &key (session (kiln.compiler:make-session)))
+  "Compiles the source file INPUT to the KIR module OUTPUT. Run it with the
+kernel module first: kiln-cg jit kernel.kir OUTPUT."
+  (write-module (kiln.compiler:compile-module
+                 (kiln.compiler:front-end (list input) session)
+                 (pathname-name input))
+                output))

@@ -37,8 +37,12 @@
   "Function name -> function of the list of argument operands.")
 
 
+(defvar *module-label*)                 ; mangled module name
+
 (defun fresh-label (prefix)
-  (format nil "~A~D" prefix (incf *counter*)))
+  "A name local to the current module. Modules are combined by kiln-cg,
+so local names carry the module's name; shared ones (symbols) do not."
+  (format nil "~A~A_~D" prefix *module-label* (incf *counter*)))
 
 ;;; Runtime functions
 
@@ -74,6 +78,7 @@ its first env word. Every function cell starts out holding one."
   (let ((name "kiln_undefined_function"))
     (unless (gethash name (kiln.kir::kmodule-defined *module*))
       (setf (gethash name (kiln.kir::kmodule-defined *module*)) t)
+      (module-shared name)
       (let ((*regions* '()))
         (with-function (name)
           (emit-error +err-undefined-function+ `(:load :self ,+fobj-env+)))))
@@ -91,6 +96,8 @@ its first env word. Every function cell starts out holding one."
                                            (:func ,(undefined-function-entry))
                                            ,(symbol-word (second name))))
                (module-data label `(:words (:data ,undef ,+tag-general+)))
+               (module-shared undef)
+               (module-shared label)
                (module-root label 0)))
            (values label 0)))
         (t (fail "invalid function name ~S" name))))
@@ -113,7 +120,8 @@ two per word (little-endian), padded."
 name of its package as a string."
   (if package
       (let ((name (package-name package)))
-        `(:data ,(string-data (format nil "kiln_pkg_~A" (mangle name)) name) ,+tag-general+))
+        `(:data ,(module-shared (string-data (format nil "kiln_pkg_~A" (mangle name)) name))
+                ,+tag-general+))
       (nil-word)))
 
 (defun symbol-data (sym)
@@ -134,6 +142,9 @@ name of its package as a string."
                                   ,(if (keywordp sym) `(:data ,obj ,+tag-general+) +unbound+)
                                   0
                                   ,(nil-word)))
+        (module-shared name)
+        (module-shared undef)
+        (module-shared obj)
         (module-root obj 3)
         (module-root obj 4)
         (module-root obj 6)))
@@ -1245,7 +1256,7 @@ be confused with a later activation at the same address."
 (defun compile-toplevel-function (asts)
   "The module's init function: runs the top-level forms in order."
   (let ((*regions* '()))
-    (with-function ("kiln_toplevel")
+    (with-function ((format nil "kiln_toplevel_~A" *module-label*))
       (let ((*self* (copy-to-var :self)))
         (emit-poll)
         (dolist (ast asts)
@@ -1256,6 +1267,7 @@ be confused with a later activation at the same address."
 (defun compile-module (asts module-name)
   "Compiles the simplified top-level ASTS into a KIR module."
   (let ((*module* (make-kmodule module-name))
+        (*module-label* (mangle module-name))
         (*counter* 0)
         (*vars* (make-hash-table :test 'eq))
         (*exits* (make-hash-table :test 'eq))
@@ -1263,6 +1275,7 @@ be confused with a later activation at the same address."
         (*constant-vars* (make-hash-table :test 'eq)))
     (let ((*load-time-values* (make-hash-table :test 'eq)))
       (compile-toplevel-function asts))
-    (module-data "kiln_toplevel_fobj" `(:words ,+kind-function+ (:func "kiln_toplevel")))
-    (module-init "kiln_toplevel_fobj")
+    (let ((init (format nil "kiln_toplevel_~A" *module-label*)))
+      (module-data (format nil "~A_fobj" init) `(:words ,+kind-function+ (:func ,init)))
+      (module-init (format nil "~A_fobj" init)))
     *module*))

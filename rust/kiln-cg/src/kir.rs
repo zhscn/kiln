@@ -9,7 +9,11 @@ use crate::sexp::Sexp;
 #[derive(Debug)]
 pub struct Module {
     pub name: String,
-    pub init: String,
+    /// Init function objects, run in order. One per source KIR module.
+    pub inits: Vec<String>,
+    /// Data and functions that several modules may define identically
+    /// (symbols and what belongs to them): only the first is kept.
+    pub shared: std::collections::HashSet<String>,
     pub import_funcs: Vec<ImportFunc>,
     pub import_data: Vec<String>,
     pub data: Vec<Data>,
@@ -224,7 +228,8 @@ pub fn parse_module(s: &Sexp) -> R<Module> {
     let (name, decls) = rest.split_first().ok_or("module: missing name")?;
     let mut m = Module {
         name: string(name)?.to_string(),
-        init: String::new(),
+        inits: vec![],
+        shared: Default::default(),
         import_funcs: vec![],
         import_data: vec![],
         data: vec![],
@@ -236,7 +241,12 @@ pub fn parse_module(s: &Sexp) -> R<Module> {
         match h {
             "init" => {
                 arity(h, rest, 1)?;
-                m.init = string(&rest[0])?.to_string();
+                m.inits.push(string(&rest[0])?.to_string());
+            }
+            "shared" => {
+                for n in rest {
+                    m.shared.insert(string(n)?.to_string());
+                }
             }
             "import-func" => {
                 if rest.len() < 3 {
@@ -284,10 +294,63 @@ pub fn parse_module(s: &Sexp) -> R<Module> {
             _ => return Err(format!("unknown module declaration {h}")),
         }
     }
-    if m.init.is_empty() {
+    if m.inits.is_empty() {
         return Err("module has no (init ...)".into());
     }
     Ok(m)
+}
+
+/// Combines KIR modules into one, in order: their init functions run in
+/// that order. Shared data and functions are kept once; any other name
+/// defined twice is an error.
+pub fn merge(modules: Vec<Module>) -> R<Module> {
+    let mut out = Module {
+        name: modules.iter().map(|m| m.name.as_str()).collect::<Vec<_>>().join("+"),
+        inits: vec![],
+        shared: Default::default(),
+        import_funcs: vec![],
+        import_data: vec![],
+        data: vec![],
+        roots: vec![],
+        funcs: vec![],
+    };
+    let mut defined = std::collections::HashSet::new();
+    let mut imported = std::collections::HashSet::new();
+    let mut roots = std::collections::HashSet::new();
+    for m in modules {
+        out.inits.extend(m.inits);
+        for f in m.import_funcs {
+            if imported.insert(f.name.clone()) {
+                out.import_funcs.push(f);
+            }
+        }
+        for d in m.import_data {
+            if imported.insert(d.clone()) {
+                out.import_data.push(d);
+            }
+        }
+        for d in m.data {
+            if defined.insert(d.name.clone()) {
+                out.data.push(d);
+            } else if !m.shared.contains(&d.name) {
+                return Err(format!("data {} is defined by two modules", d.name));
+            }
+        }
+        for f in m.funcs {
+            if defined.insert(f.name.clone()) {
+                out.funcs.push(f);
+            } else if !m.shared.contains(&f.name) {
+                return Err(format!("function {} is defined by two modules", f.name));
+            }
+        }
+        for r in m.roots {
+            if roots.insert(r.clone()) {
+                out.roots.push(r);
+            }
+        }
+        out.shared.extend(m.shared);
+    }
+    Ok(out)
 }
 
 fn parse_word(s: &Sexp) -> R<Word> {

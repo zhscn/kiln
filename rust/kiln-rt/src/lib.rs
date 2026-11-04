@@ -28,7 +28,9 @@ pub(crate) fn enter_fn() -> EnterFn {
 #[repr(C)]
 pub struct ModuleInfo {
     pub enter: EnterFn,
-    pub init_fobj: u64,
+    /// Init function objects (tagged), run in order.
+    pub inits: *const u64,
+    pub ninits: u64,
     pub callsites: *const CallSiteRecord,
     pub ncallsites: u64,
     pub stackmaps: *const gc::StackMapRecord,
@@ -44,7 +46,8 @@ pub unsafe fn function_entry(fobj: u64) -> *const u8 {
     unsafe { (*((fobj - object::TAG_GENERAL) as *const object::FunctionObj)).entry }
 }
 
-/// Registers the module's call sites and runs its init function.
+/// Registers the module's call sites, stack maps and roots, then runs its
+/// init functions in order.
 ///
 /// # Safety
 /// `info` must describe correctly compiled and loaded code.
@@ -58,8 +61,9 @@ pub unsafe fn run_module(info: &ModuleInfo) -> i32 {
         gc::register_static_roots(std::slice::from_raw_parts(info.roots, info.nroots as usize));
         let _ = ENTER.set(info.enter);
         let mut ctx = Context::new();
-        let entry = function_entry(info.init_fobj);
-        (info.enter)(&mut *ctx, info.init_fobj, entry, 0, 0);
+        for &init in std::slice::from_raw_parts(info.inits, info.ninits as usize) {
+            (info.enter)(&mut *ctx, init, function_entry(init), 0, 0);
+        }
         use std::io::Write;
         let _ = std::io::stdout().flush();
         0

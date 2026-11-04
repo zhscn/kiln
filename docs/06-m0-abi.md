@@ -120,12 +120,13 @@ Rust: kiln-launcher           staticlib，提供 C main，链接 kiln-rt
 
 ```
 (module "名字"
-  (init "初始化函数对象的数据名")
+  (init "初始化函数对象的数据名")    ; M3.2 起 kiln-cg 可以合并多个模块，见 09 §7
   (import-func "名字" 参数个数 返回值个数 [unwinds] [noreturn])
   (import-data "名字")
   (data "名字" (words W ...))      ; W: 整数 | (data "名字" [addend]) | (func "名字")
   (data "名字" (bytes "..."))      ; 末尾自动补 NUL
   (root "数据名" 字下标)            ; 静态 GC root（M2）
+  (shared "名字" ...)               ; 可被多个模块定义的数据和函数（M3.2，见 09 §7）
   (func "名字"
     (vars (v obj|raw) ...)         ; obj 会登记进栈图
     (slots (s 字节数) ...)

@@ -16,9 +16,12 @@ sources=("${@:-$root/tests/*/*.lisp}")
 # shellcheck disable=SC2206
 sources=(${sources[@]})
 
-args=()
+# One SBCL session: the kernel is compiled once, then every test in the
+# same compile-time environment.
+args=(--eval "(defvar *session* (kiln.compiler:make-session))"
+      --eval "(kiln:compile-kernel \"$build/kernel.kir\" :session *session*)")
 for src in "${sources[@]}"; do
-  args+=(--eval "(kiln:compile-file-to-kir \"$src\" \"$build/$(basename "${src%.lisp}").kir\")")
+  args+=(--eval "(kiln:compile-file-to-kir \"$src\" \"$build/$(basename "${src%.lisp}").kir\" :session *session*)")
 done
 sbcl --noinform --non-interactive \
   --load "$root/tools/env.lisp" \
@@ -30,19 +33,19 @@ for src in "${sources[@]}"; do
   name=$(basename "${src%.lisp}")
   kir=$build/$name.kir
   expected=${src%.lisp}.expected
-  if "$cg" jit "$kir" >"$build/$name.jit.out" 2>&1 && diff -u "$expected" "$build/$name.jit.out"; then
+  if "$cg" jit "$build/kernel.kir" "$kir" >"$build/$name.jit.out" 2>&1 && diff -u "$expected" "$build/$name.jit.out"; then
     echo "PASS jit $name"
   else
     echo "FAIL jit $name"; fail=1
   fi
   # GC stress: a 1 MiB heap forces frequent moving collections.
-  if MMTK_GC_TRIGGER=FixedHeapSize:1048576 "$cg" jit "$kir" >"$build/$name.stress.out" 2>&1 \
+  if MMTK_GC_TRIGGER=FixedHeapSize:1048576 "$cg" jit "$build/kernel.kir" "$kir" >"$build/$name.stress.out" 2>&1 \
      && diff -u "$expected" "$build/$name.stress.out"; then
     echo "PASS gc-stress $name"
   else
     echo "FAIL gc-stress $name"; fail=1
   fi
-  if "$cg" obj "$kir" -o "$build/$name.o" \
+  if "$cg" obj "$build/kernel.kir" "$kir" -o "$build/$name.o" \
      && cc "$build/$name.o" "$launcher" -o "$build/$name" -lpthread -ldl -lm \
      && "$build/$name" >"$build/$name.aot.out" 2>&1 \
      && diff -u "$expected" "$build/$name.aot.out"; then

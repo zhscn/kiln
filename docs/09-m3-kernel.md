@@ -9,7 +9,7 @@ M3 的目标见 [04 的里程碑](04-bootstrap.md#里程碑)：把 ANSI 核心�
 | 步骤 | 内容 | 状态 |
 |---|---|---|
 | M3.1 | 立即数和堆对象的完整 kind 表；字符、字符串、simple-vector；symbol 的名字改为字符串对象；`%primop`；用 Lisp 写的 kernel（`lisp/target/`） | ✅ |
-| M3.2 | 多模块：kernel 只编译一次，用户程序作为另一个模块和它链接；symbol 在模块之间保持同一身份 | |
+| M3.2 | 多模块：kernel 只编译一次，用户程序作为另一个模块和它链接；symbol 在模块之间保持同一身份 | ✅ |
 | M3.3 | 包和运行期的 `intern`/`find-symbol`（评估 Parcl），目标包和宿主包分开 | |
 | M3.4 | 数值塔：bignum、ratio、浮点（Quaviver 负责 I/O）、complex | |
 | M3.5 | 剩下的不依赖 CLOS 的部分：数组（Regalia 的原语部分）、`equal`/`equalp`、序列的基本函数 | |
@@ -90,3 +90,11 @@ kernel 的写法限制：
 - **原语的包装函数已删除**：kernel 为每个原语定义了真正的函数，`#'car` 直接读 symbol 的函数 cell（[08 §5.1](08-m2-front-end.md#51-原语) 里的包装函数不再需要）。
 - **测试**：所有测试都以 kernel 为前缀编译。`tests/m3/chars-strings.lisp`（Unicode 字符和字符串、Latin-1 的大小写、跨 GC 的字符串、large object space 里的大字符串）、`tests/m3/sequences.lisp`（向量、列表函数、原语作为函数对象、symbol 的 plist）。
 - **限制**：字符的大小写和分类只覆盖 Latin-1；`string=` 等还不支持 `:start`/`:end`；`make-array` 只能建一维 simple-vector；数只有 fixnum。
+
+## 7. M3.2：多模块
+
+- **KIR**：`(shared "名字"...)` 声明本模块里哪些数据和函数可能被别的模块以相同内容定义：symbol 对象、它的名字字符串和未定义函数对象、`(setf f)` 的 cell、包名字符串、`kiln_undefined_function`。其他名字（函数、常量、`load-time-value` 的 cell、init 函数）都带模块名前缀，不会冲突。
+- **kiln-cg** 一次接受多个 KIR 文件（`kiln-cg jit kernel.kir prog.kir`、`kiln-cg obj kernel.kir prog.kir -o prog.o`），先合并成一个模块：导入去重，共享定义只保留第一份，其他名字重复就报错，root 去重，各模块的 init 函数按给出的顺序执行。runtime 登记静态 root 时也会去重。
+- **`kiln_module_info`** 改为 72 字节：`enter`、`inits`（init 函数对象数组）、`ninits`、调用点表、栈图、root 表。
+- **编译会话**（`kiln.compiler:make-session`）：Clostrum 编译期环境和已定义函数的记录在多个文件之间保留。`kiln:compile-kernel` 先把 kernel 编译成 `kernel.kir`，之后同一个会话里用 `kiln:compile-file-to-kir` 编译的程序能看到 kernel 的宏和函数。`tools/test.sh` 这样只编译一次 kernel。
+- **以后**：分别生成的目标文件之间链接（共享定义用 weak 链接，launcher 汇总多个 module info），以及 image 里增量加载模块。

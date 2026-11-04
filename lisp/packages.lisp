@@ -28,7 +28,7 @@
   (:export #:kmodule #:make-kmodule #:kmodule-name
            #:*module* #:*func*
            #:module-import-func #:module-import-data #:module-data
-           #:module-func #:module-init #:module-root
+           #:module-func #:module-init #:module-root #:module-shared
            #:with-function #:new-var #:new-block #:new-slot
            #:emit #:start-block #:current-block-terminated-p
            #:print-module))
@@ -47,11 +47,11 @@
                     (#:cmd #:common-macro-definitions)
                     (#:clo #:clostrum))
   (:documentation "The compiler: Common-boot front end, lowering to KIR.")
-  (:export #:front-end #:compile-module #:kiln-compile-error))
+  (:export #:front-end #:make-session #:compile-module #:kiln-compile-error))
 
 (defpackage #:kiln
   (:use #:cl)
-  (:export #:compile-file-to-kir))
+  (:export #:compile-file-to-kir #:compile-kernel))
 
 (defpackage #:kiln.kernel
   (:use #:cl #:kiln.sys)

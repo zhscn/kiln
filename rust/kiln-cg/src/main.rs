@@ -37,6 +37,13 @@ fn load(path: &str) -> Result<kir::Module, String> {
     kir::parse_module(&s).map_err(|e| format!("{path}: {e}"))
 }
 
+/// Loads KIR files and merges them into one module; their init functions
+/// run in the order given.
+fn load_all(files: &[&String]) -> Result<kir::Module, String> {
+    let modules = files.iter().map(|f| load(f)).collect::<Result<Vec<_>, _>>()?;
+    kir::merge(modules)
+}
+
 fn run_jit(kir: &kir::Module, opts: &Options) -> Result<i32, String> {
     let mut builder = JITBuilder::with_isa(isa(false)?, default_libcall_names());
     for (name, ptr) in kiln_rt::symbols() {
@@ -67,7 +74,11 @@ fn run_jit(kir: &kir::Module, opts: &Options) -> Result<i32, String> {
         })
         .collect();
     let enter = module.get_finalized_function(out.enter);
-    let (init, _) = module.get_finalized_data(out.init_data);
+    let inits: Vec<u64> = out
+        .inits
+        .iter()
+        .map(|id| module.get_finalized_data(*id).0 as u64 + kiln_rt::object::TAG_GENERAL)
+        .collect();
     let roots: Vec<usize> = out
         .roots
         .iter()
@@ -75,7 +86,8 @@ fn run_jit(kir: &kir::Module, opts: &Options) -> Result<i32, String> {
         .collect();
     let info = kiln_rt::ModuleInfo {
         enter: unsafe { std::mem::transmute::<*const u8, kiln_rt::EnterFn>(enter) },
-        init_fobj: init as u64 + kiln_rt::object::TAG_GENERAL,
+        inits: inits.as_ptr(),
+        ninits: inits.len() as u64,
         callsites: records.as_ptr(),
         ncallsites: records.len() as u64,
         stackmaps: maps.as_ptr(),
@@ -102,12 +114,16 @@ fn main() -> ExitCode {
     let dump_clif = args.iter().any(|a| a == "--dump-clif");
     let opts = Options { dump_clif };
     let pos: Vec<&String> = args.iter().filter(|a| !a.starts_with("--")).collect();
-    let result = match pos.as_slice() {
-        [cmd, file] if cmd.as_str() == "jit" => load(file).and_then(|m| run_jit(&m, &opts)),
-        [cmd, file, o, out] if cmd.as_str() == "obj" && o.as_str() == "-o" => {
-            load(file).and_then(|m| write_obj(&m, &opts, out).map(|_| 0))
+    // kiln-cg jit A.kir B.kir ...  |  kiln-cg obj A.kir B.kir ... -o OUT.o
+    let result = match pos.split_first() {
+        Some((cmd, rest)) if cmd.as_str() == "jit" && !rest.is_empty() => {
+            load_all(rest).and_then(|m| run_jit(&m, &opts))
         }
-        _ => Err("usage: kiln-cg jit FILE.kir | kiln-cg obj FILE.kir -o FILE.o [--dump-clif]".into()),
+        Some((cmd, rest)) if cmd.as_str() == "obj" && rest.len() >= 3 && rest[rest.len() - 2] == "-o" => {
+            let (files, out) = rest.split_at(rest.len() - 2);
+            load_all(files).and_then(|m| write_obj(&m, &opts, out[1]).map(|_| 0))
+        }
+        _ => Err("usage: kiln-cg jit FILE.kir... | kiln-cg obj FILE.kir... -o FILE.o [--dump-clif]".into()),
     };
     match result {
         Ok(code) => ExitCode::from(code as u8),

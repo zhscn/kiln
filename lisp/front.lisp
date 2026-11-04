@@ -181,15 +181,27 @@ the file. Reading starts in KILN-USER."
                  (compile-toplevel-form cst compile-time-too)))))
         (compile-toplevel-form cst compile-time-too))))
 
-(defun front-end (paths)
+(defstruct (session (:constructor %make-session))
+  "Compile-time state shared by the files compiled one after another into
+separate modules: the kernel's macros and definitions stay visible to the
+programs compiled after it."
+  client
+  environment
+  (defined-functions (make-hash-table :test 'equal)))
+
+(defun make-session ()
+  (let ((client (make-instance 'client)))
+    (%make-session :client client :environment (make-compile-environment client))))
+
+(defun front-end (paths &optional (session (make-session)))
   "Reads and processes the top-level forms of the files PATHS, in order,
-as one compilation unit. Returns the simplified ASTs of the forms to
-compile, in order."
-  (let* ((*client* (make-instance 'client))
+as one compilation unit, in SESSION. Returns the simplified ASTs of the
+forms to compile, in order."
+  (let* ((*client* (session-client session))
          (cmd:*client* *client*)
-         (*environment* (make-compile-environment *client*))
+         (*environment* (session-environment session))
          (*toplevel-asts* '())
-         (*defined-functions* (make-hash-table :test 'equal))
+         (*defined-functions* (session-defined-functions session))
          (*referenced-functions* (make-hash-table :test 'equal)))
     ;; Calls to functions defined later in the file are fine: report
     ;; undefined functions at the end (CLHS 3.2.2.3).
