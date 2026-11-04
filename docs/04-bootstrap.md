@@ -42,7 +42,7 @@ SICL 的现状调研见 [05-sicl-survey.md](05-sicl-survey.md)。SICL 至今没�
 | 浮点打印 | 复用 **Quaviver** | |
 | AST 以下的 IR、优化、Cranelift 生成 | **自研** | 非局部退出、`unwind-protect`、context、poll 点、栈图都在这一层定义。SICL 在这一层只有设计文字 |
 | Condition 系统 | 复用 **Predicament**，自己写 `condition` 类和 `define-condition` | handler 和 restart 是普通的 special 变量，按 C1 自然挂在 context 上。捕获续延的 handler 以后再加 |
-| CLOS / MOP | 基于 **Clostrophilia**，在目标端用 early 函数 bootstrap | 采用 rack 间接和 stamp 分派。是直接用它的代码还是只参考，M4 再定，见下文 |
+| CLOS / MOP | 基于 **Clostrophilia**，在目标端用 early 函数 bootstrap | 采用 rack 间接和 stamp 分派。vendor 它的代码并打补丁（[10 §1](10-m4-clos.md)） |
 | 轻量 `eval` | 参考 **Maclina** | 可作为交付期可选的 `eval` 模块，或自举完成前的运行期 `compile` |
 | 数值塔（bignum、ratio） | 自研：Rust runtime 原语，Lisp 包一层 | SICL 也没有 bignum。bignum 的 limb 由 MMTk 分配 |
 | 符号、字符（Unicode）、字符串、pathname、文件、环境字典 | **自研** | 没有现成的模块，见 [05 §6.3](05-sicl-survey.md#63-ansi-各章的覆盖情况) |
@@ -92,7 +92,7 @@ kiln0  ──编译自己──▶ kiln1 ──编译自己──▶ kiln2   （
 
    调研确认这条路可行：SICL 拒绝它是出于追求优雅，不是因为不可行（[05 §7.3](05-sicl-survey.md#73-需要修正-kiln-原计划的地方)）。
 
-   **新风险**：Clostrophilia 在运行期用 `compile nil` 生成判别函数和有效方法，而 kiln0 在 M5 之前不带编译器。要在 M4 之前选定方案：宿主侧 satiation、分派自动机解释器、内置字节码 VM，或者转发给远程 JIT。
+   **新风险**：Clostrophilia 在运行期用 `compile nil` 生成判别函数和有效方法，而 kiln0 在 M5 之前不带编译器。要在 M4 之前选定方案：宿主侧 satiation、分派自动机解释器、内置字节码 VM，或者转发给远程 JIT。（M4 选了解释执行自动机和有效方法，见 [10 §1](10-m4-clos.md)。）
 
 5. **同时保留远程 JIT 模式。**
    SBCL 端编译，通过 socket 发给正在运行的 kiln runtime，由 cranelift-jit 执行。自举完成之前，靠它做交互式开发和调试 runtime。
@@ -129,7 +129,7 @@ kernel 原语和 primop（cons/symbol/vector/funcall/闭包/GC）
 | M1 ✅ | kernel 原语和 MMTk，加上 `%switch-stack` 测试 | 精确栈图、多栈扫描、展开到分界点（C2、C3、C5、C8）。已完成，见 [07-m1-gc.md](07-m1-gc.md) |
 | M2 ✅ | 前端接入：Eclector、CST、Trucler、Common-boot/Iconoclast 和 Clostrum 目标环境（见 [08](08-m2-front-end.md)，遗留事项见 08 §7） | 所有特殊形式都能降级，宏在宿主中执行 |
 | M3 ✅ | ANSI 核心库中不依赖 CLOS 的部分（见 [09](09-m3-kernel.md)，包和数组移到 M4，见 09 §11） | 数值塔、符号、Unicode 字符、字符串、pathname 都要自己写，工作量比原先估计的大 |
-| M4 | CLOS 引导，接入打印器、FORMAT、LOOP | 目标端 MOP 能自洽，重定义屏障（C4），自举完成前的运行期 `compile` 方案 |
+| M4（M4.1–M4.4 ✅） | CLOS 引导，接入打印器、FORMAT、LOOP（见 [10](10-m4-clos.md)；目标端 MOP 已经自洽，分派解释执行；剩下 M4.5：condition 系统、哈希表、包、数组等） | 目标端 MOP 能自洽，重定义屏障（C4），自举完成前的运行期 `compile` 方案 |
 | M5 | 编译器自身交叉编译，kiln0 → kiln1 → kiln2 | 两代产物一致 |
 | M6 | SLYNK/Swank 接入 | 完整的 image 开发体验，REPL 中断 |
 
