@@ -186,6 +186,43 @@ the file. Reading starts in KILN-USER."
           ((or ct (and ex compile-time-too))
            (dolist (c body) (compile-time-eval c))))))
 
+(defun declaration-cst-p (cst)
+  (and (cst:consp cst) (eq (cst:raw (cst:first cst)) 'declare)))
+
+(defun process-toplevel-body (cst compile-time-too)
+  "LOCALLY, MACROLET and SYMBOL-MACROLET at top level: their body forms are
+top-level forms too (CLHS 3.2.3.1), processed in the environment with the
+local macros added. A body that starts with declarations is compiled as a
+whole instead (the declarations would otherwise be lost)."
+  (let* ((form (cst:raw cst))
+         (body (if (eq (first form) 'locally)
+                   (cst-list (cst:rest cst))
+                   (cst-list (cst:rest (cst:rest cst))))))
+    (if (and body (declaration-cst-p (first body)))
+        (compile-toplevel-form cst compile-time-too)
+        (let ((*environment*
+                (case (first form)
+                  (locally *environment*)
+                  (macrolet
+                   (let ((env *environment*))
+                     (dolist (definition (second form) env)
+                       (destructuring-bind (name lambda-list &rest body) definition
+                         ;; The expander is evaluated in the environment so
+                         ;; far, which holds the enclosing local macros.
+                         (let ((expander (cb:eval-cst
+                                          *client*
+                                          (cst:cst-from-expression
+                                           (ecclesia:parse-macro name lambda-list body))
+                                          env)))
+                           (setf env (trucler:add-local-macro *client* env name expander)))))))
+                  (symbol-macrolet
+                   (let ((env *environment*))
+                     (dolist (binding (second form) env)
+                       (setf env (trucler:add-local-symbol-macro
+                                  *client* env (first binding) (second binding)))))))))
+          (dolist (c body)
+            (process-toplevel c compile-time-too))))))
+
 (defun process-toplevel (cst compile-time-too)
   (let ((form (cst:raw cst)))
     (if (and (consp form) (symbolp (first form)))
@@ -201,10 +238,8 @@ the file. Reading starts in KILN-USER."
           (in-package
            (setf *package* (or (find-package (second form))
                                (error "IN-PACKAGE: no package named ~S" (second form)))))
-          ;; Their bodies should be processed as top-level forms too;
-          ;; not done yet (docs/08 §6).
           ((locally macrolet symbol-macrolet)
-           (compile-toplevel-form cst compile-time-too))
+           (process-toplevel-body cst compile-time-too))
           (t
            (multiple-value-bind (expansion macrop) (macroexpand-toplevel form)
              (if macrop

@@ -35,7 +35,7 @@ Common-boot 本身的顶层处理不完整：`*compile-time-too*` 从来不会�
 - `eval-when`：按 CLHS 3.2.3.1 的表格决定是编译、编译期求值，还是两者都做。
 - 宏形式：先查环境里的宏（`trucler:describe-function`），再查 Common-macros 的宏（`cmd:macroexpand-1`），展开后用 `cst:reconstruct` 保留源码位置，再递归处理。
 - 其他形式：在 compile-time-too 模式下先求值，然后 `cst-to-ast`、`simplify-ast`，加入顶层 AST 列表。
-- `locally`、`macrolet`、`symbol-macrolet` 的主体暂时不按顶层形式处理（§7）。
+- `locally`、`macrolet`、`symbol-macrolet`：主体按顶层形式处理，局部宏加进 Trucler 环境；主体以声明开头时整体编译。
 
 **编译期求值**用 Common-boot 的 HIR 求值器（`cb:eval-cst`），在一个 Clostrum 编译期环境里执行：
 
@@ -160,7 +160,7 @@ Common-boot 本身的顶层处理不完整：`*compile-time-too*` 从来不会�
 1. ~~特殊变量的动态绑定~~（已完成，§5.2）。TLS 表的大小是固定的，以后需要能扩容。
 2. ~~多值~~（已完成，§5.3），包括经过 `throw` 和非局部 `return-from`。
 3. ~~lambda list~~（已完成，§5.4）。`&aux` 还没有确认 `lexify-lambda-list` 之后的形式。
-4. **顶层的 `locally`、`macrolet`、`symbol-macrolet`**：主体应按顶层形式处理。
+4. ~~顶层的 `locally`、`macrolet`、`symbol-macrolet`~~（已完成）：主体按顶层形式处理，局部宏的展开函数用 HIR 求值器求值后加进 Trucler 环境（`process-toplevel-body`）。主体以声明开头时仍然整体编译。
 5. ~~`load-time-value`~~（已完成，§5.5）。字符串和字符常量要等 M3 定下它们的对象表示。
 8. ~~对 symbol macro 的 `setq`~~（已解决，§5.5）。
 9. `progv`：已完成（§5.5）。
