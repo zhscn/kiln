@@ -21,5 +21,7 @@
      (:tree ,(merge-pathnames "vendor/Khazern/" (truename root)))
      (:tree ,(merge-pathnames "vendor/Common-macros/" (truename root)))
      (:tree ,(merge-pathnames "vendor/Eclector/" (truename root)))
+     (:tree ,(merge-pathnames "vendor/parser.packrat/" (truename root)))
+     (:tree ,(merge-pathnames "vendor/s-expression-syntax/" (truename root)))
      (:tree ,deps)
      :inherit-configuration)))

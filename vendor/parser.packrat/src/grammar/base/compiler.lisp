@@ -361,6 +361,7 @@
                           :end      'endp)
            'value)
 
+#-kiln
 (defun %uses? (name parameters expression)
   (catch 'used
     (sb-cltl2:macroexpand-all
@@ -370,6 +371,7 @@
         ,expression))
     nil))
 
+#-kiln
 (defun %uses-position? (expression)
   (catch 'used
     (sb-cltl2:macroexpand-all
@@ -377,6 +379,30 @@
         (symbol-macrolet ((cl-user::position (%used)))
           ,expression)))
     nil))
+
+;;; kiln: no MACROEXPAND-ALL. A name that occurs anywhere in EXPRESSION
+;;; counts as used: the generated code may do more than it needs to, but
+;;; it is correct.
+#+kiln
+(defun %occurs? (name expression)
+  (let ((seen (make-hash-table :test 'eq)))
+    (labels ((walk (x)
+               (cond ((eq x name) (return-from %occurs? t))
+                     ((and (consp x) (not (gethash x seen)))
+                      (setf (gethash x seen) t)
+                      (walk (car x))
+                      (walk (cdr x))))))
+      (walk expression)
+      nil)))
+
+#+kiln
+(defun %uses? (name parameters expression)
+  (declare (ignore parameters))
+  (%occurs? name expression))
+
+#+kiln
+(defun %uses-position? (expression)
+  (%occurs? 'cl-user::position expression))
 
 ;; TODO syntactically, EXPRESSION contains a sub-expression. However,
 ;; we do not use the value produced by that sub-expression.

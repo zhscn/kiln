@@ -14,7 +14,8 @@
 ;;; Constant
 
 (defun constant? (name)
-  (eq (sb-cltl2:variable-information name) :constant))
+  #-kiln (eq (sb-cltl2:variable-information name) :constant)
+  #+kiln (constantp name))
 
 (defrule constant ()
     (structure 'symbol

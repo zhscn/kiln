@@ -3,7 +3,9 @@
 Copies of SICL-ecosystem modules that kiln patches. Most are target code,
 compiled into kiln's modules; Common-boot and Common-macros are host
 libraries (kiln's front end) and Khazern and Eclector are both (the
-host's LOOP and reader, and the image's), found by ASDF before `deps/` (`tools/env.lisp`). Each is imported
+host's LOOP and reader, and the image's), as are parser.packrat and
+s-expression-syntax (the front end's, in the host and in the compiler
+module, docs/11 §3). Host libraries are found by ASDF before `deps/` (`tools/env.lisp`). Each is imported
 unmodified in its own commit (the upstream commit is recorded below), and
 kiln's changes follow in separate commits, so `git log -- vendor/NAME`
 shows exactly what kiln changed. Changes are not sent upstream for now.
@@ -24,6 +26,8 @@ shows exactly what kiln changed. Changes are not sent upstream for now.
 | Eclector | https://github.com/s-expressionists/Eclector | 1088a7998f0d205da12ff48de7238b1008a31792 (2026-08-29) | BSD (`Eclector/LICENSE`) |
 | Common-macros | https://github.com/robert-strandh/Common-macros | 4596ddf32357fa793ece25cecb6e8661259b51ac (2026-02-10) | no license file |
 | Inravina | https://github.com/s-expressionists/Inravina | e28b107b025b2efdd4f16ed71fbdc0e1af62e478 (2026-07-11) | MIT (`Inravina/LICENSE.md`) |
+| parser.packrat | https://github.com/scymtym/parser.packrat (branch `future`) | 835090176480e68a8af87ba550b6c9639f94f542 (2023-04-04) | MIT (`parser.packrat/COPYING`) |
+| s-expression-syntax | https://github.com/scymtym/s-expression-syntax (branch `beach`) | 1ecd399a671eeb34a50e573a38d74c4dab3663b1 (2024-04-10) | MIT (`s-expression-syntax/COPYING`) |
 
 ## Clostrophilia patches
 
@@ -221,3 +225,15 @@ Under `#+kiln` (docs/10 §18 of kiln):
 - Eclector's backquote symbols (`eclector.reader:quasiquote`, `unquote`,
   `unquote-splicing`) are the quasiquote and unquote forms (`#+kiln`), in
   the types and in the standard dispatch table.
+
+## parser.packrat patches
+
+- `%uses?` and `%uses-position?` (`src/grammar/base/compiler.lisp`) use
+  `sb-cltl2:macroexpand-all`; on kiln (`#+kiln`) a name that occurs
+  anywhere in the expression counts as used (docs/11 §2.1). The generated
+  parser may do more work than needed, but is correct.
+
+## s-expression-syntax patches
+
+- `constant?` (`code/definitions/names.lisp`) uses `constantp` on kiln
+  instead of `sb-cltl2:variable-information`.
