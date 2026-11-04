@@ -27,3 +27,7 @@ Each patched place is marked with a `kiln:` comment.
 - `default-discriminating-function` checks for obsolete instances (stamp
   differs from the class's unique number) and updates them before
   dispatching again, as its comment describes.
+- The standard method combination does not require primary methods: an
+  effective method without them signals an error only if the primary
+  methods are reached (an `:around` method need not call
+  `call-next-method`; Predicament's `signal` on a symbol relies on it).
