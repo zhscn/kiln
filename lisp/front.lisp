@@ -244,6 +244,8 @@
     (when (macro-function 'khazern-extrinsic:loop-finish)
       (setf (clo:macro-function client genv 'loop-finish)
             (macro-function 'khazern-extrinsic:loop-finish)))
+    ;; DEFSTRUCT is Anatomicl's, expanded in the host (structures.lisp).
+    (setf (clo:macro-function client genv 'defstruct) #'expand-defstruct)
     env))
 
 ;;; SETQ of a symbol macro is SETF of its expansion (CLHS 3.1.2.1.1);
@@ -431,6 +433,8 @@ programs compiled after it."
   client
   environment
   (defined-functions (make-hash-table :test 'equal))
+  ;; DEFSTRUCT layouts and typed structure descriptions (structures.lisp).
+  (structures (make-hash-table :test 'equal))
   ;; Host packages described by the symbol tables of the modules compiled
   ;; so far (lower.lisp).
   (packages '()))
@@ -495,7 +499,8 @@ created."
          (*toplevel-asts* '())
          (*defined-functions* (session-defined-functions session))
          (*referenced-functions* (make-hash-table :test 'equal))
-         (*defined-packages* '()))
+         (*defined-packages* '())
+         (*structures* (session-structures session)))
     ;; Calls to functions defined later in the file are fine: report
     ;; undefined functions at the end (CLHS 3.2.2.3).
     (handler-bind ((cb:no-function-description

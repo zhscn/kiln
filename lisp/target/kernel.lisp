@@ -444,6 +444,26 @@
 
 (defun elt (seq i)
   (if (listp seq) (nth i seq) (aref seq i)))
+(defun (setf elt) (value seq i)
+  (if (listp seq)
+      (setf (car (nthcdr i seq)) value)
+      (setf (aref seq i) value)))
+
+(defun make-sequence (type n &key (initial-element nil initial-element-p))
+  (let ((head (if (consp type) (car type) type)))
+    (cond ((member head '(list cons null))
+           (make-list n :initial-element initial-element))
+          ((member head '(string simple-string base-string simple-base-string))
+           (make-string n :initial-element (if initial-element-p initial-element #\Space)))
+          ((and (member head '(vector simple-array array))
+                (consp type) (cdr type) (not (eq (cadr type) '*)) (not (eq (cadr type) t)))
+           ;; A specialized vector: the array layer's MAKE-ARRAY.
+           (if initial-element-p
+               (make-array n :element-type (cadr type) :initial-element initial-element)
+               (make-array n :element-type (cadr type))))
+          ((member head '(vector simple-vector simple-array array sequence))
+           (make-simple-vector n initial-element))
+          (t (%primop :type-error-type type)))))
 
 (defun make-sequence-like (seq n)
   (cond ((stringp seq) (make-string n))

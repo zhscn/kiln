@@ -129,7 +129,7 @@ kernel 原语和 primop（cons/symbol/vector/funcall/闭包/GC）
 | M1 ✅ | kernel 原语和 MMTk，加上 `%switch-stack` 测试 | 精确栈图、多栈扫描、展开到分界点（C2、C3、C5、C8）。已完成，见 [07-m1-gc.md](07-m1-gc.md) |
 | M2 ✅ | 前端接入：Eclector、CST、Trucler、Common-boot/Iconoclast 和 Clostrum 目标环境（见 [08](08-m2-front-end.md)，遗留事项见 08 §7） | 所有特殊形式都能降级，宏在宿主中执行 |
 | M3 ✅ | ANSI 核心库中不依赖 CLOS 的部分（见 [09](09-m3-kernel.md)，包和数组移到 M4，见 09 §11） | 数值塔、符号、Unicode 字符、字符串、pathname 都要自己写，工作量比原先估计的大 |
-| M4（M4.1–M4.4 ✅） | CLOS 引导，接入打印器、FORMAT、LOOP（见 [10](10-m4-clos.md)；目标端 MOP 已经自洽，分派解释执行；M4.5 已接入 condition 系统、哈希表、包、ctype、数组，剩下 `defstruct`） | 目标端 MOP 能自洽，重定义屏障（C4），自举完成前的运行期 `compile` 方案 |
+| M4（M4.1–M4.4 ✅） | CLOS 引导，接入打印器、FORMAT、LOOP（见 [10](10-m4-clos.md)；目标端 MOP 已经自洽，分派解释执行；M4.5 已接入 condition 系统、哈希表、包、ctype、数组和 `defstruct`；打印器、FORMAT、流还没接） | 目标端 MOP 能自洽，重定义屏障（C4），自举完成前的运行期 `compile` 方案 |
 | M5 | 编译器自身交叉编译，kiln0 → kiln1 → kiln2 | 两代产物一致 |
 | M6 | SLYNK/Swank 接入 | 完整的 image 开发体验，REPL 中断 |
 

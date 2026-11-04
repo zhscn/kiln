@@ -326,3 +326,40 @@ Common-macros 的展开式在运行期要用的 `ecase-type-error` 等 condition
 - 带 fill pointer 的字符串参与字符串函数；
 - bit 和 `(unsigned-byte 8)` 数组，以及写入时的类型检查；
 - displaced 数组、`adjust-array`、数组类型的 `subtypep`。
+
+## 15. M4.5：结构（Anatomicl）
+
+**Anatomicl 在宿主里运行**。它把 `defstruct` 形式解析成描述对象，再生成普通的 Lisp 代码，生成的代码不引用 Anatomicl 自己。所以 kiln 把它作为宿主库加载（`kiln.asd` 依赖 `anatomicl`），编译期环境里的 `defstruct` 宏直接调用它展开，不 vendor，也不打补丁。
+
+kiln 的 client（`lisp/structures.lisp`）覆盖这几处：
+- **`:include` 的槽布局**：Anatomicl 默认通过 closer-mop 读被包含结构的类，可编译期没有目标端的类。kiln 在编译会话里记下每个结构的槽布局（`session-structures`），据此计算：
+  - 先是被包含结构的槽，访问器名按本结构的 `conc-name` 重新生成，`:include` 给出的槽描述覆盖原有的；
+  - 再是本结构自己的直接槽。
+- **类定义**：生成目标端的 `defclass`，元类是 `structure-class`。每个槽都有 initarg 和访问器，只读槽只有 reader。`:print-object` 选项生成 `print-object` 方法。
+- **复制函数**生成对 `cl:copy-structure` 的调用。
+- **typed 结构**（`:type list`/`vector`）的描述也记在会话里，供 `:include` 使用，只生成访问器。
+
+构造函数、谓词、BOA lambda list 的处理都用 Anatomicl 的原样代码：构造函数调用 `allocate-instance` 和 `(setf slot-value)`。
+
+**目标端**（`lisp/target/clos/structures.lisp`）：
+- `structure-class` 是 `standard-class` 的子类，`structure-object` 是 `standard-object` 的子类；
+- `copy-structure` 逐个复制已绑定的槽；
+- `structure-class` 上有一个 `allocate-instance :before` 方法，负责 finalize 类，因为 Anatomicl 的构造函数直接调用 `allocate-instance`，而它不像 `make-instance` 那样会 finalize。
+
+顺带补上了 kernel 的 `make-sequence` 和 `(setf elt)`（typed 结构要用）。
+
+**还没做**：
+- `equalp` 不比较结构的槽；
+- 没有 `#S(...)` 的打印和读入；
+- 结构的访问器是泛函，不是普通函数，比较慢；
+- 重定义结构和重定义类一样，还不支持。
+
+`tests/m4/clos-structures.lisp` 覆盖：
+- 默认构造函数、访问器、`setf`、谓词、复制；
+- `conc-name`、BOA 构造函数（带默认值的 `&optional`）、只读槽、自定义谓词名；
+- `:include` 及覆盖父结构槽的初值；
+- `:type list` 和 `:type vector :named`；
+- `copy-structure`；
+- 在结构上定义方法，以及把结构用作哈希键。
+
+至此 M4.5 计划中的模块都已接入：Predicament、Salmagundi、Parcl、ctype、Regalia、Anatomicl。

@@ -201,7 +201,8 @@
    *ctype-files*
    (list (kiln-clos-file "ctype-interface"))
    *regalia-files*
-   (list (kiln-clos-file "arrays")))
+   (list (kiln-clos-file "arrays")
+         (kiln-clos-file "structures")))
   "Sources of the CLOS module, in load order (docs/10 §7).")
 
 (defun write-module (module output)

@@ -7,7 +7,8 @@
                "khazern-extrinsic"
                "common-boot"
                "common-boot-ast-to-hir"
-               "common-boot-hir-evaluator")
+               "common-boot-hir-evaluator"
+               "anatomicl")
   :pathname "lisp/"
   :serial t
   :components ((:file "packages")
@@ -16,5 +17,6 @@
                (:file "lower")
                (:file "values")
                (:file "primitives")
+               (:file "structures")
                (:file "front")
                (:file "driver")))
