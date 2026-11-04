@@ -11,7 +11,7 @@ M3 的目标见 [04 的里程碑](04-bootstrap.md#里程碑)：把 ANSI 核心�
 | M3.1 | 立即数和堆对象的完整 kind 表；字符、字符串、simple-vector；symbol 的名字改为字符串对象；`%primop`；用 Lisp 写的 kernel（`lisp/target/`） | ✅ |
 | M3.2 | 多模块：kernel 只编译一次，用户程序作为另一个模块和它链接；symbol 在模块之间保持同一身份 | ✅ |
 | M3.3 | 整数：bignum、溢出时转 bignum、整数除法和位运算 | ✅ |
-| M3.4 | ratio、浮点（Quaviver 负责 I/O）、complex | |
+| M3.4 | ratio、浮点（Quaviver 负责 I/O）、complex | ✅（complex 和 Quaviver 未做，见 §9） |
 | M3.5 | 剩下的不依赖 CLOS 的部分：数组（Regalia 的原语部分）、`equal`/`equalp`、序列的基本函数 | |
 
 依赖 CLOS 的模块（Predicament、ctype、Consecution、Salmagundi、Cyclosis、打印器等）放到 M4 之后。
@@ -36,7 +36,7 @@ M3 的目标见 [04 的里程碑](04-bootstrap.md#里程碑)：把 ANSI 核心�
 |---|---|---|
 | `0x0B` | character | Unicode 码点（第 8 位起） |
 | `0x13` | UNBOUND（未绑定标记，不是一等值） | — |
-| `0x1B` | single-float（预留，M3.4） | 第 32–63 位是 IEEE 754 单精度 |
+| `0x1B` | single-float | 第 32–63 位是 IEEE 754 单精度 |
 | `0x23` | NO_TLS（TLS 表的空项，不是一等值） | — |
 
 ## 3. 堆对象的 kind
@@ -51,6 +51,8 @@ header 的低 8 位是 kind，第 8 位起是长度（含义随 kind 而定）�
 | 4 | simple-vector | `[header, 元素...]` | 元素个数 | 全部元素 |
 | 5 | simple-character-string | `[header, UTF-32 码点...]`，按 8 字节补齐 | 字符个数 | 否 |
 | 6 | bignum | `[header, 64 位数字...]`，二进制补码，小端，最短 | 数字个数 | 否 |
+| 7 | ratio | `[header, 分子, 分母]`，约分过，分母 > 1 | — | 分子、分母 |
+| 8 | double-float | `[header, IEEE 754 位模式]` | — | 否 |
 
 以后的 kind（M3.4、M3.5）：simple-base-string、specialized vector（`(unsigned-byte 8)` 等）、bit-vector、bignum、ratio、double-float、complex、array header、标准对象和 rack（M4）。
 
@@ -111,3 +113,14 @@ kernel 的写法限制：
 - **常量**：超出 fixnum 范围的字面量编译成静态 bignum。
 - **打印**：runtime 的打印器用 num-bigint 输出十进制，以后换成 Lisp 写的打印器。
 - `tests/m3/integers.lisp`：溢出成 bignum 再回到 fixnum、fixnum 边界、大数乘法、比较、除法的四种取整、位运算、`ash`、`gcd`、`expt`、`isqrt`、跨 GC 的 bignum。
+
+## 9. M3.4：ratio 和浮点
+
+- **表示**：ratio 是 kind 7，总是约分过、分母大于 1，分母为 1 时就是整数。single-float 是立即数，所以 `eql` 对它就是 `eq`（`0.0` 和 `-0.0` 位模式不同，因此不 `eql`，符合 CLHS）。double-float 是 kind 8，装箱存放。默认浮点格式是 single-float，和宿主读入 `1.5` 的结果一致。
+- **运算在 Rust 里**（`rust/kiln-rt/src/number.rs`，用 num-bigint 和 num-rational）：`kiln_rt_number_op` 处理全部实数的加减乘除、四种除法（商是整数，余数和参数同类型）、比较、`eql`、转成浮点、`numerator`/`denominator`、`rational`、`sqrt`、`exp`、`log`、三角函数、`atan` 的两参数形式、`expt`。类型传染按 CLHS 12.1.4：double > single > 有理数；有理数的初等函数结果是 single-float。比较是精确的：浮点数按它表示的有理数和有理数比较。
+- **分配和 GC**：结果为 ratio 时，分子和分母可能是 bignum，先分配它们，并通过 `values_live` 把它们登记为 root，再分配 ratio。除法的余数同理。
+- **kernel**：`two-arg-*` 一律交给 `kiln_rt_number_op`；`/`、`float`、`numerator`、`denominator`、`rational`、`rationalp`、`floatp`、`realp`、`sqrt`、`exp`、`log`、`sin`、`cos`、`tan`、`atan`、`ffloor`；`truncate` 等四种除法支持所有实数。位运算仍然只接受整数。
+- **常量**：single-float 编译成立即数，double-float 和 ratio 编译成静态对象。
+- **打印**：runtime 的打印器按 `*read-default-float-format*` = single-float 的规则输出：最短的、能读回原值的数字；`1e-3 <= |x| < 1e7` 用定点表示，否则用指数表示；double 用 `d`（`1.0d0`、`1.5d-5`）。以后由 Lisp 写的打印器和 Quaviver 取代。
+- **没做**：complex；浮点的 trap 和 `float-digits`、`integer-decode-float`、`scale-float` 等；NaN 和无穷的读写。
+- `tests/m3/reals.lisp`：ratio 的约分和运算、类型传染、浮点打印、`=` 和 `eql` 对 `0.0`/`-0.0` 和不同格式的区别、有理数和浮点的精确比较、四种除法、初等函数、跨 GC 的 ratio 和 double。

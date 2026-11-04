@@ -4,6 +4,7 @@
   (:export #:+fixnum-shift+ #:+tag-mask+ #:+tag-cons+ #:+tag-general+
            #:+kind-mask+ #:+kind-symbol+ #:+kind-function+ #:+kind-cons+
            #:+kind-simple-vector+ #:+kind-string+ #:+kind-bignum+
+           #:+kind-ratio+ #:+kind-double+ #:+single-float-tag+
            #:+immediate-mask+ #:+character-tag+ #:+character-shift+ #:+char-code-limit+
            #:+symbol-name+ #:+symbol-package+ #:+symbol-plist+ #:+vector-data+
            #:+symbol-function+ #:+symbol-value+ #:+symbol-tls-index+ #:+unbound+
@@ -19,7 +20,7 @@
            #:+err-undefined-function+ #:+err-unbound-variable+ #:+err-not-symbol+
            #:+err-odd-keywords+ #:+err-unknown-keyword+
            #:+err-not-character+ #:+err-not-string+ #:+err-not-vector+
-           #:+err-index+ #:+err-not-sequence+ #:+err-not-integer+ #:+err-division-by-zero+
+           #:+err-index+ #:+err-not-sequence+ #:+err-not-integer+ #:+err-division-by-zero+ #:+err-not-number+
            #:+reg-args+))
 
 (defpackage #:kiln.kir

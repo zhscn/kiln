@@ -25,6 +25,10 @@ pub const KIND_STRING: u64 = 5;
 /// Integer outside the fixnum range: [header (length << 8), digits...],
 /// two's complement, little-endian 64-bit digits, minimal length.
 pub const KIND_BIGNUM: u64 = 6;
+/// [header, numerator, denominator], normalized.
+pub const KIND_RATIO: u64 = 7;
+/// [header, IEEE 754 binary64 bits].
+pub const KIND_DOUBLE: u64 = 8;
 
 /// Immediates: low 3 bits 0b011, bits 3..8 the immediate kind, payload
 /// from bit 8. See docs/09-m3-kernel.md §2.
@@ -144,6 +148,10 @@ pub fn nil() -> u64 {
     tag_general(&raw const kiln_nil)
 }
 
+pub fn t() -> u64 {
+    tag_general(&raw const kiln_t)
+}
+
 pub fn is_character(v: u64) -> bool {
     v & IMMEDIATE_MASK == CHARACTER_TAG
 }
@@ -183,6 +191,8 @@ pub fn object_bytes(header: u64) -> usize {
         KIND_SYMBOL => SYMBOL_BYTES,
         KIND_STRING => 8 + (4 * (header >> LENGTH_SHIFT) as usize).next_multiple_of(8),
         KIND_BIGNUM => 8 + 8 * (header >> LENGTH_SHIFT) as usize,
+        KIND_RATIO => 24,
+        KIND_DOUBLE => 16,
         KIND_FUNCTION => 16 + 8 * (header >> LENGTH_SHIFT) as usize,
         k => panic!("object_bytes: unknown kind {k}"),
     }
@@ -256,6 +266,7 @@ pub unsafe fn write_object(out: &mut String, v: u64) {
             KIND_BIGNUM => {
                 let _ = write!(out, "{}", unsafe { crate::bignum::to_bigint(v) });
             }
+            KIND_RATIO | KIND_DOUBLE => unsafe { crate::number::write_number(out, v) },
             KIND_SIMPLE_VECTOR => {
                 out.push_str("#(");
                 let n = (h >> LENGTH_SHIFT) as usize;
@@ -272,6 +283,8 @@ pub unsafe fn write_object(out: &mut String, v: u64) {
                 let _ = write!(out, "#<OBJECT kind={} {:#x}>", k, v);
             }
         }
+    } else if crate::number::is_single(v) {
+        unsafe { crate::number::write_number(out, v) };
     } else if is_character(v) {
         let code = (v >> CHARACTER_SHIFT) as u32;
         out.push_str("#\\");

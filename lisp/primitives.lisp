@@ -184,8 +184,10 @@ are compared (no short circuit), which also checks every argument."
   "Raw 0/1: is A a fixnum or a bignum?"
   `(:or (:eq (:and ,a 1) 0) ,(emit-kind-test a +kind-bignum+)))
 (define-primitive integerp (a) (boolean-value (emit-integer-test a)))
-;;; Only integers so far (M3.4 adds ratios and floats).
-(define-primitive numberp (a) (boolean-value (emit-integer-test a)))
+(define-primitive numberp (a)
+  (boolean-value `(:or ,(emit-integer-test a)
+                       (:or (:eq (:and ,a ,+immediate-mask+) ,+single-float-tag+)
+                            (:or ,(emit-kind-test a +kind-ratio+) ,(emit-kind-test a +kind-double+))))))
 (define-primitive zerop (a) (boolean-value (emit-compare-pair :eq a 0)))
 (define-primitive plusp (a) (boolean-value (emit-compare-pair :gt a 0)))
 (define-primitive minusp (a) (boolean-value (emit-compare-pair :lt a 0)))
@@ -531,3 +533,39 @@ operand N."
 (define-primop :fixnum-logior (a b) (copy-to-var `(:or ,a ,b)))
 (define-primop :fixnum-logxor (a b) (copy-to-var `(:xor ,a ,b)))
 (define-primop :type-error-integer (x) (emit-error +err-not-integer+ x) (nil-value))
+
+(define-primop :ratiop (x) (boolean-value (emit-kind-test x +kind-ratio+)))
+(define-primop :double-float-p (x) (boolean-value (emit-kind-test x +kind-double+)))
+(define-primop :single-float-p (x)
+  (boolean-value `(:eq (:and ,x ,+immediate-mask+) ,+single-float-tag+)))
+(define-primop :type-error-number (x) (emit-error +err-not-number+ x) (nil-value))
+
+(defun rt-number-op () (module-import-func "kiln_rt_number_op" 4 1 :unwinds))
+
+(defun emit-number-op (code a b)
+  (let ((r (new-var)))
+    (emit `(:call-rt ,(rt-number-op) (,r) (:ctx ,code ,a ,b) ,(handler)))
+    r))
+
+;;; Operation codes: rust/kiln-rt/src/number.rs.
+(macrolet ((define-number-ops (&rest specs)
+             `(progn
+                ,@(mapcar (lambda (spec)
+                            (destructuring-bind (name code &optional kind) spec
+                              (ecase kind
+                                ((nil) `(define-primop ,name (a b) (emit-number-op ,code a b)))
+                                (:unary `(define-primop ,name (a) (emit-number-op ,code a 0)))
+                                ;; The remainder is in ctx.values[0].
+                                (:two-values `(define-primop ,name (a b)
+                                                (values (emit-number-op ,code a b) 2))))))
+                          specs))))
+  (define-number-ops
+    (:number-add 0) (:number-sub 1) (:number-mul 2) (:number-div 3)
+    (:number-truncate 4 :two-values) (:number-floor 5 :two-values)
+    (:number-ceiling 6 :two-values) (:number-round 7 :two-values)
+    (:number-compare 8) (:number-eql 9)
+    (:to-single-float 10 :unary) (:to-double-float 11 :unary)
+    (:numerator 12 :unary) (:denominator 13 :unary)
+    (:sqrt 14 :unary) (:exp 15 :unary) (:log 16 :unary)
+    (:sin 17 :unary) (:cos 18 :unary) (:tan 19 :unary) (:atan 20 :unary)
+    (:rational 21 :unary) (:atan2 22) (:number-expt 23)))

@@ -3,6 +3,7 @@
 pub mod bignum;
 pub mod context;
 pub mod gc;
+pub mod number;
 pub mod object;
 pub mod rtfun;
 pub mod special;
@@ -88,6 +89,7 @@ pub fn symbols() -> Vec<(&'static str, *const u8)> {
         ),
         ("kiln_rt_throw", unwind::kiln_rt_throw as *const u8),
         ("kiln_rt_integer_op", bignum::kiln_rt_integer_op as *const u8),
+        ("kiln_rt_number_op", number::kiln_rt_number_op as *const u8),
         ("kiln_rt_tls_index", special::kiln_rt_tls_index as *const u8),
         ("kiln_rt_exit_to", unwind::kiln_rt_exit_to as *const u8),
         (

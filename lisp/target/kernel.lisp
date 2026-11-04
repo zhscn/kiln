@@ -48,25 +48,36 @@
 
 ;;; Numbers. Calls to + - * and the comparisons are open-coded for
 ;;; fixnums; other numbers and fixnum overflow call the TWO-ARG- functions
-;;; below (docs/09 §8). Integers only until M3.4.
+;;; below, which hand them to the runtime's real arithmetic (docs/09 §8,
+;;; §9). Complex numbers are not implemented yet.
+
+(defun rationalp (x) (or (integerp x) (%primop :ratiop x)))
+(defun floatp (x) (or (%primop :single-float-p x) (%primop :double-float-p x)))
+(defun realp (x) (or (rationalp x) (floatp x)))
 
 (defun check-number (x)
-  (unless (integerp x) (%primop :type-error-integer x))
+  (unless (realp x) (%primop :type-error-number x))
   x)
 
-(defun two-arg-+ (a b) (%primop :integer-add a b))
-(defun two-arg-- (a b) (%primop :integer-sub a b))
-(defun two-arg-* (a b) (%primop :integer-mul a b))
+(defun two-arg-+ (a b) (%primop :number-add a b))
+(defun two-arg-- (a b) (%primop :number-sub a b))
+(defun two-arg-* (a b) (%primop :number-mul a b))
 ;; The compare result is a fixnum, so the < here takes the fast path.
-(defun two-arg-< (a b) (< (%primop :integer-compare a b) 0))
-(defun two-arg-> (a b) (> (%primop :integer-compare a b) 0))
-(defun two-arg-<= (a b) (<= (%primop :integer-compare a b) 0))
-(defun two-arg->= (a b) (>= (%primop :integer-compare a b) 0))
-(defun two-arg-= (a b) (= (%primop :integer-compare a b) 0))
+;; Rationals and floats compare exactly (CLHS 12.1.4.1).
+(defun two-arg-< (a b) (< (%primop :number-compare a b) 0))
+(defun two-arg-> (a b) (> (%primop :number-compare a b) 0))
+(defun two-arg-<= (a b) (<= (%primop :number-compare a b) 0))
+(defun two-arg->= (a b) (>= (%primop :number-compare a b) 0))
+(defun two-arg-= (a b) (= (%primop :number-compare a b) 0))
 (defun eql-slow (a b)
-  ;; Called by EQL for non-identical heap objects.
-  (and (%primop :bignump a) (%primop :bignump b)
-       (= (%primop :integer-compare a b) 0)))
+  ;; Called by EQL for non-identical heap objects: numbers of the same type
+  ;; and value (floats by their bits).
+  (%primop :number-eql a b))
+
+(defun / (n &rest ds)
+  (if (null ds)
+      (%primop :number-div 1 n)
+      (dolist (d ds n) (setq n (%primop :number-div n d)))))
 
 (defun + (&rest ns)
   (let ((s 0)) (dolist (n ns s) (setq s (+ s n)))))
@@ -102,10 +113,10 @@
 (defun abs (n) (if (< n 0) (- n) n))
 (defun signum (n) (cond ((> n 0) 1) ((< n 0) -1) (t 0)))
 
-(defun truncate (n &optional (d 1)) (%primop :integer-truncate n d))
-(defun floor (n &optional (d 1)) (%primop :integer-floor n d))
-(defun ceiling (n &optional (d 1)) (%primop :integer-ceiling n d))
-(defun round (n &optional (d 1)) (%primop :integer-round n d))
+(defun truncate (n &optional (d 1)) (%primop :number-truncate n d))
+(defun floor (n &optional (d 1)) (%primop :number-floor n d))
+(defun ceiling (n &optional (d 1)) (%primop :number-ceiling n d))
+(defun round (n &optional (d 1)) (%primop :number-round n d))
 (defun mod (n d) (nth-value 1 (floor n d)))
 (defun rem (n d) (nth-value 1 (truncate n d)))
 
@@ -139,9 +150,29 @@
       (setq l (if (or (zerop l) (zerop n))
                   0
                   (truncate (abs (* l n)) (gcd l n)))))))
-(defun expt (base power)
-  ;; Integer base and non-negative integer power until M3.4.
-  (%primop :integer-expt base power))
+(defun expt (base power) (%primop :number-expt base power))
+
+(defun float (x &optional prototype)
+  (if (and prototype (%primop :double-float-p prototype))
+      (%primop :to-double-float x)
+      (if (floatp x) x (%primop :to-single-float x))))
+(defun coerce-float (x type)
+  ;; Until COERCE: TYPE is SINGLE-FLOAT or DOUBLE-FLOAT.
+  (if (eq type 'double-float) (%primop :to-double-float x) (%primop :to-single-float x)))
+(defun numerator (q) (%primop :numerator q))
+(defun denominator (q) (%primop :denominator q))
+(defun rational (x) (%primop :rational x))
+(defun sqrt (x) (%primop :sqrt x))
+(defun exp (x) (%primop :exp x))
+(defun log (x &optional base)
+  (if base (/ (%primop :log x) (%primop :log base)) (%primop :log x)))
+(defun sin (x) (%primop :sin x))
+(defun cos (x) (%primop :cos x))
+(defun tan (x) (%primop :tan x))
+(defun atan (y &optional x)
+  (if x (%primop :atan2 y x) (%primop :atan y)))
+(defun ffloor (n &optional (d 1))
+  (multiple-value-bind (q r) (floor n d) (values (float q (if (floatp n) n 1.0)) r)))
 (defun isqrt (n)
   ;; Newton's method on integers.
   (if (< n 2)

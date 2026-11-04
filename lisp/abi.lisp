@@ -18,12 +18,16 @@
 (defconstant +kind-simple-vector+ 4)
 (defconstant +kind-string+ 5)          ; UTF-32, padded to 8 bytes
 (defconstant +kind-bignum+ 6)          ; two's complement 64-bit digits
+(defconstant +kind-ratio+ 7)           ; [header, numerator, denominator]
+(defconstant +kind-double+ 8)          ; [header, IEEE bits]
 
 ;;; Immediates: low 3 bits #b011, bits 3-7 the immediate kind, payload from
 ;;; bit 8 (docs/09 §2).
 (defconstant +immediate-mask+ #xff)
 (defconstant +character-tag+ #x0b)
 (defconstant +character-shift+ 8)
+;;; Single-floats are immediates: low byte #x1b, IEEE bits in bits 32-63.
+(defconstant +single-float-tag+ #x1b)
 (defconstant +char-code-limit+ #x110000)
 
 ;;; Symbol layout: [header, name, package, function, value, TLS index,
@@ -98,6 +102,7 @@
 (defconstant +err-not-sequence+ 15)
 (defconstant +err-not-integer+ 16)
 (defconstant +err-division-by-zero+ 17)
+(defconstant +err-not-number+ 18)
 
 ;;; Argument registers in the Lisp calling convention.
 (defconstant +reg-args+ 3)

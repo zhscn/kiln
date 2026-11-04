@@ -175,6 +175,23 @@ name of its package as a string."
                                                              (if (logbitp 63 d) (- d (ash 1 64)) d)))))
                (setf (gethash x *constants*) `(:data ,label ,+tag-general+))))))
     (symbol (symbol-word x))
+    (single-float
+     (signed-word (logior (ash (ldb (byte 32 0) (sb-kernel:single-float-bits x)) 32)
+                          +single-float-tag+)))
+    (double-float
+     (or (gethash x *constants*)
+         (let ((label (fresh-label "kiln_double_")))
+           (module-data label `(:words ,+kind-double+
+                                       ,(signed-word
+                                         (logior (ash (ldb (byte 32 0) (sb-kernel:double-float-high-bits x)) 32)
+                                                 (sb-kernel:double-float-low-bits x)))))
+           (setf (gethash x *constants*) `(:data ,label ,+tag-general+)))))
+    (ratio
+     (or (gethash x *constants*)
+         (let ((label (fresh-label "kiln_ratio_")))
+           (module-data label `(:words ,+kind-ratio+ ,(constant-word (numerator x))
+                                       ,(constant-word (denominator x))))
+           (setf (gethash x *constants*) `(:data ,label ,+tag-general+)))))
     (character
      (logior (ash (char-code x) +character-shift+) +character-tag+))
     (string
@@ -199,6 +216,10 @@ name of its package as a string."
                                        ,(constant-word (cdr x))))
            `(:data ,label ,+tag-cons+))))
     (t (fail "constants of type ~S are not supported yet" (type-of x)))))
+
+(defun signed-word (u)
+  "The 64-bit pattern U as a signed integer (KIR words are signed)."
+  (if (logbitp 63 u) (- u (ash 1 64)) u))
 
 (defun constant-object (x)
   (word-operand (constant-word x)))
