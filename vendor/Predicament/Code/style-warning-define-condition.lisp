@@ -1,6 +1,7 @@
 (cl:in-package #:predicament)
 
-(define-condition style-warning (condition)
+;;; kiln: a WARNING (CLHS 9.2: style-warning, warning, condition, t).
+(define-condition style-warning (warning)
   ()
   ;; kiln: no report that ignores the condition: it would take precedence
   ;; over the reports of classes later in a subclass's precedence list

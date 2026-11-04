@@ -1,6 +1,8 @@
 (cl:in-package #:predicament)
 
-(define-condition reader-error (error)
+;;; kiln: CLHS's superclasses (reader-error, parse-error, stream-error,
+;;; error, ...).
+(define-condition reader-error (parse-error stream-error)
   ()
   ;; kiln: no report that ignores the condition: it would take precedence
   ;; over the reports of classes later in a subclass's precedence list

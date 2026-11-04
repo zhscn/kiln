@@ -2,7 +2,8 @@
 
 (defun muffle-warning (&optional condition)
   (let ((restart (find-restart 'muffle-warning condition)))
-    (if (null condition)
+    ;; kiln: no restart (upstream tests CONDITION).
+    (if (null restart)
         (error 'control-error)
         (invoke-restart restart))))
 
