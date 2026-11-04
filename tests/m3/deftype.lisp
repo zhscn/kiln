@@ -1,0 +1,7 @@
+(deftype small () '(integer 0 9))
+(deftype pair (&optional (a t) (b t)) `(cons ,a ,b))
+(print (typep 5 'small))
+(print (typep 50 'small))
+(print (typep '(1 . "x") '(pair integer string)))
+(print (typep '(1 . 2) '(pair integer string)))
+(print (typep 3 '(or small string)))

@@ -1,7 +1,8 @@
 ;;;; Types for the built-in classes: TYPEP, TYPE-OF, COERCE, EQUALP.
 ;;;;
-;;;; Until ctype is loaded (after CLOS, M4) TYPEP knows the built-in atomic
-;;;; types and the common compound specifiers; DEFTYPE is not supported.
+;;;; TYPEP knows the built-in atomic types and the common compound
+;;;; specifiers itself; DEFTYPE names are expanded, class names go to CLOS
+;;;; and other compound specifiers to ctype, once those are loaded.
 ;;;; The compiler open-codes TYPEP for constant atomic types (docs/09 §10).
 
 (in-package #:kiln.kernel)
@@ -56,7 +57,7 @@
         (bit (or (eql object 0) (eql object 1)))
         (unsigned-byte (and (integerp object) (>= object 0)))
         (signed-byte (integerp object))
-        (t (class-typep object type)))))
+        (t (other-typep object type)))))
 
 ;;; Class names (and classes) as types, once CLOS is loaded: it sets
 ;;; *CLASS-TYPEP* to a function of the object and the type that returns
@@ -106,7 +107,41 @@
               (if (stringp object)
                   (member (car args) '(character base-char standard-char))
                   (eq (car args) t)))))
-    (t (unknown-type (cons head args)))))
+    (t (other-typep object (cons head args)))))
+
+;;; DEFTYPE (Common-macros' expansion calls %DEFTYPE at compile time, in
+;;; the compile-time environment, and at load time): the expander, a
+;;; function of the type specifier and an environment, is kept on the
+;;; plist of the name.
+(defun kiln.sys::%deftype (name expander)
+  (setf (get name 'type-expander) expander)
+  name)
+
+(defun typexpand-1 (type &optional environment)
+  (let ((expander (and (or (symbolp type) (and (consp type) (symbolp (car type))))
+                       (get (if (consp type) (car type) type) 'type-expander))))
+    (if expander
+        (values (funcall expander type environment) t)
+        (values type nil))))
+
+(defun typexpand (type &optional environment)
+  (let ((expanded nil))
+    (do () (nil)
+      (multiple-value-bind (expansion expandedp) (typexpand-1 type environment)
+        (unless expandedp (return (values type expanded)))
+        (setq type expansion expanded t)))))
+
+;;; Specifiers TYPEP does not know itself: DEFTYPE names, then classes
+;;; (symbols) or ctype (compound specifiers; *CTYPE-TYPEP* is set once
+;;; ctype is loaded).
+(defvar *ctype-typep* nil)
+
+(defun other-typep (object type)
+  (multiple-value-bind (expansion expandedp) (typexpand-1 type)
+    (cond (expandedp (typep object expansion))
+          ((symbolp type) (class-typep object type))
+          (*ctype-typep* (funcall *ctype-typep* object type))
+          (t (unknown-type type)))))
 
 (defun unknown-type (type)
   (%primop :type-error-type type))

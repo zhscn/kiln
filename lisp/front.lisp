@@ -111,6 +111,14 @@
   `(eval-when (:compile-toplevel)
      (kiln.sys::%define-setf-expander ',name ,function)))
 
+(defmethod cmd:setf-type-function-wrapper ((client client))
+  ;; Common-macros' DEFTYPE puts this in an EVAL-WHEN with all three
+  ;; situations: the compile-time environment's %DEFTYPE records the
+  ;; expander in Clostrum, the kernel's on the symbol.
+  (lambda (name function environment)
+    (declare (ignore environment))
+    `(kiln.sys::%deftype ',name ,function)))
+
 (defmethod cmd:get-setf-expansion ((client client) place &optional environment)
   (let ((environment (or environment *environment*)))
     (cond ((symbolp place)
@@ -188,6 +196,10 @@
     (def 'get-setf-expansion
       (lambda (place &optional env)
         (cmd:get-setf-expansion client place env)))
+    (def 'kiln.sys::%deftype
+      (lambda (name expander)
+        (setf (clo:type-expander client genv name) expander)
+        name))
     ;; DEFCONSTANT's compile-time side (lisp/target/kernel.lisp).
     (def 'kiln.sys::%define-constant
       (lambda (name value)
