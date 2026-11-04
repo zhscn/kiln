@@ -201,7 +201,9 @@
         ((member type '(list))
          (coerce-to-list object))
         ((member type '(vector simple-vector))
-         (apply #'vector (coerce-to-list object)))
+         ;; Not APPLY: the list can be longer than CALL-ARGUMENTS-LIMIT.
+         (let* ((l (coerce-to-list object)) (v (make-simple-vector (length l))) (i 0))
+           (dolist (x l v) (setf (svref v i) x) (setq i (+ i 1)))))
         ((member type '(string simple-string))
          (let* ((l (coerce-to-list object)) (s (make-string (length l))) (i 0))
            (dolist (c l s) (setf (schar s i) c) (setq i (+ i 1)))))

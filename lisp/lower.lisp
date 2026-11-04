@@ -964,15 +964,37 @@ the SET-STATIC-ENVIRONMENT-AST for it in ASTS (0 if there is none)."
               (return-from static-env-size (length (ico:form-asts node)))))
           ast)))
 
+(defvar *name-hint* nil
+  "The name hint of the function being compiled: local functions without
+a name of their own (closures) show it in their labels.")
+
+(defun function-name-hint (asts)
+  "The name of the first block among the first nodes of ASTS (a DEFUN's or
+DEFMETHOD's name), mangled, for the function's label: profiles show it."
+  (let ((queue (copy-list asts)) (budget 200))
+    (loop while (and queue (plusp (decf budget)))
+          do (let ((node (pop queue)))
+               (cond ((typep node 'ico:block-ast)
+                      (let ((name (ico:name (ico:name-ast node))))
+                        (return-from function-name-hint
+                          (and name (symbolp name) (symbol-package name)
+                               (let ((m (mangle (symbol-name name))))
+                                 (subseq m 0 (min 40 (length m))))))))
+                     ((not (typep node 'ico:local-function-ast))
+                      (setf queue (append queue (ast-children node)))))))))
+
 (define-mv-lowering ico:labels-ast (ast)
   (let ((functions
           (loop for lf in (ico:binding-asts ast)
                 for def = (ico:name-ast lf)
-                for label = (fresh-label (format nil "kiln_f_~A_"
-                                                 (mangle (princ-to-string (ico:name def)))))
-                do (compile-function label
-                                     (parse-lambda-list (ico:lambda-list-ast lf))
-                                     (ico:form-asts lf))
+                for hint = (or (function-name-hint (ico:form-asts lf)) *name-hint*)
+                for label = (fresh-label (format nil "kiln_f_~A_~@[~A_~]"
+                                                 (mangle (princ-to-string (ico:name def)))
+                                                 hint))
+                do (let ((*name-hint* hint))
+                     (compile-function label
+                                       (parse-lambda-list (ico:lambda-list-ast lf))
+                                       (ico:form-asts lf)))
                 collect (list def label (static-env-size def (ico:form-asts ast))))))
     (loop for (def label n) in functions
           do (if (zerop n)

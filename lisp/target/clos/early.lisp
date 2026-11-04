@@ -110,30 +110,58 @@ list, slots), the slots unbound."
 ;;; CLASS-OF and STAMP. Objects other than instances belong to the built-in
 ;;; classes defined in built-in-classes.lisp.
 
+(defvar *built-in-class-names*
+  #(fixnum character cons null symbol simple-string simple-vector bignum ratio
+    single-float double-float function t))
+
+;;; The index in *BUILT-IN-CLASS-NAMES* of the class of OBJECT, which is not
+;;; an instance; the most frequent kinds first.
+(defun built-in-class-index (object)
+  (cond ((kiln.kernel::fixnump object) 0)
+        ((characterp object) 1)
+        ((consp object) 2)
+        ((null object) 3)
+        ((symbolp object) 4)
+        ((kiln.kernel::simple-string-p object) 5)
+        ((simple-vector-p object) 6)
+        ((kiln.kernel::bignump object) 7)
+        ((kiln.kernel::ratiop object) 8)
+        ((kiln.kernel::single-float-p object) 9)
+        ((kiln.kernel::double-float-p object) 10)
+        ((functionp object) 11)
+        (t 12)))
+
 (defun built-in-class-name-of (object)
-  (cond ((null object) 'null)
-        ((symbolp object) 'symbol)
-        ((consp object) 'cons)
-        ((kiln.kernel::fixnump object) 'fixnum)
-        ((kiln.kernel::bignump object) 'bignum)
-        ((kiln.kernel::ratiop object) 'ratio)
-        ((kiln.kernel::single-float-p object) 'single-float)
-        ((kiln.kernel::double-float-p object) 'double-float)
-        ((characterp object) 'character)
-        ((kiln.kernel::simple-string-p object) 'simple-string)
-        ((simple-vector-p object) 'simple-vector)
-        ((functionp object) 'function)
-        (t 't)))
+  (svref *built-in-class-names* (built-in-class-index object)))
+
+;;; The classes and stamps of the built-in classes, by index, cached after
+;;; the switchover to the MOP (switchover.lisp): built-in classes are not
+;;; redefined.
+(defvar *built-in-classes* (kiln.kernel::make-simple-vector 13 nil))
+(defvar *built-in-stamps* (kiln.kernel::make-simple-vector 13 nil))
+(defvar *switched-p* nil)
 
 (defun class-of (object)
   (if (instancep object)
       (kiln.sys:%primop :instance-class object)
-      (find-class (built-in-class-name-of object))))
+      (let* ((index (built-in-class-index object))
+             (class (svref *built-in-classes* index)))
+        (or class
+            (let ((class (find-class (svref *built-in-class-names* index))))
+              (when *switched-p*
+                (setf (svref *built-in-classes* index) class))
+              class)))))
 
 (defun stamp (object)
   (if (instancep object)
       (standard-instance-access object -2)
-      (%slot (class-of object) '%unique-number)))
+      (let* ((index (built-in-class-index object))
+             (stamp (svref *built-in-stamps* index)))
+        (or stamp
+            (let ((stamp (%slot (class-of object) '%unique-number)))
+              (when *switched-p*
+                (setf (svref *built-in-stamps* index) stamp))
+              stamp)))))
 
 (defun class-of+1 (object) (class-of object))
 (defun stamp+1 (object) (stamp object))
@@ -590,7 +618,8 @@ superclasses and metaclasses come first or are built already."
               (cons gf (%slot specializer '%direct-generic-functions)))))
     method))
 
-(defun early-ensure-method (name &key lambda-list qualifiers specializers documentation function)
+(defun early-ensure-method (name &key lambda-list qualifiers specializers documentation function
+                                     fast-function)
   (let* ((gf (early-ensure-generic-function
               name :lambda-list (congruent-lambda-list lambda-list)))
          (method (early-make-instance (%slot gf '%method-class)
@@ -599,6 +628,7 @@ superclasses and metaclasses come first or are built already."
                                       :specializers (mapcar #'specializer-from-designator
                                                             specializers)
                                       :function function
+                                      :fast-function fast-function
                                       :documentation documentation)))
     (early-add-method gf method)))
 
@@ -615,6 +645,12 @@ superclasses and metaclasses come first or are built already."
   (if (functionp method)
       method
       (%slot method '%function)))
+
+(defun kiln.sys:%method-fast-function (method)
+  ;; NIL for the functions standing for the rest of an effective method.
+  (if (functionp method)
+      nil
+      (%slot method '%fast-function)))
 
 ;;; Accessor methods of the braid's classes. The method functions read
 ;;; the slot by name, since its location can differ in subclasses.

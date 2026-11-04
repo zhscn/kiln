@@ -72,35 +72,96 @@
     ,@(when documentation-option
         `(:documentation ',(second documentation-option)))))
 
+;;; Method functions (docs/10 §26). The method function takes the list of
+;;; arguments and the next methods (AMOP). A method whose lambda list has
+;;; only required parameters (at most +MAX-FAST-ARITY+) also gets a fast
+;;; function, of the next methods and the arguments themselves, which the
+;;; discriminating function calls without making a list. The local
+;;; functions CALL-NEXT-METHOD and NEXT-METHOD-P are only made when the
+;;; body mentions them: they are closures, allocated at each call.
+
+(defconstant +max-fast-arity+ 6)
+
+(defun mentions-p (symbols tree)
+  (let ((seen (make-hash-table :test 'eq)))
+    (labels ((walk (x)
+               (cond ((symbolp x) (member x symbols))
+                     ((atom x) nil)
+                     ((gethash x seen) nil)
+                     (t (setf (gethash x seen) t)
+                        (or (walk (car x)) (walk (cdr x)))))))
+      (walk tree))))
+
+(defun method-lambda-forms (lambda-expression)
+  "The slow and the fast method lambdas (the latter NIL) for the method
+LAMBDA-EXPRESSION."
+  (let* ((arguments (gensym "ARGUMENTS"))
+         (next-methods (gensym "NEXT-METHODS"))
+         (lambda-list (second lambda-expression))
+         (nextp (mentions-p '(call-next-method next-method-p) (cddr lambda-expression)))
+         (fastp (and (consp lambda-list)
+                     (<= (length lambda-list) +max-fast-arity+)
+                     (every #'symbolp lambda-list)
+                     (notany (lambda (p) (member p lambda-list-keywords)) lambda-list)))
+         (parameters (and fastp (loop repeat (length lambda-list) collect (gensym "ARG")))))
+    (flet ((with-next (call-next-method-body form)
+             (if nextp
+                 `(flet ((next-method-p ()
+                           (not (null ,next-methods)))
+                         (call-next-method (&rest arguments)
+                           (if (null ,next-methods)
+                               (error "no next method")
+                               ,call-next-method-body)))
+                    (declare (ignorable #'next-method-p #'call-next-method))
+                    ,form)
+                 form)))
+      (values
+       `(lambda (,arguments ,next-methods)
+          (declare (ignorable ,next-methods))
+          ,(with-next `(funcall (kiln.sys:%method-function (first ,next-methods))
+                                (or arguments ,arguments)
+                                (rest ,next-methods))
+                      `(apply ,lambda-expression ,arguments)))
+       (and fastp
+            `(lambda (,next-methods ,@parameters)
+               (declare (ignorable ,next-methods))
+               ,(with-next `(if arguments
+                                (funcall (kiln.sys:%method-function (first ,next-methods))
+                                         arguments (rest ,next-methods))
+                                (let ((fast (kiln.sys:%method-fast-function
+                                             (first ,next-methods))))
+                                  (if fast
+                                      (funcall fast (rest ,next-methods) ,@parameters)
+                                      (funcall (kiln.sys:%method-function
+                                                (first ,next-methods))
+                                               (list ,@parameters)
+                                               (rest ,next-methods)))))
+                           `(,lambda-expression ,@parameters))))))))
+
 (defmethod cmd:make-method-lambda-wrapper ((client client))
   (lambda (lambda-expression)
-    (let ((arguments (gensym "ARGUMENTS"))
-          (next-methods (gensym "NEXT-METHODS")))
-      `(lambda (,arguments ,next-methods)
-         (flet ((next-method-p ()
-                  (not (null ,next-methods)))
-                (call-next-method (&rest arguments)
-                  (if (null ,next-methods)
-                      (error "no next method")
-                      (funcall (kiln.sys:%method-function (first ,next-methods))
-                               (or arguments ,arguments)
-                               (rest ,next-methods)))))
-           (declare (ignorable #'next-method-p #'call-next-method))
-           (apply ,lambda-expression ,arguments))))))
+    (multiple-value-bind (slow fast) (method-lambda-forms lambda-expression)
+      ;; Taken apart by ENSURE-METHOD-WRAPPER.
+      (list :kiln-method-lambdas slow fast))))
 
 (defmethod cmd:ensure-method-wrapper ((client client))
   (lambda (function-name lambda-list qualifiers specializer-designators
            documentation method-lambda)
-    `(kiln.sys:%defmethod
-      ',function-name
-      :lambda-list ',lambda-list
-      :qualifiers ',qualifiers
-      :specializers (list ,@(loop for s in specializer-designators
-                                  collect (if (consp s)
-                                              `(list 'eql ,(second s))
-                                              `',s)))
-      :documentation ',documentation
-      :function ,method-lambda)))
+    (destructuring-bind (function fast-function)
+        (if (and (consp method-lambda) (eq (first method-lambda) :kiln-method-lambdas))
+            (rest method-lambda)
+            (list method-lambda nil))
+      `(kiln.sys:%defmethod
+        ',function-name
+        :lambda-list ',lambda-list
+        :qualifiers ',qualifiers
+        :specializers (list ,@(loop for s in specializer-designators
+                                    collect (if (consp s)
+                                                `(list 'eql ,(second s))
+                                                `',s)))
+        :documentation ',documentation
+        :function ,function
+        ,@(when fast-function `(:fast-function ,fast-function))))))
 
 ;;; Places. Setf expanders live in the compile-time environment
 ;;; (DEFINE-SETF-EXPANDER registers them at compile time only: there is no

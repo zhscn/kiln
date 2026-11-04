@@ -75,7 +75,8 @@
              (setf (fdefinition name) gf)
              gf)))))
 
-(defun mop-ensure-method (name &key lambda-list qualifiers specializers documentation function)
+(defun mop-ensure-method (name &key lambda-list qualifiers specializers documentation function
+                                   fast-function)
   (let* ((gf (mop-ensure-generic-function
               name :lambda-list (congruent-lambda-list lambda-list)))
          (method (make-instance (generic-function-method-class gf)
@@ -83,6 +84,7 @@
                                 :qualifiers qualifiers
                                 :specializers (mapcar #'specializer-from-designator specializers)
                                 :function function
+                                :fast-function fast-function
                                 :documentation documentation)))
     (add-method gf method)
     method))

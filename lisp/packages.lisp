@@ -41,7 +41,8 @@
   (:export #:%gc #:%gc-count #:%call-on-new-stack #:%primop
            ;; Targets of the DEFCLASS, DEFGENERIC and DEFMETHOD expansions
            ;; (lisp/target/clos/early.lisp).
-           #:%defclass #:%defgeneric #:%defmethod #:%method-function))
+           #:%defclass #:%defgeneric #:%defmethod #:%method-function
+           #:%method-fast-function))
 
 (defpackage #:kiln.compiler
   (:use #:cl #:kiln.abi #:kiln.kir)
