@@ -29,6 +29,13 @@ pub const KIND_BIGNUM: u64 = 6;
 pub const KIND_RATIO: u64 = 7;
 /// [header, IEEE 754 binary64 bits].
 pub const KIND_DOUBLE: u64 = 8;
+/// Standard object: [header, rack]. See docs/10-m4-clos.md §3.
+pub const KIND_INSTANCE: u64 = 9;
+/// Funcallable standard object: [header, entry, rack, function]. A
+/// function too: kinds 2 and 10 differ only in bit 3.
+pub const KIND_FUNCALLABLE_INSTANCE: u64 = 10;
+/// Rack: [header (length << 8), class, stamp, slot list, slots...].
+pub const KIND_RACK: u64 = 11;
 
 /// Immediates: low 3 bits 0b011, bits 3..8 the immediate kind, payload
 /// from bit 8. See docs/09-m3-kernel.md §2.
@@ -193,6 +200,9 @@ pub fn object_bytes(header: u64) -> usize {
         KIND_BIGNUM => 8 + 8 * (header >> LENGTH_SHIFT) as usize,
         KIND_RATIO => 24,
         KIND_DOUBLE => 16,
+        KIND_INSTANCE => 16,
+        KIND_FUNCALLABLE_INSTANCE => 32,
+        KIND_RACK => 8 + 8 * (header >> LENGTH_SHIFT) as usize,
         KIND_FUNCTION => 16 + 8 * (header >> LENGTH_SHIFT) as usize,
         k => panic!("object_bytes: unknown kind {k}"),
     }
@@ -267,6 +277,12 @@ pub unsafe fn write_object(out: &mut String, v: u64) {
                 let _ = write!(out, "{}", unsafe { crate::bignum::to_bigint(v) });
             }
             KIND_RATIO | KIND_DOUBLE => unsafe { crate::number::write_number(out, v) },
+            KIND_INSTANCE => {
+                let _ = write!(out, "#<STANDARD-OBJECT {:#x}>", v);
+            }
+            KIND_FUNCALLABLE_INSTANCE => {
+                let _ = write!(out, "#<FUNCALLABLE-INSTANCE {:#x}>", v);
+            }
             KIND_SIMPLE_VECTOR => {
                 out.push_str("#(");
                 let n = (h >> LENGTH_SHIFT) as usize;

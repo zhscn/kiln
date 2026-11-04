@@ -1,6 +1,6 @@
 # 10 M4：CLOS 引导
 
-**状态**：计划（2026-11）。本文记录 M4 的决定和分步计划。依据是对 Clostrophilia（HEAD 9d0e86c，2026-08-29）的调研，结论记在 §2。
+**状态**：进行中（2026-11），M4.1 已完成（§5）。本文记录 M4 的决定和分步计划。依据是对 Clostrophilia（HEAD 9d0e86c，2026-08-29）的调研，结论记在 §2。
 
 ## 1. 决定
 
@@ -39,7 +39,7 @@
 | 11 | rack | `[header(长度), class, stamp, 有效槽列表, 槽...]` |
 
 - **类指针放在 rack 里**（[05 §4.1](05-sicl-survey.md) 里 SICL 在考虑的替代设计）：`change-class` 和实例更新只需要替换 rack 指针这一个字。header 里空出的位以后存身份哈希（Salmagundi 的 EQ 哈希表需要它）。
-- `standard-instance-access` 的位置 *loc* 对应 rack 的第 *loc* + 3 个字，所以 −2 是 stamp、−1 是有效槽列表。
+- `standard-instance-access` 的位置 *loc* 对应 rack 的第 *loc* + 4 个字（第 0 个字是 header，第 1 个字是 class），所以 −2 是 stamp、−1 是有效槽列表、0 起是槽。
 - **funcallable instance 就是函数**：kind 10 和 kind 2 只差第 3 位，调用点用 `(kind & 0xF7) == 2` 同时接受两者，`funcall`、`apply` 不需要特殊处理。它的入口是一个共享的跳板，从对象里取出安装的函数，按原样转交所有参数（包括传递区里的参数，跳板里没有 safepoint）。
 - 非标准对象的 stamp：`class-of` 按对象的 kind 和 tag 查一张表得到内建类，stamp 是这个类的唯一编号。
 
@@ -52,3 +52,11 @@
 | M4.3 | braid 和 early 函数；`make-instance`、`ensure-*`；把 Clostrophilia 编译成一个模块；分派和有效方法的解释执行补丁 |
 | M4.4 | 切换到完整的 MOP：satiation（在目标端，用解释执行的分派），安装判别函数，early 访问器换成真正的泛函；用户程序的 `defclass`/`defgeneric`/`defmethod` 测试 |
 | M4.5 | Predicament（condition 系统），然后依次接入 Salmagundi（哈希表）、Parcl（包）、Regalia（数组）、Anatomicl（`defstruct`）、ctype |
+
+## 5. M4.1 的实现记录
+
+- runtime：kind 9–11 的大小、GC 扫描（rack 扫描全部字；funcallable instance 跳过入口地址，扫描 rack 和安装的函数）和打印。
+- 原语（`%primop`）：`:allocate-general-instance`、`:allocate-general-funcallable-instance`（参数和 Clostrophilia 的 `allocate-general-instance` 一致：类和 rack 里 class 之后的格数，含 stamp 和槽列表）、`:standard-instance-access` 及其 setter、`:instance-rack`/`:set-instance-rack`（换 rack 是一次存储）、`:instance-class`、`:set-funcallable-instance-function`、`:standard-instance-p`、`:funcallable-instance-p`。
+- funcallable instance 的入口是共享的跳板 `kiln_funcallable_trampoline`：从对象的第 3 个字取出安装的函数，用原来的 `nargs` 和寄存器参数调用它，返回它的全部值。跳板里没有 safepoint，传递区里的参数原样传下去。新建的 funcallable instance 安装的是一个调用即报错的函数。
+- 编译器里所有“是不是函数”的检查（`funcall`、`apply`、`functionp`、函数标识）改为 `(kind & 0xF7) == 2`。
+- `tests/m4/instances.lisp`：rack 的读写和替换、跨 GC、funcallable instance 的调用（0 到 6 个参数、`apply`、`multiple-value-call`、`mapcar`、多值返回）。

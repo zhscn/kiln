@@ -20,6 +20,13 @@
 (defconstant +kind-bignum+ 6)          ; two's complement 64-bit digits
 (defconstant +kind-ratio+ 7)           ; [header, numerator, denominator]
 (defconstant +kind-double+ 8)          ; [header, IEEE bits]
+;;; CLOS (docs/10 §3).
+(defconstant +kind-instance+ 9)        ; [header, rack]
+(defconstant +kind-funcallable-instance+ 10) ; [header, entry, rack, function]
+(defconstant +kind-rack+ 11)           ; [header, class, stamp, slot list, slots...]
+;;; Function objects and funcallable instances differ only in bit 3: a
+;;; kind is a function kind when (logand kind +function-kind-mask+) = 2.
+(defconstant +function-kind-mask+ #xf7)
 
 ;;; Immediates: low 3 bits #b011, bits 3-7 the immediate kind, payload from
 ;;; bit 8 (docs/09 §2).

@@ -178,7 +178,7 @@ are compared (no short circuit), which also checks every argument."
     r))
 
 (define-primitive symbolp (a) (emit-kind-p a +kind-symbol+))
-(define-primitive functionp (a) (emit-kind-p a +kind-function+))
+(define-primitive functionp (a) (boolean-value (emit-function-test a)))
 ;;; Only fixnums exist so far.
 (defun emit-integer-test (a)
   "Raw 0/1: is A a fixnum or a bignum?"
@@ -396,6 +396,19 @@ are compared (no short circuit), which also checks every argument."
     (start-block join)
     r))
 
+(defun emit-function-test (x)
+  "Raw 0/1: is X a function (a function object or funcallable instance)?"
+  (let ((r (new-var :raw)) (general (new-block)) (no (new-block)) (join (new-block)))
+    (br `(:eq (:and ,x ,+tag-mask+) ,+tag-general+) general no)
+    (start-block general)
+    (emit `(:set ,r (:eq (:and (:load ,x ,(- +tag-general+)) ,+function-kind-mask+) ,+kind-function+)))
+    (jump join)
+    (start-block no)
+    (emit `(:set ,r 0))
+    (jump join)
+    (start-block join)
+    r))
+
 (defun vector-length (v)
   "Fixnum length of the vector or string V."
   `(:shl (:shr (:load ,v ,(- +tag-general+)) ,+length-shift+) ,+fixnum-shift+))
@@ -435,7 +448,7 @@ operand N."
 (define-primop :simple-vector-p (x) (boolean-value (emit-kind-test x +kind-simple-vector+)))
 (define-primop :symbolp (x)
   (boolean-value `(:or (:eq ,x ,(nil-value)) ,(emit-kind-test x +kind-symbol+))))
-(define-primop :functionp (x) (boolean-value (emit-kind-test x +kind-function+)))
+(define-primop :functionp (x) (boolean-value (emit-function-test x)))
 
 (define-primop :char-code (c)
   (copy-to-var `(:shl (:shr ,c ,+character-shift+) ,+fixnum-shift+)))
@@ -570,3 +583,90 @@ operand N."
     (:sin 17 :unary) (:cos 18 :unary) (:tan 19 :unary) (:atan 20 :unary)
     (:rational 21 :unary) (:atan2 22) (:number-expt 23)))
 (define-primop :type-error-type (x) (emit-error +err-bad-type+ x) (nil-value))
+
+;;; CLOS objects (docs/10 §3). A rack is [header, class, stamp, slot list,
+;;; slots...]; STANDARD-INSTANCE-ACCESS location L is rack word L + 4, so
+;;; -2 is the stamp and -1 the slot list (Clostrophilia's convention).
+
+(defun funcallable-trampoline ()
+  "Shared entry of funcallable instances: calls the installed function with
+the same arguments. No safepoint before the call, so arguments in the
+transfer area are passed on intact."
+  (let ((name "kiln_funcallable_trampoline"))
+    (unless (gethash name (kiln.kir::kmodule-defined *module*))
+      (setf (gethash name (kiln.kir::kmodule-defined *module*)) t)
+      (module-shared name)
+      (let ((*regions* '()))
+        (with-function (name)
+          (let ((f (copy-to-var `(:load :self ,(- 24 +tag-general+))))
+                (v0 (new-var)) (nv (new-var :raw)))
+            (emit `(:call-lisp ,v0 ,nv (:load ,f ,+fobj-entry+) (:ctx ,f :nargs :a0 :a1 :a2) :nil))
+            (emit `(:return ,v0 ,nv))))))
+    name))
+
+(defun funcallable-unset ()
+  "Function object installed in a new funcallable instance: signals an
+error when called."
+  (let ((name "kiln_funcallable_unset"))
+    (unless (gethash name (kiln.kir::kmodule-defined *module*))
+      (setf (gethash name (kiln.kir::kmodule-defined *module*)) t)
+      (module-shared name)
+      (let ((*regions* '()))
+        (with-function (name)
+          (emit-error +err-not-function+ :self)))
+      (module-shared (module-data "kiln_funcallable_unset_fobj"
+                                  `(:words ,+kind-function+ (:func ,name)))))
+    `(:addr "kiln_funcallable_unset_fobj" ,+tag-general+)))
+
+(defun emit-allocate-rack (class size)
+  "A rack for CLASS with SIZE cells after the class word (stamp, slot list
+and slots), zero-filled."
+  (emit-check-length size)
+  (let* ((n (copy-to-var `(:add (:sar ,size ,+fixnum-shift+) 1) :raw))
+         (class (copy-to-var class))
+         (p (emit-alloc `(:add 8 (:shl ,n 3)) `(:or (:shl ,n ,+length-shift+) ,+kind-rack+))))
+    (emit `(:store ,p 8 ,class))
+    (copy-to-var `(:add ,p ,+tag-general+))))
+
+(define-primop :allocate-general-instance (class size)
+  (let* ((rack (emit-allocate-rack class size))
+         (p (emit-alloc 16 +kind-instance+)))
+    (emit `(:store ,p 8 ,rack))
+    (copy-to-var `(:add ,p ,+tag-general+))))
+
+(define-primop :allocate-general-funcallable-instance (class size)
+  (let* ((rack (emit-allocate-rack class size))
+         (p (emit-alloc 32 (logior +kind-funcallable-instance+ (ash 2 +length-shift+)))))
+    (emit `(:store ,p 8 (:addr ,(funcallable-trampoline))))
+    (emit `(:store ,p 16 ,rack))
+    (emit `(:store ,p 24 ,(funcallable-unset)))
+    (copy-to-var `(:add ,p ,+tag-general+))))
+
+(defun rack-of (obj)
+  "Operand: the rack of the standard or funcallable instance OBJ."
+  `(:load (:add ,obj (:select (:eq (:and (:load ,obj ,(- +tag-general+)) ,+kind-mask+)
+                                   ,+kind-instance+)
+                              0 8))
+          ,(- 8 +tag-general+)))
+
+(define-primop :standard-instance-p (x) (boolean-value (emit-kind-test x +kind-instance+)))
+(define-primop :funcallable-instance-p (x)
+  (boolean-value (emit-kind-test x +kind-funcallable-instance+)))
+(define-primop :instance-rack (obj) (copy-to-var (rack-of obj)))
+(define-primop :set-instance-rack (obj rack)
+  (emit `(:store (:add ,obj (:select (:eq (:and (:load ,obj ,(- +tag-general+)) ,+kind-mask+)
+                                          ,+kind-instance+)
+                                     0 8))
+                 ,(- 8 +tag-general+) ,rack))
+  rack)
+(define-primop :instance-class (obj)
+  (copy-to-var `(:load ,(rack-of obj) ,(- 8 +tag-general+))))
+(define-primop :standard-instance-access (obj location)
+  (copy-to-var `(:load (:add ,(rack-of obj) (:shl ,location 2)) ,(- 32 +tag-general+))))
+(define-primop :set-standard-instance-access (obj location value)
+  (emit `(:store (:add ,(rack-of obj) (:shl ,location 2)) ,(- 32 +tag-general+) ,value))
+  value)
+(define-primop :set-funcallable-instance-function (fi f)
+  (emit-check-function f)
+  (emit `(:store ,fi ,(- 24 +tag-general+) ,f))
+  f)

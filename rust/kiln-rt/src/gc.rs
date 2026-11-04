@@ -14,7 +14,8 @@
 
 use crate::context::Context;
 use crate::object::{
-    self, KIND_BIGNUM, KIND_CONS, KIND_DOUBLE, KIND_FUNCTION, KIND_RATIO, KIND_MASK, KIND_SIMPLE_VECTOR, KIND_STRING, KIND_SYMBOL,
+    self, KIND_BIGNUM, KIND_CONS, KIND_DOUBLE, KIND_FUNCALLABLE_INSTANCE, KIND_FUNCTION, KIND_INSTANCE,
+    KIND_RACK, KIND_RATIO, KIND_MASK, KIND_SIMPLE_VECTOR, KIND_STRING, KIND_SYMBOL,
     LENGTH_SHIFT,
 };
 use mmtk::util::copy::{CopySemantics, GCWorkerCopyContext};
@@ -329,6 +330,10 @@ impl Scanning<Kiln> for KilnScanning {
             KIND_SYMBOL => (8, 6),
             KIND_STRING | KIND_BIGNUM | KIND_DOUBLE => (8, 0),
             KIND_RATIO => (8, 2),
+            KIND_INSTANCE => (8, 1),
+            // Skip the entry address: rack and installed function.
+            KIND_FUNCALLABLE_INSTANCE => (16, 2),
+            KIND_RACK => (8, (h >> LENGTH_SHIFT) as usize),
             k => panic!("scan_object: unexpected kind {k} in the heap"),
         };
         for i in 0..fields {

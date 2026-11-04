@@ -5,6 +5,7 @@
            #:+kind-mask+ #:+kind-symbol+ #:+kind-function+ #:+kind-cons+
            #:+kind-simple-vector+ #:+kind-string+ #:+kind-bignum+
            #:+kind-ratio+ #:+kind-double+ #:+single-float-tag+
+           #:+kind-instance+ #:+kind-funcallable-instance+ #:+kind-rack+ #:+function-kind-mask+
            #:+immediate-mask+ #:+character-tag+ #:+character-shift+ #:+char-code-limit+
            #:+symbol-name+ #:+symbol-package+ #:+symbol-plist+ #:+vector-data+
            #:+symbol-function+ #:+symbol-value+ #:+symbol-tls-index+ #:+unbound+
