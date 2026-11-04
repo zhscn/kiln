@@ -867,6 +867,18 @@
        (unless expandedp
          (return-from macroexpand (values form expanded)))
        (setf form expansion expanded t)))))
+
+(defun special-operator-p (symbol)
+  (and (member symbol '(block catch eval-when flet function go if labels let let*
+                        load-time-value locally macrolet multiple-value-call
+                        multiple-value-prog1 progn progv quote return-from setq
+                        symbol-macrolet tagbody the throw unwind-protect))
+       t))
+
+;;; No function keeps its source (CLHS allows NIL).
+(defun function-lambda-expression (function)
+  (declare (ignore function))
+  (values nil t nil))
 ;;; The other CxR functions and their SETF functions.
 (defun (setf caar) (v x) (setf (car (car x)) v))
 (defun (setf cdar) (v x) (setf (cdr (car x)) v))

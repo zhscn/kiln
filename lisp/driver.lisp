@@ -137,6 +137,19 @@
             "random-state" "pathname" "standard-object" "structure" "package"
             "symbol")))
 
+(defparameter *inravina-files*
+  ;; As inravina.asd; kiln's pprint.lisp replaces the intrinsic interface.
+  ;; The logical block expander is called by macros at compile time.
+  (mapcar (lambda (name)
+            (let ((path (asdf:system-relative-pathname
+                         "kiln" (format nil "vendor/Inravina/code/~A.lisp" name))))
+              (if (member name '("logical-block") :test #'string=)
+                  (list :compile-time-too path)
+                  path)))
+          '("packages" "types" "interface" "logical-block" "list-printers"
+            "form-printers" "object-printers" "dispatch" "pretty-stream"
+            "implementation")))
+
 (defparameter *invistra-files*
   ;; As invistra.asd; kiln's format.lisp replaces the intrinsic interface.
   (mapcar (lambda (name)
@@ -289,11 +302,13 @@
          (kiln-clos-file "printer-support")
          (kiln-clos-file "quaviver"))
    *incless-files*
-   (list (kiln-clos-file "printer"))
+   (list (kiln-clos-file "printer")
+         (kiln-clos-file "ngray"))
+   *inravina-files*
+   (list (kiln-clos-file "pprint"))
    (mapcar (lambda (name)
              (asdf:system-relative-pathname "acclimation" (format nil "~A.lisp" name)))
            '("packages" "locale" "language" "language-english" "condition" "init"))
-   (list (kiln-clos-file "ngray"))
    *invistra-files*
    (list (kiln-clos-file "format")
          (kiln-clos-file "pathnames")

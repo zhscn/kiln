@@ -23,6 +23,7 @@ shows exactly what kiln changed. Changes are not sent upstream for now.
 | Khazern | https://github.com/s-expressionists/Khazern | b657262946bfba0e17ee930c58c8fcd6fa6be774 (2026-09-17) | BSD (`Khazern/LICENSE.md`) |
 | Eclector | https://github.com/s-expressionists/Eclector | 1088a7998f0d205da12ff48de7238b1008a31792 (2026-08-29) | BSD (`Eclector/LICENSE`) |
 | Common-macros | https://github.com/robert-strandh/Common-macros | 4596ddf32357fa793ece25cecb6e8661259b51ac (2026-02-10) | no license file |
+| Inravina | https://github.com/s-expressionists/Inravina | e28b107b025b2efdd4f16ed71fbdc0e1af62e478 (2026-07-11) | MIT (`Inravina/LICENSE.md`) |
 
 ## Clostrophilia patches
 
@@ -62,6 +63,12 @@ Each patched place is marked with a `kiln:` comment.
 
 - `signal` and `warn` on a string or a symbol call themselves on the condition without
   a stray `nil` argument (which its own `:before` method rejected).
+- Under `#+kiln`, the reports of `error`, `parse-error`, `program-error`,
+  `control-error`, `reader-error`, `warning`, `style-warning` and
+  `storage-condition`, which ignore the condition, are not defined: they
+  took precedence over the reports of classes later in a subclass's
+  precedence list (Khazern's conditions are `parse-error`s and
+  `acclimation:condition`s).
 
 ## Salmagundi patches
 
@@ -146,9 +153,6 @@ part of Quaviver that Incless uses.
 
 Under `#+kiln` (docs/10 §18 of kiln):
 
-- The branches without Inravina (the pretty printer) are taken, as for
-  SICL (`#-(or sicl kiln)`); the `format-tab` compiler macro, which
-  expands into Inravina calls, is not defined.
 - `formatter` expands into a function that interprets the control string
   (the format compiler is target code, not available when macros are
   expanded); it returns NIL instead of the unused arguments.
@@ -166,6 +170,10 @@ Under `#+kiln` (docs/10 §18 of kiln):
   with only the global environment (upstream: the global environment
   itself, in which a `lambda` form cannot add its local functions and
   variables).
+- The names in the declarations of a function body with a lambda list
+  are finalized into references, as `let`'s are (upstream leaves them
+  names, which Iconoclast's splitting of `let*` rejects when a lambda
+  list with `&optional` is lexified).
 - `augment-environment-with-binding-variable` returns the environment
   unchanged for a globally special variable (upstream: NIL, which `let*`
   then used as the environment of the following bindings and the body).
@@ -188,3 +196,9 @@ Under `#+kiln` (docs/10 §18 of kiln):
   a superclass too (with `standard-object`).
 - The replacement for a bad `#P` is `(pathname ".")`, not the literal
   `#P"."` (no pathname constants in kiln's compiled code).
+
+## Inravina patches
+
+- Eclector's backquote symbols (`eclector.reader:quasiquote`, `unquote`,
+  `unquote-splicing`) are the quasiquote and unquote forms (`#+kiln`), in
+  the types and in the standard dispatch table.

@@ -437,7 +437,7 @@ Invistra vendor 在 `vendor/Invistra`，用的是 intrinsic 接口：`format` �
 - Quaviver：只用到 §17 替身里的三个函数；
 - nontrivial-gray-streams：kiln 定义了 `ngray` 包，转出 Cyclosis 中同名的 Gray 流 symbol（`ngray.lisp`）；
 - Acclimation：用于条件报告的本地化，只加载 English 部分，作为目标端代码编译；
-- Inravina（美化打印）：没有加载。补丁把 `#-sicl` 改成 `#-(or sicl kiln)`，走 SICL 那条不用 Inravina 的分支。所以 `~<...~:>`、`~_`、`~I` 和 `~:T` 还不能用。
+- Inravina（美化打印）：§25。最初没有加载，补丁走 SICL 那条不用 Inravina 的分支；接入 Inravina 后撤掉了这个补丁，`~<...~:>`、`~_`、`~I` 和 `~:T` 都可以用。
 
 **补丁**（见 `vendor/README.md`）：
 - `formatter` 展开成在运行期解释控制串的函数，返回 NIL 而不是剩余参数，因为 Invistra 的格式编译器是目标端代码，宏展开时不可用；
@@ -483,13 +483,12 @@ Invistra vendor 在 `vendor/Invistra`，用的是 intrinsic 接口：`format` �
 - **`make-array`**（§14）：结果在可以用原生对象时就是原生对象；序列函数对非 simple 向量返回 simple 向量。
 - **结构**（§15）：`equalp` 不比较结构的槽；访问器是泛函。
 - **`change-class`**（§18）：只复制同名的槽并初始化新增的槽，不调用 `update-instance-for-different-class`。
-- **`parse-error` 的报告**（§20）：Predicament 给 `parse-error` 定义了报告「A parse error has occurred.」。`parse-error` 和 `acclimation:condition` 的子类（例如 Khazern 的条件）在类优先级里先遇到 `parse-error`，所以打印的是这句，而不是 Acclimation 的本地化报告。
+- **标准条件的报告**（§25）：Predicament 给 `error`、`parse-error` 等 8 个标准条件定义的、不看条件内容的报告去掉了，没有报告的条件打印成「Condition X was signalled.」，和 SBCL 一样。
 - **pathname**（§21）：只支持 Unix 的物理 pathname，没有 host 对象（物理 pathname 的 host 是 NIL），名字里不能用反斜杠转义；`directory` 不解析符号链接；`:if-exists :new-version`（输出的默认值）在文件已存在时报错，和 SBCL 一样；字符流的 `file-position` 以八位组计。
 - **时间**（§21）：没有时区，所以没有 `decode-universal-time`、`get-decoded-time`；`sleep` 期间其他线程不能做 GC（现在还没有其他线程）。
 - **运行期的宏展开**（§20）：`macroexpand` 只看全局宏，没有 symbol macro，环境参数被忽略；运行期的宏只有目标代码里 `defmacro` 定义的那些和 LOOP，标准宏（Common-macros）只在编译期存在。
 
 **还没有的功能**：
-- 美化打印（Inravina）：`pprint` 不做美化，`*print-pretty*` 不起作用；FORMAT 的 `~<...~:>`、`~_`、`~I`、`~:T` 不能用（§18）。Khazern 的条件报告用到了 `~@<...~:@>`。
 - 运行期的 `eval`/`compile`，REPL 的前提（reader 已有，§22）。
 - 标准流的输出缓冲（§21：文件流有缓冲，标准流没有）。
 - 类、泛函、结构的重定义（§7、§15）。
@@ -668,3 +667,32 @@ CST 读取现在约是 SBCL 的 100 倍，开始时是 1600 倍。各项改动�
 2. **在生成代码里内联分配快速路径**（bump 指针放在 context 里），以及更大的或分代的堆。默认 64 MiB 的 SemiSpace 下，GC 占了不少时间；堆加到 256 MiB 能快约 20%。
 3. **内联小函数**：kiln 现在忽略 `inline` 声明。`standard-instance-access`、`stamp`、`instancep`、`first` 之类的小函数，每次都是一次全局调用。
 4. 以后每做一步都用这个基准，再加上把前端更多部分（Trucler、Clostrum、Common-boot）搬到目标端后的基准，来衡量进展。
+
+## 25. 美化打印（Inravina）
+
+Inravina vendor 在 `vendor/Inravina`，用的是 intrinsic 接口。CL 的美化打印函数和宏都是 Inravina 的，包括 `pprint-logical-block`、`pprint-newline`、`pprint-indent`、`pprint-tab`、`pprint-fill` 等，以及 `pprint-dispatch`、`set-pprint-dispatch`、`copy-pprint-dispatch` 和 `*print-pprint-dispatch*`。kiln 的接口在 `lisp/target/clos/pprint.lisp`：
+- client 类 `inravina-intrinsic:kiln-client` 继承 Incless 的 client 和 `inravina:client`，替换掉 `incless::*client*`；Invistra 的 client 改成继承它。
+- 接口里不是 CL symbol 的名字（标准 dispatch 表、`pretty-stream-p`）放在 `inravina-intrinsic` 包里，和上游的 intrinsic 接口一样。若放在 `inravina` 包里，接口定义的单参数 `pretty-stream-p` 会覆盖 Inravina 自己的同名泛函。
+- `with-standard-io-syntax` 把 `*print-pprint-dispatch*` 绑定为标准表（`kiln.kernel::*standard-pprint-dispatch*`，由 `pprint.lisp` 设置）。
+
+**加载顺序**：Incless、`printer.lisp`、`ngray.lisp`、Inravina、`pprint.lisp`，然后才是 Acclimation 和 Invistra。`logical-block.lisp` 在编译期也求值，因为 `pprint-logical-block` 宏的展开函数 `expand-logical-block` 在宏展开时调用。`ngray` 包补上了 `stream-element-type`、`stream-external-format` 和 `stream-line-length`，它们都是 CL 的泛函。
+
+**补丁**（见 `vendor/README.md`）：
+- Inravina 识别 Eclector 的反引号符号（`eclector.reader:quasiquote`、`unquote`、`unquote-splicing`），所以 `` `(a ,b ,@c) `` 打印成反引号形式。
+- Invistra 撤掉 §18 里「不用 Inravina」的补丁，`format-tab` 的编译器宏也恢复。
+- Common-boot：lambda list 所在函数体里声明中的名字也解析成引用，和 `let` 的处理一样。上游只在 `let` 里这样做。带 `&optional` 的 lambda list 被 Iconoclast 改写成 `let*` 时，未解析的名字会让它拆分声明的步骤出错。Inravina 的 `pprint-macro-char` 就是这种情况：有 `&optional` 参数，又有 `(declare (special *quasiquote*))`。
+- Predicament：`error`、`parse-error`、`program-error`、`control-error`、`reader-error`、`warning`、`style-warning`、`storage-condition` 的报告不看条件内容，在 kiln 下去掉。原因是 Khazern 的条件同时继承 `parse-error` 和 `acclimation:condition`，类优先级里 `parse-error` 在前，它的「A parse error has occurred.」会盖住 Acclimation 的本地化报告。没有报告的条件不转义打印时，按 SBCL 的样子输出「Condition X was signalled.」（`format.lisp`）。
+
+**kernel**：加了 `special-operator-p`，Inravina 用它判断能否取宏或函数的 lambda list；还加了 `function-lambda-expression`，总是返回 NIL。
+
+**和 SBCL 的差异**：Inravina 允许一行恰好写到 `*print-right-margin*` 列，SBCL 则在到达这一列之前就换行。所以宽度正好等于右边距的行，两边的布局会不同。`*print-pretty*` 的默认值仍是 NIL，测试的输出因此不变。
+
+`tests/m4/clos-pprint.lisp` 覆盖：
+- 列表的填充换行，`defun`、`let`、`cond`、`quote`、`function`、反引号的标准布局；
+- 用户写的 `pprint-logical-block`、`pprint-pop`、`pprint-exit-if-list-exhausted`、`pprint-newline`；
+- 逻辑块里的 `*print-length*`、`*print-level*`；
+- 在复制的表上 `set-pprint-dispatch`；
+- FORMAT 的 `~<...~:>`、`~:<...~:>`、`~@<...~:@>`、`~_`、`~:_`、`~:@_`、`~:I`；
+- `pprint`，以及 Khazern 的条件报告。
+
+除右边距那一处外，输出和 SBCL 逐行一致。

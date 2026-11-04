@@ -28,7 +28,9 @@
 ;;; Eclector's standard readtable, once the reader is loaded (reader.lisp).
 ;;; Also at compile time: macro expanders use WITH-STANDARD-IO-SYNTAX.
 (eval-when (:compile-toplevel :load-toplevel :execute)
-  (defvar kiln.kernel::*standard-readtable* nil))
+  (defvar kiln.kernel::*standard-readtable* nil)
+  ;; Inravina's standard pprint dispatch table (pprint.lisp).
+  (defvar kiln.kernel::*standard-pprint-dispatch* nil))
 
 (defun readtable-case (readtable)
   (declare (ignore readtable))
@@ -39,7 +41,7 @@
          (*print-array* t) (*print-base* 10) (*print-case* :upcase)
          (*print-circle* nil) (*print-escape* t) (*print-gensym* t)
          (*print-length* nil) (*print-level* nil) (*print-lines* nil)
-         (*print-miser-width* nil) (*print-pprint-dispatch* nil)
+         (*print-miser-width* nil) (*print-pprint-dispatch* kiln.kernel::*standard-pprint-dispatch*)
          (*print-pretty* nil) (*print-radix* nil) (*print-readably* t)
          (*print-right-margin* nil) (*read-base* 10)
          (*read-default-float-format* 'single-float) (*read-eval* t)

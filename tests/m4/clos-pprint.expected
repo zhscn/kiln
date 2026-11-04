@@ -1,0 +1,36 @@
+(ALPHA BETA GAMMA DELTA EPSILON ZETA
+ ETA THETA IOTA KAPPA LAMBDA MU NU XI)
+(DEFUN FACT (N)
+  (IF (ZEROP N) 1 (* N (FACT (- N 1)))))
+(LET ((A 1) (B 2) (C 3))
+  (PRINT A)
+  (PRINT B)
+  (PRINT C))
+(COND ((NULL X) NIL)
+      ((CONSP X) (CAR X))
+      (T (ERROR "no ~a" X)))
+'QUOTED
+#'CAR
+`(A ,B ,@C)
+{:A => 1, :B => 2, :C => 3}
+{:A => 1,
+ :B => 2,
+ :C => 3}
+(1 2 3 ...)
+(1 (2 #))
+(#1 #2 THREE)
+(1 2 THREE)
+X Y Z
+(AAAAA BBBBB CCCCC DDDDD EEEEE)
+(AAAAA BBBBB CCCCC DDDDD EEEEE)
+ONE TWO
+(FOO BAR BAZ QUX QUUX)
+A, B, C
+(A B)
+
+(A B C)
+(DEFUN F (X) X)
+#(1 2 3)
+EXPECTED-TOKEN-BUT-END
+
+Expected a token but reached the end of the loop body instead.
