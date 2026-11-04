@@ -13,6 +13,49 @@
 (defun kiln-clos-file (name)
   (asdf:system-relative-pathname "kiln" (format nil "lisp/target/clos/~A.lisp" name)))
 
+(defun predicament-file (name)
+  (asdf:system-relative-pathname
+   "kiln" (format nil "vendor/Predicament/Code/~A.lisp" name)))
+
+(defparameter *predicament-files*
+  ;; As predicament-common.asd. RESTART-BIND's and RESTART-CASE's
+  ;; expanders call functions of their files.
+  (mapcar (lambda (name)
+            (if (member name '("restart-bind-defmacro" "restart-case-defmacro")
+                        :test #'string=)
+                (list :compile-time-too (predicament-file name))
+                (predicament-file name)))
+          '("break-on-signals-defparameter" "debugger-hook-defparameter"
+            "default-debugger-defvar" "condition-maker-defvar"
+            "restart-clusters-defparameter" "condition-restarts-defparameter"
+            "restart-defclass" "restart-bind-defmacro" "coerce-to-condition"
+            "restart-case-defmacro" "find-restart-defun" "compute-restarts"
+            "signal-defgeneric" "error-defgeneric" "warn-defgeneric"
+            "make-condition-defun" "invoke-debugger-defun"
+            "handler-clusters-defparameter" "handler-bind-defmacro"
+            "ignore-errors-defmacro" "with-simple-restart-defmacro"
+            "with-condition-restarts" "warning-define-condition"
+            "serious-condition-define-condition" "style-warning-define-condition"
+            "error-define-condition" "cell-error-define-condition"
+            "undefined-function-define-condition" "unbound-variable-define-condition"
+            "unbound-slot-define-condition" "arithmetic-error-define-condition"
+            "division-by-zero-define-condition" "floating-point-inexact-define-condition"
+            "floating-point-invalid-operation-define-condition"
+            "floating-point-overflow-define-condition"
+            "floating-point-underflow-define-condition" "file-error-define-condition"
+            "package-error-define-condition" "parse-error-define-condition"
+            "print-not-readable-define-condition" "program-error-define-condition"
+            "reader-error-define-condition" "simple-condition-define-condition"
+            "simple-error-define-condition" "type-error-define-condition"
+            "simple-type-error-define-condition" "simple-warning-define-condition"
+            "storage-condition-define-condition" "stream-error-define-condition"
+            "end-of-file-define-condition" "control-error-define-condition"
+            "invoke-restart-defun" "invoke-restart-interactively-defun"
+            "signal-defmethods" "error-defmethods" "cerror-defun"
+            "invalid-method-error" "method-combination-error" "break-defun"
+            "warn-defmethods" "abort-defun" "muffle-warning-defun" "continue-defun"
+            "store-value-defun" "use-value-defun" "assert")))
+
 (defun clostrophilia-files (groups)
   "GROUPS: lists (DIRECTORY FILE...); a FILE is a name or
 (:COMPILE-TIME-TOO name)."
@@ -82,7 +125,11 @@
        "initialize-instance-methods" "reinitialize-instance-methods")
       ("Slot-definition-initialization" "condition-types" "initialize-instance-methods"
        "reinitialize-instance-methods")))
-   (list (kiln-clos-file "switchover")))
+   (list (kiln-clos-file "switchover")
+         (kiln-clos-file "predicament-package")
+         (kiln-clos-file "conditions"))
+   *predicament-files*
+   (list (kiln-clos-file "early-conditions")))
   "Sources of the CLOS module, in load order (docs/10 §7).")
 
 (defun write-module (module output)

@@ -150,6 +150,19 @@
       (lambda (value name) (setf (clo:symbol-value client genv name) value)))
     (def 'boundp (lambda (name) (clo:boundp client genv name)))
     (def 'proclaim (lambda (declaration) (proclaim-in client genv declaration)))
+    ;; Expanders may call MACROEXPAND with their &ENVIRONMENT (Predicament's
+    ;; RESTART-CASE does).
+    (def 'macroexpand-1
+      (lambda (form &optional env)
+        (compile-time-macroexpand-1 form env)))
+    (def 'macroexpand
+      (lambda (form &optional env)
+        (loop with expanded = nil
+              do (multiple-value-bind (expansion macrop)
+                     (compile-time-macroexpand-1 form env)
+                   (if macrop
+                       (setf form expansion expanded t)
+                       (return (values form expanded)))))))
     (def 'funcall (lambda (f &rest args) (apply (resolve f) args)))
     (def 'apply (lambda (f &rest args) (apply #'apply (resolve f) args)))))
 
@@ -257,6 +270,13 @@ the file. Reading starts in KILN-USER."
                     (values (cmd:macroexpand-1 form *environment*) t))
                    (t (values nil nil))))))))
 
+(defun compile-time-macroexpand-1 (form env)
+  (let ((*environment* (or env *environment*)))
+    (if (and (consp form) (symbolp (first form)))
+        (multiple-value-bind (expansion macrop) (macroexpand-toplevel form)
+          (if macrop (values expansion t) (values form nil)))
+        (values form nil))))
+
 (defun process-eval-when (cst compile-time-too)
   (let* ((parts (cst-list (cst:rest cst)))
          (situations (cst:raw (first parts)))
@@ -352,6 +372,15 @@ programs compiled after it."
   (let ((client (make-instance 'client)))
     (%make-session :client client :environment (make-compile-environment client))))
 
+(defun forget-global-descriptions (environment)
+  "Trucler's reference environment caches the descriptions of global
+functions and variables it has looked up. The session's environment lives
+across files, so the cache would hide later redefinitions (a macro
+redefined by a later module, a function that becomes a macro); it is
+cleared before each top-level form. At top level the environment holds
+nothing else."
+  (reinitialize-instance environment :function-description '() :variable-description '()))
+
 (defun front-end (paths &optional (session (make-session)))
   "Reads and processes the top-level forms of the files PATHS (or
 (:COMPILE-TIME-TOO path) elements), in order,
@@ -373,9 +402,11 @@ forms to compile, in order."
       ;; were in (EVAL-WHEN (:COMPILE-TOPLEVEL :LOAD-TOPLEVEL :EXECUTE)):
       ;; for the functions that macro expanders call.
       (dolist (path paths)
-        (if (and (consp path) (eq (first path) :compile-time-too))
-            (map-file-csts (lambda (cst) (process-toplevel cst t)) (second path))
-            (map-file-csts (lambda (cst) (process-toplevel cst nil)) path))))
+        (let ((compile-time-too (and (consp path) (eq (first path) :compile-time-too))))
+          (map-file-csts (lambda (cst)
+                           (forget-global-descriptions *environment*)
+                           (process-toplevel cst compile-time-too))
+                         (if compile-time-too (second path) path)))))
     (let ((undefined (loop for name being the hash-keys of *referenced-functions*
                            unless (or (gethash name *defined-functions*)
                                       (gethash name *primitives*)

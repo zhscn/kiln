@@ -56,7 +56,18 @@
         (bit (or (eql object 0) (eql object 1)))
         (unsigned-byte (and (integerp object) (>= object 0)))
         (signed-byte (integerp object))
-        (t (unknown-type type)))))
+        (t (class-typep object type)))))
+
+;;; Class names (and classes) as types, once CLOS is loaded: it sets
+;;; *CLASS-TYPEP* to a function of the object and the type that returns
+;;; whether the object is of the type, or signals an error for types that
+;;; are not classes.
+(defvar *class-typep* nil)
+
+(defun class-typep (object type)
+  (if *class-typep*
+      (funcall *class-typep* object type)
+      (unknown-type type)))
 
 (defun compound-typep (object head args)
   (case head

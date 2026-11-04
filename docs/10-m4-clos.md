@@ -1,6 +1,6 @@
 # 10 M4：CLOS 引导
 
-**状态**：进行中（2026-11），M4.1–M4.4 已完成（§5、§8、§9）。本文记录 M4 的决定和分步计划。依据是对 Clostrophilia（HEAD 9d0e86c，2026-08-29）的调研，结论记在 §2。
+**状态**：进行中（2026-11），M4.1–M4.4 已完成（§5、§8、§9），M4.5 进行中（§10）。本文记录 M4 的决定和分步计划。依据是对 Clostrophilia（HEAD 9d0e86c，2026-08-29）的调研，结论记在 §2。
 
 ## 1. 决定
 
@@ -146,3 +146,31 @@ CLOS 是单独的模块（`kiln:compile-clos`，在 kernel 之后加载），源
 - 两个特化参数加 `:around` 方法；
 - setf 泛函；
 - `class-direct-subclasses`、`class-finalized-p`。
+
+## 10. M4.5：condition 系统（Predicament）
+
+Predicament vendor 在 `vendor/Predicament`，补丁见 `vendor/README.md`。它在 CLOS 模块的末尾加载，顺序按 `predicament-common.asd`。实现方要提供的部分照 SICL 的 `Code/Conditions/` 来写（`lisp/target/clos/conditions.lisp`）：
+
+- **类**：元类 `condition-class` 是 `standard-class` 的子类，这样槽访问和初始化的方法都直接适用；`condition` 是它的实例。报告函数存在实例的 `%report` 槽里（SICL 用 class 分配的槽，所有 condition 类会共用一个格子）。
+- **`define-condition`** 展开成 `defclass`，带 `(:metaclass condition-class)`，`:report` 变成 default initarg。
+- **`make-condition`**：Predicament 的 `make-condition` 调用 `*condition-maker*`，kiln 的实现是对 condition 类做 `make-instance`。
+- **默认 debugger**（`*default-debugger*`）：还没有流和 REPL，所以它以错误码 20 结束程序，信息里有 condition 的类名和各个槽的值。泛函和实例按名字或类名显示。
+- **类名作为类型**：kernel 的 `typep` 遇到不认识的原子类型，交给 `*class-typep*`；CLOS 把它设成“按类查优先级列表”。`typecase`、`handler-case` 和 `check-type` 都依赖它。
+- **early 阶段的 condition**：kernel 的 early `define-condition` 记下的定义（Ecclesia、Clostrophilia 的约 80 个）在 Predicament 之后建成真正的 condition 类（`early-conditions.lisp`），之后 Clostrophilia 报出的错误可以被 handler 捕获。
+- **流变量**：`*error-output*`、`*query-io*` 等先在 kernel 里定义为 NIL，等 Cyclosis 接入后再赋值。
+
+前端为此做的修改：
+
+- **Trucler 的缓存**：Trucler 的 reference 环境会把查到的全局函数、变量描述缓存在环境对象里。会话的环境在多个文件之间是同一个，后来的模块重新定义的宏（比如 CLOS 模块重新定义 kernel 的 early `define-condition`）会被缓存挡住，所以每个顶层形式之前都清空缓存。
+- **编译期的 `macroexpand`/`macroexpand-1`**：按 kiln 的环境展开。Predicament 的 `restart-case` 展开时，要用它判断信号形式是不是 `error`、`signal` 之类。
+- `restart-bind` 和 `restart-case` 所在的文件以 `:compile-time-too` 加载，因为它们的展开函数要调用同文件里的函数。
+
+Clostrophilia 也为此打了补丁：standard 方法组合不再要求必须有主方法。只有辅助方法的有效方法，在真正调用到主方法时才报错。Predicament 对 symbol 类型的 datum 只定义了 `:around` 方法，它不调用 `call-next-method`。
+
+还没有接入的部分：
+
+- runtime 检测到的错误（类型错误、未定义函数、未绑定变量等，由 `rtfun.rs` 报出）还是直接终止程序，没有变成 condition；
+- `warn` 没有被 muffle 时的输出、报告函数和 `print-object` 都要等流和打印器；
+- `invoke-debugger` 也还没有交互式 debugger。
+
+`tests/m4/clos-conditions.lisp` 覆盖：`handler-case`、`handler-bind`、`signal`、`restart-case` 和 `invoke-restart`、`muffle-warning`、`ignore-errors`、`with-simple-restart`，condition 类型的 `typep`，带清理的非局部退出，嵌套的 handler，以及 Clostrophilia 报出的 `no-applicable-method-error`。

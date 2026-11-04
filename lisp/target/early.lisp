@@ -102,3 +102,12 @@ slot is a property list as in a canonicalized DEFCLASS slot.")
       ',name ',supers
       (list ,@(mapcar #'slot-form slot-specs))
       (list ,@(mapcar #'option-form options)))))
+
+;;; The standard stream variables, NIL until there are streams (Cyclosis).
+(defvar *standard-input* nil)
+(defvar *standard-output* nil)
+(defvar *error-output* nil)
+(defvar *trace-output* nil)
+(defvar *terminal-io* nil)
+(defvar *debug-io* nil)
+(defvar *query-io* nil)
