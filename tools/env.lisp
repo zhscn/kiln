@@ -13,8 +13,10 @@
        (deps (if (and env (plusp (length env)))
                  (uiop:ensure-directory-pathname env)
                  (merge-pathnames "deps/" root))))
+  ;; Vendored host libraries (vendor/README.md) come before deps/.
   (asdf:initialize-source-registry
    `(:source-registry
      (:directory ,(truename root))
+     (:tree ,(merge-pathnames "vendor/Common-boot/" (truename root)))
      (:tree ,deps)
      :inherit-configuration)))

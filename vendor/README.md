@@ -1,6 +1,8 @@
 # Vendored modules
 
-Copies of SICL-ecosystem modules that kiln patches. Each is imported
+Copies of SICL-ecosystem modules that kiln patches. Most are target code,
+compiled into kiln's modules; Common-boot is a host library (kiln's front
+end), found by ASDF before `deps/` (`tools/env.lisp`). Each is imported
 unmodified in its own commit (the upstream commit is recorded below), and
 kiln's changes follow in separate commits, so `git log -- vendor/NAME`
 shows exactly what kiln changed. Changes are not sent upstream for now.
@@ -16,6 +18,7 @@ shows exactly what kiln changed. Changes are not sent upstream for now.
 | Cyclosis | https://github.com/s-expressionists/Cyclosis | c918406b78a6e450d4543fe7bff0ff443f4c6641 (2026-06-22) | BSD (`Cyclosis/LICENSE-BSD`) |
 | Incless | https://github.com/s-expressionists/Incless | 28587a456142ef16c1e6d71297fc681387186953 (2026-07-11) | BSD (`Incless/LICENSE.md`) |
 | Invistra | https://github.com/s-expressionists/Invistra | 1585d04b1b1fc3b6e042de30b7785fe877ae4e2e (2026-06-22) | BSD (`Invistra/LICENSE.md`) |
+| Common-boot | https://github.com/robert-strandh/Common-boot | d4270d0fe1c8e8d5708f7f8980c5454d7d35ee95 (2025-10-13) | no license file |
 
 ## Clostrophilia patches
 

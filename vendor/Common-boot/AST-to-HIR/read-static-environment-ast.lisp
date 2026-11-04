@@ -1,0 +1,15 @@
+(cl:in-package #:common-boot-ast-to-hir)
+
+(defmethod translate-ast (client (ast ico:read-static-environment-ast))
+  (let ((static-environment-ast (ico:static-environment-ast ast))
+        (index-ast (ico:index-ast ast)))
+    (check-type index-ast ico:literal-ast)
+    (let* ((literal
+             (make-instance 'hir:literal :value (ico:literal index-ast)))
+           (*next-instruction*
+             (make-instance 'hir:read-static-environment-instruction
+               :origin (ico:origin ast)
+               :inputs (list *static-environment-register* literal)
+               :outputs (list *target-register*)
+               :successors (list *next-instruction*))))
+      (translate-ast client static-environment-ast))))
