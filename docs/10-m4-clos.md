@@ -389,7 +389,7 @@ kernel 补上了全部 CxR 及其 setf 函数，还有 `*features*` 和 `nunion`
 - `open`，因为还没有 pathname；
 - 输出不缓冲；
 - `print` 仍然是 runtime 的打印器，接 Incless 之后改为写 `*standard-output*`；
-- `y-or-n-p` 要等 FORMAT。
+- `y-or-n-p`/`yes-or-no-p` 在接入 FORMAT 后可以用（§18），但输入按字符读：回答后面的换行也算一次无效回答，会多提示一次；`clear-input` 对 POSIX 流不起作用。
 
 `tests/m4/clos-streams.lisp` 覆盖：
 - 标准输出和标准错误输出；
@@ -421,7 +421,7 @@ Incless vendor 在 `vendor/Incless`，用的是 intrinsic 接口，源码没有�
 - `complex`、`pathname`、`logical-pathname`、`random-state`、`readtable` 作为暂时没有实例的内建类，因为 Incless 在它们上面特化了方法；
 - kernel 加了 `char-name`、`name-char`、`standard-char-p`。
 
-**前端修了 Common-boot 的一个错误**：对全局 special 变量，`augment-environment-with-binding-variable` 返回 `unless` 的 NIL，`let*` 之后的绑定和主体于是在 NIL 环境里转换，结果找不到 `let` 等运算符。Common-boot 是宿主侧的库，kiln 在 `front.lisp` 里重新定义了这个函数。
+**Common-boot 的一个错误**：对全局 special 变量，`augment-environment-with-binding-variable` 返回 `unless` 的 NIL，`let*` 之后的绑定和主体于是在 NIL 环境里转换，结果找不到 `let` 等运算符。Common-boot 是宿主侧的库（kiln 的前端），为此 vendor 到 `vendor/Common-boot`，ASDF 先于 `deps/` 找到它（`tools/env.lisp`），补丁见 `vendor/README.md`。
 
 `tests/m4/clos-printer.lisp` 覆盖：
 - 整数（含 bignum）、ratio、各种浮点（定点和指数形式、`-0.0`、double 的 `d0`）；
@@ -448,6 +448,8 @@ Invistra vendor 在 `vendor/Invistra`，用的是 intrinsic 接口：`format` �
 - 输出到带 fill pointer 的字符串时，先在它上面开一个字符串输出流（上游直接把字符串当成了流）。
 
 **其他补充**：
+- Cyclosis 的 `y-or-n-p` 通过 Trinsic 的 `cell-value` 取 `format`，kiln 的 client 提供这个方法；
+- Cyclosis 的 `stream-advance-to-column` 写的是换行而不是空格，导致 `~T` 输出换行（补丁）；
 - `change-class`（`change-class.lisp`）：Invistra 解析指令时用它改变实例的类。实例的类、stamp 和槽都在 rack 里，所以做法是：先建一个新类的实例，复制同名的槽，原实例接管这个新实例的 rack，再用 initarg 初始化新增的槽；
 - 条件的 `print-object`：不转义时打印它的报告；
 - kernel 加了 `parse-integer`、`complexp`（总是 NIL），以及 `(setf (values ...))` 的 setf 展开器；
@@ -468,3 +470,28 @@ Invistra vendor 在 `vendor/Invistra`，用的是 intrinsic 接口：`format` �
 - 迭代、条件、大小写转换、`~*`、`~?`、`~P`、对齐；
 - 输出目标：`t`、流、带 fill pointer 的字符串；
 - `formatter`、格式错误的条件、条件报告。
+
+## 19. 已知的缺口和偏差（汇总）
+
+各节「还没做」的汇总，以 M4.5 结束、REPL 之前的状态为准。详细原因见括号里的章节。
+
+**与 CL 不一致的行为**：
+- **`formatter`**（§18）：展开成在运行期解释控制串的函数，没有在编译期编译控制串；返回 NIL，而不是剩余的参数。
+- **`print`**（§17）：仍由编译器内联成 runtime 的打印器：先打印对象再换行，而不是 CL 的「先换行、再打印对象、后跟空格」；不经过 `*standard-output*`、`print-object` 和打印变量。`#'print` 是 Incless 的正确版本。
+- **编译器宏**（§18）：编译期的 `define-compiler-macro` 被忽略，运行期只记在 plist 上，编译器从不调用。因此 `format` 的控制串也不会在编译期编译。
+- **`y-or-n-p`**（§16）：一次无效回答之后会多提示一次。
+- **`readtable-case`**（§17）：没有 readtable，`*readtable*` 是 NIL，`readtable-case` 固定返回 `:upcase`，`get-macro-character` 只认识标准语法的宏字符。
+- **`complexp`**（§13、§18）：总是 NIL。`complex`、`pathname`、`logical-pathname`、`random-state`、`readtable` 只是没有实例的内建类，`(typep x '(complex ...))` 总是 NIL。
+- **`make-array`**（§14）：结果在可以用原生对象时就是原生对象；序列函数对非 simple 向量返回 simple 向量。
+- **结构**（§15）：`equalp` 不比较结构的槽；访问器是泛函。
+- **`change-class`**（§18）：只复制同名的槽并初始化新增的槽，不调用 `update-instance-for-different-class`。
+
+**还没有的功能**：
+- 美化打印（Inravina）：`pprint` 不做美化，`*print-pretty*` 不起作用；FORMAT 的 `~<...~:>`、`~_`、`~I`、`~:T` 不能用（§18）。
+- 目标端的 reader（Eclector）和运行期的 `eval`/`compile`，这两样是 REPL 的前提。
+- pathname 和 `open`（§16）。
+- 输出缓冲（§16）。
+- 类、泛函、结构的重定义（§7、§15）。
+- 包局部昵称参与 `find-package`；运行期的 `defpackage`/`in-package`（§12）。
+- 浮点的 `integer-decode-float` 等，以及真正的 Quaviver（§17）。
+- 位数组运算（`bit-and` 等），打印器以外对 Regalia 数组的完整支持（§14）。

@@ -20,6 +20,7 @@ AGAIN AGAIN
 X-Y
  
 fresh
+ tab|ab c|ab  c|abcdefg c
 to stdout OK
 into stream
 fill pointer

@@ -23,6 +23,7 @@
 (f "~?" "~a-~a" '(x y))
 (f "~p ~:p" 1 2)
 (f "~&fresh")
+(f "~t~a|ab~5tc|ab~2@tc|abcdefg~4tc" "tab")
 (format t "to stdout ~a~%" 'ok)
 (let ((s (make-string-output-stream)))
   (format s "into ~a" "stream")

@@ -16,3 +16,8 @@
     (if (or *print-escape* *print-readably* (null report))
         (call-next-method)
         (funcall report condition stream))))
+
+;;; Cyclosis' Y-OR-N-P and YES-OR-NO-P get FORMAT through Trinsic.
+(defmethod trinsic:cell-value
+    ((client cyclosis::kiln-client) (name (eql 'cl:format)) (type (eql 'cl:function)))
+  #'format)
