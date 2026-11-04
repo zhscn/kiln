@@ -149,6 +149,16 @@
             "miscellaneous-operations" "miscellaneous-pseudo-operations"
             "condition-reporters-en" "interface")))
 
+(defparameter *khazern-files*
+  ;; As khazern.asd; kiln's loop.lisp replaces the intrinsic interface.
+  (mapcar (lambda (name)
+            (asdf:system-relative-pathname "khazern" (format nil "code/~A.lisp" name)))
+          '("packages" "interface" "utilities" "types" "conditions"
+            "conditions-english" "binding" "parser" "clause" "expansion"
+            "variable-init-and-stepping-clauses" "value-accumulation-clauses"
+            "termination-test-clauses" "unconditional-execution-clauses"
+            "conditional-execution-clauses" "miscellaneous-clauses")))
+
 (defun clostrophilia-files (groups)
   "GROUPS: lists (DIRECTORY FILE...); a FILE is a name or
 (:COMPILE-TIME-TOO name)."
@@ -252,7 +262,11 @@
            '("packages" "locale" "language" "language-english" "condition" "init"))
    (list (kiln-clos-file "ngray"))
    *invistra-files*
-   (list (kiln-clos-file "format")))
+   (list (kiln-clos-file "format")
+         (kiln-clos-file "closer-mop")
+         (kiln-clos-file "trivial-with-current-source-form"))
+   *khazern-files*
+   (list (kiln-clos-file "loop")))
   "Sources of the CLOS module, in load order (docs/10 §7).")
 
 (defun write-module (module output)

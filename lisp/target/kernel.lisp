@@ -9,6 +9,26 @@
 
 (in-package #:kiln.kernel)
 
+;;; (SETF GET) for the definitions below, which run before GET exists:
+;;; only primitives.
+(defun %put (symbol indicator value)
+  (do ((l (%primop :symbol-plist symbol) (cdr (cdr l))))
+      ((null l)
+       (%primop :set-symbol-plist symbol
+                (cons indicator (cons value (%primop :symbol-plist symbol))))
+       value)
+    (when (eq (car l) indicator)
+      (rplaca (cdr l) value)
+      (return value))))
+
+;;; The run-time macro environment: macro functions are kept on the
+;;; symbol's plist under MACRO-FUNCTION. DEFMACRO calls (SETF
+;;; MACRO-FUNCTION) at load time too, so this comes first. (At compile
+;;; time the front end's own definitions are used, docs/08 §2.)
+(defun (setf macro-function) (function name &optional environment)
+  (declare (ignore environment))
+  (%put name 'macro-function function))
+
 ;;; Byte specifiers are conses (size . position).
 (defun byte (size position) (cons size position))
 (defun byte-size (bytespec) (car bytespec))
@@ -44,6 +64,7 @@
      (eval-when (:compile-toplevel)
        (kiln.sys::%define-constant ',name ,value))
      (setf (symbol-value ',name) ,value)
+     (%put ',name 'constant t)
      ',name))
 
 (defconstant most-positive-fixnum 4611686018427387903)
@@ -732,6 +753,36 @@
       (setf (cadr l) value)
       (return value))))
 (defun (setf cadr) (v l) (setf (car (cdr l)) v))
+
+;;; Constants are keywords, NIL, T, the names of DEFCONSTANT, quoted forms
+;;; and self-evaluating objects.
+(defun constantp (form &optional environment)
+  (declare (ignore environment))
+  (cond ((symbolp form)
+         (or (null form) (eq form t) (keywordp form) (get form 'constant)))
+        ((consp form) (eq (car form) 'quote))
+        (t t)))
+
+;;; Run-time macro expansion, with the global macro environment only (no
+;;; symbol macros yet). ENVIRONMENT is ignored: there are no run-time
+;;; lexical environments.
+(defvar *macroexpand-hook* 'funcall)
+(defun macro-function (symbol &optional environment)
+  (declare (ignore environment))
+  (get symbol 'macro-function))
+(defun macroexpand-1 (form &optional environment)
+  (let ((expander (and (consp form) (symbolp (car form))
+                       (macro-function (car form) environment))))
+    (if expander
+        (values (funcall *macroexpand-hook* expander form environment) t)
+        (values form nil))))
+(defun macroexpand (form &optional environment)
+  (let ((expanded nil))
+    (do () (nil)
+     (multiple-value-bind (expansion expandedp) (macroexpand-1 form environment)
+       (unless expandedp
+         (return-from macroexpand (values form expanded)))
+       (setf form expansion expanded t)))))
 ;;; The other CxR functions and their SETF functions.
 (defun (setf caar) (v x) (setf (car (car x)) v))
 (defun (setf cdar) (v x) (setf (cdr (car x)) v))

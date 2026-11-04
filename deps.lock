@@ -9,7 +9,6 @@ Buoy https://github.com/s-expressionists/Buoy master 548ce48a504937517f35d2b6450
 Clonedijk https://github.com/robert-strandh/Clonedijk main e4be22b2841d673597e16ae1a08a69e1c08162f7
 Clordane https://github.com/robert-strandh/Clordane master efa01a56d1609330609c847bf1f491c6fefa32ab
 Clostrum https://github.com/s-expressionists/Clostrum master bcdde830112262694fa4c5ef05afccda46675f1e
-Common-macros https://github.com/robert-strandh/Common-macros.git master 4596ddf32357fa793ece25cecb6e8661259b51ac
 Concrete-Syntax-Tree https://github.com/s-expressionists/Concrete-Syntax-Tree master f79dab6b6d14000259449c169b501cc6398b3f54
 Consecution https://github.com/s-expressionists/Consecution master 850d311b40ff3dd215e5d7384a04a48d95dc83de
 Constrictor https://github.com/s-expressionists/Constrictor master 1a8a90ec114f7ebed373ea71ca2e6738832f9ba7
@@ -20,7 +19,6 @@ fast-generic-functions https://github.com/marcoheisig/fast-generic-functions mas
 Hirundine https://github.com/robert-strandh/Hirundine main 8bf9a60532e456174374ea1a0cd22289c133c1f4
 Iconoclast https://github.com/robert-strandh/Iconoclast.git master 1ec145e113c3f0342823816b5fd8644ae9c23222
 Inravina https://github.com/s-expressionists/Inravina main e28b107b025b2efdd4f16ed71fbdc0e1af62e478
-Khazern https://github.com/s-expressionists/Khazern master b657262946bfba0e17ee930c58c8fcd6fa6be774
 Maclina https://github.com/s-expressionists/Maclina main a46ba99620ceb51f05f14e31d34fe77e1cfa96c1
 nontrivial-gray-streams https://github.com/yitzchak/nontrivial-gray-streams main 1413a06dcff7d47bb1cb65decde95ac063c27bd4
 parser.packrat https://github.com/scymtym/parser.packrat future 835090176480e68a8af87ba550b6c9639f94f542

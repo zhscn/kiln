@@ -240,6 +240,27 @@
     (def 'funcall (lambda (f &rest args) (apply (resolve f) args)))
     (def 'apply (lambda (f &rest args) (apply #'apply (resolve f) args)))))
 
+;;; Libraries written against closer-mop are read with the host's
+;;; CLOSER-MOP package, whose symbols mostly belong to the host's MOP
+;;; package (SB-MOP). (KILN.SYS::CLOSER-MOP-ALIASES) expands into a call
+;;; giving each of those symbols the function and class of the
+;;; Clostrophilia (or else CL) symbol of the same name
+;;; (lisp/target/clos/closer-mop.lisp).
+(defun expand-closer-mop-aliases (form env)
+  (declare (ignore form env))
+  ;; Clostrophilia does not export all of the MOP (GENERIC-FUNCTION-METHODS
+  ;; for instance); names without a definition are skipped at run time.
+  (flet ((accessible (name package)
+           (multiple-value-bind (symbol status) (find-symbol name package)
+             (and status symbol))))
+    (let ((pairs '()))
+      (do-external-symbols (s '#:closer-mop)
+        (let ((target (accessible (symbol-name s) '#:clostrophilia)))
+          (when (and target (not (eq target s)))
+            (push (cons s target) pairs))))
+      `(kiln.sys::%alias-names
+        ',(sort pairs #'string< :key (lambda (pair) (symbol-name (car pair))))))))
+
 (defun make-compile-environment (client)
   (let* ((env (cb:create-environment))
          (genv (trucler:global-environment client env)))
@@ -268,6 +289,8 @@
             (macro-function 'khazern-extrinsic:loop-finish)))
     ;; DEFSTRUCT is Anatomicl's, expanded in the host (structures.lisp).
     (setf (clo:macro-function client genv 'defstruct) #'expand-defstruct)
+    (setf (clo:macro-function client genv 'kiln.sys::closer-mop-aliases)
+          #'expand-closer-mop-aliases)
     env))
 
 ;;; SETQ of a symbol macro is SETF of its expansion (CLHS 3.1.2.1.1);

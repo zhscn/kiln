@@ -1,8 +1,9 @@
 # Vendored modules
 
 Copies of SICL-ecosystem modules that kiln patches. Most are target code,
-compiled into kiln's modules; Common-boot is a host library (kiln's front
-end), found by ASDF before `deps/` (`tools/env.lisp`). Each is imported
+compiled into kiln's modules; Common-boot and Common-macros are host
+libraries (kiln's front end) and Khazern is both (the host's LOOP and the
+image's), found by ASDF before `deps/` (`tools/env.lisp`). Each is imported
 unmodified in its own commit (the upstream commit is recorded below), and
 kiln's changes follow in separate commits, so `git log -- vendor/NAME`
 shows exactly what kiln changed. Changes are not sent upstream for now.
@@ -19,6 +20,8 @@ shows exactly what kiln changed. Changes are not sent upstream for now.
 | Incless | https://github.com/s-expressionists/Incless | 28587a456142ef16c1e6d71297fc681387186953 (2026-07-11) | BSD (`Incless/LICENSE.md`) |
 | Invistra | https://github.com/s-expressionists/Invistra | 1585d04b1b1fc3b6e042de30b7785fe877ae4e2e (2026-06-22) | BSD (`Invistra/LICENSE.md`) |
 | Common-boot | https://github.com/robert-strandh/Common-boot | d4270d0fe1c8e8d5708f7f8980c5454d7d35ee95 (2025-10-13) | no license file |
+| Khazern | https://github.com/s-expressionists/Khazern | b657262946bfba0e17ee930c58c8fcd6fa6be774 (2026-09-17) | BSD (`Khazern/LICENSE.md`) |
+| Common-macros | https://github.com/robert-strandh/Common-macros | 4596ddf32357fa793ece25cecb6e8661259b51ac (2026-02-10) | no license file |
 
 ## Clostrophilia patches
 
@@ -148,3 +151,15 @@ Under `#+kiln` (docs/10 §18 of kiln):
 - `augment-environment-with-binding-variable` returns the environment
   unchanged for a globally special variable (upstream: NIL, which `let*`
   then used as the environment of the following bindings and the body).
+
+## Khazern patches
+
+- No complexes or pathnames among the initial values of accumulation
+  variables, and no complex numeric types (kiln has neither yet):
+  `#-kiln`.
+
+## Common-macros patches
+
+- `defclass`: a slot specifier that is a symbol is canonicalized into the
+  form `(list :name 'slot)` (upstream: `(:name 'slot)`, which is then
+  evaluated as a call of `:name`). Khazern has such a slot.

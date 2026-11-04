@@ -45,7 +45,7 @@ for src in "${sources[@]}"; do
   # GC stress: a small heap forces frequent moving collections; CLOS's
   # live data (metaobjects, satiated call histories) needs more than 1 MiB.
   heap=1048576
-  case $name in clos-*) modules+=("$build/clos.kir"); heap=4194304 ;; esac
+  case $name in clos-*) modules+=("$build/clos.kir"); heap=8388608 ;; esac
   if "$cg" jit "${modules[@]}" "$kir" >"$build/$name.jit.out" 2>&1 && diff -u "$expected" "$build/$name.jit.out"; then
     echo "PASS jit $name"
   else

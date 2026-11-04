@@ -485,9 +485,11 @@ Invistra vendor 在 `vendor/Invistra`，用的是 intrinsic 接口：`format` �
 - **`make-array`**（§14）：结果在可以用原生对象时就是原生对象；序列函数对非 simple 向量返回 simple 向量。
 - **结构**（§15）：`equalp` 不比较结构的槽；访问器是泛函。
 - **`change-class`**（§18）：只复制同名的槽并初始化新增的槽，不调用 `update-instance-for-different-class`。
+- **`parse-error` 的报告**（§20）：Predicament 给 `parse-error` 定义了报告「A parse error has occurred.」。`parse-error` 和 `acclimation:condition` 的子类（例如 Khazern 的条件）在类优先级里先遇到 `parse-error`，所以打印的是这句，而不是 Acclimation 的本地化报告。
+- **运行期的宏展开**（§20）：`macroexpand` 只看全局宏，没有 symbol macro，环境参数被忽略；运行期的宏只有目标代码里 `defmacro` 定义的那些和 LOOP，标准宏（Common-macros）只在编译期存在。
 
 **还没有的功能**：
-- 美化打印（Inravina）：`pprint` 不做美化，`*print-pretty*` 不起作用；FORMAT 的 `~<...~:>`、`~_`、`~I`、`~:T` 不能用（§18）。
+- 美化打印（Inravina）：`pprint` 不做美化，`*print-pretty*` 不起作用；FORMAT 的 `~<...~:>`、`~_`、`~I`、`~:T` 不能用（§18）。Khazern 的条件报告用到了 `~@<...~:@>`。
 - 目标端的 reader（Eclector）和运行期的 `eval`/`compile`，这两样是 REPL 的前提。
 - pathname 和 `open`（§16）。
 - 输出缓冲（§16）。
@@ -495,3 +497,33 @@ Invistra vendor 在 `vendor/Invistra`，用的是 intrinsic 接口：`format` �
 - 包局部昵称参与 `find-package`；运行期的 `defpackage`/`in-package`（§12）。
 - 浮点的 `integer-decode-float` 等，以及真正的 Quaviver（§17）。
 - 位数组运算（`bit-and` 等），打印器以外对 Regalia 数组的完整支持（§14）。
+
+## 20. M4.6：LOOP（Khazern）和运行期的宏环境
+
+M4.6 为 M5 补齐编译器在目标端运行所需的东西，顺序是 LOOP、pathname 和文件流、reader、运行期的包操作，最后测一次前端在目标端的性能。
+
+**运行期的宏环境**：此前 `(setf macro-function)` 是编译器原语，在运行期什么也不做。现在它是 kernel 的函数，把展开函数记在符号 plist 的 `macro-function` 下；kernel 还加了 `macro-function`、`macroexpand-1`、`macroexpand`、`*macroexpand-hook*` 和 `constantp`。
+
+- `defmacro` 在加载期也会调用 `(setf macro-function)`，所以它是 kernel 的第一个定义，只用原语（经过同样只用原语的 `%put`）。
+- `defconstant` 在加载期给符号做常量标记，`constantp` 据此判断。
+- 编译期仍然用前端自己的 `macro-function`（Clostrum 环境），两者互不影响。
+
+**Khazern**：vendor 在 `vendor/Khazern`，同时用于宿主和目标端。
+- 宿主：交叉编译时 LOOP 仍然由宿主里的 Khazern（extrinsic）展开（docs/08）。
+- 目标端：Khazern 编译进 CLOS 模块，kiln 自己的 `loop.lisp` 代替它的 intrinsic 接口。`define-interface` 会用 `defmacro` 定义 `cl:loop`，这在编译期也生效，会把编译期环境里宿主的展开函数换成一个调用目标端代码的展开函数；所以 `loop.lisp` 只在加载期设定 `loop` 和 `loop-finish` 的宏函数，二者共用一个 epilogue 标签。
+- 补丁：累积变量的初值和数值类型里去掉 complex 和 pathname（`#-kiln`）。
+
+**closer-mop**：用 closer-mop 的库（Khazern、以后的 Eclector 等）在宿主里读入，读到的是宿主 CLOSER-MOP 包的符号，它们大多属于 SB-MOP。宏 `kiln.sys::closer-mop-aliases`（前端，`expand-closer-mop-aliases`）展开成一次 `kiln.sys::%alias-names` 调用：对 CLOSER-MOP 的每个外部符号，取 Clostrophilia 里可访问的同名符号（不要求导出：Clostrophilia 没有导出 `generic-function-methods` 等），运行期在后者有定义时，把函数、setf 函数和类给前者（`closer-mop.lisp`）。这种做法依赖宿主是 SBCL，等 kiln 自己读入源码（M5）时，改成定义真正的 CLOSER-MOP 包。
+
+**trivial-with-current-source-form**：kiln 的条件还不记源码形式，`with-current-source-form` 展开成 `progn`。
+
+**Common-macros**：vendor 在 `vendor/Common-macros`（宿主库）。Khazern 的源码里有一个单独写成符号的槽描述（上游的笔误，但合法），Common-macros 把它展开成 `(:name 'g)`，在运行期被当成对 `:name` 的调用。补丁改成 `(list :name 'g)`。
+
+**测试**：
+- GC 压力测试里 CLOS 模块的堆从 4 MiB 改成 8 MiB，因为加入 Khazern 后常驻的 metaobject 变多了。
+- 各测试共用一个编译会话，所以测试里定义的宏和函数名字要避免冲突。
+
+`tests/m4/clos-loop.lisp` 覆盖：
+- 运行期 `macroexpand-1` 的 LOOP 展开，和宿主 Khazern 在编译期的展开逐一比较，只允许未 intern 符号的一致改名。涵盖算术、列表、向量和哈希表迭代，以及解构、累积、`named`、`thereis`、`loop-finish`；
+- 语法错误时 Khazern 的条件，以及经 closer-mop 从 `parse-clause` 的方法里收集的预期关键字；
+- 程序里 `defmacro` 定义的宏在运行期可以展开，`macroexpand` 会展开到底。

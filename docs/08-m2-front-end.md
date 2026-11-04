@@ -47,7 +47,7 @@ Common-boot 本身的顶层处理不完整：`*compile-time-too*` 从来不会�
 
 **未定义函数的警告**推迟到文件末尾（CLHS 3.2.2.3）：Common-boot 遇到未知函数时发出的 `no-function-description` 先被屏蔽、记录下来；文件处理完后，去掉本文件 `defun` 过的函数（通过 `cmd:defun-compile-time-action` 记录）和原语，剩下的作为一个 style-warning 报告。
 
-**宏定义在运行期没有效果**：`defmacro` 展开后同时会被编译进目标代码，其中的 `(setf macro-function)` 在运行期是空操作，`proclaim` 也一样。目标端还没有宏环境，到 M4 前后再处理。
+**运行期的宏**：`defmacro` 展开后同时会被编译进目标代码，其中的 `(setf macro-function)` 在运行期把展开函数记到符号的 plist 上，`macro-function`、`macroexpand` 能用到它们（M4.6，见 [10 §20](10-m4-clos.md)）。`proclaim` 在运行期仍是空操作。
 
 ## 3. 对象布局的扩展
 
@@ -165,4 +165,4 @@ Common-boot 本身的顶层处理不完整：`*compile-time-too*` 从来不会�
 8. ~~对 symbol macro 的 `setq`~~（已解决，§5.5）。
 9. `progv`：已完成（§5.5）。
 6. 跨环境的符号：现在目标符号就是宿主符号（在 `kiln-user` 包里读入），包系统等 M3 用 Parcl 做。
-7. 运行期的宏环境：`(setf macro-function)`、`proclaim` 目前是空操作。
+7. 运行期的宏环境：`(setf macro-function)` 已完成（10 §20）；`proclaim` 目前是空操作。
