@@ -18,5 +18,6 @@
                (:file "values")
                (:file "primitives")
                (:file "structures")
+               (:file "macro-client")
                (:file "front")
                (:file "driver")))

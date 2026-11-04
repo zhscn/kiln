@@ -45,9 +45,13 @@
   (let ((parent-name (anatomicl::defstruct-included-structure-name description)))
     (append
      (when parent-name
-       (let ((parent (or (gethash (cons :object parent-name) *structures*)
-                         (error "DEFSTRUCT ~S: no structure named ~S to include"
-                                (anatomicl::defstruct-name description) parent-name)))
+       (let ((parent (multiple-value-bind (layout presentp)
+                         (gethash (cons :object parent-name) *structures*)
+                       ;; A structure without slots has the layout NIL.
+                       (if presentp
+                           layout
+                           (error "DEFSTRUCT ~S: no structure named ~S to include"
+                                  (anatomicl::defstruct-name description) parent-name))))
              (included (anatomicl::defstruct-included-slots description)))
          (dolist (slot included)
            (unless (find (anatomicl::slot-name slot) parent :key #'anatomicl::slot-name)

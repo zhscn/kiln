@@ -75,6 +75,10 @@
 (defun set-exclusive-or (a b &key test test-not key)
   (append (set-difference a b :test test :test-not test-not :key key)
           (set-difference b a :test test :test-not test-not :key key)))
+;;; The destructive versions may return their non-destructive results.
+(defun nintersection (a b &rest args) (apply #'intersection a b args))
+(defun nset-difference (a b &rest args) (apply #'set-difference a b args))
+(defun nset-exclusive-or (a b &rest args) (apply #'set-exclusive-or a b args))
 (defun subsetp (a b &key test test-not key)
   (dolist (x a t)
     (unless (member (if key (funcall key x) x) b :test test :test-not test-not :key key)
@@ -256,6 +260,18 @@
 (defun constantly (value) (lambda (&rest args) (declare (ignore args)) value))
 (defun identity (x) x)
 
+;;; The -IF-NOT functions not defined above (deprecated, but standard).
+(defun member-if-not (pred list &rest args) (apply #'member-if (complement pred) list args))
+(defun assoc-if-not (pred alist &rest args) (apply #'assoc-if (complement pred) alist args))
+(defun rassoc-if (pred alist &key key)
+  (dolist (pair alist nil)
+    (when (and pair (funcall pred (if key (funcall key (cdr pair)) (cdr pair)))) (return pair))))
+(defun rassoc-if-not (pred alist &rest args) (apply #'rassoc-if (complement pred) alist args))
+(defun position-if-not (pred seq &rest args) (apply #'position-if (complement pred) seq args))
+(defun count-if-not (pred seq &rest args) (apply #'count-if (complement pred) seq args))
+(defun nsubstitute-if-not (new pred seq &rest args)
+  (apply #'substitute-if-not new pred seq args))
+
 (defun every (pred seq &rest seqs)
   (let ((lists (mapcar (lambda (s) (seq-list s 0 nil)) (cons seq seqs))))
     (do () ((dolist (l lists nil) (when (null l) (return t))) t)
@@ -274,6 +290,21 @@
   (let ((results (apply #'mapcar f (seq-list seq 0 nil)
                         (mapcar (lambda (s) (seq-list s 0 nil)) seqs))))
     (if (null result-type) nil (coerce results result-type))))
+
+(defun map-into (target f &rest seqs)
+  ;; Stores into TARGET's elements (up to its fill pointer) until a
+  ;; sequence runs out.
+  (let ((lists (mapcar (lambda (s) (seq-list s 0 nil)) seqs))
+        (n (length target)))
+    (if (listp target)
+        (do ((l target (cdr l)))
+            ((or (null l) (dolist (x lists nil) (when (null x) (return t)))) target)
+          (setf (car l) (apply f (mapcar #'car lists)))
+          (setq lists (mapcar #'cdr lists)))
+        (do ((i 0 (+ i 1)))
+            ((or (>= i n) (dolist (x lists nil) (when (null x) (return t)))) target)
+          (setf (aref target i) (apply f (mapcar #'car lists)))
+          (setq lists (mapcar #'cdr lists))))))
 
 (defun reduce (f seq &key key from-end (start 0) end (initial-value nil initial-value-p))
   (let ((l (seq-list seq start end)))

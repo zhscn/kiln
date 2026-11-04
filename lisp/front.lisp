@@ -11,7 +11,7 @@
 ;;;; compile-time definitions. Host CL functions are imported into it, so
 ;;;; macro expanders can call them.
 
-(defclass client (trucler-reference:client cbe:client)
+(defclass client (kiln.macros:macro-client trucler-reference:client cbe:client)
   ())
 
 (defmethod cb:convert-with-parser-p ((client client) operator)
@@ -23,26 +23,19 @@
 (defvar *client*)
 (defvar *defined-functions*)            ; names defined by DEFUN in this file
 (defvar *referenced-functions*)         ; undefined names seen by Common-boot
+(defvar *toplevel-environment*)          ; Trucler environment of the top level
+(defvar *package-renames* '()
+  "Alist (NAME . NEW-NAME) of package names (strings): the file being
+processed names the package NAME, but its forms are read in NEW-NAME (a
+target library whose package has the name of a host one, docs/11 §3).
+Their definitions of macros that exist at compile time take effect at load
+time only.")
+
 
 (defmethod cmd:defun-compile-time-action ((client client) name lambda-list environment)
   (declare (ignore lambda-list environment))
   (setf (gethash name *defined-functions*) t)
   nil)
-
-;;; DEFCLASS, DEFGENERIC and DEFMETHOD expand into calls to kiln's
-;;; functions in lisp/target/clos/early.lisp, which create the metaobjects
-;;; with the early functions during the bootstrap and with the MOP after it
-;;; (docs/10 §7). Specializers are passed as designators (a class name or
-;;; (EQL object)) so that a DEFMETHOD can be evaluated before the classes
-;;; exist.
-
-(defmethod cmd:defclass-compile-time-action
-    ((client client) name superclass-names metaclass-name environment)
-  (declare (ignore name superclass-names metaclass-name environment))
-  nil)
-
-(defmethod cmd:ensure-class-name ((client client))
-  'kiln.sys:%defclass)
 
 (defmethod cmd:defgeneric-compile-time-action
     ((client client) name lambda-list argument-precedence-order
@@ -55,137 +48,6 @@
   (setf (gethash name *defined-functions*) t)
   nil)
 
-(defmethod cmd:ensure-generic-function
-    ((client client) name lambda-list argument-precedence-order
-     generic-function-class-name method-class-name method-combination-name
-     method-combination-arguments documentation-option environment)
-  (declare (ignore environment))
-  `(kiln.sys:%defgeneric
-    ',name
-    :lambda-list ',lambda-list
-    ,@(when argument-precedence-order
-        `(:argument-precedence-order ',(rest argument-precedence-order)))
-    :generic-function-class ',generic-function-class-name
-    :method-class ',method-class-name
-    :method-combination-name ',method-combination-name
-    :method-combination-arguments ',method-combination-arguments
-    ,@(when documentation-option
-        `(:documentation ',(second documentation-option)))))
-
-;;; Method functions (docs/10 §26). The method function takes the list of
-;;; arguments and the next methods (AMOP). A method whose lambda list has
-;;; only required parameters (at most +MAX-FAST-ARITY+) also gets a fast
-;;; function, of the next methods and the arguments themselves, which the
-;;; discriminating function calls without making a list. The local
-;;; functions CALL-NEXT-METHOD and NEXT-METHOD-P are only made when the
-;;; body mentions them: they are closures, allocated at each call.
-
-(defconstant +max-fast-arity+ 6)
-
-(defun mentions-p (symbols tree)
-  (let ((seen (make-hash-table :test 'eq)))
-    (labels ((walk (x)
-               (cond ((symbolp x) (member x symbols))
-                     ((atom x) nil)
-                     ((gethash x seen) nil)
-                     (t (setf (gethash x seen) t)
-                        (or (walk (car x)) (walk (cdr x)))))))
-      (walk tree))))
-
-(defun method-lambda-forms (lambda-expression)
-  "The slow and the fast method lambdas (the latter NIL) for the method
-LAMBDA-EXPRESSION."
-  (let* ((arguments (gensym "ARGUMENTS"))
-         (next-methods (gensym "NEXT-METHODS"))
-         (lambda-list (second lambda-expression))
-         (nextp (mentions-p '(call-next-method next-method-p) (cddr lambda-expression)))
-         (fastp (and (consp lambda-list)
-                     (<= (length lambda-list) +max-fast-arity+)
-                     (every #'symbolp lambda-list)
-                     (notany (lambda (p) (member p lambda-list-keywords)) lambda-list)))
-         (parameters (and fastp (loop repeat (length lambda-list) collect (gensym "ARG")))))
-    (flet ((with-next (call-next-method-body form)
-             (if nextp
-                 `(flet ((next-method-p ()
-                           (not (null ,next-methods)))
-                         (call-next-method (&rest arguments)
-                           (if (null ,next-methods)
-                               (error "no next method")
-                               ,call-next-method-body)))
-                    (declare (ignorable #'next-method-p #'call-next-method))
-                    ,form)
-                 form)))
-      (values
-       `(lambda (,arguments ,next-methods)
-          (declare (ignorable ,next-methods))
-          ,(with-next `(funcall (kiln.sys:%method-function (first ,next-methods))
-                                (or arguments ,arguments)
-                                (rest ,next-methods))
-                      `(apply ,lambda-expression ,arguments)))
-       (and fastp
-            `(lambda (,next-methods ,@parameters)
-               (declare (ignorable ,next-methods))
-               ,(with-next `(if arguments
-                                (funcall (kiln.sys:%method-function (first ,next-methods))
-                                         arguments (rest ,next-methods))
-                                (let ((fast (kiln.sys:%method-fast-function
-                                             (first ,next-methods))))
-                                  (if fast
-                                      (funcall fast (rest ,next-methods) ,@parameters)
-                                      (funcall (kiln.sys:%method-function
-                                                (first ,next-methods))
-                                               (list ,@parameters)
-                                               (rest ,next-methods)))))
-                           `(,lambda-expression ,@parameters))))))))
-
-(defmethod cmd:make-method-lambda-wrapper ((client client))
-  (lambda (lambda-expression)
-    (multiple-value-bind (slow fast) (method-lambda-forms lambda-expression)
-      ;; Taken apart by ENSURE-METHOD-WRAPPER.
-      (list :kiln-method-lambdas slow fast))))
-
-(defmethod cmd:ensure-method-wrapper ((client client))
-  (lambda (function-name lambda-list qualifiers specializer-designators
-           documentation method-lambda)
-    (destructuring-bind (function fast-function)
-        (if (and (consp method-lambda) (eq (first method-lambda) :kiln-method-lambdas))
-            (rest method-lambda)
-            (list method-lambda nil))
-      `(kiln.sys:%defmethod
-        ',function-name
-        :lambda-list ',lambda-list
-        :qualifiers ',qualifiers
-        :specializers (list ,@(loop for s in specializer-designators
-                                    collect (if (consp s)
-                                                `(list 'eql ,(second s))
-                                                `',s)))
-        :documentation ',documentation
-        :function ,function
-        ,@(when fast-function `(:fast-function ,fast-function))))))
-
-;;; Places. Setf expanders live in the compile-time environment
-;;; (DEFINE-SETF-EXPANDER registers them at compile time only: there is no
-;;; GET-SETF-EXPANSION at run time).
-
-(defmethod cmd:wrap-in-setf-setf-expander ((client client) name function environment)
-  (declare (ignore environment))
-  `(eval-when (:compile-toplevel)
-     (kiln.sys::%define-setf-expander ',name ,function)))
-
-;;; WITH-OUTPUT-TO-STRING with a string: an output stream that appends to
-;;; it (Cyclosis' string output stream, docs/10 §16).
-(defmethod cmd::output-stream-from-string-function-name ((client client))
-  ;; CYCLOSIS is created when the CLOS module's sources are read.
-  `(lambda (string)
-     (make-instance ',(intern "STRING-OUTPUT-STREAM" "CYCLOSIS") :string string)))
-
-(defmethod cmd:setf-type-function-wrapper ((client client))
-  ;; Common-macros' DEFTYPE puts this in an EVAL-WHEN with all three
-  ;; situations: the compile-time environment's %DEFTYPE records the
-  ;; expander in Clostrum, the kernel's on the symbol.
-  (lambda (name function environment)
-    (declare (ignore environment))
-    `(kiln.sys::%deftype ',name ,function)))
 
 (defmethod cmd:get-setf-expansion ((client client) place &optional environment)
   (let ((environment (or environment *environment*)))
@@ -259,7 +121,12 @@ LAMBDA-EXPRESSION."
     (def '(setf macro-function)
       (lambda (function name &optional env)
         (declare (ignore env))
-        (unless (gethash name *host-macros*)
+        (unless (or (gethash name *host-macros*)
+                    (and *package-renames*
+                         (or (clo:macro-function client genv name)
+                             (and (symbolp name)
+                                  (eq (symbol-package name) (find-package '#:common-lisp))
+                                  (cmd:macro-function-exists-p name)))))
           (setf (clo:macro-function client genv name) function))
         function))
     ;; DEFINE-COMPILER-MACRO at compile time: ignored (the host's would
@@ -313,6 +180,11 @@ LAMBDA-EXPRESSION."
                    (if macrop
                        (setf form expansion expanded t)
                        (return (values form expanded)))))))
+    ;; EVAL in a macro expander (Maclina's DEFOPS) sees the compile-time
+    ;; definitions.
+    (def 'eval
+      (lambda (form)
+        (cb:eval-cst client (cst:cst-from-expression form) *toplevel-environment*)))
     (def 'funcall (lambda (f &rest args) (apply (resolve f) args)))
     (def 'apply (lambda (f &rest args) (apply #'apply (resolve f) args)))))
 
@@ -389,7 +261,6 @@ LAMBDA-EXPRESSION."
 (defvar *inline-functions*)
 (defvar *inline-expanding* '()
   "The inline functions whose expansions are being converted.")
-(defvar *toplevel-environment*)
 (defvar *inline-enabled* nil
   "True while forms are converted for the target. Calls are not expanded
 in code that runs at compile time (EVAL-CST, the expanders of local
@@ -691,6 +562,10 @@ whole instead (the declarations would otherwise be lost)."
           (dolist (c body)
             (process-toplevel c compile-time-too))))))
 
+(defun renamed-package-name (designator)
+  (let ((entry (assoc (string designator) *package-renames* :test #'string=)))
+    (if entry (cdr entry) (string designator))))
+
 (defun process-toplevel (cst compile-time-too)
   (let ((form (cst:raw cst)))
     (when (and (consp form) (eq (first form) 'defun) (consp (rest form)) (consp (cddr form)))
@@ -706,7 +581,7 @@ whole instead (the declarations would otherwise be lost)."
           ;; Nothing is compiled for it: compiled modules do not change
           ;; *PACKAGE* when they are loaded.
           (in-package
-           (setf *package* (or (find-package (second form))
+           (setf *package* (or (find-package (renamed-package-name (second form)))
                                (error "IN-PACKAGE: no package named ~S" (second form)))))
           ;; DEFPACKAGE creates the package in the host, so that the rest
           ;; of the sources can be read. Nothing is compiled: the run-time
@@ -715,8 +590,9 @@ whole instead (the declarations would otherwise be lost)."
           ;; exists already (a host system such as Ecclesia) is left
           ;; alone.
           (defpackage
-           (unless (find-package (second form))
-             (push (eval form) *defined-packages*)))
+           (let ((name (renamed-package-name (second form))))
+             (unless (find-package name)
+               (push (eval `(defpackage ,name ,@(cddr form))) *defined-packages*))))
           ((locally macrolet symbol-macrolet)
            (process-toplevel-body cst compile-time-too))
           (t
@@ -814,8 +690,12 @@ created."
       ;; A path (:COMPILE-TIME-TOO path) is processed as if its forms
       ;; were in (EVAL-WHEN (:COMPILE-TOPLEVEL :LOAD-TOPLEVEL :EXECUTE)):
       ;; for the functions that macro expanders call.
+      ;; (:RENAMES alist path) reads the file with *PACKAGE-RENAMES*.
       (dolist (path paths)
-        (let ((compile-time-too (and (consp path) (eq (first path) :compile-time-too))))
+        (let ((compile-time-too (and (consp path) (eq (first path) :compile-time-too)))
+              (*package-renames* (if (and (consp path) (eq (first path) :renames))
+                                     (second path)
+                                     '())))
           (map-file-csts (lambda (cst)
                            (forget-global-descriptions *environment*)
                            (let* ((raw (cst:raw cst))
@@ -823,7 +703,7 @@ created."
                              (unless (eq simplified raw)
                                (setf cst (cst:reconstruct *client* simplified cst))))
                            (process-toplevel cst compile-time-too))
-                         (if compile-time-too (second path) path)))))
+                         (if (consp path) (car (last path)) path)))))
     (let ((undefined (loop for name being the hash-keys of *referenced-functions*
                            unless (or (gethash name *defined-functions*)
                                       (gethash name *primitives*)

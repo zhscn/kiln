@@ -1,6 +1,6 @@
 # 11 M5：编译器在 kiln 上运行，自举
 
-**状态**：计划（2026-11）。
+**状态**：M5.1 完成（2026-11，§5）：目标端有了运行期的标准宏、`eval`、`compile`、`load` 和 REPL。
 
 ## 1. 目标和验证
 
@@ -39,13 +39,13 @@
 
 **`macroexpand-all`**：parser.packrat 只用它判断一个名字是否被用到（`%uses?`）。在 `#+kiln` 下改成保守的树遍历：名字出现过就当作用到了，结果只会让生成的解析器多做一点事，不会出错。按 vendor 规则先原样 vendor，再打补丁。
 
-**closer-mop**：它对每种实现有条件读入的分支，已有 `sicl` 和 `mezzano` 的分支。kiln 的 MOP 来自 Clostrophilia，大概能走 `sicl` 分支，或者加一个 `kiln` 分支：closer-mop 的包直接重新导出 Clostrophilia 的符号。需要 vendor。
+**closer-mop**：不用 vendor。M4 已经把 closer-mop 的符号别名到 Clostrophilia 的函数和类上（10 §20），Maclina 直接用。
 
 ## 3. 分步计划
 
 | 步骤 | 内容 | 验证 |
 |---|---|---|
-| M5.1 | 目标端 Maclina：closer-mop（kiln 分支）、Ecclesia、Trucler、Clostrum 和 Maclina 编成 `eval` 模块；`eval`、`compile`（字节码）、`load` 源文件；最简 REPL | 测试里对字节码函数 `funcall`、和原生函数互相调用、`load` 一个源文件；不读文件时 REPL 能读入并求值 |
+| M5.1 ✅ | 目标端 Maclina：Ecclesia、Common-macros、Trucler 和 Maclina 编成 `eval` 模块（§5）；`eval`、`compile`（字节码）、`load` 源文件；最简 REPL | 测试里对字节码函数 `funcall`、和原生函数互相调用、`load` 一个源文件；不读文件时 REPL 能读入并求值 |
 | M5.2 | 前端的其余依赖编成目标端模块：alexandria、let-plus、anaphora、more-conditions、print-items、builder-protocol、parser.packrat、s-expression-syntax、Iconoclast、Common-macros、Common-boot | 在 kiln 上 `cst-to-ast` 一个形式，打印 AST 的类和结构，和 SBCL 比对 |
 | M5.3 | kiln 的 `lisp/*.lisp` 编进目标端；在 kiln 上把一个测试文件编成 KIR | 和 SBCL 产出的 KIR 逐字一致；先查 KIR 输出是否确定（§1） |
 | M5.4 | kiln0 编译全部 kiln 源码（kernel、CLOS、前端、编译器各模块），kiln-cg AOT 链接成 kiln1；kiln1 再编出 kiln2 | kiln0 和 kiln1 产出的 KIR 一致；kiln1 和 kiln2 的一致；`tools/test.sh` 在 kiln1 上通过 |
@@ -130,3 +130,54 @@ M5.4 每次编译都要跑完整的前端，速度取决于 CLOS 分派和 GC（
   - 按 Clordane 的方式在源码形式前后插入检查，但不默认插入：用户对某个函数要求单步时，用 JIT 重新编译一份带检查的版本，替换函数格里的入口，借助重定义屏障（C4）。
   - 检查和现有的 poll 点（06 §7）共用 `ctx` 上的标志位。
   - 需要 §4.2 的源码位置和 M6 的变量位置，以及交互式 debugger。
+
+## 5. M5.1：`eval` 模块
+
+**模块**：`kiln:compile-eval`，在 CLOS 模块之后载入；名字以 `ev-` 开头的测试（`tests/m5/`）带上它运行。`tools/repl.sh` 构建 kernel、CLOS、eval 三个模块，链接成可执行文件后启动 REPL；`--jit` 改用 JIT 运行。内容按顺序：
+
+1. Ecclesia。
+2. **运行期的标准宏**：Common-macros。
+   - 宿主编译器用的是它的 extrinsic 版本：包 `COMMON-MACRO-DEFINITIONS` 遮蔽了宏的名字，宏定义在小写名字的符号上。这些源码不能原样编进目标端，upstream 的 intrinsic 包也不能用（遮蔽得太少，见 `vendor/README.md`）。
+   - kiln 自己定义一个包 `kiln.cmd`：使用 CL，只遮蔽 `get-setf-expansion`、`ensure-generic-function`、`proclaim` 这三个带 client 参数的函数。读 Common-macros 的源码时把包名 `COMMON-MACRO-DEFINITIONS` 换成 `KILN.CMD`。
+   - 换包名靠文件项 `(:renames 别名表 路径)`（`front.lisp` 的 `*package-renames*`），它作用于 `in-package` 和 `defpackage`。这样的文件里，对编译期已有宏的重新定义只在载入时生效，宿主编译器的宏不会被换掉。
+   - kiln 对 Common-macros 的定制（`defclass`、`defgeneric`、`defmethod` 的展开等）从 `front.lisp` 移到 `lisp/macro-client.lisp`。宿主把它载入包 `kiln.macros`；目标端把它读进 `kiln.macros-target`，在那里 `cmd` 指向 `kiln.cmd`。所以同一个宏在编译期和运行期展开的结果相同。
+   - kernel 和 CLOS 自己定义的宏（`loop`、`define-condition`、`do-symbols` 等）在载入 Common-macros 之前保存起来，之后恢复，所以仍然优先。
+   - `define-setf-expander` 和 `defsetf` 现在在载入时也生效：展开函数记在符号的 plist 上。运行期的 `get-setf-expansion` 依次查展开函数、宏，最后用 setf 函数。
+3. Trucler（base，以及 trucler-native 的 client 类）。
+4. Maclina：base、compile、vm-shared、vm-native。`compile/parse-macro.lisp` 带 `:compile-time-too`，因为 `destructure-syntax` 的展开函数要调用它。
+5. `lisp/target/eval/evaluator.lisp`：
+   - kiln 的 Trucler client 继承 `trucler-native:client`，Maclina 的 native VM 就是为这类 client 写的。它描述的全局环境是 NIL：
+     - special 变量来自运行期的 `proclaim`，`defvar` 的展开在载入时就会调用它，把变量记在 plist 上；
+     - 常量来自 `defconstant`；
+     - 函数和宏查符号本身。
+   - `macro-function` 和 `macroexpand` 收到 Maclina 的词法环境时，经 Trucler 查局部宏（kernel 的 `*environment-macro-function*`）。
+   - `eval` 编译成字节码后执行。对未知函数的调用只在形式执行完后仍未定义时才警告，所以递归的 `defun` 不会报警告。
+   - `compile` 产出字节码函数。
+   - `load` 逐个读入形式并 `eval`。
+6. `lisp/target/eval/repl.lisp`：`kiln.sys:repl`。
+   - 维护 `*`、`+`、`/` 等变量。
+   - 形式没有处理的错误会被打印出来，然后经 `abort` 回到提示符。
+
+**验证**（`tests/m5/ev-macros.lisp`、`ev-eval.lisp`）：
+- 运行期宏展开；
+- `eval` 覆盖：
+  - 特殊变量在原生代码和字节码之间的动态绑定；
+  - 闭包、多值、`catch`/`unwind-protect`、`labels`、`&key`；
+  - 原生代码里发出、在字节码里处理的 condition；
+  - 经 `eval` 定义的类、泛函和方法；
+  - 原生代码调用字节码函数；
+- `compile`；
+- `load` 一个文件，其中的宏供后面的形式使用，还有 `defpackage` 和 `in-package`；
+- 在字符串上运行 REPL。
+
+**性能**：
+- 启动：AOT 可执行文件 0.3 秒；JIT 7.7 秒，用来编译所有模块。
+- 字节码很慢：`(fib 25)` 要 5.7 秒，SBCL 的编译代码约 1 毫秒。`eval` 一个小形式约 0.3 毫秒。
+- 前端要在 kiln 上运行，s-expression-syntax 的解析器也是 `compile` 出来的，所以 M5.5 的原生 `compile`，或者 VM 本身的性能（它的主循环是 kiln 编译的），可能要提前做。
+
+**顺带修的问题**：
+- NIL 和 T 的函数格是空的，`(fboundp nil)` 会崩溃。现在 kernel 启动时给它们放上未定义函数对象。
+- 没有 slot 的结构体被 `:include` 时，报「没有这个结构体」。
+- 宏展开函数调用的 `eval` 用的是宿主的环境。现在在编译期环境里求值（Maclina 的 `defops`）。
+- Predicament 的若干 bug，见 `vendor/README.md`：`style-warning` 不是 `warning`；`reader-error` 的超类不对；`(abort)` 等不带参数调用时总是失败。
+- 补了 `map-into`、`nintersection`、`nset-difference`、`nset-exclusive-or`，以及缺的 `-if-not` 函数。

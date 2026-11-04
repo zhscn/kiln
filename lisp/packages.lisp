@@ -42,7 +42,15 @@
            ;; Targets of the DEFCLASS, DEFGENERIC and DEFMETHOD expansions
            ;; (lisp/target/clos/early.lisp).
            #:%defclass #:%defgeneric #:%defmethod #:%method-function
-           #:%method-fast-function))
+           #:%method-fast-function
+           ;; The read-eval-print loop (lisp/target/eval/repl.lisp).
+           #:repl))
+
+(defpackage #:kiln.macros
+  (:use #:cl)
+  (:local-nicknames (#:cmd #:common-macro-definitions))
+  (:documentation "kiln's Common-macros client (macro-client.lisp).")
+  (:export #:macro-client))
 
 (defpackage #:kiln.compiler
   (:use #:cl #:kiln.abi #:kiln.kir)
@@ -57,7 +65,8 @@
 
 (defpackage #:kiln
   (:use #:cl)
-  (:export #:compile-file-to-kir #:compile-kernel #:compile-clos #:compile-frontend))
+  (:export #:compile-file-to-kir #:compile-kernel #:compile-clos #:compile-frontend
+           #:compile-eval))
 
 (defpackage #:kiln.kernel
   (:use #:cl #:kiln.sys)

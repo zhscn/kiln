@@ -377,11 +377,6 @@ are compared (no short circuit), which also checks every argument."
   (emit-check-symbol name)
   (boolean-value `(:ne ,(emit-symbol-value name) ,+unbound+)))
 
-;;; Proclamations take effect at compile time (front end); the run-time
-;;; image has no declarations yet. (SETF MACRO-FUNCTION) is the kernel's.
-(define-nary-primitive proclaim (vals)
-  (declare (ignore vals))
-  (nil-value))
 
 ;;; kiln.sys
 

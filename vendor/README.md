@@ -70,6 +70,14 @@ Each patched place is marked with a `kiln:` comment.
   precedence list (Khazern's conditions are `parse-error`s and
   `acclimation:condition`s).
 
+- `style-warning` is a `warning` (upstream: a direct subclass of
+  `condition`), and `reader-error` a `parse-error` and a `stream-error`
+  (upstream: an `error`), as in CLHS. kiln loads `reader-error` after
+  `stream-error`.
+- `abort`, `muffle-warning`, `continue`, `store-value` and `use-value`
+  test whether the restart was found (upstream tests the optional
+  condition, so `(abort)` always signalled a `control-error`).
+
 ## Salmagundi patches
 
 Under `#+kiln` (kiln reads target sources with its own features):

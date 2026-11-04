@@ -9,6 +9,17 @@
 
 (in-package #:kiln.kernel)
 
+;;; Proclamations at run time: SPECIAL is recorded on the plist, for the
+;;; evaluator (the eval module). The others take effect at compile time
+;;; only. (Defined first: the DECLAIM below calls it at load time; %PUT is
+;;; defined before any SPECIAL proclamation runs.)
+(defun proclaim (declaration)
+  (when (and (consp declaration) (eq (car declaration) 'special))
+    (dolist (name (cdr declaration))
+      (%put name 'special t)))
+  nil)
+
+
 ;;; Small functions whose calls are open-coded (docs/08 §8). Some are
 ;;; defined in types.lisp.
 (declaim (inline bignump fixnump single-float-p double-float-p ratiop rationalp floatp realp
@@ -39,6 +50,12 @@
 (defun (setf macro-function) (function name &optional environment)
   (declare (ignore environment))
   (%put name 'macro-function function))
+
+;;; DEFINE-SETF-EXPANDER (and DEFSETF) at load time: the expander goes on
+;;; the plist too, for the run-time GET-SETF-EXPANSION (the eval module).
+(defun kiln.sys::%define-setf-expander (name expander)
+  (%put name 'setf-expander expander)
+  name)
 
 ;;; Byte specifiers are conses (size . position).
 (defun byte (size position) (cons size position))
@@ -858,13 +875,15 @@
         ((consp form) (eq (car form) 'quote))
         (t t)))
 
-;;; Run-time macro expansion, with the global macro environment only (no
-;;; symbol macros yet). ENVIRONMENT is ignored: there are no run-time
-;;; lexical environments.
+;;; Run-time macro expansion (no symbol macros yet).
 (defvar *macroexpand-hook* 'funcall)
+;;; A lexical environment is one of the evaluator's (the eval module sets
+;;; this to a function of the name and the environment).
+(defvar *environment-macro-function* nil)
 (defun macro-function (symbol &optional environment)
-  (declare (ignore environment))
-  (get symbol 'macro-function))
+  (if (and environment *environment-macro-function*)
+      (funcall *environment-macro-function* symbol environment)
+      (get symbol 'macro-function)))
 (defun macroexpand-1 (form &optional environment)
   (let ((expander (and (consp form) (symbolp (car form))
                        (macro-function (car form) environment))))

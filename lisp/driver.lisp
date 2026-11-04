@@ -45,10 +45,12 @@
             "floating-point-underflow-define-condition" "file-error-define-condition"
             "package-error-define-condition" "parse-error-define-condition"
             "print-not-readable-define-condition" "program-error-define-condition"
-            "reader-error-define-condition" "simple-condition-define-condition"
+            "simple-condition-define-condition"
             "simple-error-define-condition" "type-error-define-condition"
             "simple-type-error-define-condition" "simple-warning-define-condition"
             "storage-condition-define-condition" "stream-error-define-condition"
+            ;; kiln: after its superclass STREAM-ERROR (vendor/README.md).
+            "reader-error-define-condition"
             "end-of-file-define-condition" "control-error-define-condition"
             "invoke-restart-defun" "invoke-restart-interactively-defun"
             "signal-defmethods" "error-defmethods" "cerror-defun"
@@ -377,3 +379,81 @@ kernel."
   "Compiles the front-end module to OUTPUT, loaded after the CLOS module.
 SESSION must have compiled the kernel and CLOS."
   (write-module (compile-files *frontend-files* session "frontend") output))
+
+(defun maclina-directory ()
+  ;; Maclina is not loaded in the host (its system would be found among the
+  ;; pinned dependencies).
+  (asdf:system-source-directory (asdf:find-system "maclina")))
+
+(defparameter *eval-files*
+  ;; The eval module (docs/11 §3, M5.1).
+  (let ((cmd-renames '(("COMMON-MACRO-DEFINITIONS" . "KILN.CMD")))
+        (cmd-dir "vendor/Common-macros/Common-macro-definitions/"))
+    (flet ((ecclesia (name)
+             (asdf:system-relative-pathname "ecclesia" (format nil "~A.lisp" name)))
+           (cmd (name)
+             (list :renames cmd-renames
+                   (asdf:system-relative-pathname "kiln" (format nil "~A~A.lisp" cmd-dir name))))
+           (eval-file (name)
+             (asdf:system-relative-pathname "kiln" (format nil "lisp/target/eval/~A.lisp" name))))
+      (append
+       (mapcar #'ecclesia
+               '("packages" "conditions" "condition-reporters-english" "argcount"
+                 "list-structure" "form" "declarations" "lambda-list-parsing"
+                 "lambda-list-canonicalization" "destructuring"
+                 "canonicalized-destructuring"))
+       (list (eval-file "packages"))
+       ;; As common-macro-definitions-low.asd and -shared.asd.
+       (mapcar (lambda (name) (cmd (format nil "Low/~A" name)))
+               '("condition-types" "utilities" "when" "unless" "and" "or" "cond" "case"
+                 "ecase" "return" "multiple-value-bind" "multiple-value-list"
+                 "multiple-value-setq" "nth-value" "defvar" "expand-defmethod"
+                 "expand-deftype" "expand-defpackage" "expand-defun" "expand-defclass"
+                 "expand-defgeneric" "expand-declaim" "defsetf" "destructuring-bind"
+                 "do-symbols" "lambda" "prog" "progstar" "prog1" "prog2" "handler-case"
+                 "ignore-errors" "in-package" "iteration-support" "dolist" "dotimes" "do"
+                 "dostar" "psetq" "restart-case" "check-type" "typecase" "etypecase"
+                 "with-accessors" "with-input-from-string" "with-open-file"
+                 "with-open-stream" "with-output-to-string" "with-simple-restart"
+                 "with-slots"))
+       (mapcar #'cmd
+               '("utilities" "defmethod" "deftype" "defpackage" "defparameter" "defmacro"
+                 "define-compiler-macro" "define-setf-expander" "defun" "defclass"
+                 "defgeneric" "declaim" "ccase" "ctypecase" "decf" "incf" "pop" "psetf"
+                 "push" "pushnew" "remf" "rotatef" "setf" "shiftf" "define-modify-macro"))
+       (list (list :renames '(("KILN.MACROS" . "KILN.MACROS-TARGET"))
+                   (asdf:system-relative-pathname "kiln" "lisp/macro-client.lisp"))
+             (eval-file "macros"))
+       ;; Trucler (trucler-base.asd, and the client class of
+       ;; trucler-native.asd), then Maclina (maclina.asd: base, compile,
+       ;; vm-shared, vm-native).
+       (mapcar (lambda (name)
+                 (asdf:system-relative-pathname "trucler-base" (format nil "~A.lisp" name)))
+               '("packages" "query-functions" "query-class-accessors" "cloning-information"
+                 "quasi-clone" "query-mixin-classes" "query-classes" "query-factories"
+                 "merge-functions" "merge-methods" "low-level-augmentation-functions"
+                 "augmentation-functions" "environment-builder" "macro-functions"
+                 "conditions" "condition-reporters-english"))
+       (mapcar (lambda (name)
+                 (asdf:system-relative-pathname "trucler-native" (format nil "~A.lisp" name)))
+               '("packages" "client" "methods"))
+       ;; parse-macro.lisp's functions are called by the expander of
+       ;; DESTRUCTURE-SYNTAX (compile.lisp).
+       (mapcar (lambda (name)
+                 (let ((path (merge-pathnames (format nil "~A.lisp" name) (maclina-directory))))
+                   (if (string= name "compile/parse-macro")
+                       (list :compile-time-too path)
+                       path)))
+               '("packages" "machine" "arg-conditions" "structures" "map-info" "link"
+                 "access" "introspect"
+                 "compile/package" "compile/conditions" "compile/misc-program-conditions"
+                 "compile/parse-macro" "compile/unknown-reference-conditions"
+                 "compile/compilation-unit" "compile/environment" "compile/compile"
+                 "vm-shared" "vm-native"))
+       (list (eval-file "evaluator")
+             (eval-file "repl"))))))
+
+(defun compile-eval (output &key (session (kiln.compiler:make-session)))
+  "Compiles the eval module to OUTPUT, loaded after the CLOS module.
+SESSION must have compiled the kernel and CLOS."
+  (write-module (compile-files *eval-files* session "eval") output))

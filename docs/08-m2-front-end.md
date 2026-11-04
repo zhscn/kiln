@@ -47,7 +47,7 @@ Common-boot 本身的顶层处理不完整：`*compile-time-too*` 从来不会�
 
 **未定义函数的警告**推迟到文件末尾（CLHS 3.2.2.3）：Common-boot 遇到未知函数时发出的 `no-function-description` 先被屏蔽、记录下来；文件处理完后，去掉本文件 `defun` 过的函数（通过 `cmd:defun-compile-time-action` 记录）和原语，剩下的作为一个 style-warning 报告。
 
-**运行期的宏**：`defmacro` 展开后同时会被编译进目标代码，其中的 `(setf macro-function)` 在运行期把展开函数记到符号的 plist 上，`macro-function`、`macroexpand` 能用到它们（M4.6，见 [10 §20](10-m4-clos.md)）。`proclaim` 在运行期仍是空操作。
+**运行期的宏**：`defmacro` 展开后同时会被编译进目标代码，其中的 `(setf macro-function)` 在运行期把展开函数记到符号的 plist 上，`macro-function`、`macroexpand` 能用到它们（M4.6，见 [10 §20](10-m4-clos.md)）。标准宏在运行期由 eval 模块提供（[11 §5](11-m5-self-hosting.md)）。运行期的 `proclaim` 只记录 `special`。
 
 ## 3. 对象布局的扩展
 
