@@ -8,6 +8,7 @@ shows exactly what kiln changed. Changes are not sent upstream for now.
 | Module | Upstream | Commit | License |
 |---|---|---|---|
 | Clostrophilia | https://github.com/robert-strandh/Clostrophilia | 9d0e86c734bdba3e6c009b8cab222c2d0e81f29b (2026-08-29) | BSD (`Clostrophilia/LICENSE-BSD`) |
+| Predicament | https://github.com/robert-strandh/Predicament | 715b3ae57ac8aa9b7ff07eb5ad864485d29aacbd (2025-06-02) | `Predicament/LICENSE.text` |
 
 ## Clostrophilia patches
 
