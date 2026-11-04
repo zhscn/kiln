@@ -16,6 +16,10 @@
                  acons fourth fifth caar cdar caddr cdddr identity byte byte-size byte-position
                  caaar caadr cadar cdaar cdadr cddar))
 
+;;; NIL's and T's function cells (the runtime defines the symbols).
+(%primop :init-function-cells nil)
+(%primop :init-function-cells t)
+
 ;;; (SETF GET) for the definitions below, which run before GET exists:
 ;;; only primitives.
 (defun %put (symbol indicator value)

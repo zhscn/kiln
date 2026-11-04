@@ -571,13 +571,22 @@ of it, SLOW-FN otherwise; both return an operand. Returns the result."
     (emit `(:store ,p 32 ,+unbound+))
     (emit `(:store ,p 48 ,(nil-value)))
     (emit `(:store ,p 56 ,(nil-value)))
-    (dolist (cell (list (cons +symbol-function+ (undefined-function-entry))
-                        (cons +symbol-setf-function+ (undefined-setf-function-entry))))
-      (let ((f (emit-alloc 24 (logior +kind-function+ (ash 1 +length-shift+)))))
-        (emit `(:store ,f 8 (:addr ,(cdr cell))))
-        (emit `(:store ,f 16 ,s))
-        (emit `(:store ,s ,(car cell) (:add ,f ,+tag-general+)))))
+    (emit-undefined-function-cells s)
     s))
+(defun emit-undefined-function-cells (s)
+  "Stores new undefined-function objects for the symbol S into both its
+function cells."
+  (dolist (cell (list (cons +symbol-function+ (undefined-function-entry))
+                      (cons +symbol-setf-function+ (undefined-setf-function-entry))))
+    (let ((f (emit-alloc 24 (logior +kind-function+ (ash 1 +length-shift+)))))
+      (emit `(:store ,f 8 (:addr ,(cdr cell))))
+      (emit `(:store ,f 16 ,s))
+      (emit `(:store ,s ,(car cell) (:add ,f ,+tag-general+))))))
+;; NIL and T are defined by the runtime with empty function cells; the
+;; kernel fills them in first thing.
+(define-primop :init-function-cells (s)
+  (emit-undefined-function-cells (copy-to-var s))
+  s)
 (define-primop :symbol-plist (s) (copy-to-var `(:load ,s ,+symbol-plist+)))
 (define-primop :set-symbol-plist (s v) (emit `(:store ,s ,+symbol-plist+ ,v)) v)
 ;; The package system sets the home package of a symbol (docs/10 §12), and
