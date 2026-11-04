@@ -49,6 +49,7 @@ pub unsafe fn function_entry(fobj: u64) -> *const u8 {
 /// # Safety
 /// `info` must describe correctly compiled and loaded code.
 pub unsafe fn run_module(info: &ModuleInfo) -> i32 {
+    object::init_statics();
     unsafe {
         let records = std::slice::from_raw_parts(info.callsites, info.ncallsites as usize);
         unwind::register_callsites(records);
@@ -68,8 +69,8 @@ pub unsafe fn run_module(info: &ModuleInfo) -> i32 {
 /// Runtime symbols that JIT-compiled code may reference.
 pub fn symbols() -> Vec<(&'static str, *const u8)> {
     vec![
-        ("kiln_nil", &object::kiln_nil as *const _ as *const u8),
-        ("kiln_t", &object::kiln_t as *const _ as *const u8),
+        ("kiln_nil", &raw const object::kiln_nil as *const u8),
+        ("kiln_t", &raw const object::kiln_t as *const u8),
         ("kiln_rt_print", rtfun::kiln_rt_print as *const u8),
         ("kiln_rt_error", rtfun::kiln_rt_error as *const u8),
         ("kiln_rt_poll", rtfun::kiln_rt_poll as *const u8),

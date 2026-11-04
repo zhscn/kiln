@@ -20,6 +20,14 @@ pub const KIND_SYMBOL: u64 = 1;
 pub const KIND_FUNCTION: u64 = 2;
 pub const KIND_CONS: u64 = 3;
 pub const KIND_SIMPLE_VECTOR: u64 = 4;
+/// UTF-32 string: [header (length << 8), code points...], padded to 8 bytes.
+pub const KIND_STRING: u64 = 5;
+
+/// Immediates: low 3 bits 0b011, bits 3..8 the immediate kind, payload
+/// from bit 8. See docs/09-m3-kernel.md §2.
+pub const IMMEDIATE_MASK: u64 = 0xff;
+pub const CHARACTER_TAG: u64 = 0x0b;
+pub const CHARACTER_SHIFT: u32 = 8;
 
 pub const KIND_MASK: u64 = 0xff;
 pub const LENGTH_SHIFT: u32 = 8;
@@ -31,23 +39,23 @@ pub const CONS_BYTES: usize = 24;
 /// GC ignores it.
 pub const UNBOUND: u64 = 0x13;
 
-/// Layout: [header, name pointer, name length, function, value, tls index].
-/// Statically allocated. `function` is the global function cell (a
-/// function object, or the module's undefined-function object); `value`
-/// is the global value or UNBOUND. Both may point into the heap, so the
-/// compiler registers them as static roots.
+/// Layout: [header, name, package, function, value, TLS index, plist].
+/// `name` is a string object; `package` the package (for now the package
+/// name as a string, NIL when uninterned); the TLS index is a fixnum, 0
+/// until first bound (special.rs). Symbols emitted by the compiler are
+/// static; `function`, `value` and `plist` are registered as GC roots.
 #[repr(C)]
 pub struct SymbolObj {
     pub header: u64,
-    pub name: *const u8,
-    pub len: u64,
+    pub name: u64,
+    pub package: u64,
     pub function: u64,
     pub value: u64,
-    /// TLS index for dynamic bindings, 0 until first bound (special.rs).
     pub tls_index: u64,
+    pub plist: u64,
 }
 
-unsafe impl Sync for SymbolObj {}
+pub const SYMBOL_BYTES: usize = 56;
 
 /// Layout: [header (env length << 8), entry address, env...]. The env
 /// words hold the closed-over values of a closure.
@@ -59,32 +67,82 @@ pub struct FunctionObj {
 
 unsafe impl Sync for FunctionObj {}
 
+/// A string in static memory.
+#[repr(C)]
+pub struct StaticString<const N: usize> {
+    pub header: u64,
+    pub chars: [u32; N],
+}
+
+const fn static_string<const N: usize>(s: &str) -> StaticString<N> {
+    let bytes = s.as_bytes();
+    let mut chars = [0u32; N];
+    let mut i = 0;
+    while i < bytes.len() {
+        chars[i] = bytes[i] as u32;
+        i += 1;
+    }
+    StaticString {
+        header: KIND_STRING | ((bytes.len() as u64) << LENGTH_SHIFT),
+        chars,
+    }
+}
+
+static NIL_NAME: StaticString<4> = static_string("NIL");
+static T_NAME: StaticString<2> = static_string("T");
+static CL_NAME: StaticString<12> = static_string("COMMON-LISP");
+
+/// NIL and T. Their name and package fields are filled in by
+/// `init_statics` (constant evaluation cannot tag pointers).
 #[unsafe(no_mangle)]
-pub static kiln_nil: SymbolObj = SymbolObj {
+pub static mut kiln_nil: SymbolObj = SymbolObj {
     header: KIND_SYMBOL,
-    name: b"NIL".as_ptr(),
-    len: 3,
+    name: 0,
+    package: 0,
     function: 0,
     value: 0, // NIL's value is NIL; never read through this slot.
     tls_index: 0,
+    plist: 0,
 };
 
 #[unsafe(no_mangle)]
-pub static kiln_t: SymbolObj = SymbolObj {
+pub static mut kiln_t: SymbolObj = SymbolObj {
     header: KIND_SYMBOL,
-    name: b"T".as_ptr(),
-    len: 1,
+    name: 0,
+    package: 0,
     function: 0,
     value: 0,
     tls_index: 0,
+    plist: 0,
 };
+
+/// Fills in the fields of NIL and T. Called once before any Lisp code runs.
+pub fn init_statics() {
+    unsafe {
+        let nil = nil();
+        let cl = tag_general(&CL_NAME);
+        let n = &raw mut kiln_nil;
+        (*n).name = tag_general(&NIL_NAME);
+        (*n).package = cl;
+        (*n).plist = nil;
+        let t = &raw mut kiln_t;
+        (*t).name = tag_general(&T_NAME);
+        (*t).package = cl;
+        (*t).value = tag_general(&raw const kiln_t);
+        (*t).plist = nil;
+    }
+}
 
 pub fn tag_general<T>(p: *const T) -> u64 {
     p as u64 + TAG_GENERAL
 }
 
 pub fn nil() -> u64 {
-    tag_general(&kiln_nil)
+    tag_general(&raw const kiln_nil)
+}
+
+pub fn is_character(v: u64) -> bool {
+    v & IMMEDIATE_MASK == CHARACTER_TAG
 }
 
 pub fn is_fixnum(v: u64) -> bool {
@@ -119,7 +177,8 @@ pub fn object_bytes(header: u64) -> usize {
     match header & KIND_MASK {
         KIND_CONS => CONS_BYTES,
         KIND_SIMPLE_VECTOR => 8 + 8 * (header >> LENGTH_SHIFT) as usize,
-        KIND_SYMBOL => 48,
+        KIND_SYMBOL => SYMBOL_BYTES,
+        KIND_STRING => 8 + (4 * (header >> LENGTH_SHIFT) as usize).next_multiple_of(8),
         KIND_FUNCTION => 16 + 8 * (header >> LENGTH_SHIFT) as usize,
         k => panic!("object_bytes: unknown kind {k}"),
     }
@@ -172,8 +231,20 @@ pub unsafe fn write_object(out: &mut String, v: u64) {
         match h & KIND_MASK {
             KIND_SYMBOL => {
                 let s = unsafe { &*(untag(v) as *const SymbolObj) };
-                let bytes = unsafe { std::slice::from_raw_parts(s.name, s.len as usize) };
-                out.push_str(&String::from_utf8_lossy(bytes));
+                if is_general(s.package) && unsafe { string_value(s.package) } == "KEYWORD" {
+                    out.push(':');
+                }
+                out.push_str(&unsafe { string_value(s.name) });
+            }
+            KIND_STRING => {
+                out.push('"');
+                for c in unsafe { string_value(v) }.chars() {
+                    if c == '"' || c == '\\' {
+                        out.push('\\');
+                    }
+                    out.push(c);
+                }
+                out.push('"');
             }
             KIND_FUNCTION => {
                 let _ = write!(out, "#<FUNCTION {:#x}>", v);
@@ -194,7 +265,38 @@ pub unsafe fn write_object(out: &mut String, v: u64) {
                 let _ = write!(out, "#<OBJECT kind={} {:#x}>", k, v);
             }
         }
+    } else if is_character(v) {
+        let code = (v >> CHARACTER_SHIFT) as u32;
+        out.push_str("#\\");
+        match code {
+            0x20 => out.push_str("Space"),
+            0x0a => out.push_str("Newline"),
+            0x09 => out.push_str("Tab"),
+            0x0d => out.push_str("Return"),
+            0x7f => out.push_str("Rubout"),
+            0x08 => out.push_str("Backspace"),
+            0x0c => out.push_str("Page"),
+            0 => out.push_str("Null"),
+            _ => match char::from_u32(code) {
+                Some(c) if !c.is_control() => out.push(c),
+                _ => {
+                    let _ = write!(out, "U+{code:04X}");
+                }
+            },
+        }
     } else {
         let _ = write!(out, "#<UNKNOWN {:#x}>", v);
+    }
+}
+
+/// The contents of the string object `v`.
+///
+/// # Safety
+/// `v` must be a string object.
+pub unsafe fn string_value(v: u64) -> String {
+    unsafe {
+        let n = (header(v) >> LENGTH_SHIFT) as usize;
+        let chars = std::slice::from_raw_parts((untag(v) + 8) as *const u32, n);
+        chars.iter().map(|&c| char::from_u32(c).unwrap_or('\u{fffd}')).collect()
     }
 }

@@ -136,7 +136,7 @@ Common-boot 本身的顶层处理不完整：`*compile-time-too*` 从来不会�
 `lisp/primitives.lisp` 定义了编译器直接展开的函数（另有 `values`、`values-list`、`apply`、`nth`、`nthcdr`）：fixnum 的 `+ - * 1+ 1- < > <= >= = zerop plusp minusp`，`eq eql null not`，类型谓词，cons 操作（`cons car cdr first rest second cadr cddr endp rplaca rplacd list list*`），`funcall`、`fdefinition`、`(setf fdefinition)`、`symbol-value`、`(setf symbol-value)`、`boundp`、`print`，以及 `kiln.sys` 里的测试用原语。
 
 - CL 的函数不能被重定义（CLHS 11.1.2.1.2），所以内联是合法的。
-- 原语被当作函数对象使用时（`#'car`），按它的自然参数个数生成一个包装函数。
+- 原语被当作函数对象使用时（`#'car`），读 symbol 的函数 cell；M3 起由 kernel 为每个原语定义真正的函数（[09 §4](09-m3-kernel.md#4-primop)），M2 时生成的包装函数已删除。
 - 这是过渡做法。M3 交叉编译内核库以后，这些函数大多变成用 `%primop` 写的普通函数，这里只保留内联。
 
 ## 6. 测试

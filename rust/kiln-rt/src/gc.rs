@@ -13,7 +13,9 @@
 //!   safepoint when MMTk stops it.
 
 use crate::context::Context;
-use crate::object::{self, KIND_CONS, KIND_FUNCTION, KIND_MASK, KIND_SIMPLE_VECTOR, LENGTH_SHIFT};
+use crate::object::{
+    self, KIND_CONS, KIND_FUNCTION, KIND_MASK, KIND_SIMPLE_VECTOR, KIND_STRING, KIND_SYMBOL, LENGTH_SHIFT,
+};
 use mmtk::util::copy::{CopySemantics, GCWorkerCopyContext};
 use mmtk::util::opaque_pointer::{OpaquePointer, VMMutatorThread, VMThread, VMWorkerThread};
 use mmtk::util::{Address, ObjectReference};
@@ -318,6 +320,9 @@ impl Scanning<Kiln> for KilnScanning {
             KIND_SIMPLE_VECTOR => (8, (h >> LENGTH_SHIFT) as usize),
             // Skip the entry address; the env words are Lisp values.
             KIND_FUNCTION => (16, (h >> LENGTH_SHIFT) as usize),
+            // name, package, function, value, TLS index (a fixnum), plist
+            KIND_SYMBOL => (8, 6),
+            KIND_STRING => (8, 0),
             k => panic!("scan_object: unexpected kind {k} in the heap"),
         };
         for i in 0..fields {
@@ -450,11 +455,17 @@ pub unsafe extern "C" fn kiln_rt_alloc(ctx: *mut Context, bytes: u64, header: u6
         let mutator = &mut *(*ctx).mutator;
         note_gc_count();
         let bytes = bytes as usize;
-        let addr = memory_manager::alloc(mutator, bytes, 8, 0, AllocationSemantics::Default);
+        // Large objects go to the plan's large object space.
+        let semantics = if bytes > mmtk().get_plan().constraints().max_non_los_default_alloc_bytes {
+            AllocationSemantics::Los
+        } else {
+            AllocationSemantics::Default
+        };
+        let addr = memory_manager::alloc(mutator, bytes, 8, 0, semantics);
         std::ptr::write_bytes(addr.to_mut_ptr::<u8>(), 0, bytes);
         addr.store::<u64>(header);
         let obj = ObjectReference::from_raw_address(addr).unwrap();
-        memory_manager::post_alloc(mutator, obj, bytes, AllocationSemantics::Default);
+        memory_manager::post_alloc(mutator, obj, bytes, semantics);
         addr.as_usize() as u64
     }
 }

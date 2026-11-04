@@ -81,20 +81,31 @@
     (def 'apply (lambda (f &rest args) (apply #'apply (resolve f) args)))))
 
 (defun make-compile-environment (client)
-  (let ((env (cb:create-environment)))
-    (import-host-functions client (trucler:global-environment client env))
+  (let* ((env (cb:create-environment))
+         (genv (trucler:global-environment client env)))
+    (import-host-functions client genv)
+    ;; Eclector reads `X as (ECLECTOR.READER:QUASIQUOTE X); its expansion
+    ;; uses only APPEND, LIST and QUOTE. SICL does the same
+    ;; (New-boot/Shared/define-backquote-macros.lisp).
+    (setf (clo:macro-function client genv 'eclector.reader:quasiquote)
+          (macro-function 'eclector.reader:quasiquote))
+    (setf (clo:fdefinition client genv 'eclector.reader::expand)
+          (fdefinition 'eclector.reader::expand))
     env))
 
 ;;; Reading
 
-(defun read-csts (path)
+(defun map-file-csts (function path)
+  "Reads the forms of PATH one at a time and calls FUNCTION on each CST
+before reading the next, so that IN-PACKAGE takes effect for the rest of
+the file. Reading starts in KILN-USER."
   (with-open-file (in path)
     (let ((*package* (find-package '#:kiln-user))
           (*read-eval* nil))
       (loop with eof = (list nil)
             for cst = (eclector.concrete-syntax-tree:read in nil eof)
             until (eq cst eof)
-            collect cst))))
+            do (funcall function cst)))))
 
 ;;; Top-level form processing (CLHS 3.2.3.1)
 
@@ -153,6 +164,12 @@
               (process-toplevel c compile-time-too)))
           (eval-when
            (process-eval-when cst compile-time-too))
+          ;; The host reader reads the rest of the file in the package.
+          ;; There are no packages at run time yet (M3.3), so nothing is
+          ;; compiled for it.
+          (in-package
+           (setf *package* (or (find-package (second form))
+                               (error "IN-PACKAGE: no package named ~S" (second form)))))
           ;; Their bodies should be processed as top-level forms too;
           ;; not done yet (docs/08 §6).
           ((locally macrolet symbol-macrolet)
@@ -164,9 +181,10 @@
                  (compile-toplevel-form cst compile-time-too)))))
         (compile-toplevel-form cst compile-time-too))))
 
-(defun front-end (path)
-  "Reads and processes the top-level forms of the file PATH. Returns the
-simplified ASTs of the forms to compile, in order."
+(defun front-end (paths)
+  "Reads and processes the top-level forms of the files PATHS, in order,
+as one compilation unit. Returns the simplified ASTs of the forms to
+compile, in order."
   (let* ((*client* (make-instance 'client))
          (cmd:*client* *client*)
          (*environment* (make-compile-environment *client*))
@@ -179,11 +197,12 @@ simplified ASTs of the forms to compile, in order."
                      (lambda (w)
                        (setf (gethash (cb::name w) *referenced-functions*) t)
                        (muffle-warning w))))
-      (dolist (cst (read-csts path))
-        (process-toplevel cst nil)))
+      (dolist (path paths)
+        (map-file-csts (lambda (cst) (process-toplevel cst nil)) path)))
     (let ((undefined (loop for name being the hash-keys of *referenced-functions*
                            unless (or (gethash name *defined-functions*)
-                                      (gethash name *primitives*))
+                                      (gethash name *primitives*)
+                                      (eq name 'kiln.sys:%primop))
                              collect name)))
       (when undefined
         (warn 'undefined-function-warning :names undefined)))

@@ -35,9 +35,6 @@
 ;;; Primitives (primitives.lisp)
 (defvar *primitives* (make-hash-table :test 'equal)
   "Function name -> function of the list of argument operands.")
-(defvar *primitive-arity* (make-hash-table :test 'equal)
-  "Function name -> number of parameters of its wrapper function.")
-(defvar *primitive-functions*)          ; name -> wrapper function object operand
 
 
 (defun fresh-label (prefix)
@@ -98,24 +95,48 @@ its first env word. Every function cell starts out holding one."
            (values label 0)))
         (t (fail "invalid function name ~S" name))))
 
+(defun string-words (string)
+  "Data words of a string object: header, then UTF-32 code points packed
+two per word (little-endian), padded."
+  (let ((codes (map 'list #'char-code string)))
+    (cons (logior +kind-string+ (ash (length codes) +length-shift+))
+          (loop for (a b) on codes by #'cddr
+                collect (logior a (ash (or b 0) 32))))))
+
+(defun string-data (label string)
+  "Defines LABEL as a static string object holding STRING (once)."
+  (module-data label `(:words ,@(string-words string)))
+  label)
+
+(defun package-name-word (package)
+  "Until package objects exist (M3.3), a symbol's package slot holds the
+name of its package as a string."
+  (if package
+      (let ((name (package-name package)))
+        `(:data ,(string-data (format nil "kiln_pkg_~A" (mangle name)) name) ,+tag-general+))
+      (nil-word)))
+
 (defun symbol-data (sym)
   "Name of the static data object of the symbol SYM (not NIL or T)."
   (let* ((label (symbol-label sym))
          (obj (format nil "kiln_sym_~A" label)))
     (unless (gethash obj (kiln.kir::kmodule-defined *module*))
-      (let ((name (symbol-name sym))
-            (str (format nil "kiln_str_~A" label))
+      (let ((name (string-data (format nil "kiln_name_~A" label) (symbol-name sym)))
             (undef (format nil "kiln_undef_~A" label)))
-        (module-data str `(:bytes ,name))
         (module-data undef `(:words ,(logior +kind-function+ (ash 1 +length-shift+))
                                     (:func ,(undefined-function-entry))
                                     (:data ,obj ,+tag-general+)))
-        (module-data obj `(:words ,+kind-symbol+ (:data ,str) ,(length name)
+        ;; [header, name, package, function, value, TLS index, plist]
+        (module-data obj `(:words ,+kind-symbol+
+                                  (:data ,name ,+tag-general+)
+                                  ,(package-name-word (symbol-package sym))
                                   (:data ,undef ,+tag-general+)
                                   ,(if (keywordp sym) `(:data ,obj ,+tag-general+) +unbound+)
-                                  0))
+                                  0
+                                  ,(nil-word)))
         (module-root obj 3)
-        (module-root obj 4)))
+        (module-root obj 4)
+        (module-root obj 6)))
     obj))
 
 (defun symbol-word (sym)
@@ -135,6 +156,20 @@ its first env word. Every function cell starts out holding one."
        (fail "integer ~D is outside the fixnum range (no bignums yet)" x))
      (ash x +fixnum-shift+))
     (symbol (symbol-word x))
+    (character
+     (logior (ash (char-code x) +character-shift+) +character-tag+))
+    (string
+     (or (gethash x *constants*)
+         (setf (gethash x *constants*)
+               `(:data ,(string-data (fresh-label "kiln_string_") x) ,+tag-general+))))
+    (simple-vector
+     (or (gethash x *constants*)
+         (let ((label (fresh-label "kiln_vector_")))
+           (setf (gethash x *constants*) `(:data ,label ,+tag-general+))
+           (module-data label `(:words ,(logior +kind-simple-vector+
+                                                (ash (length x) +length-shift+))
+                                       ,@(map 'list #'constant-word x)))
+           `(:data ,label ,+tag-general+))))
     (cons
      (or (gethash x *constants*)
          (let ((label (fresh-label "kiln_const_")))
@@ -392,10 +427,45 @@ visited once."
 (defmethod lower ((ast ico:variable-reference-ast))
   (copy-to-var (var-of (ico:definition-ast ast))))
 
+(defvar *constant-vars*)                ; variable definition -> constant
+
 (define-mv-lowering ico:let-temporary-ast (ast)
-  (let ((binding (ico:binding-ast ast)))
-    (bind-var (ico:variable-name-ast binding) (lower (ico:form-ast binding)))
+  (let* ((binding (ico:binding-ast ast))
+         (def (ico:variable-name-ast binding))
+         (form (ico:form-ast binding)))
+    ;; Remember temporaries bound to constants and never assigned, so that
+    ;; (FUNCALL #'(SETF FDEFINITION) F NAME) from DEFUN sees the name.
+    (multiple-value-bind (constant constantp) (constant-value form)
+      (when (and constantp (not (assigned-in-p def (ico:form-asts ast))))
+        (setf (gethash def *constant-vars*) constant)))
+    (bind-var def (lower form))
     (lower-progn-mv (ico:form-asts ast))))
+
+(defun assigned-in-p (definition asts)
+  "Is the variable DEFINITION the target of a SETQ in ASTS?"
+  (dolist (ast asts nil)
+    (walk (lambda (node inside)
+            (declare (ignore inside))
+            (when (and (typep node 'ico:simple-setq-ast)
+                       (eq (ico:definition-ast (ico:variable-name-ast node)) definition))
+              (return-from assigned-in-p t)))
+          ast)))
+
+(defun constant-value (ast)
+  "The value of AST if it is a constant (QUOTE, a literal, or a variable
+known to hold one), and true; else NIL and NIL."
+  (typecase ast
+    (ico:quote-ast
+     (let ((object (ico:object-ast ast)))
+       (if (typep object 'ico:unparsed-form-ast)
+           (let ((form (ico:form object)))
+             (values (if (typep form 'cst:cst) (cst:raw form) form) t))
+           (values nil nil))))
+    (ico:literal-ast (values (ico:literal ast) t))
+    (ico:variable-reference-ast
+     (multiple-value-bind (value found) (gethash (ico:definition-ast ast) *constant-vars*)
+       (values value found)))
+    (t (values nil nil))))
 
 (defmethod lower ((ast ico:simple-setq-ast))
   (let ((v (lower (ico:value-ast ast)))
@@ -418,6 +488,8 @@ visited once."
     (values r n)))
 
 ;;; Special variables: TLS-index scheme (C1, rust/kiln-rt/src/special.rs).
+;;; Symbols store their TLS index as a fixnum (index << 1), so the address
+;;; of the slot is the table plus the stored index shifted left by 2.
 ;;; A symbol's value in a context is its slot in the context's TLS table if
 ;;; that holds a value, else its global value. Slot 0 is always empty, so a
 ;;; symbol that was never bound (index 0) needs no test.
@@ -427,7 +499,7 @@ visited once."
 (defun emit-tls-slot (sym)
   "Raw address of the TLS slot of the symbol operand SYM (index 0 if it
 has never been bound). The table does not move."
-  (copy-to-var `(:add (:load :ctx ,+ctx-tls+) (:shl (:load ,sym ,+symbol-tls-index+) 3)) :raw))
+  (copy-to-var `(:add (:load :ctx ,+ctx-tls+) (:shl (:load ,sym ,+symbol-tls-index+) 2)) :raw))
 
 (defun emit-symbol-value (sym)
   "Current value of the symbol operand SYM, possibly UNBOUND."
@@ -482,7 +554,7 @@ has never been bound). The table does not move."
 (defun emit-unbind (region)
   "Restores the value saved in the binding entry of REGION."
   (let ((s `(:slot ,(region-slot region))))
-    (emit `(:store (:add (:load :ctx ,+ctx-tls+) (:shl (:load ,s ,+dyn-pend-target+) 3))
+    (emit `(:store (:add (:load :ctx ,+ctx-tls+) (:shl (:load ,s ,+dyn-pend-target+) 2))
                    0 (:load ,s ,+dyn-pend-value+)))))
 
 (define-mv-lowering ico:special-variable-bind-ast (ast)
@@ -491,7 +563,7 @@ has never been bound). The table does not move."
          (v (copy-to-var (lower (ico:form-ast binding))))
          (sym (constant-object name))
          (index (emit-tls-index sym)))
-    (let* ((addr (copy-to-var `(:add (:load :ctx ,+ctx-tls+) (:shl ,index 3)) :raw))
+    (let* ((addr (copy-to-var `(:add (:load :ctx ,+ctx-tls+) (:shl ,index 2)) :raw))
            (region (establish-entry :bind sym))
            (s `(:slot ,(region-slot region)))
            (r (new-var)) (n (new-var :raw)))
@@ -528,7 +600,7 @@ if needed (not a safepoint)."
     (start-block body)
     (let ((pair (copy-to-var `(:load ,l ,+cons-car+))))
       (emit `(:store (:add (:load :ctx ,+ctx-tls+)
-                           (:shl (:load (:load ,pair ,+cons-car+) ,+symbol-tls-index+) 3))
+                           (:shl (:load (:load ,pair ,+cons-car+) ,+symbol-tls-index+) 2))
                      0 (:load ,pair ,+cons-cdr+))))
     (emit `(:set ,l (:load ,l ,+cons-cdr+)))
     (jump head)
@@ -550,7 +622,7 @@ if needed (not a safepoint)."
       (start-block body)
       (let* ((sym (copy-to-var `(:load ,cur ,+cons-car+)))
              (index (progn (emit-check-symbol sym) (emit-tls-index sym)))
-             (old (copy-to-var `(:load (:add (:load :ctx ,+ctx-tls+) (:shl ,index 3)) 0))))
+             (old (copy-to-var `(:load (:add (:load :ctx ,+ctx-tls+) (:shl ,index 2)) 0))))
         (emit `(:set ,saved ,(emit-cons (emit-cons sym old) saved))))
       (emit `(:set ,cur (:load ,cur ,+cons-cdr+)))
       (jump head)
@@ -566,7 +638,7 @@ if needed (not a safepoint)."
       ;; Symbols without a value become unbound.
       (let ((v (copy-to-var `(:select (:eq ,vcur ,(nil-value)) ,+unbound+ (:load ,vcur ,+cons-car+)))))
         (emit `(:store (:add (:load :ctx ,+ctx-tls+)
-                             (:shl (:load (:load ,cur ,+cons-car+) ,+symbol-tls-index+) 3))
+                             (:shl (:load (:load ,cur ,+cons-car+) ,+symbol-tls-index+) 2))
                        0 ,v)))
       (emit `(:set ,cur (:load ,cur ,+cons-cdr+)))
       (emit `(:set ,vcur (:select (:eq ,vcur ,(nil-value)) ,vcur (:load ,vcur ,+cons-cdr+))))
@@ -862,6 +934,25 @@ the SET-STATIC-ENVIRONMENT-AST for it in ASTS (0 if there is none)."
     (emit-error +err-not-function+ f)
     (start-block ok)))
 
+(defun emit-function-designator (f)
+  "Returns a variable holding the function designated by F: F itself if
+it is a function, the global function of F if it is a symbol."
+  (let ((r (copy-to-var f))
+        (general (new-block)) (not-function (new-block)) (symbol (new-block))
+        (bad (new-block)) (ok (new-block)))
+    (br `(:eq (:and ,r ,+tag-mask+) ,+tag-general+) general bad)
+    (start-block general)
+    (br `(:eq (:and (:load ,r ,(- +tag-general+)) ,+kind-mask+) ,+kind-function+) ok not-function)
+    (start-block not-function)
+    (br `(:eq (:and (:load ,r ,(- +tag-general+)) ,+kind-mask+) ,+kind-symbol+) symbol bad)
+    (start-block symbol)
+    (emit `(:set ,r (:load ,r ,+symbol-function+)))
+    (jump ok)
+    (start-block bad)
+    (emit-error +err-not-function+ r)
+    (start-block ok)
+    r))
+
 (defun emit-check-symbol (s)
   (let ((general (new-block)) (bad (new-block)) (ok (new-block)))
     (br `(:eq (:and ,s ,+tag-mask+) ,+tag-general+) general bad)
@@ -902,11 +993,41 @@ safepoint (docs/08 §4)."
            (typep (first arg-asts) 'ico:global-function-name-reference-ast))
       ;; (FUNCALL #'F ...) is a call to F.
       (lower-global-call (ico:name (first arg-asts)) (rest arg-asts))
-      (let ((primitive (gethash name *primitives*))
-            (vals (lower-args arg-asts)))
-        (if primitive
-            (funcall primitive vals)
-            (emit-lisp-call (function-cell-value name) vals)))))
+      (let ((primop (and (eq name 'kiln.sys:%primop) (primop-name arg-asts)))
+            (constant-name (and (equal name '(setf fdefinition))
+                                (= (length arg-asts) 2)
+                                (quoted-constant (second arg-asts)))))
+        (cond
+          ;; (SETF FDEFINITION) of a constant name, as DEFUN expands to:
+          ;; store straight into the cell. This is also the only way to
+          ;; define (SETF F) functions until run-time function names exist.
+          ((and constant-name (or (symbolp constant-name)
+                                  (and (consp constant-name)
+                                       (eq (first constant-name) 'setf))))
+           (let ((f (copy-to-var (lower (first arg-asts)))))
+             (emit-check-function f)
+             (multiple-value-bind (data index) (function-cell-data constant-name)
+               (emit `(:store (:addr ,data) ,(* 8 index) ,f)))
+             f))
+          (primop
+           (funcall primop (lower-args (rest arg-asts))))
+          (t
+           (let ((primitive (gethash name *primitives*))
+                 (vals (lower-args arg-asts)))
+             (if primitive
+                 (funcall primitive vals)
+                 (emit-lisp-call (function-cell-value name) vals))))))))
+
+(defun quoted-constant (ast)
+  (values (constant-value ast)))
+
+(defun primop-name (arg-asts)
+  "The primop of a %PRIMOP call: its first argument must be a keyword."
+  (let ((op (first arg-asts)))
+    (unless (and (typep op 'ico:literal-ast) (keywordp (ico:literal op)))
+      (fail "%PRIMOP needs a keyword as its first argument"))
+    (or (gethash (ico:literal op) *primops*)
+        (fail "unknown primop ~S" (ico:literal op)))))
 
 (define-mv-lowering ico:application-ast (ast)
   (let ((fn (ico:function-name-ast ast)))
@@ -922,10 +1043,7 @@ safepoint (docs/08 §4)."
       (values v (or n 1)))))
 
 (defmethod lower ((ast ico:global-function-name-reference-ast))
-  (let ((name (ico:name ast)))
-    (if (gethash name *primitives*)
-        (primitive-function-object name)
-        (function-cell-value name))))
+  (function-cell-value (ico:name ast)))
 
 ;;; BLOCK and RETURN-FROM
 
@@ -1142,7 +1260,7 @@ be confused with a later activation at the same address."
         (*vars* (make-hash-table :test 'eq))
         (*exits* (make-hash-table :test 'eq))
         (*constants* (make-hash-table :test 'eq))
-        (*primitive-functions* (make-hash-table :test 'equal)))
+        (*constant-vars* (make-hash-table :test 'eq)))
     (let ((*load-time-values* (make-hash-table :test 'eq)))
       (compile-toplevel-function asts))
     (module-data "kiln_toplevel_fobj" `(:words ,+kind-function+ (:func "kiln_toplevel")))

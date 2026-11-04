@@ -3,7 +3,9 @@
   (:documentation "Constants shared with the runtime. See docs/06-m0-abi.md.")
   (:export #:+fixnum-shift+ #:+tag-mask+ #:+tag-cons+ #:+tag-general+
            #:+kind-mask+ #:+kind-symbol+ #:+kind-function+ #:+kind-cons+
-           #:+kind-simple-vector+
+           #:+kind-simple-vector+ #:+kind-string+
+           #:+immediate-mask+ #:+character-tag+ #:+character-shift+ #:+char-code-limit+
+           #:+symbol-name+ #:+symbol-package+ #:+symbol-plist+ #:+vector-data+
            #:+symbol-function+ #:+symbol-value+ #:+symbol-tls-index+ #:+unbound+
            #:+length-shift+ #:+fobj-env+
            #:+cons-bytes+ #:+cons-car+ #:+cons-cdr+
@@ -16,6 +18,8 @@
            #:+err-not-list+ #:+err-not-function+
            #:+err-undefined-function+ #:+err-unbound-variable+ #:+err-not-symbol+
            #:+err-odd-keywords+ #:+err-unknown-keyword+
+           #:+err-not-character+ #:+err-not-string+ #:+err-not-vector+
+           #:+err-index+ #:+err-not-sequence+
            #:+reg-args+))
 
 (defpackage #:kiln.kir
@@ -32,7 +36,7 @@
 (defpackage #:kiln.sys
   (:use)
   (:documentation "Implementation-specific operators available to compiled code.")
-  (:export #:%gc #:%gc-count #:%call-on-new-stack))
+  (:export #:%gc #:%gc-count #:%call-on-new-stack #:%primop))
 
 (defpackage #:kiln.compiler
   (:use #:cl #:kiln.abi #:kiln.kir)
@@ -48,6 +52,10 @@
 (defpackage #:kiln
   (:use #:cl)
   (:export #:compile-file-to-kir))
+
+(defpackage #:kiln.kernel
+  (:use #:cl #:kiln.sys)
+  (:documentation "Package of the target kernel sources (lisp/target/)."))
 
 (defpackage #:kiln-user
   (:use #:cl #:kiln.sys)

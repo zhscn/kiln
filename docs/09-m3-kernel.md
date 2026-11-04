@@ -1,0 +1,92 @@
+# 09 M3：kernel 和 ANSI 核心库
+
+**状态**：进行中（2026-11）。本文记录 M3 的分步计划和已经定下的对象表示。
+
+M3 的目标见 [04 的里程碑](04-bootstrap.md#里程碑)：把 ANSI 核心库交叉编译进 kiln。按 [04 的加载顺序](04-bootstrap.md#目标端的加载顺序)，CLOS 之前只能有 kernel 原语和手写的引导代码，而大多数 SICL 模块依赖 CLOS（M4）。所以 M3 先做不依赖 CLOS 的部分：对象表示、kernel、多模块链接、符号和包、字符和字符串、数值塔。
+
+## 1. 分步
+
+| 步骤 | 内容 | 状态 |
+|---|---|---|
+| M3.1 | 立即数和堆对象的完整 kind 表；字符、字符串、simple-vector；symbol 的名字改为字符串对象；`%primop`；用 Lisp 写的 kernel（`lisp/target/`） | ✅ |
+| M3.2 | 多模块：kernel 只编译一次，用户程序作为另一个模块和它链接；symbol 在模块之间保持同一身份 | |
+| M3.3 | 包和运行期的 `intern`/`find-symbol`（评估 Parcl），目标包和宿主包分开 | |
+| M3.4 | 数值塔：bignum、ratio、浮点（Quaviver 负责 I/O）、complex | |
+| M3.5 | 剩下的不依赖 CLOS 的部分：数组（Regalia 的原语部分）、`equal`/`equalp`、序列的基本函数 | |
+
+依赖 CLOS 的模块（Predicament、ctype、Consecution、Salmagundi、Cyclosis、打印器等）放到 M4 之后。
+
+## 2. 值的表示
+
+低 3 位是 tag（[07 §1](07-m1-gc.md#1-值和对象的表示)）：
+
+| 低位 | 含义 |
+|---|---|
+| `...0` | fixnum，63 位 |
+| `001` | cons |
+| `101` | 其他堆对象（带 header） |
+| `011` | 立即数，第 3–7 位是立即数的种类，第 8 位起是载荷 |
+| `111` | 保留 |
+
+立即数：
+
+| 低 8 位 | 种类 | 载荷 |
+|---|---|---|
+| `0x0B` | character | Unicode 码点（第 8 位起） |
+| `0x13` | UNBOUND（未绑定标记，不是一等值） | — |
+| `0x1B` | single-float（预留，M3.4） | 第 32–63 位是 IEEE 754 单精度 |
+| `0x23` | NO_TLS（TLS 表的空项，不是一等值） | — |
+
+## 3. 堆对象的 kind
+
+header 的低 8 位是 kind，第 8 位起是长度（含义随 kind 而定）。GC 只扫描标为“扫描”的部分。
+
+| kind | 类型 | 布局 | 长度 | GC 扫描 |
+|---|---|---|---|---|
+| 1 | symbol | `[header, name, package, function, value, TLS 下标, plist]` | — | name 到 plist（TLS 下标是 fixnum 形式的整数，不影响） |
+| 2 | function | `[header, 入口, env...]` | env 字数 | env |
+| 3 | cons | `[header, car, cdr]` | — | car、cdr |
+| 4 | simple-vector | `[header, 元素...]` | 元素个数 | 全部元素 |
+| 5 | simple-character-string | `[header, UTF-32 码点...]`，按 8 字节补齐 | 字符个数 | 否 |
+
+以后的 kind（M3.4、M3.5）：simple-base-string、specialized vector（`(unsigned-byte 8)` 等）、bit-vector、bignum、ratio、double-float、complex、array header、标准对象和 rack（M4）。
+
+**字符串**：只有一种 UTF-32 的 `simple-character-string`，每个字符 4 字节。`base-string` 以后再加，到时作为 `simple-character-string` 的子类型单独一个 kind。
+
+**symbol**：
+
+- `name` 是字符串对象，`package` 是包对象，未 intern 的 symbol 是 NIL。M3.3 之前还没有包对象，`package` 暂时存包名字符串。
+- keyword 的值是它自己，`function` 槽初始指向“未定义函数”对象（[08 §3](08-m2-front-end.md#3-对象布局的扩展)）。
+- NIL 和 T 仍然是 runtime 里的静态对象，名字字符串在 runtime 启动时填写（Rust 的常量求值不能做指针加 tag）。
+
+## 4. `%primop`
+
+`(kiln.sys:%primop :名字 参数...)` 是 kernel 代码访问底层操作的唯一入口（[05 §7.1](05-sicl-survey.md#71-采纳)）。
+
+- 它对前端来说是普通的函数调用，降级时按第一个参数（必须是 keyword 字面量）查 primop 表，展开成内联代码，所以前端不需要改。
+- [08 §5.1](08-m2-front-end.md#51-原语) 的原语仍然保留：对 CL 函数的调用照样内联。kernel 用 `(defun car (x) (car x))` 这种写法给每个原语一个真正的全局函数，这样 `#'car`、`(apply 'car ...)` 都能工作，不再需要编译器生成的包装函数。
+
+## 5. kernel
+
+`lisp/target/` 是目标端的 Lisp 源码，用 kiln 编译器交叉编译。M3.2 之前它作为前缀和每个程序编译进同一个模块。
+
+kernel 的写法限制：
+
+- 只能用 `%primop`、已经定义的 kernel 函数和 Common-macros 的宏。
+- 宏展开函数在宿主里运行，必须是可移植 CL（[04 关键选择 1](04-bootstrap.md#关键选择)）。
+
+## 6. M3.1 的实现记录
+
+- **KIR** 增加了 `(load32 A 偏移)`（零扩展）和 `(store32 A 偏移 V)`，用于 UTF-32 字符串。
+- **TLS 下标**改为按 fixnum 存放（下标 << 1），symbol 的所有字段都是合法的 Lisp 值，GC 可以统一扫描堆上的 symbol。TLS 表项地址 = 表基址 + 存放的值 << 2。
+- **大对象**：超过当前 plan 的普通分配上限时，`kiln_rt_alloc` 改用 MMTk 的 large object space。
+- **函数标识**：`funcall`、`apply`、`multiple-value-call` 接受 symbol，取它的全局函数。
+- **`(setf f)` 函数**：`defun` 展开成 `(funcall #'(setf fdefinition) f name)`，而 `name` 经过简化后是一个绑定到常量的临时变量。降级时记录“绑定到常量且从不赋值”的临时变量，函数名是编译期常量时直接写进对应的 cell。运行期才知道的 `(setf f)` 函数名要等 M3.3。
+- **比较原语**接受任意个参数，按相邻两两比较。
+- **前端**：
+  - 文件改为读一个形式处理一个，顶层的 `in-package` 在宿主里设置 `*package*`，影响后面的读入（目标端还没有包，不编译它）。
+  - Eclector 把反引号读成 `eclector.reader:quasiquote`，这个宏和 `eclector.reader::expand` 要装进编译期环境（SICL 也这样做）。
+  - 宏展开函数在编译期环境里由 HIR 求值器执行，那里还没有 `loop`（Khazern 要等 M4 之后）。
+- **原语的包装函数已删除**：kernel 为每个原语定义了真正的函数，`#'car` 直接读 symbol 的函数 cell（[08 §5.1](08-m2-front-end.md#51-原语) 里的包装函数不再需要）。
+- **测试**：所有测试都以 kernel 为前缀编译。`tests/m3/chars-strings.lisp`（Unicode 字符和字符串、Latin-1 的大小写、跨 GC 的字符串、large object space 里的大字符串）、`tests/m3/sequences.lisp`（向量、列表函数、原语作为函数对象、symbol 的 plist）。
+- **限制**：字符的大小写和分类只覆盖 Latin-1；`string=` 等还不支持 `:start`/`:end`；`make-array` 只能建一维 simple-vector；数只有 fixnum。

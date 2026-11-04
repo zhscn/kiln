@@ -598,6 +598,12 @@ impl<M: Module> FuncLowering<'_, M> {
                 let mf = trusted(b);
                 b.ins().store(mf, val, addr, *off);
             }
+            Stmt::Store32(a, off, v) => {
+                let addr = self.expr(b, a)?;
+                let val = self.expr(b, v)?;
+                let mf = trusted(b);
+                b.ins().istore32(mf, val, addr, *off);
+            }
             Stmt::Jump(t) => {
                 b.ins().jump(self.block(t)?, &[]);
                 return Ok(true);
@@ -742,6 +748,11 @@ impl<M: Module> FuncLowering<'_, M> {
                 let a = self.expr(b, a)?;
                 let mf = trusted(b);
                 b.ins().load(I64, mf, a, *off)
+            }
+            Expr::Load32(a, off) => {
+                let a = self.expr(b, a)?;
+                let mf = trusted(b);
+                b.ins().uload32(mf, a, *off)
             }
             Expr::Addr(name, addend) => {
                 let base = match self.names.get(name) {

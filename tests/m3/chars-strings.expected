@@ -1,0 +1,33 @@
+#\a
+(#\Space #\Newline #\λ #\A)
+65
+#\λ
+NIL
+T
+T
+NIL
+(#\A #\q #\É)
+(7 15 NIL)
+(T NIL 3)
+"hello"
+"quote\"d and back\\slash"
+"λx. ünïcödé"
+2
+#\λ
+T
+NIL
+T
+T
+2
+"HELLO, WORLD"
+"symbol"
+"compiler"
+"kiln"
+"desserts"
+"foo-bar"
+(#\a #\b 1 2 3)
+"c"
+"xxYxx"
+("ffffff" "eeeee" "dddd" "ccc" "bb" "a")
+100000
+#\z

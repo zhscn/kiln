@@ -32,8 +32,9 @@ pub fn tls_used() -> usize {
     *NEXT_INDEX.lock().unwrap() as usize
 }
 
-/// Returns the TLS index of the symbol `sym`, assigning one if needed.
-/// Not a safepoint.
+/// Returns the TLS index of the symbol `sym` as a fixnum (index << 1),
+/// assigning one if needed. The symbol stores it in that form too, so the
+/// GC can scan symbols uniformly. Not a safepoint.
 ///
 /// # Safety
 /// `sym` must be a tagged symbol.
@@ -46,20 +47,21 @@ pub unsafe extern "C" fn kiln_rt_tls_index(_ctx: *mut Context, sym: u64) -> u64 
             if *next as usize >= TLS_SIZE {
                 crate::rtfun::error_exit("too many special variables (TLS table full)");
             }
-            *cell = *next;
+            *cell = *next << 1;
             *next += 1;
         }
         *cell
     }
 }
 
-/// Undoes the binding recorded in `entry` (called by the unwinder).
+/// Undoes the binding recorded in `entry` (called by the unwinder). Its
+/// `pend_target` holds the TLS index as a fixnum.
 ///
 /// # Safety
 /// `entry` must be a DYN_BIND entry of `ctx`.
 pub unsafe fn unbind(ctx: *mut Context, entry: *mut DynEntry) {
     unsafe {
-        let index = (*entry).pend_target as usize;
+        let index = (*entry).pend_target as usize >> 1;
         *(*ctx).tls.add(index) = (*entry).pend_value;
     }
 }
@@ -74,7 +76,7 @@ pub unsafe fn unbind_progv(ctx: *mut Context, entry: *mut DynEntry) {
         let mut l = (*entry).tag;
         while is_cons(l) {
             let pair = car(l);
-            let index = *((untag(car(pair)) + SYMBOL_TLS_INDEX) as *const u64) as usize;
+            let index = *((untag(car(pair)) + SYMBOL_TLS_INDEX) as *const u64) as usize >> 1;
             *(*ctx).tls.add(index) = cdr(pair);
             l = cdr(l);
         }

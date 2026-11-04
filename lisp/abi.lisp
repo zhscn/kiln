@@ -16,13 +16,23 @@
 (defconstant +kind-function+ 2)
 (defconstant +kind-cons+ 3)
 (defconstant +kind-simple-vector+ 4)
+(defconstant +kind-string+ 5)          ; UTF-32, padded to 8 bytes
 
-;;; Symbol layout: [header, name pointer, name length, function, value,
-;;; TLS index].
-;;; Offsets from a tagged pointer.
+;;; Immediates: low 3 bits #b011, bits 3-7 the immediate kind, payload from
+;;; bit 8 (docs/09 §2).
+(defconstant +immediate-mask+ #xff)
+(defconstant +character-tag+ #x0b)
+(defconstant +character-shift+ 8)
+(defconstant +char-code-limit+ #x110000)
+
+;;; Symbol layout: [header, name, package, function, value, TLS index,
+;;; plist]. Offsets from a tagged pointer. The TLS index is a fixnum.
+(defconstant +symbol-name+ (- 8 +tag-general+))
+(defconstant +symbol-package+ (- 16 +tag-general+))
 (defconstant +symbol-function+ (- 24 +tag-general+))
 (defconstant +symbol-value+ (- 32 +tag-general+))
 (defconstant +symbol-tls-index+ (- 40 +tag-general+))
+(defconstant +symbol-plist+ (- 48 +tag-general+))
 ;;; Unbound value marker (an immediate the GC ignores).
 (defconstant +unbound+ #x13)
 
@@ -63,6 +73,9 @@
 (defconstant +dyn-pend-target+ 32)
 (defconstant +dyn-pend-value+ 40)
 
+;;; Offset of the first element of a simple vector or string.
+(defconstant +vector-data+ (- 8 +tag-general+))
+
 ;;; Offset of the entry address from a tagged function object pointer.
 (defconstant +fobj-entry+ (- 8 +tag-general+))
 
@@ -77,6 +90,11 @@
 (defconstant +err-not-symbol+ 8)
 (defconstant +err-odd-keywords+ 9)
 (defconstant +err-unknown-keyword+ 10)
+(defconstant +err-not-character+ 11)
+(defconstant +err-not-string+ 12)
+(defconstant +err-not-vector+ 13)
+(defconstant +err-index+ 14)
+(defconstant +err-not-sequence+ 15)
 
 ;;; Argument registers in the Lisp calling convention.
 (defconstant +reg-args+ 3)

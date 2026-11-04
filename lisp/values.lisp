@@ -172,8 +172,7 @@ proper list LIST as arguments. Returns the primary value and the count."
       (multiple-value-bind (v n) (lower-mv form)
         (setf acc (emit-push-values v n acc))))
     (let ((list (emit-nreverse acc)))
-      (emit-check-function f)
-      (emit-apply f list))))
+      (emit-apply (emit-function-designator f) list))))
 
 (defun emit-rest-list (args start)
   "In a function entry, before any safepoint: returns a list of the

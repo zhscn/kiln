@@ -111,6 +111,8 @@ pub enum Expr {
     Shift(ShiftOp, Box<Expr>, i64),
     Cmp(CmpOp, Box<Expr>, Box<Expr>),
     Load(Box<Expr>, i32),
+    /// Zero-extended 32-bit load.
+    Load32(Box<Expr>, i32),
     Addr(String, i64),
     Fp,
     Slot(String),
@@ -121,6 +123,8 @@ pub enum Expr {
 pub enum Stmt {
     Set(String, Expr),
     Store(Expr, i32, Expr),
+    /// Stores the low 32 bits.
+    Store32(Expr, i32, Expr),
     Jump(String),
     Br(Expr, String, String),
     Return(Expr, Expr),
@@ -368,6 +372,10 @@ fn parse_stmt(s: &Sexp) -> R<Stmt> {
             arity(h, r, 3)?;
             Stmt::Store(parse_expr(&r[0])?, int(&r[1])? as i32, parse_expr(&r[2])?)
         }
+        "store32" => {
+            arity(h, r, 3)?;
+            Stmt::Store32(parse_expr(&r[0])?, int(&r[1])? as i32, parse_expr(&r[2])?)
+        }
         "jump" => {
             arity(h, r, 1)?;
             Stmt::Jump(sym(&r[0])?.to_string())
@@ -474,6 +482,10 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
         "load" => {
             arity(h, r, 2)?;
             Expr::Load(e(0)?, int(&r[1])? as i32)
+        }
+        "load32" => {
+            arity(h, r, 2)?;
+            Expr::Load32(e(0)?, int(&r[1])? as i32)
         }
         "addr" => {
             let addend = if r.len() > 1 { int(&r[1])? } else { 0 };

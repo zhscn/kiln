@@ -18,6 +18,11 @@ pub const ERR_UNBOUND_VARIABLE: u64 = 7;
 pub const ERR_NOT_SYMBOL: u64 = 8;
 pub const ERR_ODD_KEYWORDS: u64 = 9;
 pub const ERR_UNKNOWN_KEYWORD: u64 = 10;
+pub const ERR_NOT_CHARACTER: u64 = 11;
+pub const ERR_NOT_STRING: u64 = 12;
+pub const ERR_NOT_VECTOR: u64 = 13;
+pub const ERR_INDEX: u64 = 14;
+pub const ERR_NOT_SEQUENCE: u64 = 15;
 
 pub fn error_exit(msg: &str) -> ! {
     let _ = std::io::stdout().flush();
@@ -60,6 +65,11 @@ pub unsafe extern "C" fn kiln_rt_error(_ctx: *mut Context, code: u64, obj: u64, 
         ERR_NOT_SYMBOL => format!("the value {s} is not of type SYMBOL"),
         ERR_ODD_KEYWORDS => format!("odd number of keyword arguments: {s}"),
         ERR_UNKNOWN_KEYWORD => format!("unknown keyword argument {s}"),
+        ERR_NOT_CHARACTER => format!("the value {s} is not of type CHARACTER"),
+        ERR_NOT_STRING => format!("the value {s} is not of type STRING"),
+        ERR_NOT_VECTOR => format!("the value {s} is not of type SIMPLE-VECTOR"),
+        ERR_INDEX => format!("index {s} is out of bounds"),
+        ERR_NOT_SEQUENCE => format!("the value {s} is not of type SEQUENCE"),
         _ => format!("error code {code}, object {s}"),
     };
     error_exit(&msg)
