@@ -11,7 +11,7 @@
            #:+symbol-function+ #:+symbol-value+ #:+symbol-tls-index+ #:+unbound+
            #:+length-shift+ #:+fobj-env+
            #:+cons-bytes+ #:+cons-car+ #:+cons-cdr+
-           #:+ctx-poll-flag+ #:+ctx-dynenv+ #:+ctx-values+ #:+values-max+ #:+ctx-values-live+ #:+ctx-tls+ #:+no-tls-value+
+           #:+ctx-poll-flag+ #:+ctx-dynenv+ #:+ctx-values+ #:+values-max+ #:+ctx-values-live+ #:+ctx-alloc-cursor+ #:+ctx-alloc-limit+ #:+ctx-tls+ #:+no-tls-value+
            #:+dyn-catch+ #:+dyn-unwind-protect+ #:+dyn-exit-point+ #:+dyn-bind+ #:+dyn-progv+ #:+dynentry-size+
            #:+dyn-kind+ #:+dyn-prev+ #:+dyn-fp+ #:+dyn-tag+
            #:+dyn-pend-target+ #:+dyn-pend-value+

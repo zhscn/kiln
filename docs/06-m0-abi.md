@@ -63,6 +63,8 @@ Rust: kiln-launcher           staticlib，提供 C main，链接 kiln-rt
 | 48 | `tls` | 特殊变量的 TLS 表（M2，见 [08 §5.2](08-m2-front-end.md#52-特殊变量c1-的-tls-下标方案)） |
 | 56 | `values[64]` | 传递区：第 4 个及之后的参数，第二个及之后的返回值（M2，见 [08 §4](08-m2-front-end.md#4-调用约定的补充超过-3-个参数)、[§5.3](08-m2-front-end.md#53-多值)） |
 | 568 | `values_live` | `values` 里有多少个字当前是 GC root，平时为 0（M2） |
+| 576 | `alloc_cursor` | bump 分配器 cursor 字段的地址：编译出的代码就地分配小对象（见 [07](07-m1-gc.md) §「内联分配」） |
+| 584 | `alloc_limit` | bump 分配器 limit 字段的地址 |
 
 两侧的定义：`rust/kiln-rt/src/context.rs` 和 `lisp/abi.lisp`，修改时必须同步。
 

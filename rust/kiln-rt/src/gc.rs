@@ -55,7 +55,7 @@ fn mmtk() -> &'static MMTK<Kiln> {
         // Defaults; MMTK_* environment variables override them.
         let defaults = [
             ("plan", "SemiSpace"),
-            ("gc_trigger", "FixedHeapSize:67108864"),
+            ("gc_trigger", "FixedHeapSize:268435456"),
             ("threads", "2"),
         ];
         for (k, v) in defaults {
@@ -198,8 +198,13 @@ impl Slot for KilnSlot {
         if !object::is_pointer(word) {
             return None;
         }
-        let r = ObjectReference::from_raw_address(unsafe { Address::from_usize(object::untag(word)) })?;
-        memory_manager::is_in_mmtk_spaces(r).then_some(r)
+        let addr = object::untag(word);
+        // Static data (module data, symbols) is outside MMTk's address
+        // range; a range check is much cheaper than is_in_mmtk_spaces.
+        if !in_heap_range(addr) {
+            return None;
+        }
+        ObjectReference::from_raw_address(unsafe { Address::from_usize(addr) })
     }
 
     fn store(&self, obj: ObjectReference) {
@@ -527,6 +532,23 @@ pub unsafe fn alloc(ctx: *mut Context, bytes: u64, header: u64) -> u64 {
     }
 }
 
+/// Addresses of the cursor and the limit of MUTATOR's default bump
+/// allocator, for the inline allocation fast path of compiled code (the
+/// allocator lives as long as the mutator).
+///
+/// # Safety
+///
+/// MUTATOR must be a mutator bound by `bind_mutator`.
+pub unsafe fn bump_pointer_fields(mutator: *mut KilnMutator) -> (*mut usize, *mut usize) {
+    unsafe {
+        let bump = bump_allocator(&mut *mutator);
+        (
+            &mut (*bump).bump_pointer.cursor as *mut Address as *mut usize,
+            &mut (*bump).bump_pointer.limit as *mut Address as *mut usize,
+        )
+    }
+}
+
 fn max_non_los_bytes() -> usize {
     static MAX: OnceLock<usize> = OnceLock::new();
     *MAX.get_or_init(|| mmtk().get_plan().constraints().max_non_los_default_alloc_bytes)
@@ -581,8 +603,17 @@ pub extern "C" fn kiln_rt_gc_count(_ctx: *mut Context) -> u64 {
 /// Is the tagged heap pointer `v` an object in an MMTk space (as opposed
 /// to static data, which never moves)?
 pub fn in_mmtk_space(v: u64) -> bool {
-    match ObjectReference::from_raw_address(unsafe { Address::from_usize(object::untag(v)) }) {
-        Some(o) => mmtk::memory_manager::is_in_mmtk_spaces(o),
-        None => false,
-    }
+    in_heap_range(object::untag(v))
+}
+
+/// Is ADDR in the address range of MMTk's spaces? All objects that MMTk
+/// allocates are, and kiln's static data never is.
+#[inline]
+fn in_heap_range(addr: usize) -> bool {
+    static RANGE: OnceLock<(usize, usize)> = OnceLock::new();
+    let (start, end) = *RANGE.get_or_init(|| {
+        let layout = mmtk::util::heap::vm_layout::vm_layout();
+        (layout.heap_start.as_usize(), layout.heap_end.as_usize())
+    });
+    addr >= start && addr < end
 }

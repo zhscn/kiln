@@ -35,12 +35,21 @@ pub struct Context {
     /// while compiled code turns multiple values into a list, which
     /// allocates.
     pub values_live: u64,
+    /// Offset 576. Address of the cursor of this context's bump allocator
+    /// (MMTk's default allocator): compiled code allocates small objects
+    /// by bumping it, and calls `kiln_rt_alloc` when it would pass the
+    /// limit (docs/07).
+    pub alloc_cursor: *mut usize,
+    /// Offset 584. Address of the limit of the bump allocator.
+    pub alloc_limit: *mut usize,
 }
 
 pub const CTX_STACK_BASE_FP: i32 = core::mem::offset_of!(Context, stack_base_fp) as i32;
 const _: () = assert!(core::mem::offset_of!(Context, tls) == 48);
 const _: () = assert!(core::mem::offset_of!(Context, values) == 56);
 const _: () = assert!(core::mem::offset_of!(Context, values_live) == 568);
+const _: () = assert!(core::mem::offset_of!(Context, alloc_cursor) == 576);
+const _: () = assert!(core::mem::offset_of!(Context, alloc_limit) == 584);
 
 impl Context {
     pub fn new() -> Box<Context> {
@@ -54,8 +63,13 @@ impl Context {
             tls: crate::special::new_tls_table(),
             values: [0; VALUES_MAX],
             values_live: 0,
+            alloc_cursor: core::ptr::null_mut(),
+            alloc_limit: core::ptr::null_mut(),
         });
         ctx.mutator = crate::gc::bind_mutator(&mut *ctx);
+        let (cursor, limit) = unsafe { crate::gc::bump_pointer_fields(ctx.mutator) };
+        ctx.alloc_cursor = cursor;
+        ctx.alloc_limit = limit;
         ctx
     }
 }
