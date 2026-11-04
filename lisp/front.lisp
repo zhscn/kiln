@@ -91,6 +91,13 @@
           (macro-function 'eclector.reader:quasiquote))
     (setf (clo:fdefinition client genv 'eclector.reader::expand)
           (fdefinition 'eclector.reader::expand))
+    ;; LOOP is Khazern's, expanded in the host; its expansions use only
+    ;; standard operators.
+    (setf (clo:macro-function client genv 'loop)
+          (macro-function 'khazern-extrinsic:loop))
+    (when (macro-function 'khazern-extrinsic:loop-finish)
+      (setf (clo:macro-function client genv 'loop-finish)
+            (macro-function 'khazern-extrinsic:loop-finish)))
     env))
 
 ;;; SETQ of a symbol macro is SETF of its expansion (CLHS 3.1.2.1.1);

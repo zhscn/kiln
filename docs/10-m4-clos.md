@@ -60,3 +60,7 @@
 - funcallable instance 的入口是共享的跳板 `kiln_funcallable_trampoline`：从对象的第 3 个字取出安装的函数，用原来的 `nargs` 和寄存器参数调用它，返回它的全部值。跳板里没有 safepoint，传递区里的参数原样传下去。新建的 funcallable instance 安装的是一个调用即报错的函数。
 - 编译器里所有“是不是函数”的检查（`funcall`、`apply`、`functionp`、函数标识）改为 `(kind & 0xF7) == 2`。
 - `tests/m4/instances.lisp`：rack 的读写和替换、跨 GC、funcallable instance 的调用（0 到 6 个参数、`apply`、`multiple-value-call`、`mapcar`、多值返回）。
+
+## 6. M4.2：编译 Clostrophilia 之前的准备
+
+- **LOOP**：Clostrophilia 有 75 处 `loop`。在宿主里加载 khazern-extrinsic，把它的 `loop`、`loop-finish` 宏函数装进编译期环境作为 `cl:loop`、`cl:loop-finish`。Khazern 的展开结果只用标准运算符，不引用它自己的运行期函数，所以目标端不需要加载 Khazern。`tests/m3/loop-macro.lisp`。

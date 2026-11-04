@@ -4,6 +4,7 @@
   :description "kiln Common Lisp implementation: host-side compiler"
   :license "BSD-2-Clause"
   :depends-on ("eclector-concrete-syntax-tree"
+               "khazern-extrinsic"
                "common-boot"
                "common-boot-ast-to-hir"
                "common-boot-hir-evaluator")
