@@ -104,7 +104,7 @@
                        (<- object ((form! forms)))
                        (* (or (seq :prefix          (<- prefix          ((form! forms))))
                               (seq :per-line-prefix (<- per-line-prefix ((form! forms)))) ; TODO prefix and per-line-prefix are mutually exclusive
-                              (seq :suﬃx           (<- suﬃx            ((form! forms)))))))
+                              (seq :suffix           (<- suffix            ((form! forms)))))))
                  "must be of the form (STREAM-DESIGNATOR OBJECT &key PREFIX PER-LINE-PREFIX SUFFIX)")
            (<- (declaration form) ((body forms))))
     `((,stream-symbol ,object

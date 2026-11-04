@@ -237,3 +237,6 @@ Under `#+kiln` (docs/10 §18 of kiln):
 
 - `constant?` (`code/definitions/names.lisp`) uses `constantp` on kiln
   instead of `sb-cltl2:variable-information`.
+- `pprint-logical-block`'s syntax (`code/definitions/io-macros.lisp`) spelled
+  `suffix` with the ligature ﬃ (U+FB03) where it binds the variable, so
+  the node referred to an unbound `suffix` (SBCL only warns).
