@@ -1,6 +1,7 @@
 ;;;; What the printer (Incless) needs from the rest of CL (docs/10 §17):
 ;;;; the printer variables, WITH-STANDARD-IO-SYNTAX, and READTABLE-CASE
-;;;; (there are no readtables at run time yet: case is always :UPCASE).
+;;;; and GET-MACRO-CHARACTER until the reader is loaded (reader.lisp
+;;;; redefines them).
 
 (in-package #:clostrophilia)
 
@@ -24,6 +25,10 @@
 (defvar *read-eval* t)
 (defvar *read-suppress* nil)
 (defvar *readtable* nil)
+;;; Eclector's standard readtable, once the reader is loaded (reader.lisp).
+;;; Also at compile time: macro expanders use WITH-STANDARD-IO-SYNTAX.
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (defvar kiln.kernel::*standard-readtable* nil))
 
 (defun readtable-case (readtable)
   (declare (ignore readtable))
@@ -38,7 +43,7 @@
          (*print-pretty* nil) (*print-radix* nil) (*print-readably* t)
          (*print-right-margin* nil) (*read-base* 10)
          (*read-default-float-format* 'single-float) (*read-eval* t)
-         (*read-suppress* nil))
+         (*read-suppress* nil) (*readtable* kiln.kernel::*standard-readtable*))
      ,@body))
 
 ;;; TYPE-OF of a standard instance (generic functions included): its

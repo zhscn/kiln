@@ -165,6 +165,13 @@
       (clo:make-variable client genv name)))
   nil)
 
+(defvar *host-macros* (make-hash-table :test 'equal)
+  "Names of the macros expanded by host functions at compile time.")
+
+(defun host-macro (client genv name function)
+  (setf (gethash name *host-macros*) t)
+  (setf (clo:macro-function client genv name) function))
+
 (defun import-host-functions (client genv)
   (do-external-symbols (s '#:common-lisp)
     (when (and (fboundp s) (not (macro-function s)) (not (special-operator-p s)))
@@ -182,10 +189,16 @@
       (lambda (name &optional env)
         (declare (ignore env))
         (clo:macro-function client genv name)))
+    ;; A macro whose compile-time expander is the host's (HOST-MACRO) keeps
+    ;; it: the target's definition (Khazern's LOOP, Eclector's QUASIQUOTE,
+    ;; alexandria's macros) takes effect at load time only. Its expander
+    ;; would call functions that exist in the target, not at compile time.
     (def '(setf macro-function)
       (lambda (function name &optional env)
         (declare (ignore env))
-        (setf (clo:macro-function client genv name) function)))
+        (unless (gethash name *host-macros*)
+          (setf (clo:macro-function client genv name) function))
+        function))
     ;; DEFINE-COMPILER-MACRO at compile time: ignored (the host's would
     ;; change the host's functions; Common-boot would call its unfinished
     ;; EXPAND-COMPILER-MACRO on those in the environment). The compiler
@@ -268,8 +281,9 @@
     ;; Eclector reads `X as (ECLECTOR.READER:QUASIQUOTE X); its expansion
     ;; uses only APPEND, LIST and QUOTE. SICL does the same
     ;; (New-boot/Shared/define-backquote-macros.lisp).
-    (setf (clo:macro-function client genv 'eclector.reader:quasiquote)
-          (macro-function 'eclector.reader:quasiquote))
+    (dolist (name '(eclector.reader:quasiquote eclector.reader:unquote
+                    eclector.reader:unquote-splicing))
+      (host-macro client genv name (macro-function name)))
     (setf (clo:fdefinition client genv 'eclector.reader::expand)
           (fdefinition 'eclector.reader::expand))
     ;; Ecclesia, for macro expanders such as Clostrophilia's
@@ -282,13 +296,13 @@
           (fdefinition 'alexandria:parse-body))
     ;; LOOP is Khazern's, expanded in the host; its expansions use only
     ;; standard operators.
-    (setf (clo:macro-function client genv 'loop)
-          (macro-function 'khazern-extrinsic:loop))
-    (when (macro-function 'khazern-extrinsic:loop-finish)
-      (setf (clo:macro-function client genv 'loop-finish)
-            (macro-function 'khazern-extrinsic:loop-finish)))
+    (host-macro client genv 'loop (macro-function 'khazern-extrinsic:loop))
+    (host-macro client genv 'loop-finish (macro-function 'khazern-extrinsic:loop-finish))
+    ;; Code evaluated at compile time sees the target's features.
+    (clo:make-variable client genv '*features* (copy-list *target-features*))
     ;; DEFSTRUCT is Anatomicl's, expanded in the host (structures.lisp).
-    (setf (clo:macro-function client genv 'defstruct) #'expand-defstruct)
+    (host-macro client genv 'defstruct #'expand-defstruct)
+
     (setf (clo:macro-function client genv 'kiln.sys::closer-mop-aliases)
           #'expand-closer-mop-aliases)
     env))
@@ -307,7 +321,18 @@ true; else NIL and NIL."
             (values nil nil)))
       (values nil nil)))
 
+;;; The READ-ONLY-P argument of LOAD-TIME-VALUE is dropped (it is only a
+;;; permission): Common-boot cannot convert it.
 (defmethod cb::convert :around ((client client) cst environment)
+  (let ((form (cst:raw cst)))
+    (if (and (consp form) (eq (first form) 'load-time-value)
+             (consp (rest form)) (consp (cddr form)))
+        (call-next-method client
+                          (cst:reconstruct client (list 'load-time-value (second form)) cst)
+                          environment)
+        (convert-setq-of-symbol-macros client cst environment #'call-next-method))))
+
+(defun convert-setq-of-symbol-macros (client cst environment next)
   (let ((form (cst:raw cst)))
     (if (and (consp form)
              (eq (first form) 'setq)
@@ -321,8 +346,8 @@ true; else NIL and NIL."
                                      (if macrop
                                          `(setf ,expansion ,value)
                                          `(setq ,var ,value)))))))
-          (call-next-method client (cst:reconstruct client rewritten cst) environment))
-        (call-next-method))))
+          (funcall next client (cst:reconstruct client rewritten cst) environment))
+        (funcall next))))
 
 ;;; Reading
 
@@ -332,13 +357,22 @@ true; else NIL and NIL."
   "The features of the target, for #+ and #- in target sources (not the
 host's: an #+SBCL branch must not be read into kiln code).")
 
+;;; Reading target sources: #. evaluates in the compile-time environment.
+(defclass source-reader-client (eclector.concrete-syntax-tree::cst-client) ())
+
+(defmethod eclector.reader:evaluate-expression ((client source-reader-client) expression)
+  (compile-time-eval (cst:cst-from-expression expression)))
+
+(defvar *source-reader-client* (make-instance 'source-reader-client))
+
 (defun map-file-csts (function path)
   "Reads the forms of PATH one at a time and calls FUNCTION on each CST
 before reading the next, so that IN-PACKAGE takes effect for the rest of
 the file. Reading starts in KILN-USER, with the target's features."
   (with-open-file (in path)
     (let ((*package* (find-package '#:kiln-user))
-          (*read-eval* nil))
+          (*read-eval* t)
+          (eclector.base:*client* *source-reader-client*))
       (loop with eof = (list nil)
             for cst = (let ((*features* *target-features*))
                         (eclector.concrete-syntax-tree:read in nil eof))

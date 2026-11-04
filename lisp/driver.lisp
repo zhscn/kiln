@@ -159,6 +159,39 @@
             "termination-test-clauses" "unconditional-execution-clauses"
             "conditional-execution-clauses" "miscellaneous-clauses")))
 
+(defparameter *alexandria-files*
+  ;; As alexandria.asd (alexandria-1). Also evaluated at compile time:
+  ;; Eclector's sources use its macros. (The host's expanders cannot be
+  ;; used: ONCE-ONLY's expansions contain the host's backquote.)
+  (mapcar (lambda (name)
+            (let ((path (asdf:system-relative-pathname
+                         "alexandria" (format nil "alexandria-1/~A.lisp" name))))
+              ;; Not the condition definitions (CLOS does not exist at
+              ;; compile time), nor what the macros do not need.
+              (if (member name '("conditions" "features" "io" "numbers") :test #'string=)
+                  path
+                  (list :compile-time-too path))))
+          '("package" "definitions" "binding" "strings" "conditions" "symbols" "macros"
+            "hash-tables" "control-flow" "functions" "lists" "types" "arrays" "sequences"
+            "numbers" "features" "io")))
+
+(defparameter *eclector-files*
+  ;; As eclector.asd, without parse results; kiln's reader.lisp is the
+  ;; interface.
+  (mapcar (lambda (name)
+            (asdf:system-relative-pathname "eclector" (format nil "code/~A.lisp" name)))
+          '("base/package" "base/utilities" "base/variables" "base/generic-functions"
+            "base/conditions" "base/read-char" "base/messages-english"
+            "readtable/package" "readtable/variables" "readtable/conditions"
+            "readtable/generic-functions" "readtable/messages-english"
+            "readtable/simple/package" "readtable/simple/readtable"
+            "readtable/simple/methods" "readtable/simple/messages-english"
+            "reader/package" "reader/more-variables" "reader/generic-functions"
+            "reader/additional-conditions" "reader/utilities" "reader/labeled-objects"
+            "reader/tokens" "reader/read-common" "reader/read" "reader/macro-functions"
+            "reader/init" "reader/quasiquote-macro" "reader/deprecation"
+            "reader/messages-english")))
+
 (defun clostrophilia-files (groups)
   "GROUPS: lists (DIRECTORY FILE...); a FILE is a name or
 (:COMPILE-TIME-TOO name)."
@@ -269,7 +302,10 @@
          (kiln-clos-file "closer-mop")
          (kiln-clos-file "trivial-with-current-source-form"))
    *khazern-files*
-   (list (kiln-clos-file "loop")))
+   (list (kiln-clos-file "loop"))
+   *alexandria-files*
+   *eclector-files*
+   (list (kiln-clos-file "reader")))
   "Sources of the CLOS module, in load order (docs/10 §7).")
 
 (defun write-module (module output)

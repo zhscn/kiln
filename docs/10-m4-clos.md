@@ -480,7 +480,7 @@ Invistra vendor 在 `vendor/Invistra`，用的是 intrinsic 接口：`format` �
 - **`print`**（§17）：仍由编译器内联成 runtime 的打印器：先打印对象再换行，而不是 CL 的「先换行、再打印对象、后跟空格」；不经过 `*standard-output*`、`print-object` 和打印变量。`#'print` 是 Incless 的正确版本。
 - **编译器宏**（§18）：编译期的 `define-compiler-macro` 被忽略，运行期只记在 plist 上，编译器从不调用。因此 `format` 的控制串也不会在编译期编译。
 - **`y-or-n-p`**（§16）：一次无效回答之后会多提示一次。
-- **`readtable-case`**（§17）：没有 readtable，`*readtable*` 是 NIL，`readtable-case` 固定返回 `:upcase`，`get-macro-character` 只认识标准语法的宏字符。
+- **reader**（§22）：没有运行期的 `eval`，所以 `#.` 报错；读入的 `` ` `` 形式是 Eclector 的 `quasiquote` 宏调用，运行期可以展开。
 - **`complexp`**（§13、§18）：总是 NIL。`complex`、`pathname`、`logical-pathname`、`random-state`、`readtable` 只是没有实例的内建类，`(typep x '(complex ...))` 总是 NIL。
 - **`make-array`**（§14）：结果在可以用原生对象时就是原生对象；序列函数对非 simple 向量返回 simple 向量。
 - **结构**（§15）：`equalp` 不比较结构的槽；访问器是泛函。
@@ -492,7 +492,7 @@ Invistra vendor 在 `vendor/Invistra`，用的是 intrinsic 接口：`format` �
 
 **还没有的功能**：
 - 美化打印（Inravina）：`pprint` 不做美化，`*print-pretty*` 不起作用；FORMAT 的 `~<...~:>`、`~_`、`~I`、`~:T` 不能用（§18）。Khazern 的条件报告用到了 `~@<...~:@>`。
-- 目标端的 reader（Eclector）和运行期的 `eval`/`compile`，这两样是 REPL 的前提。
+- 运行期的 `eval`/`compile`，REPL 的前提（reader 已有，§22）。
 - 标准流的输出缓冲（§21：文件流有缓冲，标准流没有）。
 - 类、泛函、结构的重定义（§7、§15）。
 - 包局部昵称参与 `find-package`；运行期的 `defpackage`/`in-package`（§12）。
@@ -577,3 +577,41 @@ M4.6 为 M5 补齐编译器在目标端运行所需的东西，顺序是 LOOP、
 - 二进制文件；
 - 超过缓冲大小的文件；
 - `probe-file`、`rename-file`、`directory`、`delete-file`。
+
+## 22. M4.6：reader（Eclector）
+
+Eclector vendor 在 `vendor/Eclector`，同时是宿主前端的 reader 和目标端的 reader。目标端编进 CLOS 模块的有 base、readtable、simple readtable 和 reader，不含 parse result 和 CST（M5 的前端才需要它们）。kiln 的接口在 `lisp/target/clos/reader.lisp`。
+
+**接口**：Eclector 的源码读进宿主里已有的 Eclector 包，其中 `eclector.readtable` 遮蔽了 CL 的 readtable 函数和 `*readtable*`。所以：
+- CL 的 `read`、`read-from-string`、`read-preserving-whitespace`、`read-delimited-list`，以及各个 readtable 函数，都转调 Eclector 的同名函数。readtable 参数位置不同，设计符号 NIL 表示标准 readtable。
+- kiln 的 Eclector client 让 `cl:*readtable*` 这一状态读写和绑定 CL 的变量。
+- `get-macro-character` 和 `get-dispatch-macro-character` 把 Eclector 存的符号换成函数。
+- `with-standard-io-syntax` 绑定 Eclector 的标准 readtable。
+
+**补丁**：
+- simple readtable 的类以内建类 `cl:readtable` 为超类，这样 `readtablep` 和 `(typep x 'readtable)` 成立；
+- `#P` 出错时的替代值 `#P"."` 改成 `(pathname ".")`，因为编译器还不支持 pathname 常量。
+
+**alexandria**：Eclector 的源码用到 alexandria 的宏和函数，所以 alexandria-1 也编进 CLOS 模块。
+- 宿主 alexandria 的宏不能直接当作编译期的展开函数：`once-only` 的展开结果里含有 SBCL 自己的反引号对象。
+- 所以除 `conditions`、`features`、`io`、`numbers` 之外的文件都以 `:compile-time-too` 加载，宏在编译期由 HIR 求值器执行。排除的四个文件里有 `define-condition`、`*features*` 和 `defconstant`，宏用不到它们。
+
+**前端的改动**：
+- **受保护的宿主宏**：`quasiquote`/`unquote`/`unquote-splicing`、`loop`/`loop-finish`、`defstruct` 在编译期用宿主的展开函数（`host-macro`），编译期的 `(setf macro-function)` 不覆盖它们。否则 Eclector 的 `defmacro quasiquote` 会把编译期的反引号换成一个调用目标端函数的展开函数。
+- **`#.`**：读入目标源码时，`#.` 在编译期环境里由 HIR 求值器求值（Eclector client `source-reader-client`），不再禁止。
+- **编译期的 `*features*`**：编译期环境里也有这个变量，值是目标端的 features。
+- **`(load-time-value form read-only-p)`**：转换前去掉 read-only-p，Common-boot 处理不了它。
+- **Common-boot 补丁**：`load-time-value` 的子形式在一个只含全局环境的词法环境里转换（上游直接用全局环境，里面的 `lambda` 无法加入局部函数和变量）。
+
+**kernel 的补充**：
+- 标准常量：`lambda-list-keywords`、`call-arguments-limit`（67）、`lambda-parameters-limit`、`multiple-values-limit`（65）、`char-code-limit`、浮点的极值和 epsilon、`pi`；
+- `nstring-upcase`/`downcase`/`capitalize`，以及 `string-upcase` 等的 `:start`/`:end` 参数；
+- `make-sequence` 和 `coerce` 支持位向量等其他向量类型。
+
+`tests/m4/clos-reader.lisp` 覆盖：
+- 整数、进制、bignum、比率、浮点、符号（转义、包前缀、关键字）、字符串、字符、列表、点对、quote、`#'`、向量、位向量、反引号、`#:`、`#+`/`#-`、注释、`#P`、`#2A`、`#1=`/`#1#`；
+- `read-from-string` 的第二个值和 `:start`，从流读入；
+- 读入错误；
+- readtable：`readtable-case`（`:preserve`、`:invert`）、`set-macro-character`、`set-dispatch-macro-character`、`set-syntax-from-char`、`copy-readtable`、`with-standard-io-syntax`；
+- 打印再读回；
+- 运行期展开读入的反引号形式。

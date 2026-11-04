@@ -20,5 +20,6 @@
      (:tree ,(merge-pathnames "vendor/Common-boot/" (truename root)))
      (:tree ,(merge-pathnames "vendor/Khazern/" (truename root)))
      (:tree ,(merge-pathnames "vendor/Common-macros/" (truename root)))
+     (:tree ,(merge-pathnames "vendor/Eclector/" (truename root)))
      (:tree ,deps)
      :inherit-configuration)))

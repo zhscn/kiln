@@ -2,8 +2,8 @@
 
 Copies of SICL-ecosystem modules that kiln patches. Most are target code,
 compiled into kiln's modules; Common-boot and Common-macros are host
-libraries (kiln's front end) and Khazern is both (the host's LOOP and the
-image's), found by ASDF before `deps/` (`tools/env.lisp`). Each is imported
+libraries (kiln's front end) and Khazern and Eclector are both (the
+host's LOOP and reader, and the image's), found by ASDF before `deps/` (`tools/env.lisp`). Each is imported
 unmodified in its own commit (the upstream commit is recorded below), and
 kiln's changes follow in separate commits, so `git log -- vendor/NAME`
 shows exactly what kiln changed. Changes are not sent upstream for now.
@@ -21,6 +21,7 @@ shows exactly what kiln changed. Changes are not sent upstream for now.
 | Invistra | https://github.com/s-expressionists/Invistra | 1585d04b1b1fc3b6e042de30b7785fe877ae4e2e (2026-06-22) | BSD (`Invistra/LICENSE.md`) |
 | Common-boot | https://github.com/robert-strandh/Common-boot | d4270d0fe1c8e8d5708f7f8980c5454d7d35ee95 (2025-10-13) | no license file |
 | Khazern | https://github.com/s-expressionists/Khazern | b657262946bfba0e17ee930c58c8fcd6fa6be774 (2026-09-17) | BSD (`Khazern/LICENSE.md`) |
+| Eclector | https://github.com/s-expressionists/Eclector | 1088a7998f0d205da12ff48de7238b1008a31792 (2026-08-29) | BSD (`Eclector/LICENSE`) |
 | Common-macros | https://github.com/robert-strandh/Common-macros | 4596ddf32357fa793ece25cecb6e8661259b51ac (2026-02-10) | no license file |
 
 ## Clostrophilia patches
@@ -153,6 +154,10 @@ Under `#+kiln` (docs/10 §18 of kiln):
 
 ## Common-boot patches
 
+- The form of `load-time-value` is converted in a lexical environment
+  with only the global environment (upstream: the global environment
+  itself, in which a `lambda` form cannot add its local functions and
+  variables).
 - `augment-environment-with-binding-variable` returns the environment
   unchanged for a globally special variable (upstream: NIL, which `let*`
   then used as the environment of the following bindings and the body).
@@ -168,3 +173,10 @@ Under `#+kiln` (docs/10 §18 of kiln):
 - `defclass`: a slot specifier that is a symbol is canonicalized into the
   form `(list :name 'slot)` (upstream: `(:name 'slot)`, which is then
   evaluated as a call of `:name`). Khazern has such a slot.
+
+## Eclector patches
+
+- The class of simple readtables has the built-in class `cl:readtable` as
+  a superclass too (with `standard-object`).
+- The replacement for a bad `#P` is `(pathname ".")`, not the literal
+  `#P"."` (no pathname constants in kiln's compiled code).

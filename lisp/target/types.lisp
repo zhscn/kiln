@@ -208,6 +208,12 @@
              (char (symbol-name object) 0)))
         ((member type '(float single-float short-float)) (float object))
         ((member type '(double-float long-float)) (float object 1.0d0))
+        ((member (if (consp type) (car type) type)
+                 '(vector simple-vector array simple-array string simple-string
+                   base-string simple-base-string bit-vector simple-bit-vector))
+         ;; Other vector types: MAKE-SEQUENCE knows them.
+         (let* ((l (coerce-to-list object)) (s (make-sequence type (length l))) (i 0))
+           (dolist (x l s) (setf (elt s i) x) (setq i (+ i 1)))))
         (t (%primop :type-error-type type))))
 
 (defun equalp (a b)

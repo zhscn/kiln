@@ -1,0 +1,68 @@
+"42" => (42 2)
+"-17" => (-17 3)
+"#x1F" => (31 4)
+"#b101" => (5 5)
+"#o17" => (15 4)
+"#36rZZ" => (1295 6)
+"123456789012345678901234567890" => (123456789012345678901234567890 30)
+"3/4" => (3/4 3)
+"-6/8" => (-3/4 4)
+"1.5" => (1.5 3)
+"1.5d0" => (1.5d0 5)
+"0.1" => (0.1 3)
+"1e10" => (1.0e10 4)
+"-2.5e-3" => (-0.0025 7)
+"1.0d300" => (1.0d300 7)
+"foo" => (FOO 3)
+"FOO" => (FOO 3)
+"|Foo|" => (|Foo| 5)
+"f\\oo" => (|FoO| 4)
+":key" => (:KEY 4)
+"cl:car" => (CAR 6)
+"kiln.kernel::%put" => (KILN.KERNEL::%PUT 17)
+"\"a string\"" => ("a string" 10)
+"\"esc\\\"aped\"" => ("esc\"aped" 11)
+"#\\a" => (#\a 3)
+"#\\Space" => (#\  7)
+"#\\Newline" => (#\Newline 9)
+"(1 2 3)" => ((1 2 3) 7)
+"(a . b)" => ((A . B) 7)
+"(a b . c)" => ((A B . C) 9)
+"'x" => ((QUOTE X) 2)
+"#'car" => ((FUNCTION CAR) 5)
+"#(1 2 3)" => (#(1 2 3) 8)
+"#*1011" => (#*1011 6)
+"`(a ,b ,@c)" => ((ECLECTOR.READER:QUASIQUOTE (A (ECLECTOR.READER:UNQUOTE B) (ECLECTOR.READER:UNQUOTE-SPLICING C))) 11)
+"#:gensym" => (#:GENSYM 8)
+"#+kiln yes" => (YES 10)
+"#-kiln no yes" => (YES 13)
+"  ; comment
+ after" => (AFTER 18)
+"#| block |# x" => (X 13)
+"#p\"/a/b.c\"" => (#P"/a/b.c" 10)
+"#2A((1 2) (3 4))" => (#2A((1 2) (3 4)) 16)
+"(#1=(x) #1#)" => (((X) (X)) 12)
+A at 2
+(B C) at 8
+3 at 9
+(DEFUN F (X) (* X 2))
+#\#
+reader-error "(1 2"
+reader-error ")"
+reader-error "#<foo>"
+reader-error "pkg-does-not-exist::x"
+no error: "1 . 2"
+:NONE
+T T
+:UPCASE
+"Hello"
+"HELLO" "Hello"
+(BANG X)
+(HASH-BANG 3 Y)
+Z
+!X
+(T NIL)
+T
+T :UPCASE
+T
+(APPEND (LIST (QUOTE A)) (LIST B) C (QUOTE NIL))

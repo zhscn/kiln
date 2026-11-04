@@ -70,6 +70,50 @@
 (defconstant most-positive-fixnum 4611686018427387903)
 (defconstant most-negative-fixnum -4611686018427387904)
 
+;;; Calls pass at most 3 + 64 arguments, and return at most 1 + 64 values
+;;; (docs/08 §4, §5.3).
+(defconstant call-arguments-limit 67)
+(defconstant lambda-parameters-limit 67)
+(defconstant multiple-values-limit 65)
+(defconstant char-code-limit #x110000)
+(defconstant lambda-list-keywords
+  '(&optional &rest &key &allow-other-keys &aux &body &whole &environment))
+
+(defconstant most-positive-single-float 3.4028235f38)
+(defconstant most-negative-single-float -3.4028235f38)
+(defconstant least-positive-single-float 1.4012985f-45)
+(defconstant least-negative-single-float -1.4012985f-45)
+(defconstant least-positive-normalized-single-float 1.1754944f-38)
+(defconstant least-negative-normalized-single-float -1.1754944f-38)
+(defconstant single-float-epsilon 5.960465f-8)
+(defconstant single-float-negative-epsilon 2.9802326f-8)
+(defconstant most-positive-double-float 1.7976931348623157d308)
+(defconstant most-negative-double-float -1.7976931348623157d308)
+(defconstant least-positive-double-float 4.9406564584124654d-324)
+(defconstant least-negative-double-float -4.9406564584124654d-324)
+(defconstant least-positive-normalized-double-float 2.2250738585072014d-308)
+(defconstant least-negative-normalized-double-float -2.2250738585072014d-308)
+(defconstant double-float-epsilon 1.1102230246251568d-16)
+(defconstant double-float-negative-epsilon 5.551115123125784d-17)
+;;; Short floats are single floats, long floats double floats.
+(defconstant most-positive-short-float 3.4028235f38)
+(defconstant most-negative-short-float -3.4028235f38)
+(defconstant least-positive-short-float 1.4012985f-45)
+(defconstant least-negative-short-float -1.4012985f-45)
+(defconstant least-positive-normalized-short-float 1.1754944f-38)
+(defconstant least-negative-normalized-short-float -1.1754944f-38)
+(defconstant short-float-epsilon 5.960465f-8)
+(defconstant short-float-negative-epsilon 2.9802326f-8)
+(defconstant most-positive-long-float 1.7976931348623157d308)
+(defconstant most-negative-long-float -1.7976931348623157d308)
+(defconstant least-positive-long-float 4.9406564584124654d-324)
+(defconstant least-negative-long-float -4.9406564584124654d-324)
+(defconstant least-positive-normalized-long-float 2.2250738585072014d-308)
+(defconstant least-negative-normalized-long-float -2.2250738585072014d-308)
+(defconstant long-float-epsilon 1.1102230246251568d-16)
+(defconstant long-float-negative-epsilon 5.551115123125784d-17)
+(defconstant pi 3.141592653589793d0)
+
 ;;; Errors detected by compiled code call this with the error code
 ;;; (lisp/abi.lisp) and the offending object; the condition system
 ;;; redefines it to signal a condition (lisp/target/clos/conditions.lisp).
@@ -494,6 +538,8 @@
            (make-list n :initial-element initial-element))
           ((member head '(string simple-string base-string simple-base-string))
            (make-string n :initial-element (if initial-element-p initial-element #\Space)))
+          ((member head '(bit-vector simple-bit-vector))
+           (make-array n :element-type 'bit :initial-element (if initial-element-p initial-element 0)))
           ((and (member head '(vector simple-array array))
                 (consp type) (cdr type) (not (eq (cadr type) '*)) (not (eq (cadr type) t)))
            ;; A specialized vector: the array layer's MAKE-ARRAY.
@@ -622,14 +668,20 @@
         (cond ((char< x y) (return i))
               ((char> x y) (return nil)))))))
 
-(defun string-upcase (s)
-  (let* ((s (string s)) (new (copy-seq s)))
-    (dotimes (i (length new) new)
-      (setf (schar new i) (char-upcase (schar new i))))))
-(defun string-downcase (s)
-  (let* ((s (string s)) (new (copy-seq s)))
-    (dotimes (i (length new) new)
-      (setf (schar new i) (char-downcase (schar new i))))))
+;;; Case conversion: the N versions change STRING in place (CHAR, so that
+;;; strings that are not simple work too).
+(defun nstring-upcase (string &key (start 0) end)
+  (do ((i start (+ i 1)) (end (or end (length string))))
+      ((>= i end) string)
+    (setf (char string i) (char-upcase (char string i)))))
+(defun nstring-downcase (string &key (start 0) end)
+  (do ((i start (+ i 1)) (end (or end (length string))))
+      ((>= i end) string)
+    (setf (char string i) (char-downcase (char string i)))))
+(defun string-upcase (s &key (start 0) end)
+  (nstring-upcase (copy-seq (string s)) :start start :end end))
+(defun string-downcase (s &key (start 0) end)
+  (nstring-downcase (copy-seq (string s)) :start start :end end))
 
 (defun concatenate (result-type &rest sequences)
   ;; RESULT-TYPE: STRING, SIMPLE-STRING, LIST, VECTOR or SIMPLE-VECTOR.
