@@ -8,6 +8,8 @@
 ;;;; generic function again with the same arguments.
 
 (defun invalidate-discriminating-function (generic-function)
+  ;; kiln: also the cache of effective methods for EQL specializers.
+  #+kiln (forget-eql-dispatch-cache generic-function)
   (set-funcallable-instance-function
    generic-function
    (lambda (&rest arguments)

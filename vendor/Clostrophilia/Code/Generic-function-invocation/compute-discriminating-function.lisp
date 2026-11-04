@@ -510,6 +510,31 @@
             (apply generic-function arguments))))
       ;; Come here if we can't compute the applicable methods using
       ;; only the classes of the arguments.
+      ;; kiln: the effective method is cached by the classes of the
+      ;; arguments and, where a method has an EQL specializer, by the
+      ;; argument itself if it is one of their objects (upstream computes
+      ;; it at each call).
+      #+kiln
+      (let* ((cache (eql-dispatch-cache generic-function))
+             (key (eql-dispatch-key (car cache) required-arguments classes profile))
+             (hit (assoc key (cdr cache) :test #'equal)))
+        (when hit
+          (return-from default-discriminating-function
+            (funcall (cdr hit) arguments)))
+        (let ((applicable-methods
+                (compute-applicable-methods generic-function arguments)))
+          (when (null applicable-methods)
+            (apply #'no-applicable-method generic-function arguments))
+          (let ((effective-method-function
+                  (effective-method-function
+                   generic-function
+                   (compute-effective-method
+                    generic-function
+                    (generic-function-method-combination generic-function)
+                    (final-methods applicable-methods classes)))))
+            (push (cons key effective-method-function) (cdr cache))
+            (return-from default-discriminating-function
+              (funcall effective-method-function arguments)))))
       (let ((applicable-methods
               (compute-applicable-methods generic-function arguments)))
         (when (null applicable-methods)
@@ -525,6 +550,41 @@
                (effective-method-function
                  (effective-method-function generic-function effective-method)))
           (funcall effective-method-function arguments))))))
+
+;;; kiln: caches of the effective methods of generic functions with EQL
+;;; specializers (see DEFAULT-DISCRIMINATING-FUNCTION): an alist from
+;;; generic functions to (EQL-OBJECTS . ENTRIES), where EQL-OBJECTS lists
+;;; the objects of the EQL specializers of each required parameter and
+;;; ENTRIES maps keys to effective method functions. Emptied by
+;;; INVALIDATE-DISCRIMINATING-FUNCTION. (Hash tables do not exist yet
+;;; when this file is loaded.)
+(defvar *eql-dispatch-caches* '())
+
+(defun eql-dispatch-cache (generic-function)
+  (or (cdr (assoc generic-function *eql-dispatch-caches* :test #'eq))
+      (let* ((methods (generic-function-methods generic-function))
+             (count (length (method-specializers (first methods))))
+             (objects (loop for i from 0 below count
+                            collect (loop for method in methods
+                                          for specializer = (nth i (method-specializers method))
+                                          unless (classp specializer)
+                                            collect (eql-specializer-object specializer))))
+             (cache (cons objects '())))
+        (push (cons generic-function cache) *eql-dispatch-caches*)
+        cache)))
+
+(defun eql-dispatch-key (objects arguments classes profile)
+  (loop for argument in arguments
+        for class in classes
+        for p in profile
+        for eql-objects in objects
+        collect (if (and p (member argument eql-objects :test #'eql))
+                    (list :eql argument)
+                    class)))
+
+(defun forget-eql-dispatch-cache (generic-function)
+  (setf *eql-dispatch-caches*
+        (remove generic-function *eql-dispatch-caches* :key #'car :test #'eq)))
 
 ;;; kiln: the discriminating function interprets the automaton instead
 ;;; of compiling the TAGBODY that COMPUTE-DISCRIMINATING-TAGBODY makes.  An
@@ -555,18 +615,26 @@
     (cdr (first states))))
 
 (defun automaton-transition (state stamp)
+  ;; Open-coded fixnum arithmetic: this runs at every call of a generic
+  ;; function.
   (let ((low 0)
         (high (length state)))
-    (loop while (small-integer< low high)
-          do (let* ((middle (floor (+ low high) 2))
+    (loop while (< low high)
+          do (let* ((middle (kiln.sys:%primop :fixnum-quotient (+ low high) 2))
                     (entry (svref state middle)))
-               (cond ((small-integer< stamp (first entry))
+               (cond ((< stamp (first entry))
                       (setf high middle))
-                     ((small-integer< stamp (second entry))
+                     ((< stamp (second entry))
                       (return-from automaton-transition (third entry)))
                      (t
-                      (setf low (1+ middle))))))
+                      (setf low (+ middle 1))))))
     nil))
+
+(defun argument-stamp (object)
+  (if (or (kiln.sys:%primop :standard-instance-p object)
+          (kiln.sys:%primop :funcallable-instance-p object))
+      (kiln.sys:%primop :standard-instance-access object -2)
+      (stamp+1 object)))
 
 (defun make-discriminating-closure (generic-function)
   (let* ((specializer-profile (specializer-profile generic-function))
@@ -593,7 +661,7 @@
             (loop for p in specializer-profile
                   for remaining on arguments
                   when p
-                    do (setf state (automaton-transition state (stamp+1 (car remaining))))
+                    do (setf state (automaton-transition state (argument-stamp (car remaining))))
                        (when (null state) (loop-finish)))
             (if (and (consp state) (eq (car state) :final))
                 (funcall (cdr state) arguments)
