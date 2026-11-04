@@ -52,3 +52,20 @@ Under `#+kiln` (kiln reads target sources with its own features):
   `hash-float` hashes the exact rational value instead of using Quaviver.
 - `hash-hash-table` refers to its parameter `object`, not an undefined
   `table` (an upstream bug).
+
+## Parcl patches
+
+Loaded intrinsically (`parcl-low`, `parcl-low-class`, the `parcl`
+functions); under `#+kiln`:
+
+- `parcl-low-class` does not shadow `package`: its package class is
+  `cl:package`.
+- `use-packages` is rewritten: upstream computes the added packages the
+  wrong way round, takes a symbol accessible through two packages for a
+  conflict, ignores shadowing symbols and does not update the used-by
+  lists. The `conflicts` condition is a `package-error` (it had no
+  superclass, so it was not an error), and its report takes a list.
+- `unuse-package` updates the used-by list; the `parcl` function is named
+  `unuse-package` (upstream: `unuse-pacakge`).
+- `import` gives a symbol without a home package the package as its home.
+- `unintern` returns true.

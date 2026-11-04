@@ -1,6 +1,6 @@
 (cl:in-package #:parcl-low)
 
-(define-condition conflicts ()
+(define-condition conflicts (#+kiln package-error) ; kiln: an error
   ((%conflicts
       :initarg :conflicts
       :reader conflicts))
@@ -92,7 +92,7 @@
                                 (lambda (symbol)
                                   (check symbol p (symbol-name client symbol))))))
       (unless (null conflicts)
-        (error 'conflicts :conflicts conflicts))
+        (error 'conflicts :package package :conflicts conflicts))
       (setf (use-list client package)
             (append (use-list client package) added))
       (dolist (p added)

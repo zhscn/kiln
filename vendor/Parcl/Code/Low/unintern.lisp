@@ -26,4 +26,7 @@
                      (remove-present-symbol client package symbol)
                      t))))
             (t
-             (remove-present-symbol client package symbol))))))
+             (remove-present-symbol client package symbol)
+             ;; kiln: UNINTERN returns true (not the value of
+             ;; REMOVE-PRESENT-SYMBOL).
+             #+kiln t)))))
