@@ -15,13 +15,18 @@
                     (if special-p
                         'ico:special-variable-bound-ast
                         'ico:variable-definition-ast))
-      (if special-p
-          (unless globally-special-p
-            (trucler:add-local-special-variable
-             client environment variable-name))
-          (trucler:add-lexical-variable
-           client environment
-           variable-name variable-name-ast)))))
+      ;; kiln: for a globally special variable the environment is
+      ;; returned unchanged (upstream returns the NIL of an UNLESS, which
+      ;; LET* then uses as the environment of the rest of the form).
+      (cond ((not special-p)
+             (trucler:add-lexical-variable
+              client environment
+              variable-name variable-name-ast))
+            (globally-special-p
+             environment)
+            (t
+             (trucler:add-local-special-variable
+              client environment variable-name))))))
 
 (defmethod abp:finish-node
     ((builder builder)

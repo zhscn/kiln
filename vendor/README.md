@@ -141,3 +141,9 @@ Under `#+kiln` (docs/10 §18 of kiln):
 - Infinities and NaNs are recognized through `quaviver:float-triple`.
 - Output to a string with a fill pointer goes through a string output
   stream on it (upstream uses the string as the stream).
+
+## Common-boot patches
+
+- `augment-environment-with-binding-variable` returns the environment
+  unchanged for a globally special variable (upstream: NIL, which `let*`
+  then used as the environment of the following bindings and the body).
