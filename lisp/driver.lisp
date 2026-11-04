@@ -76,6 +76,20 @@
             "remove-package-local-nickname" "make-package" "condition-types"))
   "Parcl, intrinsic: it defines the CL package functions.")
 
+(defparameter *ctype-files*
+  ;; As ctype.asd, with kiln's client instead of host.lisp and
+  ;; runtime.lisp, and kiln's interface instead of interface.lisp.
+  (mapcar (lambda (name)
+            (if (string= name "ctype-client")
+                (kiln-clos-file name)
+                (asdf:system-relative-pathname
+                 "kiln" (format nil "vendor/ctype/~A.lisp" name))))
+          '("packages" "trivalent" "method-combination" "client" "ctype-client"
+            "classes" "create" "generic-functions" "cclass" "negation"
+            "conjunction" "disjunction" "ccons" "range" "fpzero" "ccomplex"
+            "cmember" "carray" "csequence" "charset" "cvalues" "cfunction"
+            "csatisfies" "pairwise" "parse")))
+
 (defun clostrophilia-files (groups)
   "GROUPS: lists (DIRECTORY FILE...); a FILE is a name or
 (:COMPILE-TIME-TOO name)."
@@ -158,7 +172,9 @@
              "buckets/packages" "buckets/bucket-hash-table"))
    (list (kiln-clos-file "hash-tables"))
    *parcl-files*
-   (list (kiln-clos-file "package-system")))
+   (list (kiln-clos-file "package-system"))
+   *ctype-files*
+   (list (kiln-clos-file "ctype-interface")))
   "Sources of the CLOS module, in load order (docs/10 §7).")
 
 (defun write-module (module output)

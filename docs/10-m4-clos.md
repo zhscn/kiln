@@ -51,7 +51,7 @@
 | M4.2 | 宿主侧执行目标源码里的 `defpackage`（只为读入；运行期仍然没有包）；vendor Clostrophilia（原样一个提交）；早期的 `define-condition`/`error`/`format`/`documentation` 桩 |
 | M4.3 | braid 和 early 函数；`make-instance`、`ensure-*`；把 Clostrophilia 编译成一个模块；分派和有效方法的解释执行补丁 |
 | M4.4 | 切换到完整的 MOP：satiation（在目标端，用解释执行的分派），安装判别函数，early 访问器换成真正的泛函；用户程序的 `defclass`/`defgeneric`/`defmethod` 测试 |
-| M4.5 | Predicament（condition 系统），然后依次接入 Salmagundi（哈希表）、Parcl（包）、Regalia（数组）、Anatomicl（`defstruct`）、ctype |
+| M4.5 | Predicament（condition 系统），然后依次接入 Salmagundi（哈希表）、Parcl（包）、ctype（类型；Regalia 选数组类要用 `subtypep`，所以提前）、Regalia（数组）、Anatomicl（`defstruct`） |
 
 ## 5. M4.1 的实现记录
 
@@ -246,3 +246,33 @@ Parcl 没有提供的部分由 kiln 自己写：`list-all-packages`、`packagep`
 - 新 keyword、新包，`export`/`use-package` 后的继承，`use-package` 的冲突；
 - `shadow`、`unintern`、`import` 无 home 包的 symbol；
 - `do-symbols`、`with-package-iterator`、`rename-package`、`delete-package`、`find-all-symbols`。
+
+## 13. M4.5：类型（ctype）和 `deftype`
+
+顺序调整：Regalia 选数组类要用 `subtypep`，所以先接 ctype，再接 Regalia。
+
+**`deftype`**：Common-macros 的 `deftype` 通过 client 钩子 `setf-type-function-wrapper` 生成 `(kiln.sys::%deftype 'name expander)`，外面套一层三种时机都有的 `eval-when`：
+- 编译期环境里的 `%deftype` 把展开函数登记到 Clostrum；
+- kernel 里的 `%deftype` 把它存到名字的 plist 上。
+
+kernel 的 `typep` 自己认识内建的原子类型和常用的复合类型，其余的先用 `typexpand-1` 展开 `deftype` 定义的名字。展开不了的，symbol 交给 CLOS（类名），复合类型交给 ctype（`kiln.kernel::*ctype-typep*`）。`(setf compiler-macro-function)` 也在 kernel 里，编译器还不调用编译器宏。
+
+**ctype** vendor 在 `vendor/ctype`，按 `ctype.asd` 的顺序加载，但有两处替换：
+- `host.lisp` 和 `runtime.lisp` 换成 kiln 的 client（`lisp/target/clos/ctype-client.lisp`），因为原文件在加载时用宿主的 `subtypep` 和类计算常量；
+- `interface.lisp` 换成 `ctype-interface.lisp`，它定义 `cl:subtypep`、`cl:upgraded-array-element-type`、`cl:upgraded-complex-part-type`。
+
+client 的取值：
+- 浮点只有 single-float 和 double-float，short-float 归入 single-float，long-float 归入 double-float；
+- 正负零是不同的值；
+- 数组目前只有元素为 T 的 simple-vector 和字符串（`string-uaets` 是 `(character)`），Regalia 接入后再扩充；
+- base-char 是 0–127，与 kernel 的 `typep` 一致。
+
+ctype 的泛函用长形式 method combination `basic`，它生成 `(surely (call-method ...) ...)` 这样的有效方法。Clostrophilia 的解释器加了 `*effective-method-operators*` 扩展点（补丁），ctype 的 client 用它登记 `surely` 的解释：依次调用各个方法，直到第二个值为真。这样 ctype 不需要运行期编译器。
+
+还没有 complex：ctype 里特化在 `complex` 类上的方法用 `#-kiln` 去掉了，`(typep x '(complex ...))` 总是 NIL。顺便补上了 kernel 的 `substitute` 系列（`:start`、`:end`、`:count`、`:from-end`）和 `array-element-type`，`typep` 对数组类型也会检查维度。
+
+测试：
+- `tests/m3/deftype.lisp`：kernel 里的 `deftype`，不依赖 ctype；
+- `tests/m4/clos-types.lisp`：
+  - `subtypep` 覆盖整数范围、`member`/`eql`、`or`/`and`/`not`、列表和序列、浮点、类、`nil`/`t`、`satisfies`（结果不确定）、`keyword`、`deftype` 定义的名字；
+  - 复合类型的 `typep`，以及 `upgraded-array-element-type`。

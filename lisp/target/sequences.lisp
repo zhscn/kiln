@@ -222,12 +222,32 @@
             (push (car rest) result))))
     (like-seq seq (nreverse result))))
 (defun delete-duplicates (seq &rest args) (apply #'remove-duplicates seq args))
-(defun substitute (new old seq &key test test-not key)
-  (like-seq seq (mapcar (lambda (x) (if (satisfies-test old x test test-not key) new x))
-                        (seq-list seq 0 nil))))
-(defun substitute-if (new pred seq &key key)
-  (like-seq seq (mapcar (lambda (x) (if (funcall pred (if key (funcall key x) x)) new x))
-                        (seq-list seq 0 nil))))
+(defun substitute-if (new pred seq &key key (start 0) end count from-end)
+  (let ((l (seq-list seq 0 nil)) (replaced 0) (i 0) (result nil))
+    (when (and from-end count)
+      ;; Replace the last COUNT matches: work on the reversed list.
+      (let ((n (length l)))
+        (return-from substitute-if
+          (like-seq seq (reverse (seq-list (substitute-if new pred (reverse l)
+                                                          :key key :count count
+                                                          :start (if end (- n end) 0)
+                                                          :end (- n start))
+                                           0 nil))))))
+    (dolist (x l)
+      (if (and (>= i start) (or (null end) (< i end))
+               (or (null count) (< replaced count))
+               (funcall pred (if key (funcall key x) x)))
+          (progn (push new result) (setq replaced (+ replaced 1)))
+          (push x result))
+      (setq i (+ i 1)))
+    (like-seq seq (nreverse result))))
+(defun substitute (new old seq &key test test-not key (start 0) end count from-end)
+  (substitute-if new (lambda (x) (satisfies-test old x test test-not nil)) seq
+                 :key key :start start :end end :count count :from-end from-end))
+(defun substitute-if-not (new pred seq &rest args)
+  (apply #'substitute-if new (complement pred) seq args))
+(defun nsubstitute (new old seq &rest args) (apply #'substitute new old seq args))
+(defun nsubstitute-if (new pred seq &rest args) (apply #'substitute-if new pred seq args))
 
 ;;; Mapping and reducing
 

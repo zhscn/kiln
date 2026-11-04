@@ -354,6 +354,7 @@
   (unless (eql axis 0) (%primop :type-error-integer axis))
   (length (check-array a)))
 (defun array-total-size (a) (length (check-array a)))
+(defun array-element-type (a) (if (stringp (check-array a)) 'character t))
 (defun row-major-aref (a i) (aref a i))
 (defun (setf row-major-aref) (x a i) (setf (aref a i) x))
 

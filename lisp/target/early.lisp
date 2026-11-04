@@ -15,6 +15,21 @@
 ;;; Documentation strings of names, kept on the symbol's plist (of the
 ;;; second element for (SETF NAME)) under the documentation type. Other
 ;;; objects have none until CLOS takes over DOCUMENTATION.
+;;; Compiler macros are recorded (on the plist of the name, or of the
+;;; second element of (SETF NAME)) but not used yet: the compiler does not
+;;; call them.
+(defun compiler-macro-function (name &optional environment)
+  (declare (ignore environment))
+  (if (consp name)
+      (get (second name) 'setf-compiler-macro)
+      (get name 'compiler-macro)))
+
+(defun (setf compiler-macro-function) (function name &optional environment)
+  (declare (ignore environment))
+  (if (consp name)
+      (setf (get (second name) 'setf-compiler-macro) function)
+      (setf (get name 'compiler-macro) function)))
+
 (defun documentation-symbol (x)
   (if (consp x) (second x) x))
 

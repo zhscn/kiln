@@ -1,0 +1,41 @@
+;;; SUBTYPEP and compound TYPEP (ctype), DEFTYPE.
+
+(defun st (a b) (multiple-value-list (subtypep a b)))
+
+(print (st 'fixnum 'integer))
+(print (st 'integer 'fixnum))
+(print (st '(integer 0 10) '(integer -5 20)))
+(print (st '(integer 0 10) '(integer 5 20)))
+(print (st 'null 'list))
+(print (st 'list 'sequence))
+(print (st 'cons '(or null cons)))
+(print (st '(or null cons) 'list))
+(print (st 'list '(or null cons)))
+(print (st 'string 'vector))
+(print (st 'character 'string))
+(print (st '(member 1 2 3) '(integer 1 3)))
+(print (st '(eql a) 'symbol))
+(print (st 'single-float 'float))
+(print (st 'float 'single-float))
+(print (st 'ratio 'rational))
+(print (st '(and integer (not fixnum)) 'bignum))
+(print (st 'standard-class 'class))
+(print (st 'class 'standard-class))
+(print (st 'standard-object 't))
+(print (st nil 'integer))
+(print (st 't 'integer))
+(print (st '(satisfies evenp) 'integer))
+(print (st 'keyword 'symbol))
+
+(deftype digit () '(integer 0 9))
+(print (st 'digit '(mod 10)))
+(print (st '(mod 10) 'digit))
+(print (typep 7 'digit))
+
+;; Compound specifiers that the kernel's TYPEP leaves to ctype.
+(print (typep 3 '(complex real)))
+(print (typep "abc" '(simple-array character (3))))
+(print (typep "abc" '(simple-array character (4))))
+
+(print (upgraded-array-element-type 'base-char))
+(print (upgraded-array-element-type 'fixnum))
