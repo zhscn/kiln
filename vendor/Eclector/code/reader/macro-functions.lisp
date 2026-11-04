@@ -1274,7 +1274,8 @@
               :position-offset -1
               :expected-type 'string :datum expression
               :report 'replace-namestring)
-             #P".")))))
+             ;; kiln: no pathname constants in compiled code.
+             #-kiln #P"." #+kiln (pathname "."))))))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;

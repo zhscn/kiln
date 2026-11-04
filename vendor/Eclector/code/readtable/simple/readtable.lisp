@@ -1,6 +1,8 @@
 (cl:in-package #:eclector.readtable.simple)
 
-(defclass readtable ()
+;;; kiln: also of the built-in class CL:READTABLE (then STANDARD-OBJECT
+;;; must be given).
+(defclass readtable (#+kiln standard-object #+kiln cl:readtable)
   ((%syntax-types
     :initform (make-hash-table)
     :reader syntax-types)
