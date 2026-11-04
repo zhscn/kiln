@@ -129,8 +129,15 @@
 ;;; the compile-time environment, and at load time): the expander, a
 ;;; function of the type specifier and an environment, is kept on the
 ;;; plist of the name.
+;;; Caches of results that depend on the type definitions (ctype-interface
+;;; keeps its parsed specifiers and SUBTYPEP answers here); a new type or
+;;; class empties them.
+(defvar *type-caches-valid* nil)
+(defun invalidate-type-caches () (setf *type-caches-valid* nil))
+
 (defun kiln.sys::%deftype (name expander)
   (setf (get name 'type-expander) expander)
+  (invalidate-type-caches)
   name)
 
 (defun typexpand-1 (type &optional environment)
@@ -212,4 +219,6 @@
          (and (vectorp b) (= (length a) (length b))
               (dotimes (i (length a) t)
                 (unless (equalp (aref a i) (aref b i)) (return nil)))))
+        ((and *instance-equal* (%primop :standard-instance-p a))
+         (funcall *instance-equal* a b))
         (t nil)))

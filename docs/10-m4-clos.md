@@ -486,13 +486,14 @@ Invistra vendor 在 `vendor/Invistra`，用的是 intrinsic 接口：`format` �
 - **结构**（§15）：`equalp` 不比较结构的槽；访问器是泛函。
 - **`change-class`**（§18）：只复制同名的槽并初始化新增的槽，不调用 `update-instance-for-different-class`。
 - **`parse-error` 的报告**（§20）：Predicament 给 `parse-error` 定义了报告「A parse error has occurred.」。`parse-error` 和 `acclimation:condition` 的子类（例如 Khazern 的条件）在类优先级里先遇到 `parse-error`，所以打印的是这句，而不是 Acclimation 的本地化报告。
+- **pathname**（§21）：只支持 Unix 的物理 pathname，没有 host 对象（物理 pathname 的 host 是 NIL），名字里不能用反斜杠转义；`directory` 不解析符号链接；`:if-exists :new-version`（输出的默认值）在文件已存在时报错，和 SBCL 一样；字符流的 `file-position` 以八位组计。
+- **时间**（§21）：没有时区，所以没有 `decode-universal-time`、`get-decoded-time`；`sleep` 期间其他线程不能做 GC（现在还没有其他线程）。
 - **运行期的宏展开**（§20）：`macroexpand` 只看全局宏，没有 symbol macro，环境参数被忽略；运行期的宏只有目标代码里 `defmacro` 定义的那些和 LOOP，标准宏（Common-macros）只在编译期存在。
 
 **还没有的功能**：
 - 美化打印（Inravina）：`pprint` 不做美化，`*print-pretty*` 不起作用；FORMAT 的 `~<...~:>`、`~_`、`~I`、`~:T` 不能用（§18）。Khazern 的条件报告用到了 `~@<...~:@>`。
 - 目标端的 reader（Eclector）和运行期的 `eval`/`compile`，这两样是 REPL 的前提。
-- pathname 和 `open`（§16）。
-- 输出缓冲（§16）。
+- 标准流的输出缓冲（§21：文件流有缓冲，标准流没有）。
 - 类、泛函、结构的重定义（§7、§15）。
 - 包局部昵称参与 `find-package`；运行期的 `defpackage`/`in-package`（§12）。
 - 浮点的 `integer-decode-float` 等，以及真正的 Quaviver（§17）。
@@ -527,3 +528,52 @@ M4.6 为 M5 补齐编译器在目标端运行所需的东西，顺序是 LOOP、
 - 运行期 `macroexpand-1` 的 LOOP 展开，和宿主 Khazern 在编译期的展开逐一比较，只允许未 intern 符号的一致改名。涵盖算术、列表、向量和哈希表迭代，以及解构、累积、`named`、`thereis`、`loop-finish`；
 - 语法错误时 Khazern 的条件，以及经 closer-mop 从 `parse-clause` 的方法里收集的预期关键字；
 - 程序里 `defmacro` 定义的宏在运行期可以展开，`macroexpand` 会展开到底。
+
+## 21. M4.6：pathname、文件流和时间
+
+**runtime**：`kiln_rt_sys(op, a, b, c)`（`%primop :sys`）按 `op` 分派文件系统调用和时钟：open、close、lseek、unlink、rename、mkdir、rmdir、stat、getcwd、realpath、getenv、列目录、fstat、strerror、单调时钟、Unix 时间、进程 CPU 时间、sleep。
+- 文件名以 UTF-8 八位组的 simple vector 传入。
+- 返回名字的调用把结果存进作为最后一个参数传入的 simple vector，返回值是结果的长度；长度超过向量时什么也不存，Lisp 侧换一个更长的向量重试。
+- 失败时返回负的 errno。
+- 用一个入口而不是每个系统调用各导入一个函数，KIR 和 kiln-cg 都不必为新调用改动。
+
+**pathname**（`lisp/target/clos/pathnames.lisp`）：pathname 是标准对象，它的类以内建类 `pathname`（或 `logical-pathname`）为超类，做法和 Regalia 的数组一样。
+- 物理 pathname 按 SBCL 在 Unix 上的规则解析：
+  - `~/` 是 `(:absolute :home)`，`..` 是 `:up`；
+  - `*` 和 `**` 是 `:wild` 和 `:wild-inferiors`，名字里带 `*` 的串是通配模式；
+  - 以点开头的文件名没有类型；
+  - 有名字时版本是 `:newest`。
+- `..` 作为文件名时，名字就是 `".."`（SBCL 把它解析成名字 `"."`、类型 `""`）。
+- 逻辑 pathname：`logical-pathname-translations` 登记 host，`translate-logical-pathname` 按第一条匹配的转换翻译，翻译到物理 pathname 时转成小写。
+- 通配符：`pathname-match-p`、`translate-pathname` 支持 `:wild`、`:wild-inferiors` 和名字里的 `*`，按顺序把匹配到的部分填进目标的通配位置。
+- `equal` 和 `equalp` 按分量比较 pathname：kernel 的 `equal` 对标准实例调用 `*instance-equal*`。Salmagundi 的 `equal-hash` 本来就按分量散列 pathname。
+- 文件系统函数：`probe-file`、`truename`、`file-write-date`、`delete-file`、`rename-file`、`ensure-directories-exist`、`directory`、`user-homedir-pathname`。`*default-pathname-defaults*` 在启动时设为当前目录。
+
+**文件流**（`files.lisp`）：`kiln-file-stream` 是 Cyclosis 的 `posix-file-stream` 加一个 8 KiB 缓冲。
+- Cyclosis 的转码器逐个八位组读写，没有缓冲的话每个八位组都是一次系统调用。
+- 同一个缓冲先用于读还是写，取决于下一个操作：写之前把预读的部分用 lseek 退回，读之前先写出待写的部分。
+- `finish-output`、`force-output`、`close`、`file-position`、`file-length` 之前都会先写出缓冲。
+- `make-file-stream` 是 kiln client 的方法，代替 Cyclosis 只给 SBCL 写的那个：
+  - `:supersede` 和 `:rename-and-delete` 直接截断文件，不写临时文件；
+  - `:rename` 把原文件改名为 `原名.bak`；
+  - `:new-version` 和 `:error` 一样，文件存在就报错。
+- 标准流仍然没有缓冲，这样它们的输出和 runtime 直接写出的错误信息顺序不变。
+
+**时间**（`time.lisp`）：`get-internal-real-time` 和 `get-internal-run-time` 以微秒计，`get-universal-time`、`sleep`。
+
+**性能**：写这个测试时发现，往字符串流或文件写一个字符要 1 ms 左右，`format` 一次要 10 ms。泛函调用本身不慢，实测约 0.5 µs；慢在下面几处：
+- Cyclosis 的字符串输出流每次只把字符串加长 32，写入变成平方级（补丁：按倍数增长）；
+- 可调数组的增长走完整的 `make-array`，其中要经过 ctype 求 `upgraded-array-element-type`。现在一维、没有位移的可调向量直接换掉原生存储（`resize-vector`）。元素类型按类、按类型说明符缓存；
+- 写每个字符都要调用 `check-character-stream`，里面有 `subtypep`，而 `subtypep` 每次都重新解析类型说明符。现在解析结果和 `subtypep` 的答案缓存在 `equal` 哈希表里，`deftype` 或定义类时清空（`invalidate-type-caches`）；
+- Invistra 每次都重新解析控制串（补丁：按内容缓存解析结果）。
+
+改完后，往文件写一个字符约 30 µs，`format` 一次 0.3–0.7 ms，`princ-to-string` 约 0.4 ms。这些仍然偏慢，留到 M4.6 最后的性能实验一起看。
+
+`tests/m4/clos-files.lisp` 覆盖：
+- 各种名字串的解析和 namestring、合并、`enough-namestring`、匹配和翻译、`:case :common`；
+- pathname 作为 `equal` 哈希表的键，打印成 `#P`；
+- 逻辑 pathname；
+- 文本文件的写入、读回、`:append`、`:supersede`、`file-position`、`file-length`、UTF-8，以及 `file-exists` 和 `file-does-not-exist`；
+- 二进制文件；
+- 超过缓冲大小的文件；
+- `probe-file`、`rename-file`、`directory`、`delete-file`。

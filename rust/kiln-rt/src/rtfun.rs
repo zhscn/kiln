@@ -221,6 +221,212 @@ pub unsafe extern "C" fn kiln_rt_fd_read(
     (n as u64) << 1
 }
 
+/// The octets of `vec`, a simple vector of fixnums (an encoded file name).
+///
+/// # Safety
+/// `vec` must be a simple vector of fixnums.
+unsafe fn vector_octets(vec: u64) -> Vec<u8> {
+    use crate::object::{fixnum_value, header, header_length, untag};
+    let n = header_length(unsafe { header(vec) });
+    let elements = (untag(vec) + 8) as *const u64;
+    (0..n).map(|i| fixnum_value(unsafe { *elements.add(i) }) as u8).collect()
+}
+
+/// Stores `bytes` into the simple vector `vec` as fixnums if they fit;
+/// returns their count either way (the caller retries with a longer vector
+/// if it is greater than the length of `vec`).
+///
+/// # Safety
+/// `vec` must be a simple vector.
+unsafe fn store_octets(vec: u64, bytes: &[u8]) -> i64 {
+    use crate::object::{header, header_length, untag};
+    let n = header_length(unsafe { header(vec) });
+    if bytes.len() > n {
+        return bytes.len() as i64;
+    }
+    let elements = (untag(vec) + 8) as *mut u64;
+    for (i, b) in bytes.iter().enumerate() {
+        unsafe { *elements.add(i) = (*b as u64) << 1 };
+    }
+    bytes.len() as i64
+}
+
+/// The file name in the octet vector `vec`.
+fn os_name(vec: u64) -> std::ffi::OsString {
+    use std::os::unix::ffi::OsStringExt;
+    std::ffi::OsString::from_vec(unsafe { vector_octets(vec) })
+}
+
+fn c_path(bytes: Vec<u8>) -> Option<std::ffi::CString> {
+    std::ffi::CString::new(bytes).ok()
+}
+
+/// File system calls for pathnames and file streams (docs/10 §21). `op`
+/// selects the call; file names are simple vectors of octets (UTF-8), and
+/// results that are names are stored into the simple vector given as the
+/// last argument (the result is then their length; if that is greater
+/// than the length of the vector, nothing was stored). Other results are
+/// fixnums; a failure is minus errno. All arguments and results are
+/// tagged.
+///
+/// - 0 open(name, flags, mode): flags 1 read, 2 write, 4 create, 8
+///   truncate, 16 append, 32 exclusive. The descriptor.
+/// - 1 close(fd).
+/// - 2 lseek(fd, offset, whence): whence 0 start, 1 current, 2 end.
+/// - 3 unlink(name). 4 rename(name, new-name). 5 mkdir(name, mode).
+///   6 rmdir(name).
+/// - 7 stat(name, which): which 0: kind (0 none, 1 file, 2 directory, 3
+///   other); 1: size; 2: modification time (seconds since 1970).
+/// - 8 getcwd(buffer). 9 realpath(name, buffer). 10 getenv(name, buffer):
+///   -1 if unset.
+/// - 11 the entries of directory `name` (without . and ..), each followed
+///   by a 0 octet, into buffer.
+/// - 12 the size of the open file fd.
+/// - 13 strerror(errno, buffer).
+/// - 14 the monotonic clock in microseconds. 15 the time in seconds since
+///   1970. 16 the processor time of the process in microseconds.
+/// - 17 sleep for a microseconds.
+///
+/// # Safety
+/// The arguments must be as described.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kiln_rt_sys(_ctx: *mut Context, op: u64, a: u64, b: u64, c: u64) -> u64 {
+    use crate::object::fixnum_value;
+    let fixnum = |n: i64| (n << 1) as u64;
+    let errno = || -(std::io::Error::last_os_error().raw_os_error().unwrap_or(1) as i64);
+    let check = |r: i64| if r < 0 { errno() } else { r };
+    let name = |v: u64| c_path(unsafe { vector_octets(v) });
+    let einval = -(libc::EINVAL as i64);
+    let result: i64 = match fixnum_value(op) {
+        0 => match name(a) {
+            None => einval,
+            Some(path) => {
+                let flags = fixnum_value(b);
+                let mut f = match flags & 3 {
+                    1 => libc::O_RDONLY,
+                    2 => libc::O_WRONLY,
+                    _ => libc::O_RDWR,
+                } | libc::O_CLOEXEC;
+                if flags & 4 != 0 {
+                    f |= libc::O_CREAT;
+                }
+                if flags & 8 != 0 {
+                    f |= libc::O_TRUNC;
+                }
+                if flags & 16 != 0 {
+                    f |= libc::O_APPEND;
+                }
+                if flags & 32 != 0 {
+                    f |= libc::O_EXCL;
+                }
+                let mode = fixnum_value(c) as libc::c_uint;
+                check(unsafe { libc::open(path.as_ptr(), f, mode) } as i64)
+            }
+        },
+        1 => check(unsafe { libc::close(fixnum_value(a) as libc::c_int) } as i64),
+        2 => {
+            let whence = match fixnum_value(c) {
+                0 => libc::SEEK_SET,
+                1 => libc::SEEK_CUR,
+                _ => libc::SEEK_END,
+            };
+            check(unsafe { libc::lseek(fixnum_value(a) as libc::c_int, fixnum_value(b), whence) })
+        }
+        3 => match name(a) {
+            None => einval,
+            Some(path) => check(unsafe { libc::unlink(path.as_ptr()) } as i64),
+        },
+        4 => match (name(a), name(b)) {
+            (Some(from), Some(to)) => check(unsafe { libc::rename(from.as_ptr(), to.as_ptr()) } as i64),
+            _ => einval,
+        },
+        5 => match name(a) {
+            None => einval,
+            Some(path) => {
+                check(unsafe { libc::mkdir(path.as_ptr(), fixnum_value(b) as libc::mode_t) } as i64)
+            }
+        },
+        6 => match name(a) {
+            None => einval,
+            Some(path) => check(unsafe { libc::rmdir(path.as_ptr()) } as i64),
+        },
+        7 => match name(a) {
+            None => einval,
+            Some(path) => {
+                let mut st: libc::stat = unsafe { std::mem::zeroed() };
+                if unsafe { libc::stat(path.as_ptr(), &mut st) } < 0 {
+                    if fixnum_value(b) == 0 { 0 } else { errno() }
+                } else {
+                    match fixnum_value(b) {
+                        0 => match st.st_mode & libc::S_IFMT {
+                            libc::S_IFREG => 1,
+                            libc::S_IFDIR => 2,
+                            _ => 3,
+                        },
+                        1 => st.st_size,
+                        _ => st.st_mtime,
+                    }
+                }
+            }
+        },
+        8 => match std::env::current_dir() {
+            Ok(dir) => unsafe { store_octets(a, dir.as_os_str().as_encoded_bytes()) },
+            Err(e) => -(e.raw_os_error().unwrap_or(1) as i64),
+        },
+        9 => match std::fs::canonicalize(os_name(a)) {
+            Ok(path) => unsafe { store_octets(b, path.as_os_str().as_encoded_bytes()) },
+            Err(e) => -(e.raw_os_error().unwrap_or(1) as i64),
+        },
+        10 => match std::env::var_os(os_name(a)) {
+            Some(value) => unsafe { store_octets(b, value.as_encoded_bytes()) },
+            None => -1,
+        },
+        11 => match std::fs::read_dir(os_name(a)) {
+            Ok(entries) => {
+                let mut bytes = Vec::new();
+                for entry in entries.flatten() {
+                    bytes.extend_from_slice(entry.file_name().as_encoded_bytes());
+                    bytes.push(0);
+                }
+                unsafe { store_octets(b, &bytes) }
+            }
+            Err(e) => -(e.raw_os_error().unwrap_or(1) as i64),
+        },
+        12 => {
+            let mut st: libc::stat = unsafe { std::mem::zeroed() };
+            if unsafe { libc::fstat(fixnum_value(a) as libc::c_int, &mut st) } < 0 {
+                errno()
+            } else {
+                st.st_size
+            }
+        }
+        13 => {
+            let message = std::io::Error::from_raw_os_error(fixnum_value(a) as i32).to_string();
+            unsafe { store_octets(b, message.as_bytes()) }
+        }
+        14 | 16 => {
+            let clock = if fixnum_value(op) == 14 {
+                libc::CLOCK_MONOTONIC
+            } else {
+                libc::CLOCK_PROCESS_CPUTIME_ID
+            };
+            let mut ts: libc::timespec = unsafe { std::mem::zeroed() };
+            unsafe { libc::clock_gettime(clock, &mut ts) };
+            ts.tv_sec * 1_000_000 + ts.tv_nsec / 1000
+        }
+        15 => match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+            Ok(d) => d.as_secs() as i64,
+            Err(_) => 0,
+        },
+        17 => {
+            std::thread::sleep(std::time::Duration::from_micros(fixnum_value(a).max(0) as u64));
+            0
+        }
+        _ => einval,
+    };
+    fixnum(result)
+}
+
 /// The shortest decimal representation of the float `x` that reads back
 /// as the same float (for the printer, docs/10 §17): `which` selects the
 /// part. 0: the significand, a nonnegative integer without trailing zeros

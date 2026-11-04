@@ -74,6 +74,7 @@ list, slots), the slots unbound."
 
 (defun (setf find-class) (class name &optional errorp environment)
   (declare (ignore errorp environment))
+  (kiln.kernel::invalidate-type-caches)
   (setf (get name '%class) class))
 
 (defun find-class-t () (find-class 't))

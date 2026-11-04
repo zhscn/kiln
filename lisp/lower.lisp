@@ -572,6 +572,7 @@ known to hold one), and true; else NIL and NIL."
 (defun rt-fd-write () (module-import-func "kiln_rt_fd_write" 5 1))
 (defun rt-fd-read () (module-import-func "kiln_rt_fd_read" 5 1))
 (defun rt-float-decimal () (module-import-func "kiln_rt_float_decimal" 3 1))
+(defun rt-sys () (module-import-func "kiln_rt_sys" 5 1))
 
 (defun emit-tls-slot (sym)
   "Raw address of the TLS slot of the symbol operand SYM (index 0 if it

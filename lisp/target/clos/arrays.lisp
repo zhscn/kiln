@@ -64,21 +64,44 @@
       (cdr (assoc (class-of object) *class-kinds* :test #'eq))
       nil))
 
+;;; Element types are looked up often (each store checks the element), so
+;;; the element type of each class and the upgraded element type of each
+;;; type specifier are cached.
+(defvar *class-element-types* '())      ; (class . element-type)
+
 (defun element-type (array)
-  (class-element-type (class-of array)))
+  (let* ((class (class-of array))
+         (entry (assoc class *class-element-types* :test #'eq)))
+    (if entry
+        (cdr entry)
+        (let ((type (class-element-type class)))
+          (push (cons class type) *class-element-types*)
+          type))))
+
+(defvar *upgraded-element-types* '())   ; (specifier . upgraded)
 
 (defun upgraded-array-element-type (type &optional environment)
-  (if (eq type '*)
-      '*
-      (let ((name (non-vector-class-name-from-element-type type environment)))
-        (cdr (assoc name *element-types*)))))
+  (cond ((eq type '*) '*)
+        ((eq type t) t)
+        ((eq type 'character) 'character)
+        (t
+         (let ((entry (assoc type *upgraded-element-types* :test #'equal)))
+           (if entry
+               (cdr entry)
+               (let* ((name (non-vector-class-name-from-element-type type environment))
+                      (upgraded (cdr (assoc name *element-types*))))
+                 (push (cons type upgraded) *upgraded-element-types*)
+                 upgraded))))))
 
 (defun default-element (element-type)
-  (cond ((subtypep element-type 'character) #\Space)
-        ((subtypep element-type 'double-float) 0d0)
-        ((subtypep element-type 'single-float) 0f0)
-        ((subtypep element-type 'integer) 0)
-        (t nil)))
+  ;; ELEMENT-TYPE is an upgraded element type (*ELEMENT-TYPES*).
+  (cond ((eq element-type 'character) #\Space)
+        ((eq element-type 'double-float) 0d0)
+        ((eq element-type 'single-float) 0f0)
+        ((eq element-type t) nil)
+        ((equal element-type '(complex single-float)) nil)
+        ((equal element-type '(complex double-float)) nil)
+        (t 0)))
 
 ;;; Accessors
 
@@ -98,7 +121,10 @@
 
 (defun storage-set (array value index)
   (let ((element-type (element-type array)))
-    (unless (or (eq element-type t) (typep value element-type))
+    (unless (or (eq element-type t)
+                (if (eq element-type 'character)
+                    (characterp value)
+                    (typep value element-type)))
       (error 'type-error :datum value :expected-type element-type)))
   (let ((target (underlying-array array)))
     (if (null target)
@@ -285,10 +311,30 @@
                fp)
         nil)))
 
+;;; Resizing an adjustable vector that is not displaced replaces its native
+;;; storage, copying the elements that remain (the common case of
+;;; ADJUST-ARRAY and VECTOR-PUSH-EXTEND). New elements are INITIAL-ELEMENT.
+(defun resize-vector (vector size initial-element)
+  (let* ((old (contents vector))
+         (new (make-storage (if (stringp old) 'character t) size initial-element)))
+    (dotimes (i (min size (length old)))
+      (setf (cl:aref new i) (cl:aref old i)))
+    (setf (contents vector) new
+          (array-dimensions-slot vector) (list size))
+    (let ((fp (vector-fill-pointer vector)))
+      (when (and fp (> fp size))
+        (setf (vector-fill-pointer vector) size)))
+    vector))
+
+(defun resizable-vector-p (array)
+  (and (adjustable array) (null (underlying-array array)) (typep array 'vector)))
+
 (defun cl:vector-push-extend (element vector &optional (extension 16))
   (let ((fp (vector-fill-pointer (check-fill-pointer vector))))
     (when (>= fp (first (dimensions vector)))
-      (cl:adjust-array vector (+ fp (max extension 1 fp))))
+      (if (resizable-vector-p vector)
+          (resize-vector vector (+ fp (max extension 1 fp)) (default-element (element-type vector)))
+          (cl:adjust-array vector (+ fp (max extension 1 fp)))))
     (cl:vector-push element vector)))
 
 (defun cl:vector-pop (vector)
@@ -348,6 +394,17 @@
                                               (initial-contents nil initial-contents-p)
                                               fill-pointer
                                               displaced-to (displaced-index-offset 0))
+  (when (and (not (kiln.kernel::native-vector-p array))
+             (complex-array-kind array)
+             (resizable-vector-p array)
+             (null displaced-to) (not initial-contents-p)
+             (or (integerp dimensions) (and (consp dimensions) (null (rest dimensions))))
+             (equal (upgraded-array-element-type element-type) (element-type array)))
+    (resize-vector array (if (consp dimensions) (first dimensions) dimensions)
+                   (if initial-element-p initial-element (default-element (element-type array))))
+    (when fill-pointer
+      (setf (cl:fill-pointer array) (if (eq fill-pointer t) (first (dimensions array)) fill-pointer)))
+    (return-from cl:adjust-array array))
   (let* ((dimensions (canonical-dimensions dimensions))
          (fill-pointer (if (and (null fill-pointer) (cl:array-has-fill-pointer-p array))
                            (cl:fill-pointer array)

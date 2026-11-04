@@ -124,6 +124,8 @@ Under `#+kiln` (docs/10 §16 of kiln):
 - `stream-advance-to-column` writes spaces (upstream: newlines).
 - UTF-8: three octets encode the codes below `#x10000` (upstream:
   `#x1000`); decoding shifts the octets' bits left (upstream: right).
+- A string output stream's string grows geometrically (upstream: by 32
+  elements, which makes writing quadratic).
 
 ## Incless patches
 
@@ -145,6 +147,9 @@ Under `#+kiln` (docs/10 §18 of kiln):
 - Infinities and NaNs are recognized through `quaviver:float-triple`.
 - Output to a string with a fill pointer goes through a string output
   stream on it (upstream uses the string as the stream).
+- `parse-control-string` caches the directives of each control string
+  (by its contents); `format` interprets control strings at run time, and
+  parsing was most of its cost.
 
 ## Common-boot patches
 

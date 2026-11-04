@@ -263,6 +263,9 @@
    (list (kiln-clos-file "ngray"))
    *invistra-files*
    (list (kiln-clos-file "format")
+         (kiln-clos-file "pathnames")
+         (kiln-clos-file "files")
+         (kiln-clos-file "time")
          (kiln-clos-file "closer-mop")
          (kiln-clos-file "trivial-with-current-source-form"))
    *khazern-files*

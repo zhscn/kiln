@@ -577,10 +577,16 @@
       (loop-mapcar f (mapcar #'cdr lists)
                    (cons (apply f (mapcar #'car lists)) result))))
 
+;;; EQUAL and EQUALP of two standard instances: pathnames compare by
+;;; components (lisp/target/clos/pathnames.lisp sets this).
+(defvar *instance-equal* nil)
+
 (defun equal (a b)
   (cond ((eql a b) t)
         ((consp a) (and (consp b) (equal (car a) (car b)) (equal (cdr a) (cdr b))))
         ((stringp a) (and (stringp b) (string= a b)))
+        ((and *instance-equal* (%primop :standard-instance-p a))
+         (funcall *instance-equal* a b))
         (t nil)))
 
 ;;; Strings

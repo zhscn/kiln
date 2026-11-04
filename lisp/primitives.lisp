@@ -710,6 +710,13 @@ and slots), zero-filled."
   (let ((r (new-var)))
     (emit `(:call-rt ,(rt-fd-read) (,r) (:ctx ,fd ,vector ,start ,end) :nil))
     r))
+;;; File system calls (pathnames and file streams, docs/10 §21): OP selects
+;;; the call (rtfun.rs, kiln_rt_sys); the result is a fixnum, minus errno
+;;; on failure.
+(define-primop :sys (op a b c)
+  (let ((r (new-var)))
+    (emit `(:call-rt ,(rt-sys) (,r) (:ctx ,op ,a ,b ,c) :nil))
+    r))
 ;;; The shortest decimal representation of a float: WHICH selects the
 ;;; significand (0), exponent (1) or sign (2) (rtfun.rs, docs/10 §17).
 (define-primop :float-decimal (x which)

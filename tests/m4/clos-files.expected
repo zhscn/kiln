@@ -1,0 +1,42 @@
+"/a/b/c.lisp" => (:ABSOLUTE "a" "b") "c" "lisp" :NEWEST | "/a/b/c.lisp"
+"a/b/" => (:RELATIVE "a" "b") NIL NIL NIL | "a/b/"
+"c" => NIL "c" NIL :NEWEST | "c"
+".bashrc" => NIL ".bashrc" NIL :NEWEST | ".bashrc"
+"foo.tar.gz" => NIL "foo.tar" "gz" :NEWEST | "foo.tar.gz"
+"foo." => NIL "foo" "" :NEWEST | "foo."
+"." => NIL "." NIL :NEWEST | "."
+"../x/y.z" => (:RELATIVE :UP "x") "y" "z" :NEWEST | "../x/y.z"
+"./a/b" => (:RELATIVE "." "a") "b" NIL :NEWEST | "./a/b"
+"~/x.y" => (:ABSOLUTE :HOME) "x" "y" :NEWEST | "~/x.y"
+"/" => (:ABSOLUTE) NIL NIL NIL | "/"
+"" => NIL NIL NIL NIL | ""
+"*.lisp" => NIL :WILD "lisp" :NEWEST | "*.lisp"
+"/a/**/*.*" => (:ABSOLUTE "a" :WILD-INFERIORS) :WILD :WILD :NEWEST | "/a/**/*.*"
+"a*b.c" => NIL "a*b" "c" :NEWEST | "a*b.c"
+"/a/../b" => (:ABSOLUTE "a" :UP) "b" NIL :NEWEST | "/a/../b"
+"a//b" => (:RELATIVE "a") "b" NIL :NEWEST | "a/b"
+"x.y.z" => NIL "x.y" "z" :NEWEST | "x.y.z"
+".a.b" => NIL ".a" "b" :NEWEST | ".a.b"
+(:NEWEST "/x/y/a/b.c" "/x/y/../b.c" "/x/q/" "b/c.d" "/a/b/" "c.d" T NIL "/z/b/c.fasl" "baz-bar.l" T NIL "foo" "FOO" "/a/x.y" "/a/b.fasl")
+T NIL 1 T
+#P"/a/b.c"
+/a/b.c
+"KTEST" (:ABSOLUTE "SRC" "A" "B") "FOO" "KTEST:SRC;A;B;FOO.LISP"
+"/src/kiln/a/b/foo.lisp"
+"/other/x/y.z"
+("first line" "second 2" "héllo, 世界")
+length 35
+("first line" "second 2" "héllo, 世界" "appended")
+FILE-EXISTS
+FILE-DOES-NOT-EXIST
+NIL
+"new" 3
+#\e
+300 33586
+5000 "line 4999"
+T NIL
+T
+("a.txt" "c.bin" "moved.txt")
+("a.txt" "moved.txt")
+T
+NIL
