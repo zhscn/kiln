@@ -569,3 +569,4 @@ operand N."
     (:sqrt 14 :unary) (:exp 15 :unary) (:log 16 :unary)
     (:sin 17 :unary) (:cos 18 :unary) (:tan 19 :unary) (:atan 20 :unary)
     (:rational 21 :unary) (:atan2 22) (:number-expt 23)))
+(define-primop :type-error-type (x) (emit-error +err-bad-type+ x) (nil-value))

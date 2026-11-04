@@ -1027,7 +1027,24 @@ safepoint (docs/08 §4)."
 (defun lower-args (asts)
   (mapcar (lambda (a) (copy-to-var (lower a))) asts))
 
+(defparameter *type-predicates*
+  '((cons . consp) (symbol . symbolp) (list . listp) (null . null) (atom . atom)
+    (integer . integerp) (number . numberp) (character . characterp)
+    (function . functionp) (keyword . keywordp) (string . stringp)
+    (simple-string . stringp) (simple-vector . simple-vector-p)
+    (fixnum . kiln.kernel::fixnump) (bignum . kiln.kernel::bignump)
+    (float . floatp) (real . realp) (rational . rationalp)
+    (single-float . kiln.kernel::single-float-p)
+    (double-float . kiln.kernel::double-float-p))
+  "Atomic types whose TYPEP is a call to a predicate (docs/09 §10).")
+
 (defun lower-global-call (name arg-asts)
+  (when (and (eq name 'typep) (= (length arg-asts) 2))
+    (multiple-value-bind (type constantp) (constant-value (second arg-asts))
+      (let ((predicate (and constantp (cdr (assoc type *type-predicates*)))))
+        (when predicate
+          (return-from lower-global-call
+            (lower-global-call predicate (list (first arg-asts))))))))
   (if (and (eq name 'funcall)
            arg-asts
            (typep (first arg-asts) 'ico:global-function-name-reference-ast))

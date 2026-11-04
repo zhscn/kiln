@@ -1,7 +1,9 @@
 (in-package #:kiln)
 
 (defparameter *kernel-files*
-  (list (asdf:system-relative-pathname "kiln" "lisp/target/kernel.lisp"))
+  (mapcar (lambda (name)
+            (asdf:system-relative-pathname "kiln" (format nil "lisp/target/~A.lisp" name)))
+          '("kernel" "types" "sequences"))
   "Target kernel sources, compiled into the kernel module.")
 
 (defun write-module (module output)

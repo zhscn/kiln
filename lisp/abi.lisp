@@ -103,6 +103,7 @@
 (defconstant +err-not-integer+ 16)
 (defconstant +err-division-by-zero+ 17)
 (defconstant +err-not-number+ 18)
+(defconstant +err-bad-type+ 19)
 
 ;;; Argument registers in the Lisp calling convention.
 (defconstant +reg-args+ 3)

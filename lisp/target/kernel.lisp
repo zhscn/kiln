@@ -349,13 +349,7 @@
         ((null (car lists)) (apply #'nconc (cdr lists)))
         (t (setf (cdr (last (car lists))) (apply #'nconc (cdr lists)))
            (car lists))))
-(defun member (item list)
-  (cond ((null list) nil)
-        ((eql item (car list)) list)
-        (t (member item (cdr list)))))
-(defun assoc (item alist)
-  (dolist (pair alist nil)
-    (when (and pair (eql item (car pair))) (return pair))))
+;; MEMBER, ASSOC and friends with keyword arguments: sequences.lisp.
 (defun mapcar (f list &rest lists)
   (if (null lists)
       (let ((result nil))
@@ -367,8 +361,6 @@
       (nreverse result)
       (loop-mapcar f (mapcar #'cdr lists)
                    (cons (apply f (mapcar #'car lists)) result))))
-(defun mapc (f list)
-  (dolist (x list list) (funcall f x)))
 
 (defun equal (a b)
   (cond ((eql a b) t)
@@ -428,6 +420,8 @@
             (setq i (+ i 1)))))))
 
 (defun coerce-to-list (seq)
+  (if (listp seq) seq (vector-to-list seq)))
+(defun vector-to-list (seq)
   (let ((result nil))
     (dotimes (i (length seq) (nreverse result))
       (push (aref seq i) result))))

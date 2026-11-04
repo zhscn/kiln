@@ -1,6 +1,6 @@
 # 09 M3：kernel 和 ANSI 核心库
 
-**状态**：进行中（2026-11）。本文记录 M3 的分步计划和已经定下的对象表示。
+**状态**：M3.1–M3.5 已完成（2026-11）。包、Regalia 的数组和 complex 移到 M4 之后（见 §1 和 §10）。本文记录 M3 的分步计划和已经定下的对象表示。
 
 M3 的目标见 [04 的里程碑](04-bootstrap.md#里程碑)：把 ANSI 核心库交叉编译进 kiln。按 [04 的加载顺序](04-bootstrap.md#目标端的加载顺序)，CLOS 之前只能有 kernel 原语和手写的引导代码，而大多数 SICL 模块依赖 CLOS（M4）。所以 M3 先做不依赖 CLOS 的部分：对象表示、kernel、多模块链接、符号和包、字符和字符串、数值塔。
 
@@ -12,7 +12,7 @@ M3 的目标见 [04 的里程碑](04-bootstrap.md#里程碑)：把 ANSI 核心�
 | M3.2 | 多模块：kernel 只编译一次，用户程序作为另一个模块和它链接；symbol 在模块之间保持同一身份 | ✅ |
 | M3.3 | 整数：bignum、溢出时转 bignum、整数除法和位运算 | ✅ |
 | M3.4 | ratio、浮点（Quaviver 负责 I/O）、complex | ✅（complex 和 Quaviver 未做，见 §9） |
-| M3.5 | 剩下的不依赖 CLOS 的部分：数组（Regalia 的原语部分）、`equal`/`equalp`、序列的基本函数 | |
+| M3.5 | 剩下的不依赖 CLOS 的部分：`typep`、`type-of`、`coerce`、`equalp`、序列和列表函数 | ✅（数组移到 M4，见 §10） |
 
 依赖 CLOS 的模块（Predicament、ctype、Consecution、Salmagundi、Cyclosis、打印器等）放到 M4 之后。
 
@@ -124,3 +124,28 @@ kernel 的写法限制：
 - **打印**：runtime 的打印器按 `*read-default-float-format*` = single-float 的规则输出：最短的、能读回原值的数字；`1e-3 <= |x| < 1e7` 用定点表示，否则用指数表示；double 用 `d`（`1.0d0`、`1.5d-5`）。以后由 Lisp 写的打印器和 Quaviver 取代。
 - **没做**：complex；浮点的 trap 和 `float-digits`、`integer-decode-float`、`scale-float` 等；NaN 和无穷的读写。
 - `tests/m3/reals.lisp`：ratio 的约分和运算、类型传染、浮点打印、`=` 和 `eql` 对 `0.0`/`-0.0` 和不同格式的区别、有理数和浮点的精确比较、四种除法、初等函数、跨 GC 的 ratio 和 double。
+
+## 10. M3.5：类型和序列
+
+- **数组移到 M4**：Regalia 的每种数组（`array-t`、`vector-single-float`、`bit-vector` 等）都是 CLOS 类，多维数组、fill pointer、displaced 数组和特化数组都要等 CLOS。在那之前只有一维的 simple-vector 和字符串。
+- **`typep`**（`lisp/target/types.lisp`）：内建的原子类型，以及常用的复合类型（`or`、`and`、`not`、`member`、`eql`、`satisfies`、带范围的 `integer`/`rational`/`real`/`float`、`mod`、`unsigned-byte`、`signed-byte`、`cons`、带长度的字符串和向量）。`deftype` 和 `subtypep` 等 ctype（M4 之后）。类型是编译期常量的原子类型时，编译器把 `typep` 直接换成对应的谓词调用（`*type-predicates*`），`typecase` 因此也不慢。
+- **`type-of`、`coerce`、`equalp`**：覆盖目前已有的类型。
+- **序列和列表函数**（`lisp/target/sequences.lisp`）：`find`、`position`、`count`、`remove`、`remove-duplicates`、`substitute`、`some`/`every`、`map`、`reduce`、`sort`/`stable-sort`（稳定的归并排序）、`fill`、`replace`、`search`、`mismatch`，以及 `member`/`assoc`/`adjoin`/`union` 等带 `:test`/`:test-not`/`:key` 的列表函数、`string-trim`、`string-capitalize`。它们是 bootstrap 用的简单实现：先把序列转成列表再处理。Consecution（依赖 CLOS）接管序列之后替换掉。
+- `tests/m3/types-seqs.lisp`。
+
+## 11. M3 的结果和遗留
+
+kernel 现在由 `lisp/target/` 下的三个文件组成（约 900 行 Lisp），作为单独的模块编译一次。M3 之后可以用的：fixnum、bignum、ratio、单双精度浮点，Unicode 字符和 UTF-32 字符串，simple-vector，cons 和列表，symbol 的 plist，`typep`、序列函数。
+
+移到后面的：
+
+| 内容 | 移到 | 原因 |
+|---|---|---|
+| 包 | M4（Parcl） | Parcl 需要 CLOS 和哈希表 |
+| 多维、特化、可调整的数组 | M4（Regalia） | 数组是 CLOS 类 |
+| 哈希表 | M4（Salmagundi） | 依赖 CLOS，还要补身份哈希 |
+| condition 系统 | M4（Predicament） | 依赖 CLOS；目前出错时 runtime 直接退出 |
+| complex | M4 之后 | 不阻塞 bootstrap |
+| `deftype`、`subtypep` | ctype（CLOS 之后） | |
+| 打印器、reader、`format` | Incless、Eclector、Invistra（CLOS 之后） | 目前由 runtime 的 Rust 打印器代替 |
+| Unicode 大小写表 | 以后 | 字符的大小写和分类目前只覆盖 Latin-1 |
