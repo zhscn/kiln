@@ -49,3 +49,5 @@ Under `#+kiln` (kiln reads target sources with its own features):
 - `eq-hash` uses kiln's identity hash (stored in the object header,
   stable across moving collections); `slot-names` uses Clostrophilia;
   `hash-float` hashes the exact rational value instead of using Quaviver.
+- `hash-hash-table` refers to its parameter `object`, not an undefined
+  `table` (an upstream bug).

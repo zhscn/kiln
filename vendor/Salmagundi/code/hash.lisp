@@ -178,10 +178,11 @@
         do (equalp-hash accumulate (row-major-aref object i))))
 
 (defun hash-hash-table (accumulate object)
+  ;; kiln: OBJECT, not the undefined TABLE.
   (funcall accumulate +hash-table-seed+)
-  (funcall accumulate (hash-table-count table))
-  (equalp-hash accumulate (hash-table-test table))
-  (let ((hash-function (hash-table-hash-function table))
+  (funcall accumulate (hash-table-count object))
+  (equalp-hash accumulate (hash-table-test object))
+  (let ((hash-function (hash-table-hash-function object))
         (limit *hash-limit*))
     (maphash (lambda (key value)
                (cond ((plusp limit)
@@ -190,7 +191,7 @@
                       (decf limit))
                      (t
                       (return-from hash-hash-table nil))))
-             table)))
+             object)))
 
 (defun hash-structure (accumulate object)
   (loop with class = (class-of object)
