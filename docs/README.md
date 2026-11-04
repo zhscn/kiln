@@ -14,10 +14,11 @@ kiln 是一个现代 Common Lisp 实现：开发时是完整的活 image，交�
 | [08-m2-front-end.md](08-m2-front-end.md) | M2：Common-boot 前端、顶层形式处理和编译期环境、AST 降级、闭包和非局部退出 |
 | [09-m3-kernel.md](09-m3-kernel.md) | M3：分步计划、立即数和堆对象的 kind 表、`%primop`、kernel |
 | [10-m4-clos.md](10-m4-clos.md) | M4：CLOS 引导，复用 Clostrophilia 的方式、分派的解释执行、实例表示、分步计划 |
+| [11-m5-self-hosting.md](11-m5-self-hosting.md) | M5：编译器在 kiln 上运行和自举的分步计划，目标端 `eval`/`compile`（Maclina），调试基础设施的数据格式（定义记录、调用点源码位置、宏展开追踪） |
 
 ## 状态
 
-M0、M1 已完成：SBCL → KIR → Cranelift（JIT 和 AOT），MMTk 移动式 GC 和精确栈图，多栈段和跨栈展开。M2 基本完成（[08](08-m2-front-end.md)）。M3 完成（[09](09-m3-kernel.md)）：用 Lisp 写的 kernel 单独作为一个模块，数值塔（bignum、ratio、单双精度浮点）、Unicode 字符和字符串、`typep` 和序列函数都已可用；包、数组、哈希表、condition 移到 M4。M4（CLOS 引导）的计划见 [10](10-m4-clos.md)。各文档的“待定问题”一节列出尚未决定的事项。
+M0、M1 已完成：SBCL → KIR → Cranelift（JIT 和 AOT），MMTk 移动式 GC 和精确栈图，多栈段和跨栈展开。M2 基本完成（[08](08-m2-front-end.md)）。M3 完成（[09](09-m3-kernel.md)）：用 Lisp 写的 kernel 单独作为一个模块，数值塔（bignum、ratio、单双精度浮点）、Unicode 字符和字符串、`typep` 和序列函数都已可用；包、数组、哈希表、condition 移到 M4。M4（CLOS 引导）完成（[10](10-m4-clos.md)），M5 的计划见 [11](11-m5-self-hosting.md)。各文档的“待定问题”一节列出尚未决定的事项。
 
 ## 约定
 
