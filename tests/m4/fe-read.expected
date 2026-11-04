@@ -1,0 +1,7 @@
+5 forms, 5 CSTs
+T
+DEFPARAMETER (126 . 175)
+(140 . 151)
+(T T T T T)
+LET ((+ X Y))
+(A (B C))

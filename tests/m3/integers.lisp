@@ -48,3 +48,12 @@
   (%gc)
   (print l)
   (print (apply #'+ l)))
+
+;;; Division fast paths on fixnums: signs and the one overflowing quotient.
+(print (list (multiple-value-list (floor -7 2)) (multiple-value-list (floor 7 -2))
+             (multiple-value-list (floor -7 -2)) (multiple-value-list (truncate -7 2))
+             (multiple-value-list (truncate 7 -2)) (mod -7 2) (mod 7 -2) (mod -8 2)
+             (rem -7 2) (rem 7 -2) (floor 6 3) (mod 0 5)))
+(print (multiple-value-list (truncate most-negative-fixnum -1)))
+(print (multiple-value-list (floor most-negative-fixnum -1)))
+(print (mod most-negative-fixnum -1))

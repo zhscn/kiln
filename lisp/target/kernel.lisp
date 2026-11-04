@@ -255,12 +255,38 @@
 (defun abs (n) (if (< n 0) (- n) n))
 (defun signum (n) (cond ((> n 0) 1) ((< n 0) -1) (t 0)))
 
-(defun truncate (n &optional (d 1)) (check-divisor n d) (%primop :number-truncate n d))
-(defun floor (n &optional (d 1)) (check-divisor n d) (%primop :number-floor n d))
+;;; Two fixnums whose quotient is a fixnum: the fast paths of the division
+;;; functions (only the most negative fixnum divided by -1 is not).
+(defmacro with-fixnum-division ((n d) fast slow)
+  `(if (and (%primop :fixnump ,n) (%primop :fixnump ,d)
+            (not (eql ,d 0))
+            (not (and (eql ,d -1) (eql ,n most-negative-fixnum))))
+       ,fast
+       ,slow))
+
+(defun truncate (n &optional (d 1))
+  (with-fixnum-division (n d)
+    (values (%primop :fixnum-quotient n d) (%primop :fixnum-remainder n d))
+    (progn (check-divisor n d) (%primop :number-truncate n d))))
+(defun floor (n &optional (d 1))
+  (with-fixnum-division (n d)
+    (let ((q (%primop :fixnum-quotient n d))
+          (r (%primop :fixnum-remainder n d)))
+      (if (and (not (eql r 0)) (if (< d 0) (> r 0) (< r 0)))
+          (values (- q 1) (+ r d))
+          (values q r)))
+    (progn (check-divisor n d) (%primop :number-floor n d))))
 (defun ceiling (n &optional (d 1)) (check-divisor n d) (%primop :number-ceiling n d))
 (defun round (n &optional (d 1)) (check-divisor n d) (%primop :number-round n d))
-(defun mod (n d) (nth-value 1 (floor n d)))
-(defun rem (n d) (nth-value 1 (truncate n d)))
+(defun mod (n d)
+  (with-fixnum-division (n d)
+    (let ((r (%primop :fixnum-remainder n d)))
+      (if (and (not (eql r 0)) (if (< d 0) (> r 0) (< r 0))) (+ r d) r))
+    (nth-value 1 (floor n d))))
+(defun rem (n d)
+  (with-fixnum-division (n d)
+    (%primop :fixnum-remainder n d)
+    (nth-value 1 (truncate n d))))
 
 (defmacro define-logop (name fixnum-op integer-op identity)
   `(progn

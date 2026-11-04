@@ -340,3 +340,25 @@ kernel module first: kiln-cg jit kernel.kir OUTPUT."
 OUTPUT, to be loaded after the kernel. SESSION must have compiled the
 kernel."
   (write-module (compile-files *clos-files* session "clos") output))
+
+(defparameter *frontend-files*
+  ;; The parts of the front end compiled for the target so far (docs/10
+  ;; §24): concrete syntax trees and Eclector's CST reader.
+  (append
+   (mapcar (lambda (name)
+             (asdf:system-relative-pathname "concrete-syntax-tree" (format nil "~A.lisp" name)))
+           '("packages" "generic-functions" "conditions" "utilities" "cst" "cons-cst"
+             "listify" "cstify" "cst-from-expression" "quasiquotation" "reconstruct"
+             "declarations" "body" "list-structure" "bindings"
+             "condition-reporters-english"))
+   (mapcar (lambda (name)
+             (asdf:system-relative-pathname "eclector" (format nil "code/~A.lisp" name)))
+           '("parse-result/package" "parse-result/client" "parse-result/generic-functions"
+             "parse-result/labeled-objects" "parse-result/read"
+             "concrete-syntax-tree/package" "concrete-syntax-tree/client"
+             "concrete-syntax-tree/labeled-objects" "concrete-syntax-tree/read"))))
+
+(defun compile-frontend (output &key (session (kiln.compiler:make-session)))
+  "Compiles the front-end module to OUTPUT, loaded after the CLOS module.
+SESSION must have compiled the kernel and CLOS."
+  (write-module (compile-files *frontend-files* session "frontend") output))

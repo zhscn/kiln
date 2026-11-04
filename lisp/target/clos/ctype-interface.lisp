@@ -26,7 +26,27 @@
               (setf (gethash specifier *ctype-cache*)
                     (specifier-ctype *kiln-client* specifier nil)))))))
 
+(defun subtypep-uncached (type1 type2)
+  (subctypep *kiln-client* (cached-ctype type1 nil) (cached-ctype type2 nil)))
+
 (defun cl:subtypep (type1 type2 &optional environment)
+  (if (and (null environment) (symbolp type1) (symbolp type2))
+      ;; Two symbols: an alist on TYPE1's plist, valid for one epoch of
+      ;; the type definitions.
+      (let ((entry (get type1 'subtypep-cache))
+            (epoch kiln.kernel::*type-cache-epoch*))
+        (unless (and entry (eql (car entry) epoch))
+          (setf entry (cons epoch '()))
+          (setf (get type1 'subtypep-cache) entry))
+        (let ((hit (assoc type2 (cdr entry) :test #'eq)))
+          (if hit
+              (values (cadr hit) (cddr hit))
+              (multiple-value-bind (subtypep validp) (subtypep-uncached type1 type2)
+                (push (list* type2 subtypep validp) (cdr entry))
+                (values subtypep validp)))))
+      (subtypep-general type1 type2 environment)))
+
+(defun subtypep-general (type1 type2 environment)
   (if environment
       (subctypep *kiln-client*
                  (specifier-ctype *kiln-client* type1 environment)

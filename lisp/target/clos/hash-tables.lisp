@@ -32,9 +32,44 @@
        (,accumulating-function accumulate object)
        (funcall finalize))))
 
-(define-hash-function kiln-eq-hash eq-hash)
-(define-hash-function kiln-eql-hash eql-hash)
-(define-hash-function kiln-equal-hash equal-hash)
+(define-hash-function slow-eql-hash eql-hash)
+(define-hash-function slow-equal-hash equal-hash)
+
+;;; The hash functions of EQ, EQL and EQUAL tables compute the common
+;;; cases directly (Salmagundi's accumulating functions cons closures and
+;;; dispatch on the type at each step); the others go to Salmagundi's.
+(defconstant +hash-mask+ #x3fffffffffffffff)
+
+(defun kiln-eq-hash (object)
+  (logand (kiln.sys:%primop :identity-hash object) +hash-mask+))
+
+(defun kiln-eql-hash (object)
+  (cond ((kiln.sys:%primop :fixnump object) (logand object +hash-mask+))
+        ((characterp object) (char-code object))
+        ((numberp object) (slow-eql-hash object))
+        (t (kiln-eq-hash object))))
+
+(defun equal-hash-1 (object depth)
+  (cond ((consp object)
+         (if (> depth 8)
+             1
+             (logand (kiln.sys:%primop :hash-mix
+                                       (equal-hash-1 (car object) (+ depth 1))
+                                       (equal-hash-1 (cdr object) (+ depth 1)))
+                     +hash-mask+)))
+        ((stringp object)
+         (let ((hash (length object)))
+           (dotimes (i (min (length object) 64) (logand hash +hash-mask+))
+             (setf hash (kiln.sys:%primop :hash-mix hash (char-code (char object i)))))))
+        ((or (symbolp object) (numberp object) (characterp object))
+         (kiln-eql-hash object))
+        ;; Compared by contents: bit vectors and pathnames.
+        ((or (bit-vector-p object) (typep object 'pathname))
+         (slow-equal-hash object))
+        (t (kiln-eq-hash object))))
+
+(defun kiln-equal-hash (object)
+  (equal-hash-1 object 0))
 (define-hash-function kiln-equalp-hash equalp-hash)
 (define-hash-function cl:sxhash sxhash)
 

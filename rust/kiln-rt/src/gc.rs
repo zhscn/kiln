@@ -18,6 +18,7 @@ use crate::object::{
     KIND_RACK, KIND_RATIO, KIND_MASK, KIND_SIMPLE_VECTOR, KIND_STRING, KIND_SYMBOL,
     header_length,
 };
+use mmtk::util::alloc::BumpAllocator;
 use mmtk::util::copy::{CopySemantics, GCWorkerCopyContext};
 use mmtk::util::opaque_pointer::{OpaquePointer, VMMutatorThread, VMThread, VMWorkerThread};
 use mmtk::util::{Address, ObjectReference};
@@ -496,8 +497,21 @@ pub unsafe extern "C" fn kiln_rt_alloc(ctx: *mut Context, bytes: u64, header: u6
 pub unsafe fn alloc(ctx: *mut Context, bytes: u64, header: u64) -> u64 {
     unsafe {
         let mutator = &mut *(*ctx).mutator;
-        note_gc_count();
         let bytes = bytes as usize;
+        // Fast path: bump the default allocator's cursor (SemiSpace's copy
+        // space; its post_alloc does nothing without the vo_bit feature).
+        if bytes <= max_non_los_bytes() {
+            let bump = bump_allocator(mutator);
+            let start = (*bump).bump_pointer.cursor.align_up(8);
+            let end = start + bytes;
+            if end <= (*bump).bump_pointer.limit {
+                (*bump).bump_pointer.cursor = end;
+                std::ptr::write_bytes(start.to_mut_ptr::<u8>(), 0, bytes);
+                start.store::<u64>(header);
+                return start.as_usize() as u64;
+            }
+        }
+        note_gc_count();
         // Large objects go to the plan's large object space.
         let semantics = if bytes > mmtk().get_plan().constraints().max_non_los_default_alloc_bytes {
             AllocationSemantics::Los
@@ -511,6 +525,37 @@ pub unsafe fn alloc(ctx: *mut Context, bytes: u64, header: u64) -> u64 {
         memory_manager::post_alloc(mutator, obj, bytes, semantics);
         addr.as_usize() as u64
     }
+}
+
+fn max_non_los_bytes() -> usize {
+    static MAX: OnceLock<usize> = OnceLock::new();
+    *MAX.get_or_init(|| mmtk().get_plan().constraints().max_non_los_default_alloc_bytes)
+}
+
+thread_local! {
+    /// The default bump allocator of this thread's mutator, and the mutator.
+    static BUMP: Cell<(usize, *mut BumpAllocator<Kiln>)> =
+        const { Cell::new((0, std::ptr::null_mut())) };
+}
+
+/// The default allocator of MUTATOR (a bump allocator: the plan is
+/// SemiSpace), cached per thread.
+unsafe fn bump_allocator(mutator: &mut KilnMutator) -> *mut BumpAllocator<Kiln> {
+    let key = mutator as *mut KilnMutator as usize;
+    BUMP.with(|b| {
+        let (m, p) = b.get();
+        if m == key {
+            p
+        } else {
+            let p = unsafe {
+                mutator.allocator_impl_mut_for_semantic::<BumpAllocator<Kiln>>(
+                    AllocationSemantics::Default,
+                )
+            } as *mut BumpAllocator<Kiln>;
+            b.set((key, p));
+            p
+        }
+    })
 }
 
 /// `(%gc)`: requests a collection. Returns NIL.

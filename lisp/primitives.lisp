@@ -219,6 +219,8 @@ are compared (no short circuit), which also checks every argument."
 (define-primitive rest (x) (emit-car-cdr x +cons-cdr+))
 (define-primitive cadr (x) (emit-car-cdr (emit-car-cdr x +cons-cdr+) +cons-car+))
 (define-primitive second (x) (emit-car-cdr (emit-car-cdr x +cons-cdr+) +cons-car+))
+(define-primitive third (x)
+  (emit-car-cdr (emit-car-cdr (emit-car-cdr x +cons-cdr+) +cons-cdr+) +cons-car+))
 (define-primitive cddr (x) (emit-car-cdr (emit-car-cdr x +cons-cdr+) +cons-cdr+))
 
 (define-primitive endp (x)
@@ -497,6 +499,50 @@ operand N."
   (emit `(:store (:add ,v (:shl ,i 2)) ,+vector-data+ ,x))
   x)
 
+;;; SVREF, (SETF SVREF) and LENGTH are open-coded for simple vectors (and
+;;; strings, for LENGTH); anything else, and a bad index, takes the slow
+;;; path: a call to the kernel's function, which signals the error or
+;;; handles the other sequences.
+(defun emit-svref-fast-path (v i fast-fn slow-fn)
+  "Calls FAST-FN in a block where V is a simple vector and I a valid index
+of it, SLOW-FN otherwise; both return an operand. Returns the result."
+  (let ((r (new-var)) (vector (new-block)) (fast (new-block)) (slow (new-block))
+        (done (new-block)))
+    (br (emit-kind-test v +kind-simple-vector+) vector slow)
+    (start-block vector)
+    (br `(:or (:and ,i 1) (:or (:lt ,i 0) (:ge ,i ,(vector-length v)))) slow fast)
+    (start-block fast)
+    (emit `(:set ,r ,(funcall fast-fn)))
+    (jump done)
+    (start-block slow)
+    (emit `(:set ,r ,(funcall slow-fn)))
+    (jump done)
+    (start-block done)
+    r))
+
+(define-primitive svref (v i)
+  (emit-svref-fast-path v i
+                        (lambda () `(:load (:add ,v (:shl ,i 2)) ,+vector-data+))
+                        (lambda () (emit-slow-call 'svref v i))))
+
+(define-primitive (setf svref) (x v i)
+  (emit-svref-fast-path v i
+                        (lambda () (emit `(:store (:add ,v (:shl ,i 2)) ,+vector-data+ ,x)) x)
+                        (lambda () (emit-slow-call '(setf svref) x v i))))
+
+(define-primitive length (x)
+  (let ((r (new-var)) (fast (new-block)) (slow (new-block)) (done (new-block)))
+    (br `(:or ,(emit-kind-test x +kind-simple-vector+) ,(emit-kind-test x +kind-string+))
+        fast slow)
+    (start-block fast)
+    (emit `(:set ,r ,(vector-length x)))
+    (jump done)
+    (start-block slow)
+    (emit `(:set ,r ,(emit-slow-call 'length x)))
+    (jump done)
+    (start-block done)
+    r))
+
 (define-primop :make-simple-vector (n x)
   (emit-check-length n)
   (let* ((len (copy-to-var `(:sar ,n ,+fixnum-shift+) :raw))
@@ -576,6 +622,13 @@ operand N."
     (:integer-truncate 3 t) (:integer-floor 4 t) (:integer-ceiling 5 t) (:integer-round 6 t)
     (:integer-compare 7) (:integer-logand 8) (:integer-logior 9) (:integer-logxor 10)
     (:integer-ash 11) (:integer-gcd 12) (:integer-expt 13) (:integer-length 14)))
+
+;;; Fixnum division for the kernel's fast paths: on tagged fixnums, the
+;;; quotient of the tagged values is the untagged quotient, and their
+;;; remainder the tagged remainder. The caller checks that the divisor is
+;;; not 0 and that the quotient is a fixnum.
+(define-primop :fixnum-quotient (a b) (copy-to-var `(:shl (:sdiv ,a ,b) 1)))
+(define-primop :fixnum-remainder (a b) (copy-to-var `(:srem ,a ,b)))
 
 ;;; Fixnum-only bit operations, for the kernel's fast paths: on tagged
 ;;; fixnums (n << 1), AND, OR and XOR give the tagged result.

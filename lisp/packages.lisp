@@ -56,7 +56,7 @@
 
 (defpackage #:kiln
   (:use #:cl)
-  (:export #:compile-file-to-kir #:compile-kernel #:compile-clos))
+  (:export #:compile-file-to-kir #:compile-kernel #:compile-clos #:compile-frontend))
 
 (defpackage #:kiln.kernel
   (:use #:cl #:kiln.sys)

@@ -770,6 +770,8 @@ impl<M: Module> FuncLowering<'_, M> {
                     BinOp::And => b.ins().band(x, y),
                     BinOp::Or => b.ins().bor(x, y),
                     BinOp::Xor => b.ins().bxor(x, y),
+                    BinOp::Sdiv => b.ins().sdiv(x, y),
+                    BinOp::Srem => b.ins().srem(x, y),
                 }
             }
             Expr::Shift(op, x, n) => {

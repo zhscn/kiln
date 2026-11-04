@@ -81,6 +81,10 @@ pub enum BinOp {
     And,
     Or,
     Xor,
+    /// Signed division and remainder, truncating; the divisor must not be
+    /// 0, and not -1 with i64::MIN as the dividend.
+    Sdiv,
+    Srem,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -509,7 +513,7 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
     let (h, r) = head(list(s)?)?;
     let e = |i: usize| -> R<Box<Expr>> { Ok(Box::new(parse_expr(&r[i])?)) };
     Ok(match h {
-        "add" | "sub" | "mul" | "and" | "or" | "xor" => {
+        "add" | "sub" | "mul" | "and" | "or" | "xor" | "sdiv" | "srem" => {
             arity(h, r, 2)?;
             let op = match h {
                 "add" => BinOp::Add,
@@ -517,6 +521,8 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
                 "mul" => BinOp::Mul,
                 "and" => BinOp::And,
                 "or" => BinOp::Or,
+                "sdiv" => BinOp::Sdiv,
+                "srem" => BinOp::Srem,
                 _ => BinOp::Xor,
             };
             Expr::Bin(op, e(0)?, e(1)?)

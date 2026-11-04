@@ -133,7 +133,10 @@
 ;;; keeps its parsed specifiers and SUBTYPEP answers here); a new type or
 ;;; class empties them.
 (defvar *type-caches-valid* nil)
-(defun invalidate-type-caches () (setf *type-caches-valid* nil))
+(defvar *type-cache-epoch* 0)
+(defun invalidate-type-caches ()
+  (setf *type-caches-valid* nil
+        *type-cache-epoch* (+ *type-cache-epoch* 1)))
 
 (defun kiln.sys::%deftype (name expander)
   (setf (get name 'type-expander) expander)

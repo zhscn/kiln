@@ -11,7 +11,14 @@
 
 (defclass kiln-client () ())
 
-(setf eclector.base:*client* (make-instance 'kiln-client))
+;;; Bound by the CL functions below, not set globally: Eclector's other
+;;; entry points choose their client with (OR *CLIENT* default), as the
+;;; CST reader does.
+(defvar *kiln-client* (make-instance 'kiln-client))
+
+(defmacro with-kiln-client (&body body)
+  `(let ((eclector.base:*client* (or eclector.base:*client* *kiln-client*)))
+     ,@body))
 
 (defmethod state-value ((client kiln-client) (aspect (eql 'cl:*readtable*)))
   cl:*readtable*)
@@ -29,19 +36,21 @@
 ;;; Reading
 
 (defun cl:read (&optional (input-stream *standard-input*) (eof-error-p t) eof-value recursive-p)
-  (read input-stream eof-error-p eof-value recursive-p))
+  (with-kiln-client (read input-stream eof-error-p eof-value recursive-p)))
 
 (defun cl:read-preserving-whitespace
     (&optional (input-stream *standard-input*) (eof-error-p t) eof-value recursive-p)
-  (read-preserving-whitespace input-stream eof-error-p eof-value recursive-p))
+  (with-kiln-client
+    (read-preserving-whitespace input-stream eof-error-p eof-value recursive-p)))
 
 (defun cl:read-from-string (string &optional (eof-error-p t) eof-value
                             &key (start 0) end preserve-whitespace)
-  (read-from-string string eof-error-p eof-value
-                    :start start :end end :preserve-whitespace preserve-whitespace))
+  (with-kiln-client
+    (read-from-string string eof-error-p eof-value
+                      :start start :end end :preserve-whitespace preserve-whitespace)))
 
 (defun cl:read-delimited-list (char &optional (input-stream *standard-input*) recursive-p)
-  (read-delimited-list char input-stream recursive-p))
+  (with-kiln-client (read-delimited-list char input-stream recursive-p)))
 
 ;;; Readtables
 
