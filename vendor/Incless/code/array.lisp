@@ -1,0 +1,86 @@
+(cl:in-package #:incless)
+
+(defun literal-array-p (arr)
+  (and (eq t (array-element-type arr))
+       (loop for (dimension . tail) on (array-dimensions arr)
+             when (and tail
+                       (zerop dimension))
+               return nil
+             unless tail
+               return t)))
+
+(defun print-array (client arr stream)
+  (labels ((print-guts (indicies dimensions *print-level*
+                        &optional (openp t))
+             (cond ((null dimensions)
+                    (write-object client (apply #'aref arr indicies) stream))
+                   ((and (not *print-readably*)
+                         (equal *print-level* 0))
+                    (write-char #\# stream))
+                   (t
+                    (loop for index below (first dimensions)
+                          initially (when openp
+                                      (write-char #\( stream))
+                          finally (write-char #\) stream)
+                          unless (zerop index)
+                            do (write-char #\Space stream)
+                          unless (or *print-readably*
+                                     (null *print-length*)
+                                     (< index *print-length*))
+                            do (write-string "..." stream)
+                               (loop-finish)
+                          do (print-guts (append indicies (list index))
+                                         (cdr dimensions)
+                                         (and *print-level*
+                                              (max 0 (1- *print-level*)))))))))
+    (cond ((and (not *print-readably*)
+                (equal *print-level* 0))
+           (write-char #\# stream))
+          ((or (and *print-readably*
+                    (literal-array-p arr))
+               (and (not *print-readably*)
+                    *print-array*))
+           (write-char #\# stream)
+           (quaviver:write-digits 10 (array-rank arr) stream)
+           (write-char #\A stream)
+           (print-guts '() (array-dimensions arr) *print-level*))
+          #+(or clasp clisp cmucl ecl mkcl)
+          (*print-readably*
+           (write-string "#A(" stream)
+           (write-object client (array-element-type arr) stream)
+           (write-char #\Space stream)
+           (write-object client (array-dimensions arr) stream)
+           (write-char #\Space stream)
+           (print-guts '() (array-dimensions arr) *print-level*)
+           (write-char #\) stream))
+          #+sbcl
+          (*print-readably*
+           (write-string "#A(" stream)
+           (write-object client (array-dimensions arr) stream)
+           (write-char #\Space stream)
+           (write-object client (array-element-type arr) stream)
+           (cond ((zerop (array-rank arr))
+                  (write-string " . " stream)
+                  (write-object client (aref arr) stream)
+                  (write-char #\) stream))
+                 (t
+                  (print-guts '() (array-dimensions arr) *print-level* nil))))
+          ((and *print-readably* *read-eval*)
+           (write-string "#.(" stream)
+           (write-object client 'make-array stream)
+           (write-string " '" stream)
+           (if (array-dimensions arr)
+               (write-object client (array-dimensions arr) stream)
+               (write-string "()" stream))
+           (unless (eq t (array-element-type arr))
+             (write-char #\Space stream)
+             (write-object client :element-type stream)
+             (write-string " '" stream)
+             (write-object client (array-element-type arr) stream))
+           (write-char #\Space stream)
+           (write-object client :initial-contents stream)
+           (write-string " '" stream)
+           (print-guts '() (array-dimensions arr) *print-level*)
+           (write-char #\) stream))
+          (t
+           (write-unreadable-object client arr stream t t nil)))))

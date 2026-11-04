@@ -14,6 +14,7 @@ shows exactly what kiln changed. Changes are not sent upstream for now.
 | ctype | https://github.com/s-expressionists/ctype | 554b725de79ed170ca1452a7562950ecdeac5a47 (2026-06-23) | BSD (`ctype/LICENSE`) |
 | Regalia | https://github.com/s-expressionists/Regalia | 76b2f27f521edf072f8c9012e714caed3fed2194 (2026-06-04) | BSD (`Regalia/LICENSE.text`) |
 | Cyclosis | https://github.com/s-expressionists/Cyclosis | c918406b78a6e450d4543fe7bff0ff443f4c6641 (2026-06-22) | BSD (`Cyclosis/LICENSE-BSD`) |
+| Incless | https://github.com/s-expressionists/Incless | 28587a4 (2026-07-11) | BSD (`Incless/LICENSE.md`) |
 
 ## Clostrophilia patches
 
