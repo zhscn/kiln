@@ -171,4 +171,8 @@
             do (setf new-environment
                      (trucler:add-local-special-variable
                       client new-environment name)))
+    ;; kiln: the names in the declarations become references, as LET's
+    ;; do (upstream leaves them names; Iconoclast's LET splitting, applied
+    ;; when a lambda list with &OPTIONAL is lexified, rejects them).
+    (finalize-declaration-asts client declaration-asts new-environment)
     new-environment))
