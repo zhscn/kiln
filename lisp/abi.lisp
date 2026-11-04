@@ -38,15 +38,20 @@
 (defconstant +char-code-limit+ #x110000)
 
 ;;; Symbol layout: [header, name, package, function, value, TLS index,
-;;; plist]. Offsets from a tagged pointer. The TLS index is a fixnum.
+;;; plist, setf function]. Offsets from a tagged pointer. The TLS index is a fixnum.
 (defconstant +symbol-name+ (- 8 +tag-general+))
 (defconstant +symbol-package+ (- 16 +tag-general+))
 (defconstant +symbol-function+ (- 24 +tag-general+))
 (defconstant +symbol-value+ (- 32 +tag-general+))
 (defconstant +symbol-tls-index+ (- 40 +tag-general+))
 (defconstant +symbol-plist+ (- 48 +tag-general+))
+(defconstant +symbol-setf-function+ (- 56 +tag-general+)) ; the function (SETF symbol)
 ;;; Unbound value marker (an immediate the GC ignores).
 (defconstant +unbound+ #x13)
+;;; Value of a standard-object slot that is unbound (Clostrophilia's
+;;; +UNBOUND-SLOT-VALUE+), an immediate distinct from +UNBOUND+ so that it
+;;; can be the value of a variable.
+(defconstant +unbound-slot+ #x2b)
 
 ;;; Function object layout: [header (env length << 8), entry, env...].
 (defconstant +length-shift+ 8)
@@ -111,6 +116,7 @@
 (defconstant +err-division-by-zero+ 17)
 (defconstant +err-not-number+ 18)
 (defconstant +err-bad-type+ 19)
+(defconstant +err-lisp-error+ 20)       ; ERROR before the condition system
 
 ;;; Argument registers in the Lisp calling convention.
 (defconstant +reg-args+ 3)

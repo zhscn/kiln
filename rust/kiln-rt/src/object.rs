@@ -53,7 +53,11 @@ pub const CONS_BYTES: usize = 24;
 /// GC ignores it.
 pub const UNBOUND: u64 = 0x13;
 
-/// Layout: [header, name, package, function, value, TLS index, plist].
+/// Value of an unbound slot of a standard object (lisp/abi.lisp).
+pub const UNBOUND_SLOT: u64 = 0x2b;
+
+/// Layout: [header, name, package, function, value, TLS index, plist,
+/// setf function].
 /// `name` is a string object; `package` the package (for now the package
 /// name as a string, NIL when uninterned); the TLS index is a fixnum, 0
 /// until first bound (special.rs). Symbols emitted by the compiler are
@@ -67,9 +71,11 @@ pub struct SymbolObj {
     pub value: u64,
     pub tls_index: u64,
     pub plist: u64,
+    /// The function named (SETF symbol).
+    pub setf_function: u64,
 }
 
-pub const SYMBOL_BYTES: usize = 56;
+pub const SYMBOL_BYTES: usize = 64;
 
 /// Layout: [header (env length << 8), entry address, env...]. The env
 /// words hold the closed-over values of a closure.
@@ -117,6 +123,7 @@ pub static mut kiln_nil: SymbolObj = SymbolObj {
     value: 0, // NIL's value is NIL; never read through this slot.
     tls_index: 0,
     plist: 0,
+    setf_function: 0,
 };
 
 #[unsafe(no_mangle)]
@@ -128,6 +135,7 @@ pub static mut kiln_t: SymbolObj = SymbolObj {
     value: 0,
     tls_index: 0,
     plist: 0,
+    setf_function: 0,
 };
 
 /// Fills in the fields of NIL and T. Called once before any Lisp code runs.
@@ -144,6 +152,15 @@ pub fn init_statics() {
         (*t).package = cl;
         (*t).value = tag_general(&raw const kiln_t);
         (*t).plist = nil;
+        // Their plists (and the other cells, for symmetry) can point into
+        // the heap.
+        let mut roots = Vec::new();
+        for s in [n, t] {
+            roots.push(&raw mut (*s).function as usize);
+            roots.push(&raw mut (*s).plist as usize);
+            roots.push(&raw mut (*s).setf_function as usize);
+        }
+        crate::gc::register_static_roots(&roots);
     }
 }
 
@@ -320,6 +337,8 @@ pub unsafe fn write_object(out: &mut String, v: u64) {
                 }
             },
         }
+    } else if v == UNBOUND_SLOT {
+        out.push_str("#<UNBOUND-SLOT>");
     } else {
         let _ = write!(out, "#<UNKNOWN {:#x}>", v);
     }

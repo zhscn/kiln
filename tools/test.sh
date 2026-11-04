@@ -20,6 +20,14 @@ sources=(${sources[@]})
 # same compile-time environment.
 args=(--eval "(defvar *session* (kiln.compiler:make-session))"
       --eval "(kiln:compile-kernel \"$build/kernel.kir\" :session *session*)")
+# Tests named clos-*.lisp run with the CLOS module loaded after the kernel.
+need_clos=0
+for src in "${sources[@]}"; do
+  case $(basename "$src") in clos-*) need_clos=1 ;; esac
+done
+if [ $need_clos = 1 ]; then
+  args+=(--eval "(kiln:compile-clos \"$build/clos.kir\" :session *session*)")
+fi
 for src in "${sources[@]}"; do
   args+=(--eval "(kiln:compile-file-to-kir \"$src\" \"$build/$(basename "${src%.lisp}").kir\" :session *session*)")
 done
@@ -33,19 +41,21 @@ for src in "${sources[@]}"; do
   name=$(basename "${src%.lisp}")
   kir=$build/$name.kir
   expected=${src%.lisp}.expected
-  if "$cg" jit "$build/kernel.kir" "$kir" >"$build/$name.jit.out" 2>&1 && diff -u "$expected" "$build/$name.jit.out"; then
+  modules=("$build/kernel.kir")
+  case $name in clos-*) modules+=("$build/clos.kir") ;; esac
+  if "$cg" jit "${modules[@]}" "$kir" >"$build/$name.jit.out" 2>&1 && diff -u "$expected" "$build/$name.jit.out"; then
     echo "PASS jit $name"
   else
     echo "FAIL jit $name"; fail=1
   fi
   # GC stress: a 1 MiB heap forces frequent moving collections.
-  if MMTK_GC_TRIGGER=FixedHeapSize:1048576 "$cg" jit "$build/kernel.kir" "$kir" >"$build/$name.stress.out" 2>&1 \
+  if MMTK_GC_TRIGGER=FixedHeapSize:1048576 "$cg" jit "${modules[@]}" "$kir" >"$build/$name.stress.out" 2>&1 \
      && diff -u "$expected" "$build/$name.stress.out"; then
     echo "PASS gc-stress $name"
   else
     echo "FAIL gc-stress $name"; fail=1
   fi
-  if "$cg" obj "$build/kernel.kir" "$kir" -o "$build/$name.o" \
+  if "$cg" obj "${modules[@]}" "$kir" -o "$build/$name.o" \
      && cc "$build/$name.o" "$launcher" -o "$build/$name" -lpthread -ldl -lm \
      && "$build/$name" >"$build/$name.aot.out" 2>&1 \
      && diff -u "$expected" "$build/$name.aot.out"; then

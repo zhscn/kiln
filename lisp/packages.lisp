@@ -7,7 +7,7 @@
            #:+kind-ratio+ #:+kind-double+ #:+single-float-tag+
            #:+kind-instance+ #:+kind-funcallable-instance+ #:+kind-rack+ #:+function-kind-mask+
            #:+immediate-mask+ #:+character-tag+ #:+character-shift+ #:+char-code-limit+
-           #:+symbol-name+ #:+symbol-package+ #:+symbol-plist+ #:+vector-data+
+           #:+symbol-name+ #:+symbol-package+ #:+symbol-plist+ #:+symbol-setf-function+ #:+vector-data+
            #:+symbol-function+ #:+symbol-value+ #:+symbol-tls-index+ #:+unbound+
            #:+length-shift+ #:+fobj-env+
            #:+cons-bytes+ #:+cons-car+ #:+cons-cdr+
@@ -21,7 +21,7 @@
            #:+err-undefined-function+ #:+err-unbound-variable+ #:+err-not-symbol+
            #:+err-odd-keywords+ #:+err-unknown-keyword+
            #:+err-not-character+ #:+err-not-string+ #:+err-not-vector+
-           #:+err-index+ #:+err-not-sequence+ #:+err-not-integer+ #:+err-division-by-zero+ #:+err-not-number+ #:+err-bad-type+
+           #:+err-index+ #:+err-not-sequence+ #:+err-not-integer+ #:+err-division-by-zero+ #:+err-not-number+ #:+err-bad-type+ #:+err-lisp-error+ #:+unbound-slot+
            #:+reg-args+))
 
 (defpackage #:kiln.kir
@@ -38,7 +38,10 @@
 (defpackage #:kiln.sys
   (:use)
   (:documentation "Implementation-specific operators available to compiled code.")
-  (:export #:%gc #:%gc-count #:%call-on-new-stack #:%primop))
+  (:export #:%gc #:%gc-count #:%call-on-new-stack #:%primop
+           ;; Targets of the DEFCLASS, DEFGENERIC and DEFMETHOD expansions
+           ;; (lisp/target/clos/early.lisp).
+           #:%defclass #:%defgeneric #:%defmethod #:%method-function))
 
 (defpackage #:kiln.compiler
   (:use #:cl #:kiln.abi #:kiln.kir)
@@ -53,7 +56,7 @@
 
 (defpackage #:kiln
   (:use #:cl)
-  (:export #:compile-file-to-kir #:compile-kernel))
+  (:export #:compile-file-to-kir #:compile-kernel #:compile-clos))
 
 (defpackage #:kiln.kernel
   (:use #:cl #:kiln.sys)

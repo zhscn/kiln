@@ -64,8 +64,15 @@
 ## 6. M4.2：编译 Clostrophilia 之前的准备
 
 - **LOOP**：Clostrophilia 有 75 处 `loop`。在宿主里加载 khazern-extrinsic，把它的 `loop`、`loop-finish` 宏函数装进编译期环境作为 `cl:loop`、`cl:loop-finish`。Khazern 的展开结果只用标准运算符，不引用它自己的运行期函数，所以目标端不需要加载 Khazern。`tests/m3/loop-macro.lisp`。
+- **`defpackage`**：顶层的 `defpackage` 在宿主里求值，不编译任何东西。宿主里已有的包（比如 Ecclesia 的）不动。
+- **early 桩**（`lisp/target/early.lisp`，kernel 的一部分）：`error` 和 `cerror` 打印参数后终止程序（错误码 20）；`warn` 只打印；`format` 的目标是 NIL 时直接返回控制串；`assert`；`define-condition` 把定义（initform 和 `:report` 都做成函数）记在 `*early-condition-types*` 里，留给以后的 condition 系统；`documentation` 和它的 `setf` 把文档存在 symbol 的 plist 上。
+- **运行期的 `(setf f)` 函数名**：symbol 加了第 8 个字，存名为 `(setf symbol)` 的函数。`fdefinition`、`(setf fdefinition)`、`fboundp` 都改成 kernel 函数，可以接受 setf 名字。early 引导要在运行期按名字创建写访问器的泛函，所以需要这个。
+- **未绑定的槽**：立即数 `0x2b`，它和 `+unbound+` 不同，所以可以作为变量 `+unbound-slot-value+` 的值。
+- NIL 和 T 是 runtime 里的静态对象，它们的 plist 以前不是 GC 根，而类 `t`、`null` 的描述就挂在这两个 plist 上。现在已经登记为根。
 
 ## 7. 引导方案（M4.3、M4.4 的设计）
+
+实现记录见 §8。
 
 按 PCL 的思路，在目标端用 early 函数引导，顺序参照 SICL 的 Phase 4（`Code/New-boot/Phase-4/boot.lisp`），但只有一个环境：
 
@@ -79,4 +86,19 @@
 5. **early 泛函**：`defgeneric`/`defmethod` 展开成 `ensure-generic-function`/`ensure-method`。early 版本用 early `make-instance` 创建泛函（funcallable instance）和方法，并安装一个 **early 判别函数**：按每个必需参数的 `class-of` 和优先级列表计算适用方法，按特化程度排序，按 standard 方法组合执行（around、before、primary、after）。它很慢，但已经是完整的分派，足以运行 Clostrophilia 自己的初始化和终结方法。
 6. **加载 Clostrophilia 的其余部分**：槽访问、对象初始化、类终结、方法组合、泛函调用（已打上解释执行的补丁）。
 7. **切换**：对所有泛函做 satiation（用 Clostrophilia 的 `compute-discriminating-function`，此时它不再需要编译器），安装真正的判别函数；early 访问器换成真正的泛函。之后 `defclass` 走真正的 `ensure-class`。
-8. **内建类**：kiln 自己定义 `t`、`symbol`、`cons`、`fixnum`、`integer`、`character`、`string` 等内建类（元类 `built-in-class`），`class-of` 按对象的 tag 和 kind 查表。
+8. **过时实例**：类重定义后，旧实例 rack 里的 stamp 和类当前的 unique number 不一致。M4.4 装真正的判别函数时，在 `default-discriminating-function` 的慢路径里补上这项检查：发现过时实例就先更新（`update-instance-for-redefined-class`，换 rack），再重新分派。这样可以避免 §2 里说的死循环，也就是重定义屏障 C4 在 CLOS 上的落实。
+9. **内建类**：kiln 自己定义 `t`、`symbol`、`cons`、`fixnum`、`integer`、`character`、`string` 等内建类（元类 `built-in-class`），`class-of` 按对象的 tag 和 kind 查表。
+
+## 8. M4.3 的实现记录
+
+CLOS 是单独的模块（`kiln:compile-clos`，在 kernel 之后加载），源文件和顺序在 `lisp/driver.lisp` 的 `*clos-files*` 里。`tests/m4/clos-*.lisp` 和这个模块一起运行。
+
+- **宏的展开**：`defclass`、`defgeneric`、`defmethod` 用 Common-macros 的展开，通过 client 方法（`lisp/front.lisp`）展开成对 `kiln.sys:%defclass`、`%defgeneric`、`%defmethod` 的调用。特化符以标识的形式传入：类名，或 `(eql 对象)`。这样类还不存在的时候 `defmethod` 也能求值。`call-next-method` 通过 `kiln.sys:%method-function` 取下一个方法的函数。
+- **类的描述**（`lisp/target/clos/early.lisp`）：braid 建成之前，`%defclass` 只记录参数，`%defgeneric`、`%defmethod` 推迟执行。`build-classes` 从描述出发：
+  - 用 Clostrophilia 的算法（照原样移植）计算优先级列表、有效槽和槽位置、default initargs；
+  - 先分配所有类对象，再按元类的有效槽填写，最后补上派生的槽：优先级列表、有效槽、实例大小、unique number、已终结、直接子类和 prototype；
+  - 槽定义对象也按描述创建。有效槽定义里槽名和位置所在的位置记下来，之后 early 代码按槽名经 rack 的槽列表（位置 −1）读写元对象，不经过泛函。
+- **braid**（`braid.lisp`）：Clostrophilia 的类层次加上 kiln 的内建类（`built-in-classes.lisp`），一次建好，再执行推迟的定义。之后每个 early `defclass` 单独走 `build-classes`，暂不支持类的重定义。
+- **early 泛函**：它们是真正的 `standard-generic-function` 实例（funcallable instance），判别函数是 `early-discriminate`：按优先级列表计算适用方法，按 standard 方法组合执行，不缓存。braid 里的类，其访问器方法是真正的 `standard-reader-method`/`standard-writer-method`，方法函数按槽名读写。
+- **`class-of`**：实例取 rack 里的类；其他对象按 tag 和 kind 对应到内建类。`stamp`：实例取 rack 里的 stamp，其他对象取它的类的 unique number。
+- `tests/m4/clos-braid.lisp`：优先级列表、有效槽的顺序和位置、元类、`class-of`、访问器的分派。

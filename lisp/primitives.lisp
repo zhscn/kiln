@@ -330,15 +330,28 @@ are compared (no short circuit), which also checks every argument."
   (when (null vals) (fail "FUNCALL needs a function"))
   (emit-lisp-call (emit-function-designator (first vals)) (rest vals)))
 
-(define-primitive fdefinition (name)
+;;; FDEFINITION and (SETF FDEFINITION) are kernel functions (they take
+;;; (SETF symbol) names too); DEFUN's (SETF FDEFINITION) of a constant name
+;;; stores into the cell directly (LOWER-GLOBAL-CALL).
+(define-primop :symbol-function (name)
   (emit-check-symbol name)
   (copy-to-var `(:load ,name ,+symbol-function+)))
-
-(define-primitive (setf fdefinition) (function name)
+(define-primop :set-symbol-function (name function)
   (emit-check-function function)
   (emit-check-symbol name)
   (emit `(:store ,name ,+symbol-function+ ,function))
   function)
+(define-primop :symbol-setf-function (name)
+  (emit-check-symbol name)
+  (copy-to-var `(:load ,name ,+symbol-setf-function+)))
+(define-primop :set-symbol-setf-function (name function)
+  (emit-check-function function)
+  (emit-check-symbol name)
+  (emit `(:store ,name ,+symbol-setf-function+ ,function))
+  function)
+(define-primop :undefined-function-p (f)
+  ;; F is the content of a function cell.
+  (boolean-value `(:eq (:load ,f ,+fobj-entry+) (:addr ,(undefined-function-entry)))))
 
 (define-primitive symbol-value (name)
   (emit-check-symbol name)
@@ -583,6 +596,7 @@ operand N."
     (:sin 17 :unary) (:cos 18 :unary) (:tan 19 :unary) (:atan 20 :unary)
     (:rational 21 :unary) (:atan2 22) (:number-expt 23)))
 (define-primop :type-error-type (x) (emit-error +err-bad-type+ x) (nil-value))
+(define-primop :lisp-error (x) (emit-error +err-lisp-error+ x) (nil-value))
 
 ;;; CLOS objects (docs/10 §3). A rack is [header, class, stamp, slot list,
 ;;; slots...]; STANDARD-INSTANCE-ACCESS location L is rack word L + 4, so
@@ -649,6 +663,7 @@ and slots), zero-filled."
                               0 8))
           ,(- 8 +tag-general+)))
 
+(define-primop :unbound-slot-value () +unbound-slot+)
 (define-primop :standard-instance-p (x) (boolean-value (emit-kind-test x +kind-instance+)))
 (define-primop :funcallable-instance-p (x)
   (boolean-value (emit-kind-test x +kind-funcallable-instance+)))

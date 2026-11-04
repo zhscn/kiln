@@ -38,6 +38,7 @@ M3 的目标见 [04 的里程碑](04-bootstrap.md#里程碑)：把 ANSI 核心�
 | `0x13` | UNBOUND（未绑定标记，不是一等值） | — |
 | `0x1B` | single-float | 第 32–63 位是 IEEE 754 单精度 |
 | `0x23` | NO_TLS（TLS 表的空项，不是一等值） | — |
+| `0x2b` | 标准对象里未绑定的槽（Clostrophilia 的 `+unbound-slot-value+`，M4） | — |
 
 ## 3. 堆对象的 kind
 
@@ -45,7 +46,7 @@ header 的低 8 位是 kind，第 8 位起是长度（含义随 kind 而定）�
 
 | kind | 类型 | 布局 | 长度 | GC 扫描 |
 |---|---|---|---|---|
-| 1 | symbol | `[header, name, package, function, value, TLS 下标, plist]` | — | name 到 plist（TLS 下标是 fixnum 形式的整数，不影响） |
+| 1 | symbol | `[header, name, package, function, value, TLS 下标, plist, setf 函数]` | — | name 到 setf 函数（TLS 下标是 fixnum 形式的整数，不影响） |
 | 2 | function | `[header, 入口, env...]` | env 字数 | env |
 | 3 | cons | `[header, car, cdr]` | — | car、cdr |
 | 4 | simple-vector | `[header, 元素...]` | 元素个数 | 全部元素 |

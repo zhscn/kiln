@@ -326,8 +326,9 @@ impl Scanning<Kiln> for KilnScanning {
             KIND_SIMPLE_VECTOR => (8, (h >> LENGTH_SHIFT) as usize),
             // Skip the entry address; the env words are Lisp values.
             KIND_FUNCTION => (16, (h >> LENGTH_SHIFT) as usize),
-            // name, package, function, value, TLS index (a fixnum), plist
-            KIND_SYMBOL => (8, 6),
+            // name, package, function, value, TLS index (a fixnum), plist,
+            // setf function
+            KIND_SYMBOL => (8, 7),
             KIND_STRING | KIND_BIGNUM | KIND_DOUBLE => (8, 0),
             KIND_RATIO => (8, 2),
             KIND_INSTANCE => (8, 1),

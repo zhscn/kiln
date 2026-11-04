@@ -29,6 +29,79 @@
   (setf (gethash name *defined-functions*) t)
   nil)
 
+;;; DEFCLASS, DEFGENERIC and DEFMETHOD expand into calls to kiln's
+;;; functions in lisp/target/clos/early.lisp, which create the metaobjects
+;;; with the early functions during the bootstrap and with the MOP after it
+;;; (docs/10 §7). Specializers are passed as designators (a class name or
+;;; (EQL object)) so that a DEFMETHOD can be evaluated before the classes
+;;; exist.
+
+(defmethod cmd:defclass-compile-time-action
+    ((client client) name superclass-names metaclass-name environment)
+  (declare (ignore name superclass-names metaclass-name environment))
+  nil)
+
+(defmethod cmd:ensure-class-name ((client client))
+  'kiln.sys:%defclass)
+
+(defmethod cmd:defgeneric-compile-time-action
+    ((client client) name lambda-list argument-precedence-order
+     generic-function-class-name method-class-name method-combination-name
+     method-combination-arguments documentation-option environment)
+  (declare (ignore lambda-list argument-precedence-order
+                   generic-function-class-name method-class-name method-combination-name
+                   method-combination-arguments documentation-option environment))
+  ;; Calls to the generic function are not calls to an undefined function.
+  (setf (gethash name *defined-functions*) t)
+  nil)
+
+(defmethod cmd:ensure-generic-function
+    ((client client) name lambda-list argument-precedence-order
+     generic-function-class-name method-class-name method-combination-name
+     method-combination-arguments documentation-option environment)
+  (declare (ignore environment))
+  `(kiln.sys:%defgeneric
+    ',name
+    :lambda-list ',lambda-list
+    ,@(when argument-precedence-order
+        `(:argument-precedence-order ',(rest argument-precedence-order)))
+    :generic-function-class ',generic-function-class-name
+    :method-class ',method-class-name
+    :method-combination-name ',method-combination-name
+    :method-combination-arguments ',method-combination-arguments
+    ,@(when documentation-option
+        `(:documentation ',(second documentation-option)))))
+
+(defmethod cmd:make-method-lambda-wrapper ((client client))
+  (lambda (lambda-expression)
+    (let ((arguments (gensym "ARGUMENTS"))
+          (next-methods (gensym "NEXT-METHODS")))
+      `(lambda (,arguments ,next-methods)
+         (flet ((next-method-p ()
+                  (not (null ,next-methods)))
+                (call-next-method (&rest arguments)
+                  (if (null ,next-methods)
+                      (error "no next method")
+                      (funcall (kiln.sys:%method-function (first ,next-methods))
+                               (or arguments ,arguments)
+                               (rest ,next-methods)))))
+           (declare (ignorable #'next-method-p #'call-next-method))
+           (apply ,lambda-expression ,arguments))))))
+
+(defmethod cmd:ensure-method-wrapper ((client client))
+  (lambda (function-name lambda-list qualifiers specializer-designators
+           documentation method-lambda)
+    `(kiln.sys:%defmethod
+      ',function-name
+      :lambda-list ',lambda-list
+      :qualifiers ',qualifiers
+      :specializers (list ,@(loop for s in specializer-designators
+                                  collect (if (consp s)
+                                              `(list 'eql ,(second s))
+                                              `',s)))
+      :documentation ',documentation
+      :function ,method-lambda)))
+
 (define-condition undefined-function-warning (style-warning)
   ((names :initarg :names :reader undefined-function-names))
   (:report (lambda (c s)
@@ -245,6 +318,14 @@ whole instead (the declarations would otherwise be lost)."
           (in-package
            (setf *package* (or (find-package (second form))
                                (error "IN-PACKAGE: no package named ~S" (second form)))))
+          ;; DEFPACKAGE creates the package in the host, so that the rest
+          ;; of the sources can be read. Nothing is compiled: there are
+          ;; no packages at run time until Parcl is loaded (docs/10 §7).
+          ;; A package that exists already (a host system such as
+          ;; Ecclesia) is left alone.
+          (defpackage
+           (unless (find-package (second form))
+             (eval form)))
           ((locally macrolet symbol-macrolet)
            (process-toplevel-body cst compile-time-too))
           (t

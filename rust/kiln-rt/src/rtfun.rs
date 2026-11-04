@@ -27,6 +27,8 @@ pub const ERR_NOT_INTEGER: u64 = 16;
 pub const ERR_DIVISION_BY_ZERO: u64 = 17;
 pub const ERR_NOT_NUMBER: u64 = 18;
 pub const ERR_BAD_TYPE: u64 = 19;
+/// ERROR before the condition system: OBJ is the list (DATUM . ARGUMENTS).
+pub const ERR_LISP_ERROR: u64 = 20;
 
 pub fn error_exit(msg: &str) -> ! {
     let _ = std::io::stdout().flush();
@@ -86,6 +88,7 @@ pub unsafe fn error_with(_ctx: *mut Context, code: u64, obj: u64) -> ! {
         ERR_DIVISION_BY_ZERO => format!("division of {s} by zero"),
         ERR_NOT_NUMBER => format!("the value {s} is not of type REAL"),
         ERR_BAD_TYPE => format!("{s} is not a known type specifier"),
+        ERR_LISP_ERROR => format!("error: {s}"),
         _ => format!("error code {code}, object {s}"),
     };
     error_exit(&msg)
