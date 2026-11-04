@@ -696,3 +696,48 @@ Inravina vendor 在 `vendor/Inravina`，用的是 intrinsic 接口。CL 的美�
 - `pprint`，以及 Khazern 的条件报告。
 
 除右边距那一处外，输出和 SBCL 逐行一致。
+
+## 26. 泛函分派：不再为参数分配列表
+
+§24 的建议 1。kiln 还没有运行期编译器，所以判别函数和有效方法仍是闭包，没有按 Clostrophilia 原本的设计编译成代码。但调用路径不再分配内存，EQL 特化也有了缓存。
+
+**方法函数**（`lisp/front.lisp` 的 `method-lambda-forms`）：
+- 方法函数仍按 AMOP 的约定接收参数列表和后续方法。
+- 方法体没有出现 `call-next-method`、`next-method-p` 时，不再生成这两个局部函数。它们是闭包，原来每次调用方法都要分配两个。
+- lambda list 只有必需参数（至多 6 个）的方法另有一个**快速函数** `(lambda (next-methods a1 ... an) ...)`，直接接收参数本身。它的 `call-next-method` 不带参数时，若下一个方法也有快速函数就直接调用，否则才构造列表。快速函数保存在 `method` 的新槽 `%fast-function` 里（Clostrophilia 补丁），由 `kiln.sys:%method-fast-function` 读取。`make-method-lambda-wrapper` 返回 `(:kiln-method-lambdas 方法函数 快速函数)`，由 `ensure-method-wrapper` 拆开传给 `%defmethod`。
+
+**判别函数**（Clostrophilia 补丁，`compute-discriminating-function.lisp`）：
+- **展开调用**：泛函的 lambda list 只有必需参数、至多 6 个时（`spread-arity`），判别函数就是 `(lambda (a0 a1) ...)` 这样的闭包，调用历史里的有效方法函数也直接接收参数。有效方法是单个方法时：
+  - 访问器方法（`maybe-replace-method` 换成的直接按位置读写槽的方法）直接读写槽，读到未绑定的槽时调用 `slot-unbound`；
+  - 有快速函数的方法直接调用快速函数；
+  - 其他有效方法（`:before`、`:around` 等组合）仍通过列表调用解释出来的闭包。
+- **自动机**：状态改为展平的 simple vector（`start end target` 三个一组）。转移（`automaton-transition`）和取 stamp（`argument-stamp`）改成宏，在判别函数里展开。参数数目固定，每个特化参数的转移都按位置展开。
+- **EQL 特化**：参数的类不能确定适用方法时（有 EQL 特化），原来每次调用都要走默认判别函数：重新调用 `compute-applicable-methods-using-classes`，再用 `equal` 查以列表为键的缓存。现在缓存条目是 `#(有效方法 spec0 spec1 ...)`，每个参数的 spec 是 NIL（不特化）、`(对象)`（等于某个 EQL 对象）或类的 stamp（参数不是任何 EQL 对象）。判别函数在自动机未命中时先逐条比较，比较时不分配内存。缓存跟着泛函走（`*eql-dispatch-caches*`），判别函数重算时保留，方法改变时清空；每个泛函至多 256 条。
+- 在未命中路径里读泛函和方法的槽时，用 kiln 的 `%slot` 直接读，不调用读取器。读取器本身是泛函，可能也未命中，否则会无限递归。
+
+**内建类的 stamp**（`early.lisp`）：非实例对象的类和 stamp 原来每次都要经过一串类型判断、`find-class`，再按名字在槽表里查 `%unique-number`。现在按类型下标缓存在 simple vector 里，switchover 之后才缓存，因为内建类不会重定义。
+
+**顺带修正**：
+- `coerce` 到 `simple-vector` 原来用 `(apply #'vector list)`，列表超过 `call-arguments-limit`（67）时报 program-error，现在改为逐个填入。展平的自动机状态触发了这个问题。
+- 编译器给函数的标签加上名字：取函数体里第一个 block 的名字，没有 block 的局部函数（闭包）沿用外层函数的名字。例如 `kiln_f_G10660_AUTOMATON_2D_TRANSITION_clos_1466`，profile 里能看出是哪个函数。
+
+**结果**：`bench/gf.lisp` 测单次调用的耗时，`bench/gf-misses.lisp` 统计读文件时哪些泛函未命中。
+
+| 调用（µs） | 之前 | 之后 |
+|---|---|---|
+| 普通函数 | 0.003 | 0.003 |
+| 1 个参数，按类分派 | 0.089 | 0.037 |
+| 1 个参数，fixnum | 0.128 | 0.039 |
+| 2 个参数 | 0.107 | 0.035 |
+| 读取器 / 写入器 | 0.035 / 0.046 | 0.020 / 0.022 |
+| `call-next-method` | 0.128 | 0.112 |
+| `:around` 加 `:before` | 0.203 | 0.153 |
+| `&key` | 0.268 | 0.209 |
+| EQL 特化 | 1.904 | 0.043 |
+
+读一遍 `kernel.lisp`，`state-value` 原来有 42856 次未命中，`call-with-state-value` 有 4615 次，现在都是 0。`bench/fe-read.lisp`：`read` 从 507 ms 降到 161 ms，CST 读取从 656 ms 降到 253 ms（SBCL 6.3 ms）。
+
+**还剩下的**：
+- 判别闭包本身约占 17%。主要开销是 kiln 生成的代码溢出到栈上，以及类型检查。
+- 方法组合（`call-next-method`、`:before`、`:around`）的有效方法仍要构造参数列表，用到 `call-next-method` 的方法每次调用仍要分配两个局部函数闭包。
+- 真正编译出来的判别函数要等运行期编译器（M5）。
