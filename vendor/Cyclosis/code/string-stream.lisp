@@ -44,7 +44,9 @@
           ((< (fill-pointer string) (array-total-size string))
            (setf (fill-pointer string) position))
           (t
-           (adjust-array string (+ position 32) :fill-pointer position)))))
+           ;; kiln: grow geometrically (upstream: by 32, quadratic).
+           (adjust-array string (max (+ position 32) (* 2 (array-total-size string)))
+                         :fill-pointer position)))))
 
 (defmethod stream-write-char ((stream string-output-stream) character)
   (with-accessors ((position stream-file-position)
