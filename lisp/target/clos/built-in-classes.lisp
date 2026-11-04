@@ -37,4 +37,11 @@
   (ratio rational)
   (float real)
   (single-float float)
-  (double-float float))
+  (double-float float)
+  ;; Classes without instances yet: complex numbers, pathnames, random
+  ;; states, readtables.
+  (complex number)
+  (pathname t)
+  (logical-pathname pathname)
+  (random-state t)
+  (readtable t))

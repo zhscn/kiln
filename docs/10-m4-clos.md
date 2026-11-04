@@ -396,3 +396,37 @@ kernel 补上了全部 CxR 及其 setf 函数，还有 `*features*` 和 `nunion`
 - `with-output-to-string`、字符串输出流和输入流、`read-line` 的两个值和 EOF；
 - broadcast stream、concatenated stream；
 - `fresh-line`、UTF-8 编码、`end-of-file`。
+
+## 17. 打印器（Incless）
+
+Incless vendor 在 `vendor/Incless`，用的是 intrinsic 接口，源码没有改动。它定义了 `write`、`prin1`、`princ`、`print-object`、`print-unreadable-object`、`write-to-string`、`prin1-to-string` 和 `princ-to-string`。kiln 的 client 在 `lisp/target/clos/printer.lisp`：
+- `class-slot-names` 用 Clostrophilia 的 `class-slots`；
+- `write-identity` 打印身份哈希。
+
+**`print` 还没有换**：`print` 仍由编译器内联成 runtime 的打印器（`kiln_rt_print`），测试的输出格式因此不变。Incless 定义的 `cl:print` 只有通过 `#'print` 调用时才会用到。等测试的 expected 统一迁移时再把内联去掉。
+
+**Quaviver 的替身**（`lisp/target/clos/quaviver.lisp`）。Incless 只用到 Quaviver 的三个函数：
+- `float-triple`：最短往返十进制表示，由 runtime 的 `kiln_rt_float_decimal`（`%primop :float-decimal`）用 Rust 的浮点格式化计算，分别取出有效数字、指数和符号；
+- `write-digits`：照搬 Quaviver 的语义（小数点位置、前导零、数字分组）；
+- `count-digits`。
+
+真正的 Quaviver 有 7000 行，还依赖 `integer-decode-float` 等 kiln 还没有的函数，以后再换上。
+
+**其他补充**（`printer-support.lisp`）：
+- 打印和读入的变量（`*print-base*` 等）；
+- `with-standard-io-syntax`；
+- `readtable-case`：没有 readtable，固定返回 `:upcase`；
+- `get-macro-character`：标准语法中的宏字符，用来判断 symbol 名字要不要转义；
+- 实例的 `type-of`：类名，通过 kernel 的 `*instance-type-of*` 钩子；
+- `complex`、`pathname`、`logical-pathname`、`random-state`、`readtable` 作为暂时没有实例的内建类，因为 Incless 在它们上面特化了方法；
+- kernel 加了 `char-name`、`name-char`、`standard-char-p`。
+
+**前端修了 Common-boot 的一个错误**：对全局 special 变量，`augment-environment-with-binding-variable` 返回 `unless` 的 NIL，`let*` 之后的绑定和主体于是在 NIL 环境里转换，结果找不到 `let` 等运算符。Common-boot 是宿主侧的库，kiln 在 `front.lisp` 里重新定义了这个函数。
+
+`tests/m4/clos-printer.lisp` 覆盖：
+- 整数（含 bignum）、ratio、各种浮点（定点和指数形式、`-0.0`、double 的 `d0`）；
+- 字符、带转义的字符串；
+- symbol：keyword、需要 `|...|` 的名字、未 intern 的 symbol、包前缀；
+- 点对列表、向量、多维数组、bit vector、带 fill pointer 的向量；
+- `princ`、`:base`/`:radix`、`:case`、`*print-length*`、`*print-level*`；
+- 结构的 `#S(...)`、用户定义的 `print-object` 和 `print-unreadable-object`。

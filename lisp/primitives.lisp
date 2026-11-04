@@ -712,6 +712,12 @@ and slots), zero-filled."
   (let ((r (new-var)))
     (emit `(:call-rt ,(rt-fd-read) (,r) (:ctx ,fd ,vector ,start ,end) :nil))
     r))
+;;; The shortest decimal representation of a float: WHICH selects the
+;;; significand (0), exponent (1) or sign (2) (rtfun.rs, docs/10 §17).
+(define-primop :float-decimal (x which)
+  (let ((r (new-var)))
+    (emit `(:call-rt ,(rt-float-decimal) (,r) (:ctx ,x ,which) :nil))
+    r))
 ;;; One FNV-1a step on fixnums H and V, wrapping: (H xor V) * prime. Both
 ;;; are tagged (even), so the product is too.
 (define-primop :hash-mix (h v)

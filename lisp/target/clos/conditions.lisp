@@ -7,8 +7,7 @@
 
 ;;; Standard types that have no objects in kiln yet: nothing is of them.
 (defparameter *types-without-objects*
-  '(complex pathname logical-pathname
-    structure-object stream readtable random-state))
+  '())
 
 ;;; TYPEP of a class name or a class.
 (defun class-typep (object type)

@@ -111,6 +111,24 @@
   `(eval-when (:compile-toplevel)
      (kiln.sys::%define-setf-expander ',name ,function)))
 
+;;; Common-boot's version returns NIL for a globally special variable
+;;; (the value of its UNLESS), which LET* then uses as the environment of
+;;; the following bindings and the body. This is the same with the
+;;; environment returned in that case.
+(defun cb::augment-environment-with-binding-variable
+    (client environment variable-name-ast declaration-asts)
+  (let ((variable-name (ico:name variable-name-ast)))
+    (multiple-value-bind (special-p globally-special-p)
+        (cb::variable-is-special-p client variable-name-ast declaration-asts environment)
+      (change-class variable-name-ast
+                    (if special-p
+                        'ico:special-variable-bound-ast
+                        'ico:variable-definition-ast))
+      (cond ((not special-p)
+             (trucler:add-lexical-variable client environment variable-name variable-name-ast))
+            (globally-special-p environment)
+            (t (trucler:add-local-special-variable client environment variable-name))))))
+
 (defmethod cmd:setf-type-function-wrapper ((client client))
   ;; Common-macros' DEFTYPE puts this in an EVAL-WHEN with all three
   ;; situations: the compile-time environment's %DEFTYPE records the

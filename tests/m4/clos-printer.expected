@@ -1,0 +1,38 @@
+42
+-1234567890123456789012345
+3/4
+1.5
+0.1
+1.0d0
+1.0e10
+1.5e-5
+-0.0
+123456.7
+#\a
+#\ 
+#\Newline
+"a \"quoted\" string"
+SYMBOL
+:KEYWORD
+|mixed Case|
+#:UNINTERNED
+KILN.KERNEL::INTERNAL
+(1 (2 3) . 4)
+(QUOTE X)
+#(1 "two" #\3)
+#2A((1 2) (3 4))
+#*101
+#(7 7)
+no quotes
+x
+(A b c)
+#xFF
+downcase
+(1 2 3 ...)
+(1 (2 #))
+#S(POINT :X 1 :Y 2)
+#<THING 
+<point 5>
+#<NAMED "bob">
+(WRITTEN TO STANDARD OUTPUT)
+done

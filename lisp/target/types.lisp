@@ -162,6 +162,8 @@
 (defun unknown-type (type)
   (%primop :type-error-type type))
 
+(defvar *instance-type-of* nil)
+
 (defun type-of (object)
   (cond ((null object) 'null)
         ((eq object t) 'boolean)
@@ -177,6 +179,8 @@
         ((stringp object) (list 'simple-array 'character (list (length object))))
         ((simple-vector-p object) (list 'simple-vector (length object)))
         ((functionp object) 'compiled-function)
+        ;; Standard instances: the name of the class, once CLOS sets this.
+        (*instance-type-of* (funcall *instance-type-of* object))
         (t t)))
 
 (defun coerce (object type)

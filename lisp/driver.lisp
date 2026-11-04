@@ -127,6 +127,16 @@
             "transcode/iso-8859" "transcode/dos" "transcode/mac" "transcode/windows"
             "transcode/utf-8" "transcode/utf-32" "transcode/unsigned-byte")))
 
+(defparameter *incless-files*
+  ;; As incless.asd; kiln's printer.lisp replaces the intrinsic interface.
+  (mapcar (lambda (name)
+            (asdf:system-relative-pathname
+             "kiln" (format nil "vendor/Incless/code/~A.lisp" name)))
+          '("packages" "interface" "write-object" "integer" "rational" "float"
+            "complex" "character" "string" "cons" "bit-vector" "array" "vector"
+            "random-state" "pathname" "standard-object" "structure" "package"
+            "symbol")))
+
 (defun clostrophilia-files (groups)
   "GROUPS: lists (DIRECTORY FILE...); a FILE is a name or
 (:COMPILE-TIME-TOO name)."
@@ -219,7 +229,11 @@
          ;; Trinsic, for the interfaces of Cyclosis and the printer modules.
          (asdf:system-relative-pathname "trinsic" "code/interface.lisp"))
    *cyclosis-files*
-   (list (kiln-clos-file "streams")))
+   (list (kiln-clos-file "streams")
+         (kiln-clos-file "printer-support")
+         (kiln-clos-file "quaviver"))
+   *incless-files*
+   (list (kiln-clos-file "printer")))
   "Sources of the CLOS module, in load order (docs/10 §7).")
 
 (defun write-module (module output)

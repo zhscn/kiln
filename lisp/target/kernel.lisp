@@ -315,6 +315,24 @@
         ((< weight 10) (code-char (+ weight 48)))
         (t (code-char (+ weight 55)))))
 (defun alphanumericp (c) (or (alpha-char-p c) (digit-char-p c)))
+;;; Character names (CHAR-NAME, NAME-CHAR): the semi-standard ones.
+(defparameter *character-names*
+  '((0 . "Nul") (7 . "Bell") (8 . "Backspace") (9 . "Tab") (10 . "Newline")
+    (12 . "Page") (13 . "Return") (27 . "Escape") (32 . "Space") (127 . "Rubout")))
+
+(defun char-name (c)
+  (cdr (assoc (char-code c) *character-names*)))
+
+(defun name-char (name)
+  (let ((name (string name)))
+    (cond ((string-equal name "Linefeed") (code-char 10))
+          (t (let ((entry (rassoc name *character-names* :test #'string-equal)))
+               (and entry (code-char (car entry))))))))
+
+(defun standard-char-p (c)
+  (let ((x (char-code c)))
+    (or (= x 10) (<= 32 x 126))))
+
 (defun graphic-char-p (c)
   (let ((x (char-code c)))
     (or (<= 32 x 126) (>= x 160))))

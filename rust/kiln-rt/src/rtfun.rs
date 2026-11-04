@@ -220,3 +220,48 @@ pub unsafe extern "C" fn kiln_rt_fd_read(
     }
     (n as u64) << 1
 }
+
+/// The shortest decimal representation of the float `x` that reads back
+/// as the same float (for the printer, docs/10 §17): `which` selects the
+/// part. 0: the significand, a nonnegative integer without trailing zeros
+/// (0 for zero); 1: the exponent `e` such that |x| = significand * 10^e
+/// (or 10000 for an infinity, 10001 for a NaN); 2: the sign, 1 or -1 (-1
+/// for -0.0). All three are fixnums.
+///
+/// # Safety
+/// `x` must be a single-float or a double-float.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kiln_rt_float_decimal(_ctx: *mut Context, x: u64, which: u64) -> u64 {
+    use crate::number::{double_value, is_single, single_value};
+    let (text, negative, special) = if is_single(x) {
+        let f = single_value(x);
+        (format!("{:e}", f.abs()), f.is_sign_negative(), f.is_infinite() as u8 + 2 * f.is_nan() as u8)
+    } else {
+        let f = unsafe { double_value(x) };
+        (format!("{:e}", f.abs()), f.is_sign_negative(), f.is_infinite() as u8 + 2 * f.is_nan() as u8)
+    };
+    let fixnum = |n: i64| (n << 1) as u64;
+    match fixnum_value(which) {
+        2 => fixnum(if negative { -1 } else { 1 }),
+        1 if special == 1 => fixnum(10000),
+        1 if special >= 2 => fixnum(10001),
+        _ if special != 0 => fixnum(0),
+        part => {
+            // "d.ddde[-]n": the digits and the exponent of the first digit.
+            let (mantissa, exponent) = text.split_once('e').unwrap();
+            let digits: String = mantissa.chars().filter(|c| *c != '.').collect();
+            let exponent: i64 = exponent.parse().unwrap();
+            let digits = digits.trim_end_matches('0');
+            if digits.is_empty() {
+                return fixnum(0);
+            }
+            if part == 0 {
+                fixnum(digits.parse::<i64>().unwrap())
+            } else {
+                fixnum(exponent - (digits.len() as i64 - 1))
+            }
+        }
+    }
+}
+
+use crate::object::fixnum_value;
