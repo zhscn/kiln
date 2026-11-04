@@ -138,6 +138,8 @@
 ;;; This is very hacky
 (defun numeric-types ()
   (let ((types (list 'complex 'number)))
+    ;; kiln: no complexes yet.
+    #-kiln
     (mapc (lambda (type)
             (pushnew (type-of (coerce 1 type)) types :test #'equalp))
           '((complex long-float)
@@ -169,10 +171,12 @@
            *numeric-types*))
 
 (defvar +initial-values+
+  ;; kiln: no complexes or pathnames yet.
   (remove-duplicates '(nil #\*
                        0 0s0 0f0 0d0 0l0
-                       #C(0s0 0s0) #C(0f0 0f0) #C(0d0 0d0) #C(0l0 0l0)
-                       "" #P"")))
+                       #-kiln #C(0s0 0s0) #-kiln #C(0f0 0f0)
+                       #-kiln #C(0d0 0d0) #-kiln #C(0l0 0l0)
+                       "" #-kiln #P"")))
 
 (defun deduce-initial-value (type)
   (when (and (consp type)
