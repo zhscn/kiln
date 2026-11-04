@@ -141,7 +141,8 @@
   ;; A direct-slot-spec can be a symbol which is then the
   ;; name of the slot.
   (if (symbolp direct-slot-spec)
-      `(:name ',direct-slot-spec)
+      ;; kiln: a form, like the canonicalized list of the other case.
+      `(list :name ',direct-slot-spec)
       (progn
         ;; If the direct-slot-spec is not a symbol, it must
         ;; be a non-empty proper list.
