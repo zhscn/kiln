@@ -181,3 +181,26 @@ M5.4 每次编译都要跑完整的前端，速度取决于 CLOS 分派和 GC（
 - 宏展开函数调用的 `eval` 用的是宿主的环境。现在在编译期环境里求值（Maclina 的 `defops`）。
 - Predicament 的若干 bug，见 `vendor/README.md`：`style-warning` 不是 `warning`；`reader-error` 的超类不对；`(abort)` 等不带参数调用时总是失败。
 - 补了 `map-into`、`nintersection`、`nset-difference`、`nset-exclusive-or`，以及缺的 `-if-not` 函数。
+
+## 6. 字节码 VM 的性能（M5.1 之后）
+
+基准是 `(fib 25)` 在 REPL 里由字节码执行（AOT 可执行文件，`perf` 取样）。SBCL 的编译代码约 1 毫秒。
+
+| 改动 | 秒 |
+|---|---|
+| M5.1 结束时 | 5.70 |
+| 字节码存成 simple vector：kiln 的 Maclina client 定义 `m:make-module` 方法。`(unsigned-byte 8)` 数组是 Regalia 的实例，`aref` 要经过几层泛函和 `typep` | 1.90 |
+| 结构的访问器不再是泛函（先是带缓存的闭包函数） | 1.27 |
+| `ash` 的 fixnum 快速路径（KIR 加了按值移位 `shlv`、`sarv`）。原来每次都由 runtime 换成 BigInt 再算 | 1.18 |
+| `ceiling`、`round` 的 fixnum 快速路径。Khazern 把 `(loop repeat n)` 展开时用到 `ceiling` | 0.81 |
+| 访问器是 inline 的顶层函数，槽位置是常量；inline 也支持 setf 函数（10 §15、08 §8） | 0.70 |
+| `(eql x 常量)` 按 `eq` 降级；只有一个下标的 `aref` 就地读写 simple vector | 0.55 |
+
+`eval` 一个小形式约 0.22 毫秒，主要花在 Maclina 编译上。
+
+**剩下的开销**：
+- 主循环本身约占三分之一，热点是循环头的一长串栈槽到栈槽的搬移。有大约二十个值活过整个循环，主要是 VM 的局部函数（`spush`、`spop`、`code` 等）的闭包对象，它们都被 spill 了，每条指令都要搬一遍。
+- 解决办法是在编译器里对不逃逸的局部函数做 lambda lifting，或者内联小的局部函数。这对所有代码都有用，不只是 VM。
+- 其余开销：Maclina 自己的泛函（`m:entry-pc` 等，每次调用要访问五次）；`max`，以及 `logand`/`logior` 的全局调用。
+
+下一步是原生 `compile`（M5.5，提前做）。

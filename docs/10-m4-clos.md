@@ -333,7 +333,10 @@ kiln 的 client（`lisp/structures.lisp`）覆盖这几处：
 - **`:include` 的槽布局**：Anatomicl 默认通过 closer-mop 读被包含结构的类，可编译期没有目标端的类。kiln 在编译会话里记下每个结构的槽布局（`session-structures`），据此计算：
   - 先是被包含结构的槽，访问器名按本结构的 `conc-name` 重新生成，`:include` 给出的槽描述覆盖原有的；
   - 再是本结构自己的直接槽。
-- **类定义**：生成目标端的 `defclass`，元类是 `structure-class`。每个槽都有 initarg 和访问器，只读槽只有 reader。`:print-object` 选项生成 `print-object` 方法。
+- **类定义**：生成目标端的 `defclass`，元类是 `structure-class`。每个槽都有 initarg。`:print-object` 选项生成 `print-object` 方法。
+- **访问器**（M5.1 之后，[11 §6](11-m5-self-hosting.md)）：访问器是 inline 的普通函数，不是泛函；可写的槽还有 inline 的 setf 函数。
+  - 槽的位置就是它在布局里的序号：被包含结构的槽在前，`defclass` 里也是这个顺序，Clostrophilia 按这个顺序分配位置。
+  - 结构的类存在包 `kiln.structures` 的一个变量里。实例的类就是这个类时直接读写槽；否则（包含它的结构的实例）先检查类型（`kiln.sys::%structure-ref`/`%structure-set`）。
 - **复制函数**生成对 `cl:copy-structure` 的调用。
 - **typed 结构**（`:type list`/`vector`）的描述也记在会话里，供 `:include` 使用，只生成访问器。
 
@@ -349,7 +352,7 @@ kiln 的 client（`lisp/structures.lisp`）覆盖这几处：
 **还没做**：
 - `equalp` 不比较结构的槽；
 - 没有 `#S(...)` 的打印和读入；
-- 结构的访问器是泛函，不是普通函数，比较慢；
+- ~~结构的访问器是泛函，不是普通函数，比较慢~~（M5.1 之后改成了 inline 函数）；
 - 重定义结构和重定义类一样，还不支持。
 
 `tests/m4/clos-structures.lisp` 覆盖：

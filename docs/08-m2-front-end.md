@@ -191,4 +191,10 @@ docs/10 §24 的建议 3。实现在 `lisp/front.lisp`。
 
 **结果**（`bench/fe-read.lisp`）：CST 读取 205 → 187 ms，`read` 135 → 120 ms，`read-line` 100 → 68 ms；`make-instance` 2.1 → 1.1 µs（`bench/gf.lisp`）。
 
-**还没有**：`&optional`、`&key` 参数的展开；`setf` 函数；编译器宏（`define-compiler-macro` 在编译期仍被忽略）。`member`、`assoc` 这类带 `:test` 的函数，要靠编译器宏或源码变换，按常量 test 生成专门的循环，光 inline 不够，因为 kiln 不做常量传播，`(funcall test ...)` 仍是间接调用。
+**setf 函数**（M5.1 之后）：`(declaim (inline (setf f)))` 之后定义的 `(defun (setf f) ...)` 也会展开。setf 一个 place 时 Common-macros 默认展开成 `(funcall #'(setf f) 新值 参数...)`，这种调用按 `(setf f)` 的调用展开。结构的访问器用到了这一点（[10 §15](10-m4-clos.md)）。
+
+**降级时的改写**（`lower-global-call`）：
+- `(eql x 常量)`：常量不是堆上的数（bignum、ratio、double float）时，按 `eq` 降级。`case` 展开成这样的比较。
+- 只有一个下标的 `aref` 和 `(setf aref)`：simple vector 就地读写，其他数组调用 kernel 的函数（原语 `%aref-1`、`%set-aref-1`）。
+
+**还没有**：`&optional`、`&key` 参数的展开；编译器宏（`define-compiler-macro` 在编译期仍被忽略）。`member`、`assoc` 这类带 `:test` 的函数，要靠编译器宏或源码变换，按常量 test 生成专门的循环，光 inline 不够，因为 kiln 不做常量传播，`(funcall test ...)` 仍是间接调用。

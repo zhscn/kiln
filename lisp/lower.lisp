@@ -1148,7 +1148,26 @@ calls for the associative NCONC and APPEND."
                           (list (list-ast arg-asts (make-instance 'ico:literal-ast :literal nil))
                                 (make-instance 'ico:literal-ast :literal 'simple-vector))))))))
 
+(defun eq-comparable-constant-p (ast)
+  "True if AST is a constant that EQL compares as EQ: not a number that is
+a heap object (bignum, ratio, double float)."
+  (multiple-value-bind (value constantp) (constant-value ast)
+    (and constantp
+         (not (and (integerp value)
+                   (not (<= +most-negative-fixnum+ value +most-positive-fixnum+))))
+         (not (typep value '(or ratio double-float))))))
+
 (defun lower-global-call (name arg-asts)
+  ;; (EQL x constant), as CASE expands into, is EQ for most constants.
+  (when (and (eq name 'eql) (= (length arg-asts) 2)
+             (or (eq-comparable-constant-p (first arg-asts))
+                 (eq-comparable-constant-p (second arg-asts))))
+    (return-from lower-global-call (lower-global-call 'eq arg-asts)))
+  ;; One subscript: the primitives with a simple vector fast path.
+  (cond ((and (eq name 'aref) (= (length arg-asts) 2))
+         (setf name 'kiln.kernel::%aref-1))
+        ((and (equal name '(setf aref)) (= (length arg-asts) 3))
+         (setf name 'kiln.kernel::%set-aref-1)))
   (when (and (eq name 'typep) (= (length arg-asts) 2))
     (multiple-value-bind (type constantp) (constant-value (second arg-asts))
       (let ((predicate (and constantp (cdr (assoc type *type-predicates*)))))

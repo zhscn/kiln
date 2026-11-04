@@ -154,6 +154,7 @@ Rust: kiln-launcher           staticlib，提供 C main，链接 kiln-rt
 | `(add A B)` `sub` `mul` `and` `or` `xor` | |
 | `(sdiv A B)` `srem` | 有符号除法和余数，向零截断；B 不能是 0，A 是 i64 最小值时 B 不能是 −1（M4.6） |
 | `(shl A n)` `sar` `shr` | 立即数移位 |
+| `(shlv A B)` `sarv` | 按 B 的值移位，B 必须在 0..64 之内（M5.1 之后，`ash` 的 fixnum 快速路径） |
 | `(eq A B)` `ne` `lt` `le` `gt` `ge` | 有符号比较，结果 0/1 |
 | `(load A 偏移)` | 读一个字 |
 | `(addr "名字" [addend])` | 数据或函数的地址 |

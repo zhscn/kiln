@@ -16,6 +16,12 @@
 ;;; The global environment is NIL. Special variables are recorded on the
 ;;; plist by PROCLAIM, constants by DEFCONSTANT (the kernel).
 
+;;; The bytecode is kept in a simple vector: an (UNSIGNED-BYTE 8) array is a
+;;; Regalia instance, whose AREF goes through generic functions; the VM
+;;; reads the bytecode at each instruction.
+(defmethod m:make-module ((client client) bytecode)
+  (make-instance 'm:module :bytecode (coerce bytecode 'simple-vector)))
+
 (defmethod trucler:describe-variable ((client client) (env null) name)
   (cond ((or (null name) (eq name t) (keywordp name) (get name 'kiln.kernel::constant))
          (make-instance 'trucler:constant-variable-description

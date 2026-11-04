@@ -298,7 +298,7 @@ taken to cover the whole form: not expanding a call is always correct."
 (defun note-inline-proclamation (kind names)
   (when (boundp '*inline-functions*)
     (dolist (name names)
-      (when (symbolp name)
+      (when (or (symbolp name) (setf-function-name-p name))
         (if (eq kind 'notinline)
             (setf (gethash name *inline-functions*) :notinline)
             (unless (consp (gethash name *inline-functions*))
@@ -325,10 +325,14 @@ taken to cover the whole form: not expanding a call is always correct."
       (walk tree))
     symbols))
 
+(defun setf-function-name-p (name)
+  (and (consp name) (eq (first name) 'setf) (consp (rest name))
+       (symbolp (second name)) (null (cddr name))))
+
 (defun note-inline-definition (form)
   "FORM is a top-level DEFUN: keep its body if its name is declared inline."
   (destructuring-bind (name lambda-list &rest body) (rest form)
-    (when (and (symbolp name)
+    (when (and (or (symbolp name) (setf-function-name-p name))
                ;; Declared inline, or inline and defined before: the new
                ;; definition replaces the expansion.
                (let ((entry (gethash name *inline-functions*)))
@@ -339,22 +343,37 @@ taken to cover the whole form: not expanding a call is always correct."
                (notany (lambda (p) (member p lambda-list-keywords)) lambda-list))
       (multiple-value-bind (declarations forms) (split-body body)
         (setf (gethash name *inline-functions*)
-              (list lambda-list declarations `(block ,name ,@forms)
+              (list lambda-list declarations
+                    `(block ,(if (symbolp name) name (second name)) ,@forms)
                     (tree-symbols body)))))))
 
+(defun inline-call (form)
+  "The function name and the argument forms of FORM, a call by name:
+(F ARG...), or (FUNCALL (FUNCTION (SETF F)) ARG...) as SETF of a place
+expands into; else NIL."
+  (cond ((and (consp form) (symbolp (first form)) (listp (rest form)))
+         (values (first form) (rest form)))
+        ((and (consp form) (eq (first form) 'funcall)
+              (consp (rest form)) (listp (cddr form))
+              (consp (second form)) (eq (first (second form)) 'function)
+              (consp (rest (second form))) (null (cddr (second form)))
+              (setf-function-name-p (second (second form))))
+         (values (second (second form)) (cddr form)))
+        (t nil)))
+
 (defun inline-call-p (client environment form)
-  (and *inline-enabled*
-       (consp form)
-       (symbolp (first form))
+  (multiple-value-bind (name arguments) (inline-call form)
+   (and *inline-enabled*
+       name
        (let ((entry (and (boundp '*inline-functions*)
-                         (gethash (first form) *inline-functions*))))
+                         (gethash name *inline-functions*))))
          (and (consp entry)
-              (not (member (first form) *inline-expanding*))
-              (not (member (first form) *local-notinline*))
+              (not (member name *inline-expanding* :test #'equal))
+              (not (member name *local-notinline* :test #'equal))
               (< (length *inline-expanding*) 8)
-              (handler-case (= (length (rest form)) (length (first entry)))
+              (handler-case (= (length arguments) (length (first entry)))
                 (error () nil))
-              (let ((description (trucler:describe-function client environment (first form))))
+              (let ((description (trucler:describe-function client environment name)))
                 ;; NIL: a function unknown to the compile-time
                 ;; environment (DEFUN does not define it at compile time).
                 (or (null description)
@@ -367,15 +386,16 @@ taken to cover the whole form: not expanding a call is always correct."
                                      trucler:local-macro-description))
                             (typep (trucler:describe-variable client environment symbol)
                                    'trucler:local-symbol-macro-description)))
-                      (fourth entry))))))
+                      (fourth entry)))))))
 
 (defun inline-expansion (form)
-  (destructuring-bind (lambda-list declarations body &rest more)
-      (gethash (first form) *inline-functions*)
-    (declare (ignore more))
-    `(let ,(mapcar #'list lambda-list (rest form))
-       ,@declarations
-       ,body)))
+  (multiple-value-bind (name arguments) (inline-call form)
+    (destructuring-bind (lambda-list declarations body &rest more)
+        (gethash name *inline-functions*)
+      (declare (ignore more))
+      `(let ,(mapcar #'list lambda-list arguments)
+         ,@declarations
+         ,body))))
 
 ;;; SETQ of a symbol macro is SETF of its expansion (CLHS 3.1.2.1.1);
 ;;; Common-boot has no method for it, so the form is rewritten before
@@ -408,7 +428,7 @@ true; else NIL and NIL."
 (defun convert-maybe-inline (client cst environment form next)
   (when (inline-call-p client environment form)
     (return-from convert-maybe-inline
-      (let ((*inline-expanding* (cons (first form) *inline-expanding*)))
+      (let ((*inline-expanding* (cons (inline-call form) *inline-expanding*)))
         (funcall next client (cst:reconstruct client (inline-expansion form) cst) environment))))
   (convert-load-time-value client cst environment form next))
 
@@ -615,7 +635,8 @@ programs compiled after it."
   ;; so far (lower.lisp).
   (packages '())
   ;; Inline proclamations and expansions (*INLINE-FUNCTIONS*).
-  (inline-functions (make-hash-table :test 'eq)))
+  ;; Keys are function names: symbols and (SETF symbol).
+  (inline-functions (make-hash-table :test 'equal)))
 
 (defun make-session ()
   (let ((client (make-instance 'client)))

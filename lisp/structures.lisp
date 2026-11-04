@@ -83,17 +83,46 @@
        (defclass ,name (,(or (anatomicl::defstruct-included-structure-name description)
                              'structure-object))
          ,(loop for slot in layout
-                for accessor = (anatomicl::slot-accessor-name slot)
                 collect `(,(anatomicl::slot-name slot)
-                          :initarg ,(keyword-of (anatomicl::slot-name slot))
-                          ,@(if (anatomicl::slot-read-only slot)
-                                `(:reader ,accessor)
-                                `(:accessor ,accessor))))
+                          :initarg ,(keyword-of (anatomicl::slot-name slot))))
          (:metaclass structure-class))
+       ,@(structure-accessor-definitions name layout)
        ,@(let ((print-object (anatomicl::defstruct-print-object description)))
            (when print-object
              `((defmethod print-object ((object ,name) stream)
                  (funcall (function ,print-object) object stream))))))))
+
+;;; Accessors are inline functions, not generic functions (CLHS allows
+;;; either): the evaluator's VM, Eclector and the compiler call them in
+;;; their inner loops. A slot's location is its index in the layout (the
+;;; included structure's slots come first, as in the DEFCLASS above). An
+;;; instance whose class is the structure's is accessed directly; another
+;;; (of an including structure) after a type check
+;;; (lisp/target/clos/structures.lisp). The structure's class is kept in a
+;;; variable of KILN.STRUCTURES.
+(defun structure-class-variable (name)
+  (intern (format nil "~A::~A"
+                  (if (symbol-package name) (package-name (symbol-package name)) "#")
+                  (symbol-name name))
+          '#:kiln.structures))
+
+(defun structure-accessor-definitions (name layout)
+  (let ((variable (structure-class-variable name))
+        (accessors '()))
+    (loop for slot in layout
+          for location from 0
+          for accessor = (anatomicl::slot-accessor-name slot)
+          when accessor
+            do (push `(defun ,accessor (object)
+                        (kiln.sys::%structure-ref object ,variable ',name ,location))
+                     accessors)
+               (unless (anatomicl::slot-read-only slot)
+                 (push `(defun (setf ,accessor) (value object)
+                          (kiln.sys::%structure-set value object ,variable ',name ,location))
+                       accessors)))
+    `((defparameter ,variable (find-class ',name))
+      (declaim (inline ,@(mapcar #'second accessors)))
+      ,@(reverse accessors))))
 
 (defmethod anatomicl::generate-copier
     ((client anatomicl-client) (description anatomicl::defstruct-object-description) layout copier-name)

@@ -68,6 +68,10 @@
   (:export #:compile-file-to-kir #:compile-kernel #:compile-clos #:compile-frontend
            #:compile-eval))
 
+(defpackage #:kiln.structures
+  (:use)
+  (:documentation "Variables holding the classes of structures (lisp/structures.lisp)."))
+
 (defpackage #:kiln.kernel
   (:use #:cl #:kiln.sys)
   (:documentation "Package of the target kernel sources (lisp/target/)."))

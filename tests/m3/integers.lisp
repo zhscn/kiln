@@ -57,3 +57,13 @@
 (print (multiple-value-list (truncate most-negative-fixnum -1)))
 (print (multiple-value-list (floor most-negative-fixnum -1)))
 (print (mod most-negative-fixnum -1))
+;; ASH's fixnum fast path at the edges.
+(print (list (ash 1 61) (ash 1 62) (ash -1 62) (ash most-positive-fixnum 1) (ash most-negative-fixnum 1)
+             (ash -7 -2) (ash 5 -63) (ash -5 -100) (ash 3 0) (ash (ash 1 61) 1) (ash 0 1000)
+             (ash -1 -1) (ash 12345 -3) (ash -12345 -3) (ash 1 63) (ash 7 58)))
+;; CEILING's and ROUND's fixnum fast paths.
+(print (mapcar (lambda (p) (multiple-value-list (ceiling (car p) (cdr p))))
+               '((7 . 2) (-7 . 2) (7 . -2) (-7 . -2) (6 . 3) (0 . 5) (5 . 1))))
+(print (mapcar (lambda (p) (multiple-value-list (round (car p) (cdr p))))
+               '((7 . 2) (5 . 2) (-7 . 2) (-5 . 2) (7 . -2) (-7 . -2) (8 . 3) (-8 . 3) (10 . 4) (1 . 3) (0 . 7))))
+(print (list (multiple-value-list (round 7)) (multiple-value-list (ceiling -4))))

@@ -530,6 +530,19 @@ of it, SLOW-FN otherwise; both return an operand. Returns the result."
                         (lambda () (emit `(:store (:add ,v (:shl ,i 2)) ,+vector-data+ ,x)) x)
                         (lambda () (emit-slow-call '(setf svref) x v i))))
 
+;;; AREF and (SETF AREF) with one subscript (lower-global-call renames
+;;; them): a simple vector is accessed inline, anything else through the
+;;; kernel's functions.
+(define-primitive kiln.kernel::%aref-1 (v i)
+  (emit-svref-fast-path v i
+                        (lambda () `(:load (:add ,v (:shl ,i 2)) ,+vector-data+))
+                        (lambda () (emit-slow-call 'aref v i))))
+
+(define-primitive kiln.kernel::%set-aref-1 (x v i)
+  (emit-svref-fast-path v i
+                        (lambda () (emit `(:store (:add ,v (:shl ,i 2)) ,+vector-data+ ,x)) x)
+                        (lambda () (emit-slow-call '(setf aref) x v i))))
+
 (define-primitive length (x)
   (let ((r (new-var)) (fast (new-block)) (slow (new-block)) (done (new-block)))
     (br `(:or ,(emit-kind-test x +kind-simple-vector+) ,(emit-kind-test x +kind-string+))
@@ -645,6 +658,12 @@ function cells."
 (define-primop :fixnum-logior (a b) (copy-to-var `(:or ,a ,b)))
 (define-primop :fixnum-logxor (a b) (copy-to-var `(:xor ,a ,b)))
 (define-primop :type-error-integer (x) (emit-error +err-not-integer+ x) (nil-value))
+;;; Shifts of a tagged fixnum N by a fixnum count C in 0..62, for ASH's
+;;; fast path. Shifting left can overflow: the kernel shifts back to check.
+(define-primop :fixnum-shift-left (n c)
+  (copy-to-var `(:shlv ,n (:sar ,c 1))))
+(define-primop :fixnum-shift-right (n c)
+  (copy-to-var `(:and (:sarv ,n (:sar ,c 1)) -2)))
 
 (define-primop :ratiop (x) (boolean-value (emit-kind-test x +kind-ratio+)))
 (define-primop :double-float-p (x) (boolean-value (emit-kind-test x +kind-double+)))
