@@ -1,0 +1,7 @@
+*.fn
+*.fns
+*.aux
+*.log
+*.pdf
+*.toc
+*~
