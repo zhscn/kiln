@@ -1,5 +1,7 @@
 (in-package #:ctype)
 
+;;; kiln: there are no complex numbers (and no class COMPLEX) yet.
+#-kiln
 (defmethod ctypep (client (object complex) (ct ccomplex))
   (and (ctypep client (realpart object) (ccomplex-ucpt ct))
        (ctypep client (imagpart object) (ccomplex-ucpt ct))))

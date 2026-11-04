@@ -73,3 +73,10 @@ functions); under `#+kiln`:
   `unuse-package` (upstream: `unuse-pacakge`).
 - `import` gives a symbol without a home package the package as its home.
 - `unintern` returns true.
+
+## ctype patches
+
+- The `ctypep` method specialized on `complex` is not read under kiln
+  (no complex numbers yet). `host.lisp`, `runtime.lisp` and
+  `interface.lisp` are not loaded: kiln has its own client and interface
+  (`lisp/target/clos/ctype-*.lisp`).
