@@ -17,3 +17,13 @@ Each patched place is marked with a `kiln:` comment.
   classes before `initialize-instance-defmethods.lisp` is loaded.
 - The `(setf documentation)` of `add-method` is not evaluated
   (Clostrophilia's `documentation` takes one object; no `format` yet).
+- No `compile` at run time (kiln has no compiler at run time before M5):
+  the discriminating function interprets the discriminating automaton
+  (binary search over stamp intervals per layer) instead of compiling a
+  `tagbody`; effective method forms are interpreted into closures
+  (`call-method`, `make-method`, `progn`, `multiple-value-prog1`, `if`,
+  `quote`, `and`, `or` and calls to global functions); accessor method
+  functions are closures.
+- `default-discriminating-function` checks for obsolete instances (stamp
+  differs from the class's unique number) and updates them before
+  dispatching again, as its comment describes.

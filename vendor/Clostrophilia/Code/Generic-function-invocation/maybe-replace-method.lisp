@@ -32,7 +32,14 @@
                  :slot-location location
                  :slot-definition direct-slot
                  :documentation nil
-                 :function (compile nil lambda-expression))))
+                 ;; kiln: a closure, not a compiled lambda expression.
+                 :function (if (consp location)
+                               (lambda (arguments next-methods)
+                                 (declare (ignore arguments next-methods))
+                                 (car location))
+                               (lambda (arguments next-methods)
+                                 (declare (ignore next-methods))
+                                 (slot-value-using-location+1 (car arguments) location))))))
             ((eq method-class (find-class 'standard-writer-method))
              (let* ((direct-slot (accessor-method-slot-definition method))
                     (location (slot-location direct-slot (cadr classes)))
@@ -53,6 +60,14 @@
                  :slot-location location
                  :slot-definition direct-slot
                  :documentation nil
-                 :function (compile nil lambda-expression))))
+                 ;; kiln: a closure, not a compiled lambda expression.
+                 :function (if (consp location)
+                               (lambda (arguments next-methods)
+                                 (declare (ignore next-methods))
+                                 (setf (car location) (car arguments)))
+                               (lambda (arguments next-methods)
+                                 (declare (ignore next-methods))
+                                 (setf (slot-value-using-location+1 (cadr arguments) location)
+                                       (car arguments)))))))
             (t
              method)))))

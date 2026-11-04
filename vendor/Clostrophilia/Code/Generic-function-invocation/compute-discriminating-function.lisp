@@ -240,24 +240,133 @@
                                :test #'eq)))
     (slot-definition-location effective-slot)))
 
+;;; kiln: closures instead of compiled lambda expressions.
 (defun effective-method-from-reader-method (class method)
   (let ((location (determine-slot-location class method)))
-    (compile nil
-             `(lambda (instance)
-                (declare (ignorable instance))
-                ,(if (consp location)
-                     `(car ',location)
-                     `(standard-instance-access instance ,location))))))
+    (if (consp location)
+        (lambda (instance)
+          (declare (ignore instance))
+          (car location))
+        (lambda (instance)
+          (standard-instance-access instance location)))))
 
 (defun effective-method-from-writer-method (class method)
   (let ((location (determine-slot-location class method)))
-    (compile nil
-             `(lambda (new-value instance)
-                (declare (ignorable instance))
-                (setf ,(if (consp location)
-                           `(car ',location)
-                           `(standard-instance-access instance ,location))
-                      new-value)))))
+    (if (consp location)
+        (lambda (new-value instance)
+          (declare (ignore instance))
+          (setf (car location) new-value))
+        (lambda (new-value instance)
+          (setf (standard-instance-access instance location) new-value)))))
+
+;;; kiln: effective methods are interpreted, not compiled (there is no
+;;; compiler at run time yet).  EFFECTIVE-METHOD-FUNCTION turns the form
+;;; returned by COMPUTE-EFFECTIVE-METHOD into a closure of one argument,
+;;; the list of arguments, that does what the compiled form would do.
+;;; The form is the result of WRAP-METHOD-COMBINATION-FORM; inside it,
+;;; CALL-METHOD and MAKE-METHOD, the special operators PROGN,
+;;; MULTIPLE-VALUE-PROG1, IF, QUOTE, the macros AND and OR, and calls to
+;;; global functions are supported, which covers the standard method
+;;; combination and the short forms.  Long-form DEFINE-METHOD-COMBINATION
+;;; bodies that produce other code need the compiler.
+
+(defun effective-method-function (generic-function effective-method)
+  (let ((form (if (and (consp effective-method)
+                       (eq (first effective-method) 'lambda)
+                       (consp (third effective-method))
+                       (eq (first (third effective-method)) 'macrolet)
+                       (consp (third (third effective-method)))
+                       (eq (first (third (third effective-method))) 'macrolet))
+                  (third (third (third effective-method)))
+                  (error "unsupported effective method form" effective-method))))
+    (effective-method-closure
+     form (generic-function-method-class generic-function))))
+
+(defun make-method-form-p (form)
+  (and (consp form) (eq (first form) 'make-method)))
+
+(defun call-method-closure (method next-methods method-class)
+  (if (make-method-form-p method)
+      (effective-method-closure (second method) method-class)
+      (let ((function (method-function method))
+            (keyp (member '&key (method-lambda-list method)))
+            (next-methods
+              (loop for next in next-methods
+                    collect
+                    (if (make-method-form-p next)
+                        (let ((closure (effective-method-closure (second next) method-class)))
+                          (make-method-instance method-class
+                            :qualifiers '()
+                            :lambda-list '()
+                            :specializers '()
+                            :function (lambda (arguments next-methods)
+                                        (declare (ignore next-methods))
+                                        (funcall closure arguments))))
+                        next))))
+        (if keyp
+            (lambda (arguments)
+              (funcall function (append arguments '(:allow-other-keys t)) next-methods))
+            (lambda (arguments)
+              (funcall function arguments next-methods))))))
+
+(defun effective-method-closure (form method-class)
+  (flet ((sub (form) (effective-method-closure form method-class)))
+    (cond ((and (symbolp form) (not (keywordp form)) (not (member form '(t nil))))
+           (error "unsupported variable in an effective method form" form))
+          ((atom form)
+           (lambda (arguments) (declare (ignore arguments)) form))
+          (t
+           (case (first form)
+             (call-method
+              (call-method-closure (second form) (third form) method-class))
+             (quote
+              (let ((object (second form)))
+                (lambda (arguments) (declare (ignore arguments)) object)))
+             (progn
+              (if (null (rest form))
+                  (lambda (arguments) (declare (ignore arguments)) nil)
+                  (let ((closures (mapcar #'sub (rest form))))
+                    (lambda (arguments)
+                      (loop for (closure . more) on closures
+                            when (null more)
+                              return (funcall closure arguments)
+                            do (funcall closure arguments))))))
+             (multiple-value-prog1
+              (let ((first (sub (second form)))
+                    (closures (mapcar #'sub (rest (rest form)))))
+                (lambda (arguments)
+                  (multiple-value-prog1 (funcall first arguments)
+                    (loop for closure in closures
+                          do (funcall closure arguments))))))
+             (if
+              (let ((test (sub (second form)))
+                    (then (sub (third form)))
+                    (else (sub (fourth form))))
+                (lambda (arguments)
+                  (if (funcall test arguments)
+                      (funcall then arguments)
+                      (funcall else arguments)))))
+             (and
+              (cond ((null (rest form)) (sub t))
+                    ((null (rest (rest form))) (sub (second form)))
+                    (t (sub `(if ,(second form) (and ,@(rest (rest form))) nil)))))
+             (or
+              (cond ((null (rest form)) (sub nil))
+                    ((null (rest (rest form))) (sub (second form)))
+                    (t (let ((first (sub (second form)))
+                             (rest (sub `(or ,@(rest (rest form))))))
+                         (lambda (arguments)
+                           (let ((value (funcall first arguments)))
+                             (if value value (funcall rest arguments))))))))
+             (t
+              (let ((operator (first form))
+                    (closures (mapcar #'sub (rest form))))
+                (unless (and (symbolp operator) (fboundp operator))
+                  (error "unsupported operator in an effective method form" operator))
+                (lambda (arguments)
+                  (apply (fdefinition operator)
+                         (loop for closure in closures
+                               collect (funcall closure arguments)))))))))))
 
 (defun final-methods (methods classes)
   (loop for method in methods
@@ -316,7 +425,9 @@
                   generic-function
                   method-combination
                   final-methods))
-               (effective-method-function (compile nil effective-method)))
+               ;; kiln: interpreted.
+               (effective-method-function
+                 (effective-method-function generic-function effective-method)))
           ;; Add a new call cache to the call history.
           (setf (call-history generic-function)
                 (cons (make-call-cache relevant-classes
@@ -344,6 +455,19 @@
 ;;; closed-over variable, from a compiled-in constant, or perhaps by
 ;;; some other mechanism.
 (defun default-discriminating-function (generic-function arguments profile)
+  (let* ((required-argument-count (length profile))
+         (required-arguments (subseq arguments 0 required-argument-count))
+         ;; kiln: the check for obsolete instances that the comment above
+         ;; describes (step 1).  The stamp of an obsolete instance is not
+         ;; the unique number of its class, so no path of the automaton
+         ;; matches it; it is brought up to date before dispatching again.
+         (obsolete (loop for argument in required-arguments
+                         for p in profile
+                         thereis (and p (obsolete-instance-p argument) argument))))
+    (unless (null obsolete)
+      (update-obsolete-instance obsolete)
+      (return-from default-discriminating-function
+        (apply generic-function arguments))))
   (let* ((required-argument-count (length profile))
          (required-arguments (subseq arguments 0 required-argument-count))
          (classes (loop for argument in required-arguments
@@ -389,8 +513,84 @@
                   generic-function
                   method-combination
                   (final-methods applicable-methods classes)))
-               (effective-method-function (compile nil effective-method)))
+               ;; kiln: interpreted.
+               (effective-method-function
+                 (effective-method-function generic-function effective-method)))
           (funcall effective-method-function arguments))))))
+
+;;; kiln: the discriminating function interprets the automaton instead
+;;; of compiling the TAGBODY that COMPUTE-DISCRIMINATING-TAGBODY makes.  An
+;;; internal state is a simple vector of entries (START END TARGET),
+;;; sorted by START, for the stamps START <= stamp < END (the transfer
+;;; groups of MAKE-TRANSFER-GROUPS); a final state is (:FINAL . effective
+;;; method).  Each specialized required argument takes one transition,
+;;; found by binary search; a miss calls the default discriminating
+;;; function.
+
+(defun automaton-states (info)
+  ;; Returns the initial state.
+  (let ((states '())
+        (final-layer-p t))
+    (loop for layer-info in (reverse info)
+          do (loop for (name . content) in layer-info
+                   do (push (cons name
+                                  (if final-layer-p
+                                      (cons :final content)
+                                      (coerce
+                                       (loop for ((start . end) . target)
+                                               in (make-transfer-groups content)
+                                             collect (list start end
+                                                           (cdr (assoc target states))))
+                                       'simple-vector)))
+                            states))
+             (setf final-layer-p nil))
+    (cdr (first states))))
+
+(defun automaton-transition (state stamp)
+  (let ((low 0)
+        (high (length state)))
+    (loop while (small-integer< low high)
+          do (let* ((middle (floor (+ low high) 2))
+                    (entry (svref state middle)))
+               (cond ((small-integer< stamp (first entry))
+                      (setf high middle))
+                     ((small-integer< stamp (second entry))
+                      (return-from automaton-transition (third entry)))
+                     (t
+                      (setf low (1+ middle))))))
+    nil))
+
+(defun make-discriminating-closure (generic-function)
+  (let* ((specializer-profile (specializer-profile generic-function))
+         (active-arg-count (loop for x in specializer-profile count x))
+         (call-history (call-history generic-function)))
+    (when (null call-history)
+      (return-from make-discriminating-closure
+        (lambda (&rest arguments)
+          (default-discriminating-function
+           generic-function arguments (specializer-profile generic-function)))))
+    (when (small-integer= active-arg-count 0)
+      (let ((effective-method (effective-method-cache (first call-history))))
+        (return-from make-discriminating-closure
+          (lambda (&rest arguments)
+            (funcall effective-method arguments)))))
+    (let ((automaton (make-automaton (1+ active-arg-count))))
+      (loop for call-cache in call-history
+            do (add-path automaton
+                         (class-cache call-cache)
+                         (effective-method-cache call-cache)))
+      (let ((initial (automaton-states (extract-transition-information automaton))))
+        (lambda (&rest arguments)
+          (let ((state initial))
+            (loop for p in specializer-profile
+                  for remaining on arguments
+                  when p
+                    do (setf state (automaton-transition state (stamp+1 (car remaining))))
+                       (when (null state) (loop-finish)))
+            (if (and (consp state) (eq (car state) :final))
+                (funcall (cdr state) arguments)
+                (default-discriminating-function
+                 generic-function arguments specializer-profile))))))))
 
 (defun make-cdr (n)
   (if (small-integer= n 0)
@@ -479,9 +679,8 @@
 ;;; as a constant, so that the discriminating function can pass the
 ;;; generic function to the default discriminating function.
 (defun make-default-discriminating-function (generic-function)
-  (compile
-   nil
-   (make-discriminating-function-lambda generic-function)))
+  ;; kiln: a closure, not a compiled lambda expression.
+  (make-discriminating-closure generic-function))
 
 (defmethod compute-discriminating-function
     ((generic-function standard-generic-function))
