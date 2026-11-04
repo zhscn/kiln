@@ -1,6 +1,6 @@
 (cl:in-package #:parcl)
 
-(defun unuse-pacakge
+(defun #-kiln unuse-pacakge #+kiln unuse-package ; kiln: typo
     (packages-to-unuse &optional (package-designator *package*))
   (let ((packages (if (listp packages-to-unuse)
                       (mapcar #'find-package packages-to-unuse)

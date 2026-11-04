@@ -2,7 +2,8 @@
 
 (defpackage parcl-low-class
   (:use #:common-lisp)
-  (:shadow #:package)
+  ;; kiln: the package class is CL:PACKAGE.
+  #-kiln (:shadow #:package)
   (:export
      #:package
      #:client

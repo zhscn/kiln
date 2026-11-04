@@ -32,4 +32,9 @@
                        (do-not-import ()
                            (return-from import t)))))))
     (ensure-present-symbol client package symbol :internal)
+    ;; kiln: an imported symbol without a home package gets PACKAGE as
+    ;; its home (CLHS IMPORT), as the generic function's comment says.
+    #+kiln
+    (when (null (symbol-package client symbol))
+      (setf (symbol-package client symbol) package))
     (return-from import t)))

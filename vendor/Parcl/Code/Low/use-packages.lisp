@@ -4,6 +4,13 @@
   ((%conflicts
       :initarg :conflicts
       :reader conflicts))
+  #+kiln ; kiln: CONFLICTS is a list of (symbol package other-symbol).
+  (:report (lambda (condition stream)
+             (format stream "Conflicts:~%")
+             (loop for (symbol package other) in (conflicts condition)
+                   do (format stream "Symbol ~s from package ~s conflicts with ~s~%"
+                              symbol package other))))
+  #-kiln
   (:report (lambda (condition stream)
              (format stream "Conflicts:~%")
              (loop for entries being each hash-value of (conflicts condition)
@@ -21,6 +28,7 @@
 ;;; define exactly what restarts are useful, in particular so that
 ;;; they can be used programmatically.
 
+#-kiln
 (defmethod use-packages (client package packages-to-use)
   (let ((added-packages
           (set-difference (use-list client package) packages-to-use)))
@@ -47,3 +55,46 @@
                  :conflicts conflicts)))
       (setf (use-list client package)
             (append (use-list client package) packages-to-use)))))
+
+;;; kiln: the method above computes the added packages the wrong way
+;;; round (the packages already used, not the new ones), takes a symbol
+;;; that is accessible through two packages for a conflict, ignores
+;;; shadowing symbols, and does not update the used-by lists.
+#+kiln
+(defmethod use-packages (client package packages-to-use)
+  (let ((added '()))
+    (dolist (p packages-to-use)
+      (unless (or (eq p package)
+                  (member p (use-list client package))
+                  (member p added))
+        (push p added)))
+    (setf added (reverse added))
+    (let ((shadowing (shadowing-symbols client package))
+          (conflicts '()))
+      (flet ((check (symbol from name)
+               (multiple-value-bind (other status)
+                   (find-symbol client package name)
+                 (when (and status
+                            (not (eq other symbol))
+                            (not (member other shadowing)))
+                   (push (list symbol from other) conflicts)))
+               (dolist (q added)
+                 (unless (eq q from)
+                   (multiple-value-bind (other status)
+                       (find-present-symbol client q name)
+                     (when (and (eq status :external)
+                                (not (eq other symbol))
+                                (null (nth-value 1 (find-present-symbol
+                                                    client package name))))
+                       (push (list symbol from other) conflicts)))))))
+        (dolist (p added)
+          (map-external-symbols client p
+                                (lambda (symbol)
+                                  (check symbol p (symbol-name client symbol))))))
+      (unless (null conflicts)
+        (error 'conflicts :conflicts conflicts))
+      (setf (use-list client package)
+            (append (use-list client package) added))
+      (dolist (p added)
+        (push package (used-by-list client p)))
+      t)))
