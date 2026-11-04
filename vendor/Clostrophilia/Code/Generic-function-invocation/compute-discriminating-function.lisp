@@ -309,6 +309,11 @@
             (lambda (arguments)
               (funcall function arguments next-methods))))))
 
+;;; kiln: other operators that clients' method combinations use (an alist
+;;; of the operator and a function of the form and a function that
+;;; interprets a subform, which returns the closure).
+(defvar *effective-method-operators* '())
+
 (defun effective-method-closure (form method-class)
   (flet ((sub (form) (effective-method-closure form method-class)))
     (cond ((and (symbolp form) (not (keywordp form)) (not (member form '(t nil))))
@@ -360,13 +365,16 @@
                              (if value value (funcall rest arguments))))))))
              (t
               (let ((operator (first form))
-                    (closures (mapcar #'sub (rest form))))
+                    (extension (cdr (assoc (first form) *effective-method-operators*))))
+                (if extension
+                    (funcall extension form #'sub)
+              (let ((closures (mapcar #'sub (rest form))))
                 (unless (and (symbolp operator) (fboundp operator))
                   (error "unsupported operator in an effective method form" operator))
                 (lambda (arguments)
                   (apply (fdefinition operator)
                          (loop for closure in closures
-                               collect (funcall closure arguments)))))))))))
+                               collect (funcall closure arguments)))))))))))))
 
 (defun final-methods (methods classes)
   (loop for method in methods

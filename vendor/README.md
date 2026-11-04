@@ -36,6 +36,9 @@ Each patched place is marked with a `kiln:` comment.
   methods are reached (an `:around` method need not call
   `call-next-method`; Predicament's `signal` on a symbol relies on it).
 
+- Clients can interpret more operators in effective method forms
+  (`*effective-method-operators*`; kiln's ctype client adds `surely`).
+
 ## Predicament patches
 
 - `signal` and `warn` on a string or a symbol call themselves on the condition without
