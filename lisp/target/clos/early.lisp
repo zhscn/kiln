@@ -710,11 +710,9 @@ superclasses and metaclasses come first or are built already."
                             (< (position s1 cpl) (position s2 cpl)))))))
 
 (defun call-method-function (method arguments next-methods)
-  (funcall (%slot method '%function)
-           (if (member '&key (%slot method '%lambda-list))
-               (append arguments '(:allow-other-keys t))
-               arguments)
-           next-methods))
+  ;; Method functions with keyword parameters allow other keys
+  ;; (lisp/macro-client.lisp).
+  (funcall (%slot method '%function) arguments next-methods))
 
 (defun early-discriminate (gf arguments)
   (let* ((applicable

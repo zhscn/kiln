@@ -73,9 +73,25 @@ compiler's client and the run-time macros."))
                         (or (walk (car x)) (walk (cdr x)))))))
       (walk tree))))
 
+;;; A method with keyword parameters accepts any keyword arguments (the
+;;; generic function checks them, CLHS 7.6.5): its lambda list gets
+;;; &ALLOW-OTHER-KEYS. (Clostrophilia appends :ALLOW-OTHER-KEYS T to the
+;;; arguments instead, which a &REST parameter would then see.)
+(defun allow-other-keys-lambda-list (lambda-list)
+  (if (and (member '&key lambda-list) (not (member '&allow-other-keys lambda-list)))
+      (let ((aux (position '&aux lambda-list)))
+        (append (subseq lambda-list 0 aux)
+                '(&allow-other-keys)
+                (and aux (subseq lambda-list aux))))
+      lambda-list))
+
 (defun method-lambda-forms (lambda-expression)
   "The slow and the fast method lambdas (the latter NIL) for the method
 LAMBDA-EXPRESSION."
+  (setf lambda-expression
+        (list* (first lambda-expression)
+               (allow-other-keys-lambda-list (second lambda-expression))
+               (cddr lambda-expression)))
   (let* ((arguments (gensym "ARGUMENTS"))
          (next-methods (gensym "NEXT-METHODS"))
          (lambda-list (second lambda-expression))

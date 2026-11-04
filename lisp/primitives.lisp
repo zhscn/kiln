@@ -581,11 +581,13 @@ of it, SLOW-FN otherwise; both return an operand. Returns the result."
     (emit `(:store ,p 56 ,(nil-value)))
     (emit-undefined-function-cells s)
     s))
-(defun emit-undefined-function-cells (s)
-  "Stores new undefined-function objects for the symbol S into both its
-function cells."
-  (dolist (cell (list (cons +symbol-function+ (undefined-function-entry))
-                      (cons +symbol-setf-function+ (undefined-setf-function-entry))))
+(defun emit-undefined-function-cells (s &key (function t) (setf-function t))
+  "Stores new undefined-function objects for the symbol S into its function
+cells (both by default)."
+  (dolist (cell (append (and function
+                             (list (cons +symbol-function+ (undefined-function-entry))))
+                        (and setf-function
+                             (list (cons +symbol-setf-function+ (undefined-setf-function-entry))))))
     (let ((f (emit-alloc 24 (logior +kind-function+ (ash 1 +length-shift+)))))
       (emit `(:store ,f 8 (:addr ,(cdr cell))))
       (emit `(:store ,f 16 ,s))
@@ -594,6 +596,13 @@ function cells."
 ;; kernel fills them in first thing.
 (define-primop :init-function-cells (s)
   (emit-undefined-function-cells (copy-to-var s))
+  s)
+;; FMAKUNBOUND.
+(define-primop :unbind-function (s)
+  (emit-undefined-function-cells (copy-to-var s) :setf-function nil)
+  s)
+(define-primop :unbind-setf-function (s)
+  (emit-undefined-function-cells (copy-to-var s) :function nil)
   s)
 (define-primop :symbol-plist (s) (copy-to-var `(:load ,s ,+symbol-plist+)))
 (define-primop :set-symbol-plist (s v) (emit `(:store ,s ,+symbol-plist+ ,v)) v)

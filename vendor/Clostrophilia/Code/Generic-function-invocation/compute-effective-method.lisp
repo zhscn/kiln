@@ -28,11 +28,10 @@
 
 (defun funcall-method-function
     (method-function arguments lambda-list next-method)
-  (if (member '&key lambda-list)
-      (funcall method-function
-               (append arguments '(:allow-other-keys t))
-               next-method)
-      (funcall method-function arguments next-method)))
+  ;; kiln: method functions with keyword parameters allow other keys
+  ;; (kiln's method lambdas).
+  (declare (ignore lambda-list))
+  (funcall method-function arguments next-method))
 
 (defun wrap-in-call-method-macrolet (form arguments-var)
   `(macrolet ((call-method (method &optional next-method-list)

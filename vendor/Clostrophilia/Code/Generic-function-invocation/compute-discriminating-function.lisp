@@ -307,14 +307,13 @@
 (defun call-method-closure (method next-methods method-class)
   (if (make-method-form-p method)
       (effective-method-closure (second method) method-class)
+      ;; kiln: method functions with keyword parameters allow other keys
+      ;; (kiln's method lambdas); appending :ALLOW-OTHER-KEYS T to the
+      ;; arguments would show it to a &REST parameter.
       (let ((function (method-function method))
-            (keyp (member '&key (method-lambda-list method)))
             (next-methods (resolve-next-methods next-methods method-class)))
-        (if keyp
-            (lambda (arguments)
-              (funcall function (append arguments '(:allow-other-keys t)) next-methods))
-            (lambda (arguments)
-              (funcall function arguments next-methods))))))
+        (lambda (arguments)
+          (funcall function arguments next-methods)))))
 
 ;;; kiln: other operators that clients' method combinations use (an alist
 ;;; of the operator and a function of the form and a function that

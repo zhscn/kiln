@@ -2,6 +2,7 @@
 ;;;; in its rack: a new instance of the new class is made, the slots with
 ;;;; the same names copied, and the instance takes over its rack. The
 ;;;; slots that are new are then initialized with the initargs.
+;;;; Funcallable instances have racks too, and keep their function.
 
 (in-package #:clostrophilia)
 
@@ -11,6 +12,17 @@
   (apply #'change-class instance (find-class new-class) initargs))
 
 (defmethod change-class ((instance standard-object) (new-class standard-class) &rest initargs)
+  (apply #'change-class-by-rack instance new-class initargs))
+
+(defmethod change-class ((instance funcallable-standard-object) (new-class symbol)
+                         &rest initargs)
+  (apply #'change-class instance (find-class new-class) initargs))
+
+(defmethod change-class ((instance funcallable-standard-object)
+                         (new-class funcallable-standard-class) &rest initargs)
+  (apply #'change-class-by-rack instance new-class initargs))
+
+(defun change-class-by-rack (instance new-class &rest initargs)
   (unless (class-finalized-p new-class)
     (finalize-inheritance new-class))
   (let* ((old-class (class-of instance))

@@ -286,15 +286,19 @@
 (defun notany (pred seq &rest seqs) (not (apply #'some pred seq seqs)))
 (defun notevery (pred seq &rest seqs) (not (apply #'every pred seq seqs)))
 
+;;; Lists are not copied: MAP stops at the shortest sequence, and a list
+;;; can be circular (architecture.builder-protocol passes one).
+(defun map-arg-list (seq)
+  (if (listp seq) seq (seq-list seq 0 nil)))
+
 (defun map (result-type f seq &rest seqs)
-  (let ((results (apply #'mapcar f (seq-list seq 0 nil)
-                        (mapcar (lambda (s) (seq-list s 0 nil)) seqs))))
+  (let ((results (apply #'mapcar f (map-arg-list seq) (mapcar #'map-arg-list seqs))))
     (if (null result-type) nil (coerce results result-type))))
 
 (defun map-into (target f &rest seqs)
   ;; Stores into TARGET's elements (up to its fill pointer) until a
   ;; sequence runs out.
-  (let ((lists (mapcar (lambda (s) (seq-list s 0 nil)) seqs))
+  (let ((lists (mapcar #'map-arg-list seqs))
         (n (length target)))
     (if (listp target)
         (do ((l target (cdr l)))

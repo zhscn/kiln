@@ -55,6 +55,11 @@ Each patched place is marked with a `kiln:` comment.
 - `default-discriminating-function` checks for obsolete instances (stamp
   differs from the class's unique number) and updates them before
   dispatching again, as its comment describes.
+- Method functions are called with the generic function's arguments
+  unchanged: upstream appends `:allow-other-keys t` for a method with
+  keyword parameters, which its `&rest` parameter then sees
+  (architecture.builder-protocol stores such a list). kiln's method lambdas
+  have `&allow-other-keys` instead (`lisp/macro-client.lisp`).
 - The standard method combination does not require primary methods: an
   effective method without them signals an error only if the primary
   methods are reached (an `:around` method need not call
