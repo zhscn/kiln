@@ -31,7 +31,7 @@
       (call-next-method)))
 
 (defun format-tab (client colon-p at-sign-p colnum colinc)
-  (if (and (not colon-p) #-sicl (not (inravina:pretty-stream-p client *format-output*)))
+  (if (and (not colon-p) #-(or sicl kiln) (not (inravina:pretty-stream-p client *format-output*)))
       (let ((cur (ngray:stream-line-column *format-output*)))
         (cond (at-sign-p
                (ngray:stream-advance-to-column *format-output*
@@ -46,7 +46,7 @@
                (ngray:stream-advance-to-column *format-output*
                                                (+ cur
                                                   (- colinc (rem (- cur colnum) colinc)))))))
-      #-sicl
+      #-(or sicl kiln)
       (inravina:pprint-tab client *format-output*
                            (cond ((and colon-p at-sign-p) :section-relative)
                                  (colon-p :section)
@@ -54,6 +54,8 @@
                                  (t :line))
                            colnum colinc)))
 
+;;; kiln: no pretty printer (Inravina) yet.
+#-(or sicl kiln)
 (define-compiler-macro format-tab (&whole form client colon-p at-sign-p colnum colinc)
   (if (and (constantp colon-p) colon-p)
       `(inravina:pprint-tab ,client *format-output*

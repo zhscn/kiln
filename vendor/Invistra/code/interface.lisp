@@ -24,8 +24,14 @@
     (define-compiler-macro ,format-sym (&whole form destination control-string &rest args)
       (expand-format ,client-form form destination control-string args))
 
+    ;; kiln: the format compiler is target code, not available when
+    ;; macros are expanded; the function interprets the control string.
+    ;; It returns NIL instead of the unused arguments.
     (defmacro ,formatter-sym (control-string)
-      (expand-formatter ,client-form control-string))
+      #-kiln (expand-formatter ,client-form control-string)
+      #+kiln `(lambda (stream &rest arguments)
+                (apply #'format stream ,control-string arguments)
+                nil))
 
     ,@(unless intrinsicp
         `((defun ,break-sym (&optional (format-control "BREAK invoked") &rest args)

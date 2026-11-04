@@ -4,6 +4,8 @@
 ;;; all the output goes.
 (defvar *format-output* nil)
 
+;;; kiln: macro expanders call it, at compile time.
+(eval-when (:compile-toplevel :load-toplevel :execute)
 (defun unique-name (&rest args)
   (gensym (apply #'concatenate 'string
                  (mapcar (lambda (arg)
@@ -11,7 +13,7 @@
                              (symbol (symbol-name arg))
                              (string arg)
                              (otherwise (write-to-string arg))))
-                         args))))
+                         args)))))
 
 #+(or)(define-compiler-macro (&whole form &rest args)
   (if (and (consp name)

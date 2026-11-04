@@ -123,3 +123,18 @@ Under `#+kiln` (docs/10 §16 of kiln):
 None. kiln's client (`lisp/target/clos/printer.lisp`) supplies the
 implementation-specific parts, and `lisp/target/clos/quaviver.lisp` the
 part of Quaviver that Incless uses.
+
+## Invistra patches
+
+Under `#+kiln` (docs/10 §18 of kiln):
+
+- The branches without Inravina (the pretty printer) are taken, as for
+  SICL (`#-(or sicl kiln)`); the `format-tab` compiler macro, which
+  expands into Inravina calls, is not defined.
+- `formatter` expands into a function that interprets the control string
+  (the format compiler is target code, not available when macros are
+  expanded); it returns NIL instead of the unused arguments.
+- `unique-name` is defined at compile time too (macro expanders call it).
+- Infinities and NaNs are recognized through `quaviver:float-triple`.
+- Output to a string with a fill pointer goes through a string output
+  stream on it (upstream uses the string as the stream).

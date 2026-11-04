@@ -20,7 +20,9 @@
                (or (mezzano.extensions:float-infinity-p value)
                    (mezzano.extensions:float-nan-p value))
                #+sbcl (or (sb-ext:float-infinity-p value)
-                          (sb-ext:float-nan-p value)))
+                          (sb-ext:float-nan-p value))
+               ;; kiln: infinities and NaNs have a keyword for an exponent.
+               #+kiln (keywordp (nth-value 1 (quaviver:float-triple client 10 value))))
           (not (numberp value)))
       (let ((*print-base* 10)
             (*print-escape* nil)

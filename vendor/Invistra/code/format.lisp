@@ -293,8 +293,15 @@
                                         *format-output* (pop-remaining-arguments)))))))
 
 (defun format-with-client (client destination control &rest args)
+  ;; kiln: output to a string with a fill pointer goes through a string
+  ;; output stream on it (upstream uses the string as the stream).
+  #+kiln
+  (when (and (stringp destination) (array-has-fill-pointer-p destination))
+    (with-output-to-string (stream destination)
+      (apply #'format-with-client client stream control args))
+    (return-from format-with-client nil))
   (let ((*format-output* (cond ((or (streamp destination)
-                                  #-sicl (inravina:pretty-stream-p client destination)
+                                  #-(or sicl kiln) (inravina:pretty-stream-p client destination)
                                   (and (stringp destination)
                                        (array-has-fill-pointer-p destination)))
                               destination)
@@ -319,11 +326,11 @@
             for index from 0
             for blankp = (and (find char #(#\Space #\Tab #\Page #\Return)) t)
             finally (write-string (subseq item start) *format-output*)
-                    #-sicl (when in-blank-p
+                    #-(or sicl kiln) (when in-blank-p
                              (inravina:pprint-newline client *format-output* *newline-kind*))
             when (and in-blank-p (not blankp))
               do (write-string (subseq item start index) *format-output*)
-                 #-sicl (inravina:pprint-newline client *format-output* *newline-kind*)
+                 #-(or sicl kiln) (inravina:pprint-newline client *format-output* *newline-kind*)
                  (setf start index)
             do (setf in-blank-p blankp))
       (write-string item *format-output*)))
@@ -331,7 +338,7 @@
 (defmethod compile-item ((client client) (item string) &optional parameters)
   (declare (ignore parameters))
   (if *newline-kind*
-      #+sicl nil #-sicl
+      #+(or sicl kiln) nil #-(or sicl kiln)
       (loop with start = 0
             with in-blank-p = nil
             with pprint-newline = `(inravina:pprint-newline ,(trinsic:client-form client)
