@@ -12,6 +12,9 @@
 
 (defgeneric add-method (generic-function method))
 
+;;; kiln: not evaluated; DOCUMENTATION here is Clostrophilia's generic
+;;; function of one object, and FORMAT is not available yet.
+#+(or)
 (setf (documentation 'add-method 'function)
       (format nil
               "Lambda list: (GENERIC-FUNCTION METHOD).~@

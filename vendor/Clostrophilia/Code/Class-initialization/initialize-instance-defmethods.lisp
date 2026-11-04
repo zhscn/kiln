@@ -47,7 +47,9 @@
              :direct-superclasses defaulted-direct-superclasses
              initargs))))
 
-(defparameter *class-unique-number* 0)
+;;; kiln: DEFVAR, because the bootstrap numbers the classes of the braid
+;;; before this file is loaded.
+(defvar *class-unique-number* 0)
 
 (defun new-unique-number ()
   (prog1 *class-unique-number* (incf *class-unique-number*)))
