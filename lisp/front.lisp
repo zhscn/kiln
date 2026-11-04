@@ -298,6 +298,13 @@
     ;; standard operators.
     (host-macro client genv 'loop (macro-function 'khazern-extrinsic:loop))
     (host-macro client genv 'loop-finish (macro-function 'khazern-extrinsic:loop-finish))
+    ;; DEFPACKAGE not at top level (top-level ones are processed in the
+    ;; host, PROCESS-TOPLEVEL) runs at run time (lisp/target/clos/package-system.lisp).
+    (host-macro client genv 'defpackage
+                (lambda (form env)
+                  (declare (ignore env))
+                  `(eval-when (:compile-toplevel :load-toplevel :execute)
+                     (kiln.kernel::%defpackage ',(second form) ',(cddr form)))))
     ;; Code evaluated at compile time sees the target's features.
     (clo:make-variable client genv '*features* (copy-list *target-features*))
     ;; DEFSTRUCT is Anatomicl's, expanded in the host (structures.lisp).

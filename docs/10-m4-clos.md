@@ -235,9 +235,7 @@ Parcl vendor 在 `vendor/Parcl`，以 intrinsic 方式加载：`parcl-low`（泛
 
 Parcl 没有提供的部分由 kiln 自己写：`list-all-packages`、`packagep`、`rename-package`、`delete-package`、`unintern`、`find-all-symbols`、`do-symbols`、`do-external-symbols`、`do-all-symbols`、`with-package-iterator`。其中 `with-package-iterator` 先把要遍历的 symbol 收集成列表。启动时 `*package*` 是 `COMMON-LISP-USER`。
 
-**还没做**：
-- 运行期的 `defpackage` 和 `in-package`（编译的模块不改 `*package*`；要等 REPL 或 `eval`）；
-- 包局部昵称不参与 `find-package`；
+**还没做**（运行期的 `defpackage`、`in-package` 和包局部昵称见 §23）：
 - 冲突时的 restart 只有 Parcl 原有的那些（`use-package` 冲突直接报 `package-error`）；
 - `do-symbols` 对有 use 列表的包是平方复杂度（Parcl 的 `map-symbols` 用列表去重）。
 
@@ -495,7 +493,6 @@ Invistra vendor 在 `vendor/Invistra`，用的是 intrinsic 接口：`format` �
 - 运行期的 `eval`/`compile`，REPL 的前提（reader 已有，§22）。
 - 标准流的输出缓冲（§21：文件流有缓冲，标准流没有）。
 - 类、泛函、结构的重定义（§7、§15）。
-- 包局部昵称参与 `find-package`；运行期的 `defpackage`/`in-package`（§12）。
 - 浮点的 `integer-decode-float` 等，以及真正的 Quaviver（§17）。
 - 位数组运算（`bit-and` 等），打印器以外对 Regalia 数组的完整支持（§14）。
 
@@ -615,3 +612,22 @@ Eclector vendor 在 `vendor/Eclector`，同时是宿主前端的 reader 和目�
 - readtable：`readtable-case`（`:preserve`、`:invert`）、`set-macro-character`、`set-dispatch-macro-character`、`set-syntax-from-char`、`copy-readtable`、`with-standard-io-syntax`；
 - 打印再读回；
 - 运行期展开读入的反引号形式。
+
+## 23. M4.6：运行期的 `defpackage`、`in-package` 和包局部昵称
+
+编译的模块仍然从 symbol 表得到它们的包（§12），顶层的 `defpackage` 和 `in-package` 照旧只在宿主里执行。新增的部分用于运行期执行的代码，在 `package-system.lisp` 的末尾：
+
+- **`%defpackage`**：按 CLHS 的顺序建立或更新包。
+  - 顺序：昵称（`rename-package`）、shadow、shadowing import、use 列表、import、intern、export，最后是包局部昵称。
+  - 包已存在时就地更新，不检查和原定义的差异。
+  - 没有 `:use` 时 use 列表为空，和 SBCL 一样。
+  - 忽略 `:documentation` 和 `:size`。
+- **宏**：运行期的 `defpackage` 展开成对 `%defpackage` 的调用，`in-package` 展开成对 `*package*` 的赋值，都包在 `eval-when` 里。它们和 LOOP 一样只在加载期设定。
+- **编译期**：不在顶层的 `defpackage`（比如在函数体里）由前端展开成同样的 `%defpackage` 调用（受保护的宿主宏，§22）。原来用的是 Common-macros 的展开，它需要 client 提供局部昵称的函数名，而 kiln 没有提供。
+- **包局部昵称**：`find-package` 按名字查找时，先看当前包的局部昵称，所以读入 `a:foo` 也会用到它们。`parcl::package-local-nicknames` 返回 `(昵称 . 包)` 的列表。
+
+`tests/m4/clos-defpackage.lisp` 覆盖：
+- 函数里的 `defpackage`：`:use`、`:nicknames`、`:export`、`:shadow`、`:shadowing-import-from`、`:import-from`、`:intern`、`:local-nicknames`；
+- 重复定义时更新包；
+- 局部昵称对 `find-package` 和 reader 的作用；
+- 函数里的 `in-package`、运行期展开这两个宏，以及包不存在时报 `package-error`。

@@ -66,14 +66,27 @@
 (defmethod find-package ((designator package))
   designator)
 
+;;; A name is first looked up among the local nicknames of the current
+;;; package.
+(defun lookup-package (name)
+  (or (and (boundp '*package*) (packagep *package*)
+           (second (assoc name (parcl-low:local-nicknames *client* *package*)
+                          :test #'string=)))
+      (values (gethash name *packages*))))
+
 (defmethod find-package ((designator string))
-  (values (gethash designator *packages*)))
+  (lookup-package designator))
 
 (defmethod find-package ((designator symbol))
-  (values (gethash (symbol-name designator) *packages*)))
+  (lookup-package (symbol-name designator)))
 
 (defmethod find-package ((designator character))
-  (values (gethash (string designator) *packages*)))
+  (lookup-package (string designator)))
+
+(defun package-local-nicknames (package)
+  "The local nicknames of PACKAGE: conses (NICKNAME . PACKAGE)."
+  (mapcar (lambda (entry) (cons (first entry) (second entry)))
+          (parcl-low:local-nicknames *client* (find-package-or-error package))))
 
 (defun find-package-or-error (designator)
   (or (find-package designator)
@@ -292,3 +305,70 @@
   (unless (member (find-package "COMMON-LISP") (parcl-low:use-list *client* cl-user))
     (parcl-low:use-packages *client* cl-user (list (find-package "COMMON-LISP"))))
   (setf *package* cl-user))
+
+;;; DEFPACKAGE and IN-PACKAGE at run time (docs/10 §23). Compiled modules
+;;; get their packages from their symbol tables; these are for code that
+;;; runs DEFPACKAGE (also inside a function: the front end expands it
+;;; into the same %DEFPACKAGE call) and for macroexpansion at run time.
+;;; The macro functions are set at load time only, as LOOP's.
+
+(defun option-arguments (key options)
+  (loop for (name . arguments) in options
+        when (eq name key) append arguments))
+
+(defun kiln.kernel::%defpackage (name options)
+  "Creates or updates the package NAME as DEFPACKAGE with OPTIONS does, in
+the order of CLHS: shadows, shadowing imports, use list, imports and
+interned symbols, exports; then local nicknames."
+  (let* ((name (string name))
+         (package (or (find-package name) (make-package name :use '()))))
+    (rename-package package name (mapcar #'string (option-arguments :nicknames options)))
+    (shadow (mapcar #'string (option-arguments :shadow options)) package)
+    (loop for (key from . names) in options
+          when (eq key :shadowing-import-from)
+            do (let ((from (find-package-or-error from)))
+                 (shadowing-import
+                  (mapcar (lambda (n)
+                            (multiple-value-bind (symbol status) (find-symbol (string n) from)
+                              (unless status
+                                (error 'package-error :package from))
+                              symbol))
+                          names)
+                  package)))
+    (use-package (mapcar #'find-package-or-error (option-arguments :use options)) package)
+    (loop for (key from . names) in options
+          when (eq key :import-from)
+            do (let ((from (find-package-or-error from)))
+                 (import (mapcar (lambda (n)
+                                   (multiple-value-bind (symbol status) (find-symbol (string n) from)
+                                     (unless status
+                                       (error 'package-error :package from))
+                                     symbol))
+                                 names)
+                         package)))
+    (dolist (n (option-arguments :intern options))
+      (intern (string n) package))
+    (export (mapcar (lambda (n) (intern (string n) package))
+                    (option-arguments :export options))
+            package)
+    (loop for (nickname actual) in (option-arguments :local-nicknames options)
+          do (let ((actual (find-package-or-error actual)))
+               (unless (eq (lookup-local-nickname nickname package) actual)
+                 (parcl:add-package-local-nickname nickname actual package))))
+    package))
+
+(defun lookup-local-nickname (nickname package)
+  (second (assoc (string nickname) (parcl-low:local-nicknames *client* package)
+                 :test #'string=)))
+
+(setf (macro-function 'defpackage)
+      (lambda (form environment)
+        (declare (ignore environment))
+        `(eval-when (:compile-toplevel :load-toplevel :execute)
+           (kiln.kernel::%defpackage ',(second form) ',(cddr form)))))
+
+(setf (macro-function 'in-package)
+      (lambda (form environment)
+        (declare (ignore environment))
+        `(eval-when (:compile-toplevel :load-toplevel :execute)
+           (setq *package* (find-package-or-error ',(second form))))))
