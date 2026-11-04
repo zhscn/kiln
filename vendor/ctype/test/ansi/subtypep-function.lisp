@@ -1,0 +1,21 @@
+;-*- Mode:     Lisp -*-
+;;;; Author:   Paul Dietz
+;;;; Created:  Wed Dec 15 21:57:44 2004
+;;;; Contains: Tests of SUBTYPEP on FUNCTION types
+
+(in-package #:ctype.test)
+
+(5am:def-suite subtypep.function :in subtypep)
+(5am:in-suite subtypep.function)
+
+(5am:test subtypep-function.1
+  (check-all-not-subtypep t '(function (t) t) t))
+
+(5am:test subtypep-function.2
+  (check-all-subtypep nil '(function (t) t) t))
+
+(5am:test subtypep-function.3
+  (check-all-subtypep '(function (t) t) 'function t))
+
+(5am:test subtypep-function.4
+  (check-all-subtypep '(function (t) integer) '(function (t) real) t))

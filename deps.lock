@@ -14,7 +14,6 @@ Common-macros https://github.com/robert-strandh/Common-macros.git master 4596ddf
 Concrete-Syntax-Tree https://github.com/s-expressionists/Concrete-Syntax-Tree master f79dab6b6d14000259449c169b501cc6398b3f54
 Consecution https://github.com/s-expressionists/Consecution master 850d311b40ff3dd215e5d7384a04a48d95dc83de
 Constrictor https://github.com/s-expressionists/Constrictor master 1a8a90ec114f7ebed373ea71ca2e6738832f9ba7
-ctype https://github.com/s-expressionists/ctype main 554b725de79ed170ca1452a7562950ecdeac5a47
 Cyclosis https://github.com/s-expressionists/Cyclosis master c918406b78a6e450d4543fe7bff0ff443f4c6641
 documentation-utils https://github.com/Shinmera/documentation-utils master fcbd927dee7f311915a27ee557e3db1d4510403c
 Ecclesia https://github.com/s-expressionists/Ecclesia main 74027d0cedba9b98dce9611bf3ae2793e8819449
