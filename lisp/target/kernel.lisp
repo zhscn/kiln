@@ -49,6 +49,10 @@
 (defun (setf symbol-function) (f name) (%primop :set-symbol-function name f))
 (defun (setf symbol-value) (v s) (setf (symbol-value s) v))
 (defun (setf nth) (v n l) (setf (car (nthcdr n l)) v))
+(defun (setf cddr) (v c) (setf (cdr (cdr c)) v))
+(defun (setf caddr) (v c) (setf (car (cddr c)) v))
+(defun (setf second) (v c) (setf (car (cdr c)) v))
+(defun (setf third) (v c) (setf (car (cddr c)) v))
 
 (defun list (&rest elements) elements)
 (defun list* (x &rest more)
@@ -441,6 +445,23 @@
       (push (aref seq i) result))))
 
 ;;; Symbols
+
+(defun make-symbol (name)
+  (%primop :make-symbol (check-string name)))
+
+(defvar *gensym-counter* 0)
+
+(defun integer-to-decimal-string (n)
+  (if (< n 10)
+      (string (digit-char n))
+      (concatenate 'string (integer-to-decimal-string (floor n 10))
+                   (string (digit-char (mod n 10))))))
+
+(defun gensym (&optional (x "G"))
+  (if (integerp x)
+      (make-symbol (concatenate 'string "G" (integer-to-decimal-string x)))
+      (prog1 (make-symbol (concatenate 'string x (integer-to-decimal-string *gensym-counter*)))
+        (setq *gensym-counter* (+ *gensym-counter* 1)))))
 
 (defun symbol-name (s)
   (unless (symbolp s) (%primop :type-error-symbol s))

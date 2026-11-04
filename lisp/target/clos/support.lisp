@@ -7,7 +7,7 @@
 ;;; Until the switchover, MAKE-INSTANCE fills the slots from the initargs
 ;;; and initforms without running INITIALIZE-INSTANCE.
 (defun make-instance (class &rest initargs)
-  (apply #'early-make-instance class initargs))
+  (apply (if *switched-p* #'mop-make-instance #'early-make-instance) class initargs))
 
 (defun make-method-instance (class &rest initargs)
   (apply #'make-instance class initargs))

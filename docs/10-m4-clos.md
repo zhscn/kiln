@@ -1,6 +1,6 @@
 # 10 M4：CLOS 引导
 
-**状态**：进行中（2026-11），M4.1 已完成（§5）。本文记录 M4 的决定和分步计划。依据是对 Clostrophilia（HEAD 9d0e86c，2026-08-29）的调研，结论记在 §2。
+**状态**：进行中（2026-11），M4.1–M4.4 已完成（§5、§8、§9）。本文记录 M4 的决定和分步计划。依据是对 Clostrophilia（HEAD 9d0e86c，2026-08-29）的调研，结论记在 §2。
 
 ## 1. 决定
 
@@ -108,3 +108,41 @@ CLOS 是单独的模块（`kiln:compile-clos`，在 kernel 之后加载），源
 - **名字冲突**：kiln 的引导代码和 Clostrophilia 在同一个包里，引导代码自己的辅助函数都以 `early-` 开头。`method-more-specific-p` 曾经和 Clostrophilia 的同名函数冲突。
 - **Clostrophilia 的补丁**（`vendor/README.md`）：`*class-unique-number*` 改为 `defvar`，因为 braid 的类在这个文件加载之前就已经编号；`add-method` 的 `(setf documentation)` 不求值。
 - 测试：`tests/m4/clos-braid.lisp` 检查优先级列表、有效槽的顺序和位置、元类、`class-of`、访问器的分派。`tests/m4/clos-early.lisp` 在用户程序里用 `defclass`/`defgeneric`/`defmethod`，覆盖 before、after、around 方法，`call-next-method`、`next-method-p`，EQL 特化，setf 泛函，以及经过 Clostrophilia 的 `slot-value`、`slot-boundp`。
+
+### 分派和有效方法的解释执行（Clostrophilia 补丁）
+
+- **判别函数**：仍用 Clostrophilia 的调用历史和自动机（`add-path`、`extract-transition-information`、`make-transfer-groups`），然后解释执行，不生成 `tagbody`。内部状态是按 stamp 排好序的区间向量 `(start end 目标)`，每个特化的必需参数走一次转移，用二分查找；查不到就调用 `default-discriminating-function`。终态直接保存有效方法。
+- **有效方法**：`compute-effective-method` 仍返回形式，`effective-method-function` 把它变成闭包。支持 `call-method`、`make-method`、`progn`、`multiple-value-prog1`、`if`、`quote`、`and`、`or` 和全局函数调用，覆盖 standard 方法组合和所有短形式。长形式产生的其他代码要等 M5 的编译器。
+- **访问器方法**：`maybe-replace-method` 产生的方法，其函数直接是读写槽位置的闭包。
+- **过时实例**：`default-discriminating-function` 先检查特化参数里有没有 stamp 和它的类的 unique number 不一致的实例，有就先更新再重新分派。类重定义还不支持，所以目前的“更新”是报错，它保证 stamp 过时的实例不会让分派死循环。
+
+## 9. M4.4 的实现记录：切换到 MOP
+
+`lisp/target/clos/switchover.lisp`，在 CLOS 模块的最后执行：
+
+1. 所有 early 泛函（`*early-generic-functions*`）换上 standard 方法组合，清空调用历史。
+2. **satiation**：early 判别函数还装着的时候，对每个泛函，按它的方法在每个特化位置可能遇到的类（当前所有类里，优先级列表包含某个方法的特化符的那些；EQL 特化符取对象的类）做笛卡尔积。对每组类调用 Clostrophilia 的 `compute-applicable-methods-using-classes`，有主方法的组合用 `add-call-cache` 加进调用历史。组合数超过 `*satiation-limit*`（4000）的泛函跳过。
+3. 先算好所有泛函的判别函数，再一次性装上。之后调用遇到新的类，走 `default-discriminating-function`；它自己调用的泛函（`call-history`、`compute-applicable-methods-using-classes`、`compute-effective-method` 等），对现有的元类都已经 satiated，所以不会无限递归。
+4. `*switched-p*` 置真。此后 `%defclass`、`%defgeneric`、`%defmethod`、`make-instance`、`ensure-generic-function+1` 走 MOP：
+   - `make-instance`：`allocate-instance-using-class`（按需终结类，补上 default initargs），然后 `initialize-instance`；
+   - `ensure-class`：`make-instance` 元类，再登记 `find-class`；
+   - `ensure-generic-function`：通过 `find-method-combination` 取方法组合；
+   - `ensure-method`：`make-instance` 方法类，再 `add-method`。
+
+`make-instance` 现在是普通函数，还不是泛函。类和泛函的重定义也还不支持。
+
+其他改动：
+
+- **运行期的 `make-symbol` 和 `gensym`**：Clostrophilia 在运行期生成有效方法的形式时会用到。原语 `:make-symbol` 在堆上分配 symbol，两个函数格都放上未定义函数对象。未定义的 `(setf f)` 有单独的报错入口（错误码 21）。
+- **GC 压力测试的堆**：CLOS 的存活数据（元对象、satiated 的调用历史）超过 1 MiB，所以 `clos-*` 测试用 4 MiB 的堆。
+- **构建**：debug 构建里依赖库（Cranelift、MMTk）也按 `opt-level = 2` 编译。否则 JIT 编译 kernel 和 CLOS 模块要 10 秒，现在约 1.6 秒（release 版 0.9 秒）。
+
+`tests/m4/clos-mop.lisp` 覆盖：
+
+- `initialize-instance :after`、`reinitialize-instance`、`:default-initargs`；
+- `list`、`+`、`progn`（`:most-specific-last`）、`and` 这几种方法组合；
+- 一个泛函上的十几种类和 EQL 特化；
+- 先定义方法、后定义的子类；
+- 两个特化参数加 `:around` 方法；
+- setf 泛函；
+- `class-direct-subclasses`、`class-finalized-p`。

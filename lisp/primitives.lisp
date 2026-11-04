@@ -351,7 +351,9 @@ are compared (no short circuit), which also checks every argument."
   function)
 (define-primop :undefined-function-p (f)
   ;; F is the content of a function cell.
-  (boolean-value `(:eq (:load ,f ,+fobj-entry+) (:addr ,(undefined-function-entry)))))
+  (let ((entry (copy-to-var `(:load ,f ,+fobj-entry+) :raw)))
+    (boolean-value `(:or (:eq ,entry (:addr ,(undefined-function-entry)))
+                         (:eq ,entry (:addr ,(undefined-setf-function-entry)))))))
 
 (define-primitive symbol-value (name)
   (emit-check-symbol name)
@@ -507,6 +509,25 @@ operand N."
 
 (define-primop :symbol-name (s) (copy-to-var `(:load ,s ,+symbol-name+)))
 (define-primop :symbol-package (s) (copy-to-var `(:load ,s ,+symbol-package+)))
+(define-primop :make-symbol (name)
+  ;; An uninterned symbol; both function cells hold an undefined-function
+  ;; object for it.
+  (let* ((name (copy-to-var name))
+         (p (emit-alloc 64 +kind-symbol+))
+         (s (copy-to-var `(:add ,p ,+tag-general+))))
+    (emit `(:store ,p 8 ,name))
+    (emit `(:store ,p 16 ,(nil-value)))
+    (emit `(:store ,p 24 ,(nil-value)))
+    (emit `(:store ,p 32 ,+unbound+))
+    (emit `(:store ,p 48 ,(nil-value)))
+    (emit `(:store ,p 56 ,(nil-value)))
+    (dolist (cell (list (cons +symbol-function+ (undefined-function-entry))
+                        (cons +symbol-setf-function+ (undefined-setf-function-entry))))
+      (let ((f (emit-alloc 24 (logior +kind-function+ (ash 1 +length-shift+)))))
+        (emit `(:store ,f 8 (:addr ,(cdr cell))))
+        (emit `(:store ,f 16 ,s))
+        (emit `(:store ,s ,(car cell) (:add ,f ,+tag-general+)))))
+    s))
 (define-primop :symbol-plist (s) (copy-to-var `(:load ,s ,+symbol-plist+)))
 (define-primop :set-symbol-plist (s v) (emit `(:store ,s ,+symbol-plist+ ,v)) v)
 

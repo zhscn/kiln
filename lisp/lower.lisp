@@ -84,6 +84,17 @@ its first env word. Every function cell starts out holding one."
           (emit-error +err-undefined-function+ `(:load :self ,+fobj-env+)))))
     name))
 
+(defun undefined-setf-function-entry ()
+  "As UNDEFINED-FUNCTION-ENTRY, for the function (SETF symbol)."
+  (let ((name "kiln_undefined_setf_function"))
+    (unless (gethash name (kiln.kir::kmodule-defined *module*))
+      (setf (gethash name (kiln.kir::kmodule-defined *module*)) t)
+      (module-shared name)
+      (let ((*regions* '()))
+        (with-function (name)
+          (emit-error +err-undefined-setf-function+ `(:load :self ,+fobj-env+)))))
+    name))
+
 (defun function-cell-data (name)
   "Data object and word index of the global function cell of NAME."
   (cond ((symbolp name)
@@ -128,7 +139,7 @@ name of its package as a string."
                                     (:func ,(undefined-function-entry))
                                     (:data ,obj ,+tag-general+)))
         (module-data undef-setf `(:words ,(logior +kind-function+ (ash 1 +length-shift+))
-                                         (:func ,(undefined-function-entry))
+                                         (:func ,(undefined-setf-function-entry))
                                          (:data ,obj ,+tag-general+)))
         ;; [header, name, package, function, value, TLS index, plist,
         ;; setf function]

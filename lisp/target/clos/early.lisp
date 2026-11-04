@@ -321,6 +321,10 @@ list, slots), the slots unbound."
 ;;; Building classes
 
 (defvar *braid-built-p* nil)
+(defvar *early-generic-functions* '()
+  "The generic functions made before the switchover, most recent first.")
+(defvar *switched-p* nil
+  "True after the switchover to the MOP (switchover.lisp).")
 (defvar *class-records* '()
   "(NAME . INITARGS) of each DEFCLASS before the braid, most recent first.")
 (defvar *deferred-definitions* '()
@@ -475,10 +479,13 @@ superclasses and metaclasses come first or are built already."
     (desc-class d)))
 
 (defun kiln.sys:%defclass (name &rest initargs)
-  (if *braid-built-p*
-      (early-define-class name initargs)
-      (progn (push (cons name initargs) *class-records*)
-             name)))
+  (cond (*switched-p*
+         (apply #'mop-ensure-class name initargs))
+        (*braid-built-p*
+         (early-define-class name initargs))
+        (t
+         (push (cons name initargs) *class-records*)
+         name)))
 
 ;;; Generic functions and methods
 
@@ -515,15 +522,17 @@ superclasses and metaclasses come first or are built already."
                     :documentation documentation)))
           (set-funcallable-instance-function
            gf (lambda (&rest arguments) (early-discriminate gf arguments)))
+          (push gf *early-generic-functions*)
           (setf (fdefinition name) gf)
           gf))))
 
 (defun ensure-generic-function+1 (name &rest initargs)
-  (apply #'early-ensure-generic-function name initargs))
+  (apply (if *switched-p* #'mop-ensure-generic-function #'early-ensure-generic-function)
+         name initargs))
 
 (defun kiln.sys:%defgeneric (name &rest initargs)
   (if *braid-built-p*
-      (apply #'early-ensure-generic-function name initargs)
+      (apply #'ensure-generic-function+1 name initargs)
       (progn (push (lambda () (apply #'early-ensure-generic-function name initargs))
                    *deferred-definitions*)
              name)))
@@ -534,7 +543,7 @@ superclasses and metaclasses come first or are built already."
   (let ((entry (assoc object *eql-specializers*)))
     (if entry
         (cdr entry)
-        (let ((specializer (early-make-instance 'eql-specializer :object object)))
+        (let ((specializer (make-instance 'eql-specializer :object object)))
           (push (cons object specializer) *eql-specializers*)
           specializer))))
 
@@ -594,7 +603,7 @@ superclasses and metaclasses come first or are built already."
 
 (defun kiln.sys:%defmethod (name &rest initargs)
   (if *braid-built-p*
-      (apply #'early-ensure-method name initargs)
+      (apply (if *switched-p* #'mop-ensure-method #'early-ensure-method) name initargs)
       (progn (push (lambda () (apply #'early-ensure-method name initargs))
                    *deferred-definitions*)
              name)))

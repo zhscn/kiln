@@ -42,14 +42,16 @@ for src in "${sources[@]}"; do
   kir=$build/$name.kir
   expected=${src%.lisp}.expected
   modules=("$build/kernel.kir")
-  case $name in clos-*) modules+=("$build/clos.kir") ;; esac
+  # GC stress: a small heap forces frequent moving collections; CLOS's
+  # live data (metaobjects, satiated call histories) needs more than 1 MiB.
+  heap=1048576
+  case $name in clos-*) modules+=("$build/clos.kir"); heap=4194304 ;; esac
   if "$cg" jit "${modules[@]}" "$kir" >"$build/$name.jit.out" 2>&1 && diff -u "$expected" "$build/$name.jit.out"; then
     echo "PASS jit $name"
   else
     echo "FAIL jit $name"; fail=1
   fi
-  # GC stress: a 1 MiB heap forces frequent moving collections.
-  if MMTK_GC_TRIGGER=FixedHeapSize:1048576 "$cg" jit "${modules[@]}" "$kir" >"$build/$name.stress.out" 2>&1 \
+  if MMTK_GC_TRIGGER=FixedHeapSize:$heap "$cg" jit "${modules[@]}" "$kir" >"$build/$name.stress.out" 2>&1 \
      && diff -u "$expected" "$build/$name.stress.out"; then
     echo "PASS gc-stress $name"
   else

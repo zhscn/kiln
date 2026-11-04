@@ -81,7 +81,8 @@
       ("Method-initialization" "condition-types" "direct-slot-definition-p"
        "initialize-instance-methods" "reinitialize-instance-methods")
       ("Slot-definition-initialization" "condition-types" "initialize-instance-methods"
-       "reinitialize-instance-methods"))))
+       "reinitialize-instance-methods")))
+   (list (kiln-clos-file "switchover")))
   "Sources of the CLOS module, in load order (docs/10 §7).")
 
 (defun write-module (module output)

@@ -23,3 +23,8 @@ panic = "abort"
 
 [profile.release]
 panic = "abort"
+
+# Dependencies (Cranelift, MMTk, num) are optimized in debug builds too:
+# JIT-compiling the kernel and CLOS modules is otherwise slow.
+[profile.dev.package."*"]
+opt-level = 2

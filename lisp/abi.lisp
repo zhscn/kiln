@@ -116,7 +116,8 @@
 (defconstant +err-division-by-zero+ 17)
 (defconstant +err-not-number+ 18)
 (defconstant +err-bad-type+ 19)
-(defconstant +err-lisp-error+ 20)       ; ERROR before the condition system
+(defconstant +err-lisp-error+ 20)
+(defconstant +err-undefined-setf-function+ 21)       ; ERROR before the condition system
 
 ;;; Argument registers in the Lisp calling convention.
 (defconstant +reg-args+ 3)
