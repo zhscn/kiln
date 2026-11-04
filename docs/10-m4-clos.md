@@ -631,3 +631,40 @@ Eclector vendor 在 `vendor/Eclector`，同时是宿主前端的 reader 和目�
 - 重复定义时更新包；
 - 局部昵称对 `find-package` 和 reader 的作用；
 - 函数里的 `in-package`、运行期展开这两个宏，以及包不存在时报 `package-error`。
+
+## 24. M4.6：前端在目标端的性能实验
+
+**做法**：把前端的一部分编进目标端，看 CLOS 密集的代码在 kiln 上有多慢。
+- 前端的这一部分是 Concrete-Syntax-Tree 和 Eclector 的 parse-result、CST 读取器，编成第三个模块 `frontend`（`kiln:compile-frontend`）。它不进 CLOS 模块，以免拖慢所有测试的启动；`tests/*/fe-*.lisp` 和它一起运行。
+- 基准是 `bench/fe-read.lisp`，由 `tools/bench-fe-read.sh` 运行：在 kiln（JIT）和 SBCL 上用同一份 Eclector 代码把 `lisp/target/kernel.lisp`（891 行，307 个形式）读成 CST。`BENCH=文件` 只在 kiln 上运行别的基准。
+- profile 用 AOT 产物加 `perf record -e cpu-clock`。这台机器上 perf 不能记录调用栈；函数名是 gensym，可以按「函数对象存进哪个 symbol 的函数格」对回全局函数名。
+
+**正确性**（`tests/m4/fe-read.lisp`）：用 `read` 和 CST 读取器分别读入测试文件自身，结果一致，源码位置正确。为此把 kiln 的 Eclector client 改成只在 CL 的读入函数里绑定、不全局设置：Eclector 的其他入口用 `(or *client* 默认 client)` 选 client，全局设置会让 CST 读取器用错 client，丢掉 parse result。
+
+**结果**（每次读完整个文件，毫秒）：
+
+| 阶段 | `read` | CST 读取 | `read-line` |
+|---|---|---|---|
+| 开始 | 9379 | 9964 | 1441 |
+| 自动机二分查找不再调用 runtime 的 `floor` | 4228 | 4559 | 545 |
+| 哈希函数和 `subtypep` 的快速路径 | 3902 | 4119 | 230 |
+| runtime 的分配快速路径 | 2229 | 2360 | 177 |
+| EQL 特化调用的有效方法缓存 | 664 | 807 | 178 |
+| `svref`/`length` 内联，自动机转移内联 | 493 | 615 | 131 |
+| SBCL（同一份 Eclector；`read` 是 SBCL 自己的） | 0.7 | 6.3 | 0.0 |
+
+CST 读取现在约是 SBCL 的 100 倍，开始时是 1600 倍。各项改动：
+- **fixnum 除法**：KIR 加了 `sdiv`/`srem`。`floor`、`truncate`、`mod`、`rem` 对两个 fixnum 内联计算，原来每次都调用 runtime。自动机二分查找里的 `floor` 曾让每次按实例分派的调用花 0.5 µs，现在是 0.08 µs。
+- **哈希**：`eq`、`eql`、`equal` 表的散列函数直接处理 fixnum、字符、符号、字符串和 cons，不再走 Salmagundi 那套逐步累加、为每次散列生成闭包的路径。`gethash` 从 5.6 µs 降到约 1 µs。
+- **`subtypep`**：两个符号的情况缓存在第一个符号的 plist 上，带缓存代号（`*type-cache-epoch*`），定义类型或类时递增。从 6 µs 降到 0.15 µs，每读写一个字符都要调用它一次（`check-character-stream`）。
+- **分配**：`kiln_rt_alloc` 先直接移动 MMTk 默认 bump 分配器的指针，空间不够时才走 MMTk 的分配函数。原来每次分配都要锁一次 GC 计数的互斥量、查 allocator、调用 `post_alloc`。
+- **EQL 特化**：Clostrophilia 在参数的类不足以确定适用方法时（有 EQL 特化），每次调用都重新计算适用方法和有效方法。补丁按类和 EQL 对象缓存有效方法，方法改变时清空。Eclector 的 `state-value` 等泛函都属于这种情况。
+- **原语**：`svref`、`(setf svref)`、`length` 对 simple vector 内联（`length` 也对字符串内联），其他情况调用 kernel 的函数；`third` 也成了原语。自动机转移和取 stamp 直接用 primop。
+
+**剩下的开销**：Lisp 代码约 55%，其中分派约 25%（自动机转移、判别闭包、取 stamp），其余是 `member`、`assoc`、`equal`、`get` 等调用；GC 和分配约 37%。
+
+**对 M5 的估计和建议**：照现在的速度，在 kiln 上跑交叉编译器会比在 SBCL 上慢大约两个数量级，对自举来说太慢。M5 之前或期间要做：
+1. **编译出来的判别函数**：kiln 自己的编译器能在运行期编译之后，按 Clostrophilia 原本的设计生成判别函数，免去解释自动机，也免去每次调用为 `&rest` 参数列表分配内存。
+2. **在生成代码里内联分配快速路径**（bump 指针放在 context 里），以及更大的或分代的堆。默认 64 MiB 的 SemiSpace 下，GC 占了不少时间；堆加到 256 MiB 能快约 20%。
+3. **内联小函数**：kiln 现在忽略 `inline` 声明。`standard-instance-access`、`stamp`、`instancep`、`first` 之类的小函数，每次都是一次全局调用。
+4. 以后每做一步都用这个基准，再加上把前端更多部分（Trucler、Clostrum、Common-boot）搬到目标端后的基准，来衡量进展。

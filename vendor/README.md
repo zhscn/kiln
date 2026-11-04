@@ -28,6 +28,14 @@ shows exactly what kiln changed. Changes are not sent upstream for now.
 
 Each patched place is marked with a `kiln:` comment.
 
+- When the classes of the arguments do not determine the applicable
+  methods (EQL specializers), the effective method is cached by the
+  classes and the EQL objects; upstream computes it at each call. The
+  cache is emptied by `invalidate-discriminating-function`.
+- `automaton-transition` (kiln's interpreter of the dispatch automaton)
+  uses open-coded fixnum operations, and the stamps of instances are read
+  directly.
+
 - `*class-unique-number*` is a `defvar`: the bootstrap numbers the braid's
   classes before `initialize-instance-defmethods.lisp` is loaded.
 - The `(setf documentation)` of `add-method` is not evaluated
