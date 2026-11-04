@@ -205,6 +205,9 @@ Under `#+kiln` (docs/10 §18 of kiln):
   where these would redefine CL's functions. Upstream's intrinsic package
   shadows too little for the same files: `get-setf-expansion` taking a
   client would become CL's.
+- `define-modify-macro`: the expansion binds the place's temporaries and
+  the store variable with `let*` (upstream `let`: the new value's form,
+  which reads the place, referred to unbound temporaries).
 
 ## Eclector patches
 

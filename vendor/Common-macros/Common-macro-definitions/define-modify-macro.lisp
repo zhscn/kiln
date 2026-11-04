@@ -41,6 +41,6 @@
                  (binding
                    (list (first store-vars)
                          (list* ',function reader-form argument-forms))))
-             (list 'let
+             (list 'let*
                    (append bindings (list binding))
                    writer-form)))))))
