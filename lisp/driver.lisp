@@ -129,7 +129,8 @@
          (kiln-clos-file "predicament-package")
          (kiln-clos-file "conditions"))
    *predicament-files*
-   (list (kiln-clos-file "early-conditions")))
+   (list (kiln-clos-file "early-conditions")
+         (kiln-clos-file "runtime-errors")))
   "Sources of the CLOS module, in load order (docs/10 §7).")
 
 (defun write-module (module output)

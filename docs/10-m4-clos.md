@@ -167,10 +167,15 @@ Predicament vendor 在 `vendor/Predicament`，补丁见 `vendor/README.md`。它
 
 Clostrophilia 也为此打了补丁：standard 方法组合不再要求必须有主方法。只有辅助方法的有效方法，在真正调用到主方法时才报错。Predicament 对 symbol 类型的 datum 只定义了 `:around` 方法，它不调用 `call-next-method`。
 
+**运行期错误也是 condition**：
+
+- **生成的代码**：编译器生成的报错代码（类型检查、参数个数、未定义函数、未绑定变量、下标越界等）不再直接调用 runtime 结束程序，而是调用 kernel 的 `%runtime-error`，传入错误码（fixnum）和出错的对象。kernel 里 `%runtime-error` 的定义仍然是结束程序；CLOS 模块（`runtime-errors.lisp`）把它重定义为按错误码 `error` 出对应的 condition：`type-error`、`undefined-function`、`unbound-variable`、`division-by-zero`、`program-error` 等。这是普通的 Lisp 调用，调用链上没有 Rust 帧，handler 的非局部退出照常工作。
+- **还没定义时**：`%runtime-error` 还没定义的时候（kernel 加载完之前），报错代码先检查它的函数格，未定义就直接结束程序。`:lisp-error`（early `error` 和默认 debugger 用的）始终直接结束程序。
+- **数值运算**：runtime 的数值运算（Rust）发现的错误没法变成 condition，所以 kernel 在调用 runtime 之前先在 Lisp 里检查：`two-arg-*` 系列检查参数是不是实数，除法和 `truncate`、`floor` 等检查除数是不是零。
+
 还没有接入的部分：
 
-- runtime 检测到的错误（类型错误、未定义函数、未绑定变量等，由 `rtfun.rs` 报出）还是直接终止程序，没有变成 condition；
 - `warn` 没有被 muffle 时的输出、报告函数和 `print-object` 都要等流和打印器；
 - `invoke-debugger` 也还没有交互式 debugger。
 
-`tests/m4/clos-conditions.lisp` 覆盖：`handler-case`、`handler-bind`、`signal`、`restart-case` 和 `invoke-restart`、`muffle-warning`、`ignore-errors`、`with-simple-restart`，condition 类型的 `typep`，带清理的非局部退出，嵌套的 handler，以及 Clostrophilia 报出的 `no-applicable-method-error`。
+`tests/m4/clos-conditions.lisp` 覆盖：`handler-case`、`handler-bind`、`signal`、`restart-case` 和 `invoke-restart`、`muffle-warning`、`ignore-errors`、`with-simple-restart`，condition 类型的 `typep`，带清理的非局部退出，嵌套的 handler，以及 Clostrophilia 报出的 `no-applicable-method-error`。还覆盖编译代码和 runtime 发现的错误：`car` 的类型错误、未定义函数、除零、参数个数不对、未绑定变量、下标越界、非数值参与运算。

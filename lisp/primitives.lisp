@@ -617,7 +617,11 @@ operand N."
     (:sin 17 :unary) (:cos 18 :unary) (:tan 19 :unary) (:atan 20 :unary)
     (:rational 21 :unary) (:atan2 22) (:number-expt 23)))
 (define-primop :type-error-type (x) (emit-error +err-bad-type+ x) (nil-value))
-(define-primop :lisp-error (x) (emit-error +err-lisp-error+ x) (nil-value))
+(define-primop :lisp-error (x) (emit-fatal-error +err-lisp-error+ x) (nil-value))
+(define-primop :fatal-error (code x)
+  ;; CODE is a fixnum.
+  (emit-fatal-error `(:sar ,code ,+fixnum-shift+) x)
+  (nil-value))
 
 ;;; CLOS objects (docs/10 §3). A rack is [header, class, stamp, slot list,
 ;;; slots...]; STANDARD-INSTANCE-ACCESS location L is rack word L + 4, so

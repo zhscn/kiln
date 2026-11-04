@@ -9,6 +9,12 @@
 
 (in-package #:kiln.kernel)
 
+;;; Errors detected by compiled code call this with the error code
+;;; (lisp/abi.lisp) and the offending object; the condition system
+;;; redefines it to signal a condition (lisp/target/clos/conditions.lisp).
+(defun %runtime-error (code object)
+  (%primop :fatal-error code object))
+
 ;;; Primitives as functions. The calls inside are inlined, so each of these
 ;;; is the out-of-line version of its primitive: what #'CAR and
 ;;; (APPLY 'CAR ...) call.
@@ -77,25 +83,38 @@
   (unless (realp x) (%primop :type-error-number x))
   x)
 
-(defun two-arg-+ (a b) (%primop :number-add a b))
-(defun two-arg-- (a b) (%primop :number-sub a b))
-(defun two-arg-* (a b) (%primop :number-mul a b))
+;; The arguments are checked here rather than in the runtime, so that the
+;; error can be a condition.
+(defun check-numbers (a b) (check-number a) (check-number b))
+(defun two-arg-+ (a b) (check-numbers a b) (%primop :number-add a b))
+(defun two-arg-- (a b) (check-numbers a b) (%primop :number-sub a b))
+(defun two-arg-* (a b) (check-numbers a b) (%primop :number-mul a b))
 ;; The compare result is a fixnum, so the < here takes the fast path.
 ;; Rationals and floats compare exactly (CLHS 12.1.4.1).
-(defun two-arg-< (a b) (< (%primop :number-compare a b) 0))
-(defun two-arg-> (a b) (> (%primop :number-compare a b) 0))
-(defun two-arg-<= (a b) (<= (%primop :number-compare a b) 0))
-(defun two-arg->= (a b) (>= (%primop :number-compare a b) 0))
-(defun two-arg-= (a b) (= (%primop :number-compare a b) 0))
+(defun compare (a b) (check-numbers a b) (%primop :number-compare a b))
+(defun two-arg-< (a b) (< (compare a b) 0))
+(defun two-arg-> (a b) (> (compare a b) 0))
+(defun two-arg-<= (a b) (<= (compare a b) 0))
+(defun two-arg->= (a b) (>= (compare a b) 0))
+(defun two-arg-= (a b) (= (compare a b) 0))
 (defun eql-slow (a b)
   ;; Called by EQL for non-identical heap objects: numbers of the same type
   ;; and value (floats by their bits).
   (%primop :number-eql a b))
 
+(defun check-divisor (n d)
+  ;; Division by zero is signaled here, so that it can be a condition
+  ;; (the runtime would end the program); 17 is the error code.
+  (check-numbers n d)
+  (when (zerop d)
+    (%runtime-error 17 n)))
+
 (defun / (n &rest ds)
   (if (null ds)
-      (%primop :number-div 1 n)
-      (dolist (d ds n) (setq n (%primop :number-div n d)))))
+      (progn (check-divisor 1 n) (%primop :number-div 1 n))
+      (dolist (d ds n)
+        (check-divisor n d)
+        (setq n (%primop :number-div n d)))))
 
 (defun + (&rest ns)
   (let ((s 0)) (dolist (n ns s) (setq s (+ s n)))))
@@ -131,10 +150,10 @@
 (defun abs (n) (if (< n 0) (- n) n))
 (defun signum (n) (cond ((> n 0) 1) ((< n 0) -1) (t 0)))
 
-(defun truncate (n &optional (d 1)) (%primop :number-truncate n d))
-(defun floor (n &optional (d 1)) (%primop :number-floor n d))
-(defun ceiling (n &optional (d 1)) (%primop :number-ceiling n d))
-(defun round (n &optional (d 1)) (%primop :number-round n d))
+(defun truncate (n &optional (d 1)) (check-divisor n d) (%primop :number-truncate n d))
+(defun floor (n &optional (d 1)) (check-divisor n d) (%primop :number-floor n d))
+(defun ceiling (n &optional (d 1)) (check-divisor n d) (%primop :number-ceiling n d))
+(defun round (n &optional (d 1)) (check-divisor n d) (%primop :number-round n d))
 (defun mod (n d) (nth-value 1 (floor n d)))
 (defun rem (n d) (nth-value 1 (truncate n d)))
 

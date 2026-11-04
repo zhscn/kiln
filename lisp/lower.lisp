@@ -262,9 +262,26 @@ one (bindings have none)."
     (emit `(:set ,v ,operand))
     v))
 
-(defun emit-error (code obj)
+(defun emit-fatal-error (code obj)
+  "Reports error CODE about the Lisp value OBJ and ends the program."
   (emit `(:call-rt ,(rt-error) () (:ctx ,code ,obj) ,(handler)))
   (emit '(:trap)))
+
+(defun emit-error (code obj)
+  "Signals error CODE about the Lisp value OBJ: by calling the kernel's
+%RUNTIME-ERROR with the code (a fixnum) and OBJ, which the condition
+system redefines to signal a condition; before the kernel has defined it,
+by ending the program."
+  (let ((obj (copy-to-var obj))
+        (f (function-cell-value 'kiln.kernel::%runtime-error))
+        (lisp (new-block))
+        (fatal (new-block)))
+    (br `(:eq (:load ,f ,+fobj-entry+) (:addr ,(undefined-function-entry))) fatal lisp)
+    (start-block lisp)
+    (emit-lisp-call f (list (ash code +fixnum-shift+) obj))
+    (jump fatal)
+    (start-block fatal)
+    (emit-fatal-error code obj)))
 
 (defun emit-poll ()
   (let ((slow (new-block)) (cont (new-block)))

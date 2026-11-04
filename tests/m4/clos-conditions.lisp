@@ -48,3 +48,16 @@
 (print (mapcar #'class-name
                (clostrophilia:class-precedence-list
                 (find-class 'clostrophilia:no-applicable-method-error))))
+
+;;; Errors detected by compiled code and the runtime.
+(print (handler-case (car 5)
+         (type-error (c) (list (type-error-datum c) (type-error-expected-type c)))))
+(print (handler-case (no-such-function 1)
+         (undefined-function (c) (cell-error-name c))))
+(print (handler-case (/ 1 0) (division-by-zero () 'division-by-zero)))
+(print (handler-case (floor 7 0) (arithmetic-error () 'arithmetic-error)))
+(print (handler-case (funcall (lambda (x) x)) (program-error () 'wrong-argument-count)))
+(print (handler-case (symbol-value (gensym)) (unbound-variable () 'unbound)))
+(print (handler-case (svref (vector 1 2) 5) (error () 'bad-index)))
+(print (handler-case (+ 1 'a) (type-error (c) (type-error-datum c))))
+(print (handler-case (funcall 'no-such-function-either) (cell-error () 'cell-error)))
