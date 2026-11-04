@@ -7,7 +7,7 @@
 
 ;;; Standard types that have no objects in kiln yet: nothing is of them.
 (defparameter *types-without-objects*
-  '(complex package pathname logical-pathname bit-vector simple-bit-vector
+  '(complex pathname logical-pathname bit-vector simple-bit-vector
     structure-object stream readtable random-state))
 
 ;;; TYPEP of a class name or a class.

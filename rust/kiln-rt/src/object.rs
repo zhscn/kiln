@@ -67,10 +67,12 @@ pub const UNBOUND_SLOT: u64 = 0x2b;
 
 /// Layout: [header, name, package, function, value, TLS index, plist,
 /// setf function].
-/// `name` is a string object; `package` the package (for now the package
-/// name as a string, NIL when uninterned); the TLS index is a fixnum, 0
-/// until first bound (special.rs). Symbols emitted by the compiler are
-/// static; `function`, `value` and `plist` are registered as GC roots.
+/// `name` is a string object; `package` the package (NIL when
+/// uninterned; the compiler emits the package's name as a string, which
+/// the package system replaces with the package object, docs/10 §12); the
+/// TLS index is a fixnum, 0 until first bound (special.rs). Symbols
+/// emitted by the compiler are static; `package`, `function`, `value`,
+/// `plist` and `setf_function` are registered as GC roots.
 #[repr(C)]
 pub struct SymbolObj {
     pub header: u64,
@@ -165,6 +167,7 @@ pub fn init_statics() {
         // the heap.
         let mut roots = Vec::new();
         for s in [n, t] {
+            roots.push(&raw mut (*s).package as usize);
             roots.push(&raw mut (*s).function as usize);
             roots.push(&raw mut (*s).plist as usize);
             roots.push(&raw mut (*s).setf_function as usize);
@@ -281,7 +284,16 @@ pub unsafe fn write_object(out: &mut String, v: u64) {
         match h & KIND_MASK {
             KIND_SYMBOL => {
                 let s = unsafe { &*(untag(v) as *const SymbolObj) };
-                if is_general(s.package) && unsafe { string_value(s.package) } == "KEYWORD" {
+                // A keyword: its package is KEYWORD (by name, before
+                // package objects exist), and its value is itself.
+                let keyword = if is_general(s.package)
+                    && unsafe { header(s.package) } & KIND_MASK == KIND_STRING
+                {
+                    (unsafe { string_value(s.package) }) == "KEYWORD"
+                } else {
+                    s.value == v && v != tag_general(&raw const kiln_t)
+                };
+                if keyword {
                     out.push(':');
                 }
                 out.push_str(&unsafe { string_value(s.name) });

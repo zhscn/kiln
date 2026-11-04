@@ -203,6 +203,46 @@ Rust 和编译器里所有从 header 读长度的地方都改为只取 32 位（
 - **`defconstant`**（kernel 宏）：编译期把名字登记为编译期环境里的常量，引用处直接编译成值；加载时给 symbol 设值。kernel 定义了 `most-positive-fixnum`、`most-negative-fixnum`。
 - **setf 展开器**：kiln 的 client 实现了 Common-macros 的 `get-setf-expansion`（展开 symbol macro 和宏形式、查 setf 展开器），`define-setf-expander` 在编译期把展开器登记到 Clostrum 环境。kernel 用它定义了 `getf` 和 `ldb` 的展开器。
 - **声明里的函数类型**：Iconoclast 没有 `(function ...)`、`(values ...)` 这类复合类型的 AST，前端在转换之前把 `declare` 里的这类类型降级为 `function` 或 `t`，并去掉 `ftype` 声明。它们目前只是提示，不影响语义。
-- **类型**：`typep` 对 `complex`、`package`、`pathname`、`bit-vector`、`structure-object` 等现在还没有对象的标准类型返回 NIL。kernel 加了 `byte`、`ldb`、`dpb`、`mask-field`、`ldb-test`，以及按一维向量实现的 `array-rank`、`array-dimensions`、`array-total-size`、`row-major-aref`。
+- **类型**：`typep` 对 `complex`、`pathname`、`bit-vector`、`structure-object` 等现在还没有对象的标准类型返回 NIL。kernel 加了 `byte`、`ldb`、`dpb`、`mask-field`、`ldb-test`，以及按一维向量实现的 `array-rank`、`array-dimensions`、`array-total-size`、`row-major-aref`。
 
 `tests/m4/clos-hash-tables.lisp` 覆盖：四种测试函数；实例、symbol、cons 作 EQ 键，并在大量分配和 GC 之后查找；bignum、浮点、字符作 EQL 键；字符串和列表作 EQUAL 键；大小写无关的字符串和不同类型的数作 EQUALP 键；扩容、`remhash`、`maphash`、`clrhash`、迭代器和 `sxhash`。
+
+## 12. M4.5：包（Parcl）
+
+Parcl vendor 在 `vendor/Parcl`，以 intrinsic 方式加载：`parcl-low`（泛函协议和默认方法）、`parcl-low-class`（包是带槽的类）、`parcl` 公共层直接定义 `cl:intern`、`cl:find-symbol`、`cl:export`、`cl:use-package`、`cl:make-package` 等。kiln 的 client 和引导在 `lisp/target/clos/package-system.lisp`，Parcl 的补丁见 `vendor/README.md`。
+
+**运行期的包镜像宿主的包**：目标源码由宿主 Eclector 读进宿主的包（`defpackage` 在宿主执行，见 §6），所以宿主的包结构就是目标程序的包结构。
+
+- **编译期**：每个模块编译完后，编译器生成一张 symbol 表，记下两类宿主包，即模块里 symbol 的 home 包和模块的 `defpackage` 新建的包。每个包记录：
+  - 名字、昵称、use 列表（只保留运行期存在的包）；
+  - 模块里每个在该包中 present 的 symbol 及其状态（internal/external、是否 shadowing、该包是否是它的 home 包）。
+  
+  `defpackage` 新建的包，它的外部 symbol 都会放进表里，哪怕模块没有引用。kernel 额外带上 CL 的全部 978 个外部 symbol，这样运行期每个标准 symbol 都存在。宿主的 `KILN-USER`（测试程序读入的包）在运行期叫 `COMMON-LISP-USER`，昵称 `CL-USER`。
+- **加载时**：模块的 init 函数第一件事是把这张表推到 `kiln.kernel::*module-symbol-tables*`，然后如果 `%register-module-symbols` 已经定义就调用它。CLOS 模块加载完 Parcl 和 client 后自己调用一次，把 kernel 和 CLOS 模块的表登记成包对象。登记过程：
+  - 新建 Parcl 的包对象，填好符号表和 use 列表（宿主已经检查过冲突，所以直接写入，不走 `use-package` 的检查）；
+  - 把每个 symbol 的 `package` 槽从包名字符串换成 home 包对象；
+  - NIL 和 T 由 runtime 定义，单独登记。
+  
+  之后加载的模块在 init 开头就完成登记。
+- **symbol 的 `package` 槽**：静态 symbol 的这个槽登记为 GC root，因为登记后它指向堆上的包对象；NIL 和 T 的同样登记为 root。新 primop 有两个：`:set-symbol-package`，以及 `:set-symbol-global-value`（新的 keyword 以自身为值）。
+- **keyword**：`keywordp` 比较 `kiln.kernel::*keyword-package*`，包系统就位之前比较包名字符串。runtime 的打印器在 `package` 槽是字符串时比较名字，否则看 symbol 的值是不是它自己（T 除外）。
+
+**kiln 的 client**：
+- symbol 表是 `equal` 哈希表；
+- 包注册表是另一张 `equal` 哈希表，把名字和昵称映射到包，`store-package` 检查重名；
+- `find-package` 是 Parcl 定义的泛函，kiln 为包、字符串、symbol、字符各加一个方法；
+- 在 KEYWORD 里 intern 的 symbol 设为外部 symbol，并以自身为值。
+
+Parcl 没有提供的部分由 kiln 自己写：`list-all-packages`、`packagep`、`rename-package`、`delete-package`、`unintern`、`find-all-symbols`、`do-symbols`、`do-external-symbols`、`do-all-symbols`、`with-package-iterator`。其中 `with-package-iterator` 先把要遍历的 symbol 收集成列表。启动时 `*package*` 是 `COMMON-LISP-USER`。
+
+**还没做**：
+- 运行期的 `defpackage` 和 `in-package`（编译的模块不改 `*package*`；要等 REPL 或 `eval`）；
+- 包局部昵称不参与 `find-package`；
+- 冲突时的 restart 只有 Parcl 原有的那些（`use-package` 冲突直接报 `package-error`）；
+- `do-symbols` 对有 use 列表的包是平方复杂度（Parcl 的 `map-symbols` 用列表去重）。
+
+`tests/m4/clos-packages.lisp` 覆盖：
+- 静态 symbol 的 home 包、继承来的 symbol、CL 的 978 个外部 symbol；
+- 新 keyword、新包，`export`/`use-package` 后的继承，`use-package` 的冲突；
+- `shadow`、`unintern`、`import` 无 home 包的 symbol；
+- `do-symbols`、`with-package-iterator`、`rename-package`、`delete-package`、`find-all-symbols`。

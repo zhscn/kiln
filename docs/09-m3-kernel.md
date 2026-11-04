@@ -16,7 +16,7 @@ M3 的目标见 [04 的里程碑](04-bootstrap.md#里程碑)：把 ANSI 核心�
 
 依赖 CLOS 的模块（Predicament、ctype、Consecution、Salmagundi、Cyclosis、打印器等）放到 M4 之后。
 
-**包移到 M4**：Parcl 的底层协议（`parcl-low`）全是泛函，包本身是 CLOS 类（`Low/package-class.lisp`），符号表用哈希表。它要在 CLOS 和 Salmagundi 之后才能运行。在那之前自己写一套简单的包实现，Parcl 一到就要扔掉，所以不做。在那之前，symbol 的 `package` 槽存包名字符串，`keywordp` 和打印器靠它判断。交叉编译时目标包和宿主包怎么分开（例如目标的 Eclector 和宿主编译器用的 Eclector 同名），也等到真正交叉编译这些模块时再定。
+**包移到 M4**：Parcl 的底层协议（`parcl-low`）全是泛函，包本身是 CLOS 类（`Low/package-class.lisp`），符号表用哈希表。它要在 CLOS 和 Salmagundi 之后才能运行。在那之前自己写一套简单的包实现，Parcl 一到就要扔掉，所以不做。在那之前，symbol 的 `package` 槽存包名字符串，`keywordp` 和打印器靠它判断（M4.5 的做法见 [10 §12](10-m4-clos.md#12-m45包parcl)）。交叉编译时目标包和宿主包怎么分开（例如目标的 Eclector 和宿主编译器用的 Eclector 同名），也等到真正交叉编译这些模块时再定。
 
 ## 2. 值的表示
 
@@ -61,7 +61,7 @@ header 的低 8 位是 kind，第 8 位起是长度（含义随 kind 而定）�
 
 **symbol**：
 
-- `name` 是字符串对象，`package` 是包对象，未 intern 的 symbol 是 NIL。M3.3 之前还没有包对象，`package` 暂时存包名字符串。
+- `name` 是字符串对象，`package` 是包对象，未 intern 的 symbol 是 NIL。编译器生成的静态 symbol 在这个槽里存包名字符串，包系统（M4.5，[10 §12](10-m4-clos.md#12-m45包parcl)）启动时把它换成包对象。
 - keyword 的值是它自己，`function` 槽初始指向“未定义函数”对象（[08 §3](08-m2-front-end.md#3-对象布局的扩展)）。
 - NIL 和 T 仍然是 runtime 里的静态对象，名字字符串在 runtime 启动时填写（Rust 的常量求值不能做指针加 tag）。
 

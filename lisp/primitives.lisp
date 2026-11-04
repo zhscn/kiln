@@ -531,6 +531,10 @@ operand N."
     s))
 (define-primop :symbol-plist (s) (copy-to-var `(:load ,s ,+symbol-plist+)))
 (define-primop :set-symbol-plist (s v) (emit `(:store ,s ,+symbol-plist+ ,v)) v)
+;; The package system sets the home package of a symbol (docs/10 §12), and
+;; makes a new keyword its own (global) value.
+(define-primop :set-symbol-package (s p) (emit `(:store ,s ,+symbol-package+ ,p)) p)
+(define-primop :set-symbol-global-value (s v) (emit `(:store ,s ,+symbol-value+ ,v)) v)
 
 (define-primop :evenp (n)
   (emit-check-fixnums n n)

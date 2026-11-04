@@ -545,11 +545,23 @@
 (defun (setf symbol-plist) (v s)
   (unless (symbolp s) (%primop :type-error-symbol s))
   (%primop :set-symbol-plist s v))
+;;; Each module's init pushes its symbol table here before anything else
+;;; (lower.lisp); the package system registers the symbols (docs/10 §12).
+;;; No initial value: the kernel's own table is pushed before this runs.
+(defvar *module-symbol-tables*)
+
+;;; The KEYWORD package, once the package system exists. (No docstring:
+;;; (SETF DOCUMENTATION) is defined in early.lisp.)
+(defvar *keyword-package* nil)
+
 (defun keywordp (x)
-  ;; Until packages exist (M3.3) a symbol's package is its package name.
+  ;; Before the package system has replaced it with the package, a
+  ;; symbol's package is its package name.
   (and (symbolp x) x (not (eq x t))
        (let ((p (symbol-package x)))
-         (and (stringp p) (string= p "KEYWORD")))))
+         (if (stringp p)
+             (string= p "KEYWORD")
+             (and p (eq p *keyword-package*))))))
 
 (defun getf (plist indicator &optional default)
   (do ((l plist (cddr l)))

@@ -127,6 +127,8 @@ name of its package as a string."
                 ,+tag-general+))
       (nil-word)))
 
+(defvar *module-symbols*)               ; symbols with static data, newest first
+
 (defun symbol-data (sym)
   "Name of the static data object of the symbol SYM (not NIL or T)."
   (let* ((label (symbol-label sym))
@@ -155,6 +157,9 @@ name of its package as a string."
         (module-shared undef)
         (module-shared undef-setf)
         (module-shared obj)
+        (push sym *module-symbols*)
+        ;; The package slot holds the package object once packages exist.
+        (module-root obj 2)
         (module-root obj 3)
         (module-root obj 4)
         (module-root obj 6)
@@ -1328,28 +1333,121 @@ be confused with a later activation at the same address."
 
 ;;; Module
 
+(defun symbol-table-cell ()
+  (format nil "kiln_symtab_~A" *module-label*))
+
+(defun emit-note-symbol-table ()
+  "Pushes the module's symbol table (SYMBOL-TABLE-LITERAL, stored in a
+static cell when the module is complete) onto
+KILN.KERNEL::*MODULE-SYMBOL-TABLES*, then calls
+KILN.KERNEL::%REGISTER-MODULE-SYMBOLS if the package system has defined
+it (docs/10 §12). Nothing binds the variable while modules are loaded, so
+its global value is used directly."
+  (let* ((sym (copy-to-var (word-operand (symbol-word 'kiln.kernel::*module-symbol-tables*))))
+         (old (new-var))
+         (unbound (new-block)) (join (new-block)))
+    (emit `(:set ,old (:load ,sym ,+symbol-value+)))
+    (br `(:eq ,old ,+unbound+) unbound join)
+    (start-block unbound)
+    (emit `(:set ,old ,(nil-value)))
+    (jump join)
+    (start-block join)
+    (let ((table (copy-to-var `(:load (:addr ,(symbol-table-cell)) 0))))
+      (emit `(:store ,sym ,+symbol-value+ ,(emit-cons table old)))))
+  (let ((f (function-cell-value 'kiln.kernel::%register-module-symbols))
+        (call (new-block)) (join (new-block)))
+    (br `(:eq (:load ,f ,+fobj-entry+) (:addr ,(undefined-function-entry))) join call)
+    (start-block call)
+    (emit-lisp-call f '())
+    (jump join)
+    (start-block join)))
+
 (defun compile-toplevel-function (asts)
   "The module's init function: runs the top-level forms in order."
   (let ((*regions* '()))
     (with-function ((format nil "kiln_toplevel_~A" *module-label*))
       (let ((*self* (copy-to-var :self)))
         (emit-poll)
+        (emit-note-symbol-table)
         (dolist (ast asts)
           (emit-load-time-values ast)
           (lower ast))
         (emit `(:return ,(nil-value) 1))))))
 
-(defun compile-module (asts module-name)
-  "Compiles the simplified top-level ASTS into a KIR module."
+;;; The module's symbol table, for the package system (docs/10 §12): a
+;;; simple vector of package descriptions #(name nicknames uses entries),
+;;; one for each host package that is the home of a symbol of the module
+;;; or that the module defined. ENTRIES holds a symbol and its status in
+;;; the package, alternately: 1 if external, + 2 if shadowing, + 4 if the
+;;; package is its home package. The run-time packages mirror the host
+;;; packages the target sources were read into; KILN-USER (where test
+;;; programs are read) is COMMON-LISP-USER.
+
+(defun target-package-name (package)
+  (if (eq package (find-package '#:kiln-user))
+      "COMMON-LISP-USER"
+      (package-name package)))
+
+(defun target-package-nicknames (package)
+  (if (eq package (find-package '#:kiln-user))
+      '("CL-USER")
+      (package-nicknames package)))
+
+(defun package-entries (package symbols)
+  (let ((shadowing (package-shadowing-symbols package)))
+    (coerce (loop for sym in symbols
+                  append (multiple-value-bind (found status)
+                             (find-symbol (symbol-name sym) package)
+                           (when (and (eq found sym) (member status '(:internal :external)))
+                             (list sym (logior (if (eq status :external) 1 0)
+                                               (if (member sym shadowing) 2 0)
+                                               (if (eq (symbol-package sym) package) 4 0))))))
+            'simple-vector)))
+
+(defun symbol-table-literal (symbols session defined-packages)
+  "SESSION (if any) remembers the packages described so far: a package's
+use list only names packages that exist at run time."
+  (let ((packages (copy-list defined-packages)))
+    (dolist (sym symbols)
+      (let ((p (symbol-package sym)))
+        (when p (pushnew p packages))))
+    (let ((known (if session
+                     (dolist (p packages (session-packages session))
+                       (pushnew p (session-packages session)))
+                     packages)))
+      (coerce (loop for p in packages
+                    collect (vector (target-package-name p)
+                                    (target-package-nicknames p)
+                                    (loop for u in (package-use-list p)
+                                          when (member u known)
+                                            collect (target-package-name u))
+                                    (package-entries p symbols)))
+              'simple-vector))))
+
+(defun compile-module (asts module-name &key session defined-packages extra-symbols)
+  "Compiles the simplified top-level ASTS into a KIR module. The module's
+symbol table describes its symbols, the EXTRA-SYMBOLS and the symbols of
+the DEFINED-PACKAGES (host packages its DEFPACKAGE forms created) for the
+package system (docs/10 §12)."
   (let ((*module* (make-kmodule module-name))
         (*module-label* (mangle module-name))
         (*counter* 0)
         (*vars* (make-hash-table :test 'eq))
         (*exits* (make-hash-table :test 'eq))
         (*constants* (make-hash-table :test 'eql))
-        (*constant-vars* (make-hash-table :test 'eq)))
+        (*constant-vars* (make-hash-table :test 'eq))
+        (*module-symbols* '()))
     (let ((*load-time-values* (make-hash-table :test 'eq)))
       (compile-toplevel-function asts))
+    (dolist (sym extra-symbols)
+      (symbol-word sym))
+    (dolist (package defined-packages)
+      (do-symbols (sym package)
+        (when (eq (nth-value 1 (find-symbol (symbol-name sym) package)) :external)
+          (symbol-word sym))))
+    (module-data (symbol-table-cell)
+                 `(:words ,(constant-word (symbol-table-literal
+                                           *module-symbols* session defined-packages))))
     (let ((init (format nil "kiln_toplevel_~A" *module-label*)))
       (module-data (format nil "~A_fobj" init) `(:words ,+kind-function+ (:func ,init)))
       (module-init (format nil "~A_fobj" init)))

@@ -288,6 +288,7 @@ the file. Reading starts in KILN-USER, with the target's features."
 
 ;;; Top-level form processing (CLHS 3.2.3.1)
 
+(defvar *defined-packages*)             ; host packages created by DEFPACKAGE forms
 (defvar *toplevel-asts*)                ; simplified ASTs, most recent first
 
 (defun cst-list (cst)
@@ -388,19 +389,20 @@ whole instead (the declarations would otherwise be lost)."
           (eval-when
            (process-eval-when cst compile-time-too))
           ;; The host reader reads the rest of the file in the package.
-          ;; There are no packages at run time yet (M3.3), so nothing is
-          ;; compiled for it.
+          ;; Nothing is compiled for it: compiled modules do not change
+          ;; *PACKAGE* when they are loaded.
           (in-package
            (setf *package* (or (find-package (second form))
                                (error "IN-PACKAGE: no package named ~S" (second form)))))
           ;; DEFPACKAGE creates the package in the host, so that the rest
-          ;; of the sources can be read. Nothing is compiled: there are
-          ;; no packages at run time until Parcl is loaded (docs/10 §7).
-          ;; A package that exists already (a host system such as
-          ;; Ecclesia) is left alone.
+          ;; of the sources can be read. Nothing is compiled: the run-time
+          ;; package is built from the module's symbol table, which
+          ;; mirrors the host package (docs/10 §12). A package that
+          ;; exists already (a host system such as Ecclesia) is left
+          ;; alone.
           (defpackage
            (unless (find-package (second form))
-             (eval form)))
+             (push (eval form) *defined-packages*)))
           ((locally macrolet symbol-macrolet)
            (process-toplevel-body cst compile-time-too))
           (t
@@ -416,7 +418,10 @@ separate modules: the kernel's macros and definitions stay visible to the
 programs compiled after it."
   client
   environment
-  (defined-functions (make-hash-table :test 'equal)))
+  (defined-functions (make-hash-table :test 'equal))
+  ;; Host packages described by the symbol tables of the modules compiled
+  ;; so far (lower.lisp).
+  (packages '()))
 
 (defun make-session ()
   (let ((client (make-instance 'client)))
@@ -470,13 +475,15 @@ nothing else."
   "Reads and processes the top-level forms of the files PATHS (or
 (:COMPILE-TIME-TOO path) elements), in order,
 as one compilation unit, in SESSION. Returns the simplified ASTs of the
-forms to compile, in order."
+forms to compile, in order, and the host packages that DEFPACKAGE forms
+created."
   (let* ((*client* (session-client session))
          (cmd:*client* *client*)
          (*environment* (session-environment session))
          (*toplevel-asts* '())
          (*defined-functions* (session-defined-functions session))
-         (*referenced-functions* (make-hash-table :test 'equal)))
+         (*referenced-functions* (make-hash-table :test 'equal))
+         (*defined-packages* '()))
     ;; Calls to functions defined later in the file are fine: report
     ;; undefined functions at the end (CLHS 3.2.2.3).
     (handler-bind ((cb:no-function-description
@@ -503,4 +510,4 @@ forms to compile, in order."
                              collect name)))
       (when undefined
         (warn 'undefined-function-warning :names undefined)))
-    (reverse *toplevel-asts*)))
+    (values (reverse *toplevel-asts*) (reverse *defined-packages*))))

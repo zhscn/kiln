@@ -56,6 +56,26 @@
             "warn-defmethods" "abort-defun" "muffle-warning-defun" "continue-defun"
             "store-value-defun" "use-value-defun" "assert")))
 
+(defparameter *parcl-files*
+  ;; parcl-low, parcl-low-class, parcl-packages-intrinsic, parcl-common.
+  (mapcar (lambda (name)
+            (asdf:system-relative-pathname
+             "kiln" (format nil "vendor/Parcl/Code/~A.lisp" name)))
+          '("Low/packages" "Low/accessors" "Low/configuration" "Low/generic-functions"
+            "Low/package-class" "Low/find-symbol" "Low/import" "Low/shadowing-import"
+            "Low/use-packages" "Low/unuse-package" "Low/export" "Low/unexport"
+            "Low/unintern" "Low/add-local-nickname" "Low/remove-local-nickname"
+            "Low/condition-types"
+            "Low/Class/packages" "Low/Class/client" "Low/Class/package-defclass"
+            "Low/Class/methods" "Low/Class/map-symbols" "Low/Class/map-external-symbols"
+            "packages-intrinsic"
+            "variables" "utilities" "package-name" "package-nicknames"
+            "package-shadowing-symbols" "package-use-list" "package-used-by-list"
+            "intern" "find-symbol" "import" "shadowing-import" "use-package"
+            "unuse-package" "export" "unexport" "shadow" "add-package-local-nickname"
+            "remove-package-local-nickname" "make-package" "condition-types"))
+  "Parcl, intrinsic: it defines the CL package functions.")
+
 (defun clostrophilia-files (groups)
   "GROUPS: lists (DIRECTORY FILE...); a FILE is a name or
 (:COMPILE-TIME-TOO name)."
@@ -136,7 +156,9 @@
               "kiln" (format nil "vendor/Salmagundi/code/~A.lisp" name)))
            '("packages" "utility" "generic-functions" "hash-table" "hash"
              "buckets/packages" "buckets/bucket-hash-table"))
-   (list (kiln-clos-file "hash-tables")))
+   (list (kiln-clos-file "hash-tables"))
+   *parcl-files*
+   (list (kiln-clos-file "package-system")))
   "Sources of the CLOS module, in load order (docs/10 §7).")
 
 (defun write-module (module output)
@@ -144,25 +166,30 @@
     (kiln.kir:print-module module out))
   output)
 
+(defun compile-files (files session module-name &key extra-symbols)
+  (multiple-value-bind (asts defined-packages) (kiln.compiler:front-end files session)
+    (kiln.compiler:compile-module asts module-name
+                                  :session session
+                                  :defined-packages defined-packages
+                                  :extra-symbols extra-symbols)))
+
 (defun compile-kernel (output &key (session (kiln.compiler:make-session)))
   "Compiles the kernel to the KIR module OUTPUT. Programs compiled later
 in SESSION see its macros and definitions."
-  (write-module (kiln.compiler:compile-module
-                 (kiln.compiler:front-end *kernel-files* session) "kernel")
+  (write-module (compile-files *kernel-files* session "kernel"
+                              ;; Every standard symbol exists at run time.
+                              :extra-symbols (let ((symbols '()))
+                                               (do-external-symbols (s '#:common-lisp symbols)
+                                                 (push s symbols))))
                 output))
 
 (defun compile-file-to-kir (input output &key (session (kiln.compiler:make-session)))
   "Compiles the source file INPUT to the KIR module OUTPUT. Run it with the
 kernel module first: kiln-cg jit kernel.kir OUTPUT."
-  (write-module (kiln.compiler:compile-module
-                 (kiln.compiler:front-end (list input) session)
-                 (pathname-name input))
-                output))
+  (write-module (compile-files (list input) session (pathname-name input)) output))
 
 (defun compile-clos (output &key (session (kiln.compiler:make-session)))
   "Compiles CLOS (Clostrophilia and kiln's bootstrap) to the KIR module
 OUTPUT, to be loaded after the kernel. SESSION must have compiled the
 kernel."
-  (write-module (kiln.compiler:compile-module
-                 (kiln.compiler:front-end *clos-files* session) "clos")
-                output))
+  (write-module (compile-files *clos-files* session "clos") output))
