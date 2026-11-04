@@ -20,6 +20,9 @@
   #+sicl
   (mapcar #'sicl-clos:slot-definition-name
           (sicl-clos:class-slots class))
+  #+kiln
+  (mapcar #'clostrophilia:slot-definition-name
+          (clostrophilia:class-slots class))
   #+sbcl
   (mapcar #'sb-mop:slot-definition-name
           (sb-mop:class-slots class)))
@@ -121,6 +124,13 @@
              (double-float +double-float-seed+)
              #+quaviver/long-float
              (long-float +long-float-seed+)))
+  ;; kiln: no Quaviver; hash the exact rational value (KILN has no
+  ;; infinities or NaNs to hash yet).
+  #+kiln
+  (let ((rational (rational object)))
+    (funcall accumulate (numerator rational))
+    (funcall accumulate (denominator rational)))
+  #-kiln
   (multiple-value-bind (significand exponent sign)
       (quaviver:float-triple nil 2 object)
     (cond ((symbolp exponent)
@@ -196,7 +206,9 @@
   (declare (type (function (integer) null) accumulate))
   (funcall accumulate +object-seed+)
   (funcall accumulate
-           #-(or abcl allegro ccl cmucl ecl sbcl) 0
+           #-(or abcl allegro ccl cmucl ecl sbcl kiln) 0
+           ;; kiln: the identity hash, stable across moving collections.
+           #+kiln (kiln.sys:%primop :identity-hash object)
            #+abcl (system:identity-hash-code object)
            #+allegro (excl:lispval-to-address object)
            #+ccl (ccl:%address-of object)

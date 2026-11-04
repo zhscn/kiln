@@ -32,7 +32,6 @@ Parcl https://github.com/s-expressionists/Parcl main bec1c13abb9f77deecf44f2e9a3
 parser.packrat https://github.com/scymtym/parser.packrat future 835090176480e68a8af87ba550b6c9639f94f542
 Quaviver https://github.com/s-expressionists/Quaviver main d11d95e5f42873c89ee4d3fde4333d256f9bf571
 Regalia https://github.com/robert-strandh/Regalia.git master 76b2f27f521edf072f8c9012e714caed3fed2194
-Salmagundi https://github.com/s-expressionists/Salmagundi main f03296d46a1b189a3b723eb2dcdfc7c5af38163a
 s-expression-syntax https://github.com/scymtym/s-expression-syntax.git beach 1ecd399a671eeb34a50e573a38d74c4dab3663b1
 Trinsic https://github.com/s-expressionists/Trinsic main 3a370f91982fba03987ae71d5b75e8527508b3c4
 trivial-features https://github.com/trivial-features/trivial-features master 828246a1c1efdcad94c1ba2f2a210bb9cb4cde3e

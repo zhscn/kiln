@@ -38,3 +38,14 @@ Each patched place is marked with a `kiln:` comment.
 
 - `signal` and `warn` on a string or a symbol call themselves on the condition without
   a stray `nil` argument (which its own `:before` method rejected).
+
+## Salmagundi patches
+
+Under `#+kiln` (kiln reads target sources with its own features):
+
+- The package shadows only `make-hash-table` and `sxhash` (their
+  Salmagundi versions take a client); `gethash` and the rest are the CL
+  functions.
+- `eq-hash` uses kiln's identity hash (stored in the object header,
+  stable across moving collections); `slot-names` uses Clostrophilia;
+  `hash-float` hashes the exact rational value instead of using Quaviver.
