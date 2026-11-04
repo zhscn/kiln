@@ -1,0 +1,117 @@
+(cl:in-package #:invistra)
+
+(defclass client () ())
+
+;;; Return the name of a subclass to be used for a particular
+;;; directive.  Each particular directive subclass must be accompanied
+;;; by an eql-specialized method on this generic function.
+(defgeneric specialize-directive (client character directive))
+
+;;; For the default case, signal an error.
+(defmethod specialize-directive (client character directive)
+  (declare (ignore character))
+  (signal-unknown-directive-character client directive))
+
+(defgeneric append-clause (client directive items terminator))
+
+(defgeneric parameter-specifications (client directive)
+  (:method (client directive)
+    (declare (ignore client directive))
+    nil))
+
+;;; Check the syntax of a directive.
+(defgeneric check-item-syntax
+    (client directive global-layout local-layout parent &optional group position)
+  (:method-combination progn :most-specific-last)
+  (:method progn (client directive global-layout local-layout parent &optional group position)
+    (declare (ignore client directive global-layout local-layout parent group position))))
+
+(defgeneric interpret-item (client item &optional parameters)
+  (:method (client item &optional parameters)
+    (declare (ignore client item parameters))))
+
+(defgeneric compile-item (client item &optional parameters)
+  (:method (client item &optional parameters)
+    (declare (ignore client item parameters))))
+
+(defgeneric parse-parameter (client character directive)
+  (:method (client character directive)
+    (declare (ignore client character directive))
+    nil))
+
+(defgeneric parse-modifier (client character directive)
+  (:method (client character directive)
+    (declare (ignore client character directive))
+    nil))
+
+(defgeneric parse-suffix (client character directive)
+  (:method (client character directive)
+    (declare (ignore client character directive))
+    nil))
+
+(defgeneric parse-directive (client character control-string position)
+  (:method (client character control-string position)
+    (declare (ignore client character control-string position))
+    nil))
+
+(defgeneric merge-layout (client item global local &rest args &key))
+
+(defgeneric coerce-function-designator (client object)
+  (:method (client object)
+    (declare (ignore client))
+    object))
+
+(defgeneric print-key-sequence (client character stream)
+  (:method (client character stream)
+    (declare (ignore client stream))
+    character))
+
+(defgeneric make-argument-cursor (client object))
+
+(defgeneric traverse-item (client item)
+  (:method (client item)
+    (declare (ignore client item))))
+
+(defgeneric end (directive))
+
+(defgeneric structured-end (directive)
+  (:method (directive)
+    (end directive)))
+
+(defgeneric null-parameter-p (parameter)
+  (:method (parameter)
+    (declare (ignore parameter))
+    nil))
+
+(defgeneric control-string (directive))
+
+(defgeneric start (directive))
+
+(defgeneric suffix-start (directive))
+
+(defgeneric directive-character (directive))
+
+(defgeneric parameters (directive))
+
+(defgeneric colon-p (directive))
+
+(defgeneric at-sign-p (directive))
+
+(defgeneric structured-end-p (directive)
+  (:method (directive)
+    (declare (ignore directive))
+    nil))
+
+(defgeneric structured-separator-p (directive)
+  (:method (directive)
+    (declare (ignore directive))
+    nil))
+
+(defgeneric structured-start-p (directive)
+  (:method (directive)
+    (declare (ignore directive))
+    nil))
+
+(defgeneric interpret-parameter (parameter))
+
+(defgeneric compile-parameter (parameter))

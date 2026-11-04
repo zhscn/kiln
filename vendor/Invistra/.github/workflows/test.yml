@@ -1,0 +1,63 @@
+name: test
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  test:
+    name: ${{ matrix.lisp }}
+    defaults:
+      run:
+        shell: bash -l {0}
+    strategy:
+      fail-fast: false
+      matrix:
+        lisp:
+        - abcl
+        - ccl
+        - clasp
+        - cmucl
+        - ecl
+        - sbcl
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/yitzchak/archlinux-cl:latest
+      options: --security-opt seccomp:unconfined
+    steps:
+    - name: Checkout nontrivial-gray-streams
+      uses: actions/checkout@v7
+      with:
+        repository: yitzchak/nontrivial-gray-streams
+        path: nontrivial-gray-streams
+    - name: Checkout Quaviver
+      uses: actions/checkout@v7
+      with:
+        repository: s-expressionists/Quaviver
+        path: quaviver
+    - name: Checkout Incless
+      uses: actions/checkout@v7
+      with:
+        repository: s-expressionists/Incless
+        path: incless
+    - name: Checkout Inravina
+      uses: actions/checkout@v7
+      with:
+        repository: s-expressionists/Inravina
+        path: inravina
+    - name: Checkout Repository
+      uses: actions/checkout@v7
+      with:
+        path: invistra
+    - name: Setup Lisp Environment
+      run: |
+        make-rc
+        asdf-add
+    - name: Run Unit Tests
+      run: |
+        lisp -i ${{ matrix.lisp }} -e "(defparameter cl-user::*exit-on-test-failures* t)" -e "(asdf:load-system :invistra-extrinsic/unit-test)" -e "(parachute:test :invistra-extrinsic/unit-test)"
+    - name: Run ANSI Tests
+      run: |
+        lisp -i ${{ matrix.lisp }} -e "(asdf:load-system :invistra-extrinsic/ansi-test)" -e "(invistra-extrinsic/ansi-test:test :exit t)"
