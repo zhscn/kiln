@@ -9,15 +9,15 @@
                      do (funcall handler datum)))))
 
 
+;;; kiln: no NIL argument in the recursive calls; the :BEFORE method below
+;;; signals a TYPE-ERROR when a condition comes with arguments.
 (defmethod signal :around ((datum string) &rest arguments)
   (signal (make-condition 'simple-condition
                           :format-control datum
-                          :format-arguments arguments)
-          nil))
+                          :format-arguments arguments)))
 
 (defmethod signal :around ((datum symbol) &rest arguments)
-  (signal (apply #'make-condition datum arguments)
-          nil))
+  (signal (apply #'make-condition datum arguments)))
 
 (defmethod signal :before ((datum condition) &rest arguments)
   (unless (null arguments)

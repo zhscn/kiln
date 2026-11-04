@@ -32,3 +32,8 @@ Each patched place is marked with a `kiln:` comment.
   effective method without them signals an error only if the primary
   methods are reached (an `:around` method need not call
   `call-next-method`; Predicament's `signal` on a symbol relies on it).
+
+## Predicament patches
+
+- `signal` on a string or a symbol calls `signal` on the condition without
+  a stray `nil` argument (which its own `:before` method rejected).
