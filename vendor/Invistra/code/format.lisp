@@ -301,7 +301,7 @@
       (apply #'format-with-client client stream control args))
     (return-from format-with-client nil))
   (let ((*format-output* (cond ((or (streamp destination)
-                                  #-(or sicl kiln) (inravina:pretty-stream-p client destination)
+                                  #-sicl (inravina:pretty-stream-p client destination)
                                   (and (stringp destination)
                                        (array-has-fill-pointer-p destination)))
                               destination)
@@ -326,11 +326,11 @@
             for index from 0
             for blankp = (and (find char #(#\Space #\Tab #\Page #\Return)) t)
             finally (write-string (subseq item start) *format-output*)
-                    #-(or sicl kiln) (when in-blank-p
+                    #-sicl (when in-blank-p
                              (inravina:pprint-newline client *format-output* *newline-kind*))
             when (and in-blank-p (not blankp))
               do (write-string (subseq item start index) *format-output*)
-                 #-(or sicl kiln) (inravina:pprint-newline client *format-output* *newline-kind*)
+                 #-sicl (inravina:pprint-newline client *format-output* *newline-kind*)
                  (setf start index)
             do (setf in-blank-p blankp))
       (write-string item *format-output*)))
@@ -338,7 +338,7 @@
 (defmethod compile-item ((client client) (item string) &optional parameters)
   (declare (ignore parameters))
   (if *newline-kind*
-      #+(or sicl kiln) nil #-(or sicl kiln)
+      #+sicl nil #-sicl
       (loop with start = 0
             with in-blank-p = nil
             with pprint-newline = `(inravina:pprint-newline ,(trinsic:client-form client)

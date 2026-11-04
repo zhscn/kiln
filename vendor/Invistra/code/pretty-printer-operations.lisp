@@ -20,7 +20,7 @@
     ((client client) (directive conditional-newline-directive) &optional parameters)
   (declare (ignore parameters)
            (ignorable client))
-  #-(or sicl kiln)
+  #-sicl
   (with-accessors ((colon-p colon-p)
                    (at-sign-p at-sign-p))
       directive
@@ -34,7 +34,7 @@
     ((client client) (directive conditional-newline-directive) &optional parameters)
   (declare (ignore parameters)
            (ignorable client))
-  #-(or sicl kiln)
+  #-sicl
   (with-accessors ((colon-p colon-p)
                    (at-sign-p at-sign-p))
       directive
@@ -99,7 +99,7 @@
     ((client client) (directive logical-block-directive) &optional parameters)
   (declare (ignore parameters)
            (ignorable client))
-  #-(or sicl kiln)
+  #-sicl
   (with-accessors ((clauses clauses))
       directive
     (let* ((last-clause (car (last clauses)))
@@ -188,7 +188,7 @@
     ((client client) (directive logical-block-directive) &optional parameters)
   (declare (ignore parameters)
            (ignorable client))
-  #-(or sicl kiln)
+  #-sicl
   (with-accessors ((clauses clauses))
       directive
     (let* ((last-clause (car (last clauses)))
@@ -299,14 +299,14 @@
 
 (defmethod interpret-item ((client client) (directive indent-directive) &optional parameters)
   (declare (ignorable client parameters))
-  #-(or sicl kiln)
+  #-sicl
   (inravina:pprint-indent client *format-output*
                           (if (colon-p directive) :current :block)
                           (car parameters)))
 
 (defmethod compile-item ((client client) (directive indent-directive) &optional parameters)
   (declare (ignorable client parameters))
-  #-(or sicl kiln)
+  #-sicl
   `((inravina:pprint-indent ,(trinsic:client-form client) *format-output*
                             ,(if (colon-p directive) :current :block)
                             ,(car parameters))))
