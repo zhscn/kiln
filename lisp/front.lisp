@@ -111,24 +111,6 @@
   `(eval-when (:compile-toplevel)
      (kiln.sys::%define-setf-expander ',name ,function)))
 
-;;; Common-boot's version returns NIL for a globally special variable
-;;; (the value of its UNLESS), which LET* then uses as the environment of
-;;; the following bindings and the body. This is the same with the
-;;; environment returned in that case.
-(defun cb::augment-environment-with-binding-variable
-    (client environment variable-name-ast declaration-asts)
-  (let ((variable-name (ico:name variable-name-ast)))
-    (multiple-value-bind (special-p globally-special-p)
-        (cb::variable-is-special-p client variable-name-ast declaration-asts environment)
-      (change-class variable-name-ast
-                    (if special-p
-                        'ico:special-variable-bound-ast
-                        'ico:variable-definition-ast))
-      (cond ((not special-p)
-             (trucler:add-lexical-variable client environment variable-name variable-name-ast))
-            (globally-special-p environment)
-            (t (trucler:add-local-special-variable client environment variable-name))))))
-
 ;;; WITH-OUTPUT-TO-STRING with a string: an output stream that appends to
 ;;; it (Cyclosis' string output stream, docs/10 §16).
 (defmethod cmd::output-stream-from-string-function-name ((client client))
