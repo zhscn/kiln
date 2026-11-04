@@ -127,7 +127,7 @@ Common-boot 本身的顶层处理不完整：`*compile-time-too*` 从来不会�
 - **`progv`**：绑定的个数运行期才知道，没法每个绑定占一个栈上条目。所以只建立一个 progv 条目（动态环境条目 kind 7），tag 是一个 `(symbol . 旧 TLS 值)` 的列表。先把所有旧值存进列表，再链接条目，最后写入新值，所以展开时看到的列表总是完整的。值不够时，多出来的 symbol 变为未绑定。离开时（正常、本地退出、unwinder）按列表恢复。
 - **`load-time-value`**：降级每个顶层形式之前，先找出其中所有的 `load-time-value`，在模块的 init 函数里求值，存进静态 root cell；引用处读这个 cell。所以它在包含它的顶层形式执行之前、在空词法环境里求值一次。
 - **`symbol-macrolet`**：简化之后展开已经代入，只剩主体。`macrolet` 被 `macrolet-to-locally` 变成 `locally`。`flet`、`let`、`let*`、`function` 都被简化掉了。
-- **Common-boot 的缺口**：对 symbol macro 做 `setq`（以及会展开成 `setq` 的 `setf`）在 Common-boot 里没有对应的方法（`finalize-variable-name-ast-from-description` 不接受 `local-symbol-macro-description`）。CLHS 要求这时按 `setf` 展开式处理。要在 kiln 的 client 里补，或者向上游提。
+- **对 symbol macro 做 `setq`**：Common-boot 没有对应的方法（`finalize-variable-name-ast-from-description` 不接受 symbol macro 的描述），会展开成 `setq` 的 `setf` 也一样。CLHS 3.1.2.1.1 要求这时按对展开式的 `setf` 处理。kiln 在自己的 client 上给 `cb::convert` 加了一个 `:around` 方法：转换之前把这样的 `setq` 改写成 `(setf 展开式 值)`，不需要修改 Common-boot。`with-slots`、`with-accessors` 依赖这一点。
 
 `tests/m2/special-forms.lisp` 在非顶层位置覆盖了全部 25 个特殊操作符。
 
@@ -162,7 +162,7 @@ Common-boot 本身的顶层处理不完整：`*compile-time-too*` 从来不会�
 3. ~~lambda list~~（已完成，§5.4）。`&aux` 还没有确认 `lexify-lambda-list` 之后的形式。
 4. **顶层的 `locally`、`macrolet`、`symbol-macrolet`**：主体应按顶层形式处理。
 5. ~~`load-time-value`~~（已完成，§5.5）。字符串和字符常量要等 M3 定下它们的对象表示。
-8. 对 symbol macro 的 `setq`（§5.5，Common-boot 的缺口）。
+8. ~~对 symbol macro 的 `setq`~~（已解决，§5.5）。
 9. `progv`：已完成（§5.5）。
 6. 跨环境的符号：现在目标符号就是宿主符号（在 `kiln-user` 包里读入），包系统等 M3 用 Parcl 做。
 7. 运行期的宏环境：`(setf macro-function)`、`proclaim` 目前是空操作。

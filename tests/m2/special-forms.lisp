@@ -44,3 +44,11 @@
 ;; The load-time value is the same object on every call.
 (defun ltv () (load-time-value (list 1)))
 (print (eq (ltv) (ltv)))
+
+;; SETQ and SETF of symbol macros act on the expansion.
+(let ((cell (list 1 2)))
+  (symbol-macrolet ((head (car cell)) (tail (cdr cell)))
+    (setq head 10)
+    (setf tail '(20))
+    (incf head)
+    (print cell)))

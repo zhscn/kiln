@@ -93,6 +93,37 @@
           (fdefinition 'eclector.reader::expand))
     env))
 
+;;; SETQ of a symbol macro is SETF of its expansion (CLHS 3.1.2.1.1);
+;;; Common-boot has no method for it, so the form is rewritten before
+;;; conversion. WITH-SLOTS and WITH-ACCESSORS rely on this.
+
+(defun symbol-macro-expansion (client environment name)
+  "The expansion of NAME if it names a symbol macro in ENVIRONMENT, and
+true; else NIL and NIL."
+  (if (symbolp name)
+      (let ((d (trucler:describe-variable client environment name)))
+        (if (typep d 'trucler:symbol-macro-description)
+            (values (trucler:expansion d) t)
+            (values nil nil)))
+      (values nil nil)))
+
+(defmethod cb::convert :around ((client client) cst environment)
+  (let ((form (cst:raw cst)))
+    (if (and (consp form)
+             (eq (first form) 'setq)
+             (loop for (var) on (rest form) by #'cddr
+                   thereis (nth-value 1 (symbol-macro-expansion client environment var))))
+        (let ((rewritten
+                `(progn
+                   ,@(loop for (var value) on (rest form) by #'cddr
+                           collect (multiple-value-bind (expansion macrop)
+                                       (symbol-macro-expansion client environment var)
+                                     (if macrop
+                                         `(setf ,expansion ,value)
+                                         `(setq ,var ,value)))))))
+          (call-next-method client (cst:reconstruct client rewritten cst) environment))
+        (call-next-method))))
+
 ;;; Reading
 
 (defun map-file-csts (function path)
