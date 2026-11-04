@@ -21,10 +21,15 @@ use std::process::ExitCode;
 fn isa(pic: bool) -> Result<OwnedTargetIsa, String> {
     let mut flags = settings::builder();
     let set = |f: &mut settings::Builder, k: &str, v: &str| f.set(k, v).map_err(|e| e.to_string());
-    set(&mut flags, "opt_level", "speed")?;
+    // KILN_CG_OPT: Cranelift's opt_level (default "speed"). KILN_VERIFY=1
+    // runs Cranelift's IR verifier on every function (slow on the large
+    // modules).
+    let opt = std::env::var("KILN_CG_OPT").unwrap_or_else(|_| "speed".to_string());
+    let verify = std::env::var("KILN_VERIFY").is_ok_and(|v| v == "1");
+    set(&mut flags, "opt_level", &opt)?;
     set(&mut flags, "preserve_frame_pointers", "true")?;
     set(&mut flags, "is_pic", if pic { "true" } else { "false" })?;
-    set(&mut flags, "enable_verifier", "true")?;
+    set(&mut flags, "enable_verifier", if verify { "true" } else { "false" })?;
     let isa_builder = cranelift_native::builder()?;
     isa_builder
         .finish(settings::Flags::new(flags))
@@ -50,8 +55,12 @@ fn run_jit(kir: &kir::Module, opts: &Options) -> Result<i32, String> {
         builder.symbol(name, ptr);
     }
     let mut module = JITModule::new(builder);
+    let t = std::time::Instant::now();
     let out = codegen::compile(&mut module, kir, opts)?;
     module.finalize_definitions().map_err(|e| e.to_string())?;
+    if std::env::var("KILN_TIME").is_ok() {
+        eprintln!("kiln-cg: compiled in {:?}", t.elapsed());
+    }
     let records: Vec<CallSiteRecord> = out
         .callsites
         .iter()
@@ -117,7 +126,14 @@ fn main() -> ExitCode {
     // kiln-cg jit A.kir B.kir ...  |  kiln-cg obj A.kir B.kir ... -o OUT.o
     let result = match pos.split_first() {
         Some((cmd, rest)) if cmd.as_str() == "jit" && !rest.is_empty() => {
-            load_all(rest).and_then(|m| run_jit(&m, &opts))
+            {
+                let t = std::time::Instant::now();
+                let m = load_all(rest);
+                if std::env::var("KILN_TIME").is_ok() {
+                    eprintln!("kiln-cg: loaded in {:?}", t.elapsed());
+                }
+                m.and_then(|m| run_jit(&m, &opts))
+            }
         }
         Some((cmd, rest)) if cmd.as_str() == "obj" && rest.len() >= 3 && rest[rest.len() - 2] == "-o" => {
             let (files, out) = rest.split_at(rest.len() - 2);

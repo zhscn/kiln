@@ -1402,17 +1402,42 @@ its global value is used directly."
     (jump join)
     (start-block join)))
 
-(defun compile-toplevel-function (asts)
-  "The module's init function: runs the top-level forms in order."
+(defparameter *toplevel-chunk-size* 16
+  "Top-level forms per function: the init function calls one function per
+chunk, since code generation time grows faster than linearly with the
+size of a function.")
+
+(defun compile-toplevel-chunk (name asts)
+  "A function NAME of no arguments that runs the top-level forms ASTS;
+returns the operand of its (static) function object."
   (let ((*regions* '()))
-    (with-function ((format nil "kiln_toplevel_~A" *module-label*))
+    (with-function (name)
       (let ((*self* (copy-to-var :self)))
         (emit-poll)
-        (emit-note-symbol-table)
         (dolist (ast asts)
           (emit-load-time-values ast)
           (lower ast))
-        (emit `(:return ,(nil-value) 1))))))
+        (emit `(:return ,(nil-value) 1)))))
+  (let ((fobj (format nil "~A_fobj" name)))
+    (module-data fobj `(:words ,+kind-function+ (:func ,name)))
+    `(:data ,fobj ,+tag-general+)))
+
+(defun compile-toplevel-function (asts)
+  "The module's init function: registers the module's symbols, then runs
+the top-level forms in order, in chunks."
+  (let ((chunks (loop for i from 0
+                      for rest on asts by (lambda (l) (nthcdr *toplevel-chunk-size* l))
+                      collect (compile-toplevel-chunk
+                               (format nil "kiln_toplevel_~A_~D" *module-label* i)
+                               (subseq rest 0 (min *toplevel-chunk-size* (length rest)))))))
+    (let ((*regions* '()))
+      (with-function ((format nil "kiln_toplevel_~A" *module-label*))
+        (let ((*self* (copy-to-var :self)))
+          (emit-poll)
+          (emit-note-symbol-table)
+          (dolist (fobj chunks)
+            (emit-lisp-call (copy-to-var (word-operand fobj)) '()))
+          (emit `(:return ,(nil-value) 1)))))))
 
 ;;; The module's symbol table, for the package system (docs/10 §12): a
 ;;; simple vector of package descriptions #(name nicknames uses entries),

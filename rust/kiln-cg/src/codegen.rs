@@ -180,13 +180,16 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
         module.define_data(id, &desc).map_err(err)?;
     }
 
-    // Functions.
-    let mut ctx = module.make_context();
+    // Functions: the CLIF is built here, one function after another (it
+    // needs the module for references); the functions are compiled to
+    // machine code on all cores, then defined in order.
     let mut fctx = FunctionBuilderContext::new();
     let mut callsites = Vec::new();
     let mut stackmaps = Vec::new();
-    for (f, &id) in kir.funcs.iter().zip(&func_ids) {
-        ctx.func.signature = lisp_sig.clone();
+    let mut funcs = Vec::with_capacity(kir.funcs.len());
+    for f in &kir.funcs {
+        let mut func = ir::Function::new();
+        func.signature = lisp_sig.clone();
         let mut lw = FuncLowering {
             module,
             names: &names,
@@ -201,18 +204,37 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
             data_gvs: HashMap::new(),
             lisp_sigref: None,
         };
-        lw.build(&mut ctx.func, &mut fctx, f)
+        lw.build(&mut func, &mut fctx, f)
             .map_err(|e| format!("func {}: {e}", f.name))?;
         if opts.dump_clif {
-            eprintln!("; {}\n{}", f.name, ctx.func.display());
+            eprintln!("; {}\n{}", f.name, func.display());
         }
-        module
-            .define_function(id, &mut ctx)
-            .map_err(|e| format!("func {}: {e:?}", f.name))?;
-        collect_callsites(&ctx, id, &mut callsites)?;
-        collect_stackmaps(&ctx, id, &mut stackmaps)?;
-        module.clear_context(&mut ctx);
+        funcs.push(func);
     }
+    let timing = std::env::var("KILN_TIME").is_ok();
+    let t = std::time::Instant::now();
+    let contexts = compile_parallel(module.isa(), funcs, &kir.funcs)?;
+    if timing {
+        eprintln!("kiln-cg: machine code in {:?}", t.elapsed());
+    }
+    let min_align = (module.isa().function_alignment().minimum as u64)
+        .max(module.isa().symbol_alignment());
+    for (ctx, &id) in contexts.iter().zip(&func_ids) {
+        let code = ctx.compiled_code().ok_or("no compiled code")?;
+        let relocs: Vec<_> = code
+            .buffer
+            .relocs()
+            .iter()
+            .map(|r| cranelift_module::ModuleReloc::from_mach_reloc(r, &ctx.func, id))
+            .collect();
+        let align = (code.buffer.min_alignment as u64).max(min_align);
+        module
+            .define_function_bytes(id, align, code.code_buffer(), &relocs)
+            .map_err(|e| format!("func {id}: {e:?}"))?;
+        collect_callsites(ctx, id, &mut callsites)?;
+        collect_stackmaps(ctx, id, &mut stackmaps)?;
+    }
+    let mut ctx = module.make_context();
 
     // Trampolines for unwinding runtime functions.
     for f in &kir.import_funcs {
@@ -820,4 +842,60 @@ fn trusted(_b: &mut FunctionBuilder) -> MemFlagsData {
 enum Callee {
     Direct(ir::FuncRef),
     Indirect(ir::SigRef, Value),
+}
+
+/// Compiles FUNCS to machine code on all available cores. The results
+/// keep the order of FUNCS.
+fn compile_parallel(
+    isa: &dyn cranelift_codegen::isa::TargetIsa,
+    funcs: Vec<ir::Function>,
+    kfuncs: &[kir::Func],
+) -> R<Vec<Context>> {
+    let n = funcs.len();
+    // KILN_CG_THREADS overrides the number of threads.
+    let threads = std::env::var("KILN_CG_THREADS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or_else(|| std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1))
+        .clamp(1, n.max(1));
+    let queue: std::sync::Mutex<Vec<Option<Context>>> =
+        std::sync::Mutex::new(funcs.into_iter().map(|f| Some(Context::for_function(f))).collect());
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let chunk = 16;
+    let results: Vec<R<Vec<(usize, Context)>>> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..threads)
+            .map(|_| {
+                let queue = &queue;
+                let next = &next;
+                scope.spawn(move || -> R<Vec<(usize, Context)>> {
+                    let mut done = Vec::new();
+                    loop {
+                        let start = next.fetch_add(chunk, std::sync::atomic::Ordering::Relaxed);
+                        if start >= n {
+                            break;
+                        }
+                        let end = (start + chunk).min(n);
+                        let mut batch: Vec<(usize, Context)> = {
+                            let mut q = queue.lock().unwrap();
+                            (start..end).map(|i| (i, q[i].take().unwrap())).collect()
+                        };
+                        for (i, ctx) in &mut batch {
+                            ctx.compile(isa, &mut Default::default())
+                                .map_err(|e| format!("func {}: {e:?}", kfuncs[*i].name))?;
+                        }
+                        done.extend(batch);
+                    }
+                    Ok(done)
+                })
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap()).collect()
+    });
+    let mut out: Vec<Option<Context>> = (0..n).map(|_| None).collect();
+    for r in results {
+        for (i, ctx) in r? {
+            out[i] = Some(ctx);
+        }
+    }
+    Ok(out.into_iter().map(|c| c.unwrap()).collect())
 }

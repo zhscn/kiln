@@ -28,3 +28,12 @@ panic = "abort"
 # JIT-compiling the kernel and CLOS modules is otherwise slow.
 [profile.dev.package."*"]
 opt-level = 2
+
+# kiln-cg reads and lowers tens of megabytes of KIR for the CLOS module,
+# and kiln-rt runs its initialization: optimize them in debug builds too
+# (debug assertions stay on).
+[profile.dev.package.kiln-cg]
+opt-level = 2
+
+[profile.dev.package.kiln-rt]
+opt-level = 2
