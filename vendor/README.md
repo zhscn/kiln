@@ -35,5 +35,5 @@ Each patched place is marked with a `kiln:` comment.
 
 ## Predicament patches
 
-- `signal` on a string or a symbol calls `signal` on the condition without
+- `signal` and `warn` on a string or a symbol call themselves on the condition without
   a stray `nil` argument (which its own `:before` method rejected).
