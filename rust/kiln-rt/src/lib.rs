@@ -1,5 +1,6 @@
 //! kiln runtime.
 
+pub mod bignum;
 pub mod context;
 pub mod gc;
 pub mod object;
@@ -86,6 +87,7 @@ pub fn symbols() -> Vec<(&'static str, *const u8)> {
             stack::kiln_rt_call_on_new_stack as *const u8,
         ),
         ("kiln_rt_throw", unwind::kiln_rt_throw as *const u8),
+        ("kiln_rt_integer_op", bignum::kiln_rt_integer_op as *const u8),
         ("kiln_rt_tls_index", special::kiln_rt_tls_index as *const u8),
         ("kiln_rt_exit_to", unwind::kiln_rt_exit_to as *const u8),
         (

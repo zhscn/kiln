@@ -10,11 +10,13 @@ M3 的目标见 [04 的里程碑](04-bootstrap.md#里程碑)：把 ANSI 核心�
 |---|---|---|
 | M3.1 | 立即数和堆对象的完整 kind 表；字符、字符串、simple-vector；symbol 的名字改为字符串对象；`%primop`；用 Lisp 写的 kernel（`lisp/target/`） | ✅ |
 | M3.2 | 多模块：kernel 只编译一次，用户程序作为另一个模块和它链接；symbol 在模块之间保持同一身份 | ✅ |
-| M3.3 | 包和运行期的 `intern`/`find-symbol`（评估 Parcl），目标包和宿主包分开 | |
-| M3.4 | 数值塔：bignum、ratio、浮点（Quaviver 负责 I/O）、complex | |
+| M3.3 | 整数：bignum、溢出时转 bignum、整数除法和位运算 | ✅ |
+| M3.4 | ratio、浮点（Quaviver 负责 I/O）、complex | |
 | M3.5 | 剩下的不依赖 CLOS 的部分：数组（Regalia 的原语部分）、`equal`/`equalp`、序列的基本函数 | |
 
 依赖 CLOS 的模块（Predicament、ctype、Consecution、Salmagundi、Cyclosis、打印器等）放到 M4 之后。
+
+**包移到 M4**：Parcl 的底层协议（`parcl-low`）全是泛函，包本身是 CLOS 类（`Low/package-class.lisp`），符号表用哈希表。它要在 CLOS 和 Salmagundi 之后才能运行。在那之前自己写一套简单的包实现，Parcl 一到就要扔掉，所以不做。在那之前，symbol 的 `package` 槽存包名字符串，`keywordp` 和打印器靠它判断。交叉编译时目标包和宿主包怎么分开（例如目标的 Eclector 和宿主编译器用的 Eclector 同名），也等到真正交叉编译这些模块时再定。
 
 ## 2. 值的表示
 
@@ -48,6 +50,7 @@ header 的低 8 位是 kind，第 8 位起是长度（含义随 kind 而定）�
 | 3 | cons | `[header, car, cdr]` | — | car、cdr |
 | 4 | simple-vector | `[header, 元素...]` | 元素个数 | 全部元素 |
 | 5 | simple-character-string | `[header, UTF-32 码点...]`，按 8 字节补齐 | 字符个数 | 否 |
+| 6 | bignum | `[header, 64 位数字...]`，二进制补码，小端，最短 | 数字个数 | 否 |
 
 以后的 kind（M3.4、M3.5）：simple-base-string、specialized vector（`(unsigned-byte 8)` 等）、bit-vector、bignum、ratio、double-float、complex、array header、标准对象和 rack（M4）。
 
@@ -98,3 +101,13 @@ kernel 的写法限制：
 - **`kiln_module_info`** 改为 72 字节：`enter`、`inits`（init 函数对象数组）、`ninits`、调用点表、栈图、root 表。
 - **编译会话**（`kiln.compiler:make-session`）：Clostrum 编译期环境和已定义函数的记录在多个文件之间保留。`kiln:compile-kernel` 先把 kernel 编译成 `kernel.kir`，之后同一个会话里用 `kiln:compile-file-to-kir` 编译的程序能看到 kernel 的宏和函数。`tools/test.sh` 这样只编译一次 kernel。
 - **以后**：分别生成的目标文件之间链接（共享定义用 weak 链接，launcher 汇总多个 module info），以及 image 里增量加载模块。
+
+## 8. M3.3：整数
+
+- **表示**：fixnum 范围（63 位）之外的整数是 bignum（kind 6）：二进制补码、小端的 64 位数字，长度最短。fixnum 范围内的整数永远是 fixnum，所以整数的 `eql` 就是 fixnum 的 `eq` 或 bignum 的值相等。
+- **运算在 Rust 里**（`rust/kiln-rt/src/bignum.rs`，用 num-bigint）：`kiln_rt_integer_op(ctx, op, a, b)` 实现加减乘、四种除法（商作为返回值，余数在 `ctx.values[0]`，即两个值）、比较、位运算、`ash`、`gcd`、`expt`、`integer-length`。它先把参数读成 BigInt 再分配结果，所以分配时的 GC 不影响参数；除法先分配余数并通过 `values_live` 把它登记为 root，再分配商。
+- **快路径和慢路径**：编译器对 `+ - *` 和比较照样内联 fixnum 运算。参数不是 fixnum 或者溢出时，调用 kernel 里的 `two-arg-+`、`two-arg-<` 等函数，由它们按类型分派（现在只有整数，M3.4 加 ratio 和浮点）。`eql` 对不是同一对象的堆对象调用 kernel 的 `eql-slow`。
+- **kernel**：`truncate`/`floor`/`ceiling`/`round`（两个值）、`mod`、`rem`、`logand`/`logior`/`logxor`（fixnum 有快路径：带 tag 的 fixnum 直接按位运算）、`lognot`、`logtest`、`logbitp`、`ash`、`integer-length`、`evenp`/`oddp`、`gcd`、`lcm`、`expt`、`isqrt`、`abs`、`signum`。
+- **常量**：超出 fixnum 范围的字面量编译成静态 bignum。
+- **打印**：runtime 的打印器用 num-bigint 输出十进制，以后换成 Lisp 写的打印器。
+- `tests/m3/integers.lisp`：溢出成 bignum 再回到 fixnum、fixnum 边界、大数乘法、比较、除法的四种取整、位运算、`ash`、`gcd`、`expt`、`isqrt`、跨 GC 的 bignum。

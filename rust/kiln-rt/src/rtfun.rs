@@ -23,6 +23,8 @@ pub const ERR_NOT_STRING: u64 = 12;
 pub const ERR_NOT_VECTOR: u64 = 13;
 pub const ERR_INDEX: u64 = 14;
 pub const ERR_NOT_SEQUENCE: u64 = 15;
+pub const ERR_NOT_INTEGER: u64 = 16;
+pub const ERR_DIVISION_BY_ZERO: u64 = 17;
 
 pub fn error_exit(msg: &str) -> ! {
     let _ = std::io::stdout().flush();
@@ -51,7 +53,15 @@ pub unsafe extern "C" fn kiln_rt_print(_ctx: *mut Context, obj: u64) -> u64 {
 /// # Safety
 /// `obj` must be a valid Lisp value.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn kiln_rt_error(_ctx: *mut Context, code: u64, obj: u64, _fp: usize) -> ! {
+pub unsafe extern "C" fn kiln_rt_error(ctx: *mut Context, code: u64, obj: u64, _fp: usize) -> ! {
+    unsafe { error_with(ctx, code, obj) }
+}
+
+/// Signals the error `code` about `obj` (for now: reports it and exits).
+///
+/// # Safety
+/// `obj` must be a valid Lisp value.
+pub unsafe fn error_with(_ctx: *mut Context, code: u64, obj: u64) -> ! {
     let mut s = String::new();
     unsafe { write_object(&mut s, obj) };
     let msg = match code {
@@ -70,6 +80,8 @@ pub unsafe extern "C" fn kiln_rt_error(_ctx: *mut Context, code: u64, obj: u64, 
         ERR_NOT_VECTOR => format!("the value {s} is not of type SIMPLE-VECTOR"),
         ERR_INDEX => format!("index {s} is out of bounds"),
         ERR_NOT_SEQUENCE => format!("the value {s} is not of type SEQUENCE"),
+        ERR_NOT_INTEGER => format!("the value {s} is not of type INTEGER"),
+        ERR_DIVISION_BY_ZERO => format!("division of {s} by zero"),
         _ => format!("error code {code}, object {s}"),
     };
     error_exit(&msg)

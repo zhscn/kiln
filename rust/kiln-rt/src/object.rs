@@ -22,6 +22,9 @@ pub const KIND_CONS: u64 = 3;
 pub const KIND_SIMPLE_VECTOR: u64 = 4;
 /// UTF-32 string: [header (length << 8), code points...], padded to 8 bytes.
 pub const KIND_STRING: u64 = 5;
+/// Integer outside the fixnum range: [header (length << 8), digits...],
+/// two's complement, little-endian 64-bit digits, minimal length.
+pub const KIND_BIGNUM: u64 = 6;
 
 /// Immediates: low 3 bits 0b011, bits 3..8 the immediate kind, payload
 /// from bit 8. See docs/09-m3-kernel.md §2.
@@ -179,6 +182,7 @@ pub fn object_bytes(header: u64) -> usize {
         KIND_SIMPLE_VECTOR => 8 + 8 * (header >> LENGTH_SHIFT) as usize,
         KIND_SYMBOL => SYMBOL_BYTES,
         KIND_STRING => 8 + (4 * (header >> LENGTH_SHIFT) as usize).next_multiple_of(8),
+        KIND_BIGNUM => 8 + 8 * (header >> LENGTH_SHIFT) as usize,
         KIND_FUNCTION => 16 + 8 * (header >> LENGTH_SHIFT) as usize,
         k => panic!("object_bytes: unknown kind {k}"),
     }
@@ -248,6 +252,9 @@ pub unsafe fn write_object(out: &mut String, v: u64) {
             }
             KIND_FUNCTION => {
                 let _ = write!(out, "#<FUNCTION {:#x}>", v);
+            }
+            KIND_BIGNUM => {
+                let _ = write!(out, "{}", unsafe { crate::bignum::to_bigint(v) });
             }
             KIND_SIMPLE_VECTOR => {
                 out.push_str("#(");

@@ -163,9 +163,17 @@ name of its package as a string."
 (defun constant-word (x)
   (typecase x
     (integer
-     (unless (<= +most-negative-fixnum+ x +most-positive-fixnum+)
-       (fail "integer ~D is outside the fixnum range (no bignums yet)" x))
-     (ash x +fixnum-shift+))
+     (if (<= +most-negative-fixnum+ x +most-positive-fixnum+)
+         (ash x +fixnum-shift+)
+         (or (gethash x *constants*)
+             (let ((label (fresh-label "kiln_bignum_"))
+                   (n (ceiling (1+ (integer-length x)) 64)))
+               ;; Two's complement digits, minimal length.
+               (module-data label `(:words ,(logior +kind-bignum+ (ash n +length-shift+))
+                                           ,@(loop for i below n
+                                                   collect (let ((d (ldb (byte 64 (* 64 i)) x)))
+                                                             (if (logbitp 63 d) (- d (ash 1 64)) d)))))
+               (setf (gethash x *constants*) `(:data ,label ,+tag-general+))))))
     (symbol (symbol-word x))
     (character
      (logior (ash (char-code x) +character-shift+) +character-tag+))
@@ -1271,7 +1279,7 @@ be confused with a later activation at the same address."
         (*counter* 0)
         (*vars* (make-hash-table :test 'eq))
         (*exits* (make-hash-table :test 'eq))
-        (*constants* (make-hash-table :test 'eq))
+        (*constants* (make-hash-table :test 'eql))
         (*constant-vars* (make-hash-table :test 'eq)))
     (let ((*load-time-values* (make-hash-table :test 'eq)))
       (compile-toplevel-function asts))

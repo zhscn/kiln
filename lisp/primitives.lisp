@@ -37,33 +37,55 @@
 (defun boolean-value (condition)
   (copy-to-var `(:select ,condition ,(t-value) ,(nil-value))))
 
-;;; Fixnum arithmetic
+;;; Arithmetic. Fixnums are open-coded; other numbers, and fixnum
+;;; overflow, take the slow path: a call to the kernel's two-argument
+;;; function (docs/09 §8), which dispatches on the number types.
 
 (defun emit-check-fixnums (a b)
+  "For operations defined on fixnums only."
   (let ((bad (new-block)) (ok (new-block)))
     (br `(:and (:or ,a ,b) 1) bad ok)
     (start-block bad)
     (emit-error +err-not-fixnum+ `(:select (:and ,a 1) ,a ,b))
     (start-block ok)))
 
+(defun emit-slow-call (name &rest vals)
+  "Primary value of a call to the kernel function NAME."
+  (values (emit-lisp-call (function-cell-value name) vals)))
+
 (defun emit-arith (op a b)
   (let ((r (new-var)) (ovf (new-var :raw))
-        (bad (new-block)) (ok (new-block)))
-    (emit-check-fixnums a b)
+        (fast (new-block)) (slow (new-block)) (done (new-block)))
+    (br `(:and (:or ,a ,b) 1) slow fast)
+    (start-block fast)
     (ecase op
       (+ (emit `(:add-ovf ,r ,ovf ,a ,b)))
       (- (emit `(:sub-ovf ,r ,ovf ,a ,b)))
       (* (emit `(:mul-ovf ,r ,ovf (:sar ,a ,+fixnum-shift+) ,b))))
-    (br ovf bad ok)
-    (start-block bad)
-    (emit-error +err-overflow+ a)
-    (start-block ok)
+    (br ovf slow done)
+    (start-block slow)
+    (emit `(:set ,r ,(emit-slow-call (ecase op
+                                        (+ 'kiln.kernel::two-arg-+)
+                                        (- 'kiln.kernel::two-arg--)
+                                        (* 'kiln.kernel::two-arg-*))
+                                      a b)))
+    (jump done)
+    (start-block done)
     r))
+
+(defun emit-check-number (a)
+  "Signals an error unless A is a number (via the slow path)."
+  (let ((slow (new-block)) (ok (new-block)))
+    (br `(:and ,a 1) slow ok)
+    (start-block slow)
+    (emit-slow-call 'kiln.kernel::check-number a)
+    (jump ok)
+    (start-block ok)))
 
 (defun fold-arith (op identity vals)
   (cond ((null vals) identity)
         ((null (rest vals))
-         (emit-check-fixnums (first vals) (first vals))
+         (emit-check-number (first vals))
          (first vals))
         (t (reduce (lambda (a b) (emit-arith op a b)) vals))))
 
@@ -76,16 +98,37 @@
 (define-primitive 1+ (a) (emit-arith '+ a (ash 1 +fixnum-shift+)))
 (define-primitive 1- (a) (emit-arith '- a (ash 1 +fixnum-shift+)))
 
+(defun emit-compare-pair (op a b)
+  "Raw 0/1 variable: does OP hold between the numbers A and B?"
+  (let ((r (new-var :raw)) (fast (new-block)) (slow (new-block)) (done (new-block)))
+    (br `(:and (:or ,a ,b) 1) slow fast)
+    (start-block fast)
+    (emit `(:set ,r (,op ,a ,b)))
+    (jump done)
+    (start-block slow)
+    (emit `(:set ,r (:ne ,(emit-slow-call (ecase op
+                                             (:lt 'kiln.kernel::two-arg-<)
+                                             (:gt 'kiln.kernel::two-arg->)
+                                             (:le 'kiln.kernel::two-arg-<=)
+                                             (:ge 'kiln.kernel::two-arg->=)
+                                             (:eq 'kiln.kernel::two-arg-=))
+                                           a b)
+                         ,(nil-value))))
+    (jump done)
+    (start-block done)
+    r))
+
 (defun emit-compare (op vals)
-  "Chained fixnum comparison: true if OP holds for each adjacent pair."
+  "Chained comparison: true if OP holds for each adjacent pair. All pairs
+are compared (no short circuit), which also checks every argument."
   (when (null vals) (fail "comparison needs at least one argument"))
   (if (null (rest vals))
-      (progn (emit-check-fixnums (first vals) (first vals)) (t-value))
-      (let ((all 1))
+      (progn (emit-check-number (first vals)) (t-value))
+      (let ((all nil))
         (loop for (a b) on vals
               while b
-              do (emit-check-fixnums a b)
-                 (setf all (if (eql all 1) (list op a b) `(:and ,all (,op ,a ,b)))))
+              do (let ((p (emit-compare-pair op a b)))
+                   (setf all (if all `(:and ,all ,p) p))))
         (boolean-value all))))
 
 (macrolet ((compare (name op)
@@ -96,7 +139,22 @@
 
 (define-primitive eq (a b) (boolean-value `(:eq ,a ,b)))
 ;;; Only fixnums, symbols and conses exist so far, so EQL is EQ.
-(define-primitive eql (a b) (boolean-value `(:eq ,a ,b)))
+(define-primitive eql (a b)
+  ;; Identical objects are EQL; otherwise only numbers that are heap
+  ;; objects (bignums) can be, which the kernel decides.
+  (let ((r (copy-to-var (t-value)))
+        (no (new-block)) (slow (new-block)) (false (new-block)) (done (new-block)))
+    (br `(:eq ,a ,b) done no)
+    (start-block no)
+    (br `(:eq (:and ,a ,+tag-mask+) ,+tag-general+) slow false)
+    (start-block slow)
+    (emit `(:set ,r ,(emit-slow-call 'kiln.kernel::eql-slow a b)))
+    (jump done)
+    (start-block false)
+    (emit `(:set ,r ,(nil-value)))
+    (jump done)
+    (start-block done)
+    r))
 (define-primitive null (a) (boolean-value `(:eq ,a ,(nil-value))))
 (define-primitive not (a) (boolean-value `(:eq ,a ,(nil-value))))
 (define-primitive consp (a) (boolean-value `(:eq (:and ,a ,+tag-mask+) ,+tag-cons+)))
@@ -122,11 +180,15 @@
 (define-primitive symbolp (a) (emit-kind-p a +kind-symbol+))
 (define-primitive functionp (a) (emit-kind-p a +kind-function+))
 ;;; Only fixnums exist so far.
-(define-primitive integerp (a) (boolean-value `(:eq (:and ,a 1) 0)))
-(define-primitive numberp (a) (boolean-value `(:eq (:and ,a 1) 0)))
-(define-primitive zerop (a) (emit-check-fixnums a a) (boolean-value `(:eq ,a 0)))
-(define-primitive plusp (a) (emit-check-fixnums a a) (boolean-value `(:gt ,a 0)))
-(define-primitive minusp (a) (emit-check-fixnums a a) (boolean-value `(:lt ,a 0)))
+(defun emit-integer-test (a)
+  "Raw 0/1: is A a fixnum or a bignum?"
+  `(:or (:eq (:and ,a 1) 0) ,(emit-kind-test a +kind-bignum+)))
+(define-primitive integerp (a) (boolean-value (emit-integer-test a)))
+;;; Only integers so far (M3.4 adds ratios and floats).
+(define-primitive numberp (a) (boolean-value (emit-integer-test a)))
+(define-primitive zerop (a) (boolean-value (emit-compare-pair :eq a 0)))
+(define-primitive plusp (a) (boolean-value (emit-compare-pair :gt a 0)))
+(define-primitive minusp (a) (boolean-value (emit-compare-pair :lt a 0)))
 
 (define-primitive cons (a b) (emit-cons a b))
 
@@ -436,3 +498,36 @@ operand N."
   (define-type-error :type-error-vector +err-not-vector+)
   (define-type-error :type-error-sequence +err-not-sequence+)
   (define-type-error :type-error-symbol +err-not-symbol+))
+
+(define-primop :bignump (x) (boolean-value (emit-kind-test x +kind-bignum+)))
+
+(defun rt-integer-op () (module-import-func "kiln_rt_integer_op" 4 1 :unwinds))
+
+(defun emit-integer-op (code a b)
+  (let ((r (new-var)))
+    (emit `(:call-rt ,(rt-integer-op) (,r) (:ctx ,code ,a ,b) ,(handler)))
+    r))
+
+;;; Operation codes: rust/kiln-rt/src/bignum.rs.
+(macrolet ((define-integer-ops (&rest specs)
+             `(progn
+                ,@(mapcar (lambda (spec)
+                            (destructuring-bind (name code &optional two-values) spec
+                              `(define-primop ,name (a b)
+                                 ,(if two-values
+                                      ;; The remainder is in ctx.values[0].
+                                      `(values (emit-integer-op ,code a b) 2)
+                                      `(emit-integer-op ,code a b)))))
+                          specs))))
+  (define-integer-ops
+    (:integer-add 0) (:integer-sub 1) (:integer-mul 2)
+    (:integer-truncate 3 t) (:integer-floor 4 t) (:integer-ceiling 5 t) (:integer-round 6 t)
+    (:integer-compare 7) (:integer-logand 8) (:integer-logior 9) (:integer-logxor 10)
+    (:integer-ash 11) (:integer-gcd 12) (:integer-expt 13) (:integer-length 14)))
+
+;;; Fixnum-only bit operations, for the kernel's fast paths: on tagged
+;;; fixnums (n << 1), AND, OR and XOR give the tagged result.
+(define-primop :fixnum-logand (a b) (copy-to-var `(:and ,a ,b)))
+(define-primop :fixnum-logior (a b) (copy-to-var `(:or ,a ,b)))
+(define-primop :fixnum-logxor (a b) (copy-to-var `(:xor ,a ,b)))
+(define-primop :type-error-integer (x) (emit-error +err-not-integer+ x) (nil-value))

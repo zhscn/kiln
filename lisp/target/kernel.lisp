@@ -46,7 +46,27 @@
 (defun apply (f arg &rest args)
   (apply f (if (null args) arg (apply #'list* arg args))))
 
-;;; Numbers (fixnums only until M3.4)
+;;; Numbers. Calls to + - * and the comparisons are open-coded for
+;;; fixnums; other numbers and fixnum overflow call the TWO-ARG- functions
+;;; below (docs/09 §8). Integers only until M3.4.
+
+(defun check-number (x)
+  (unless (integerp x) (%primop :type-error-integer x))
+  x)
+
+(defun two-arg-+ (a b) (%primop :integer-add a b))
+(defun two-arg-- (a b) (%primop :integer-sub a b))
+(defun two-arg-* (a b) (%primop :integer-mul a b))
+;; The compare result is a fixnum, so the < here takes the fast path.
+(defun two-arg-< (a b) (< (%primop :integer-compare a b) 0))
+(defun two-arg-> (a b) (> (%primop :integer-compare a b) 0))
+(defun two-arg-<= (a b) (<= (%primop :integer-compare a b) 0))
+(defun two-arg->= (a b) (>= (%primop :integer-compare a b) 0))
+(defun two-arg-= (a b) (= (%primop :integer-compare a b) 0))
+(defun eql-slow (a b)
+  ;; Called by EQL for non-identical heap objects.
+  (and (%primop :bignump a) (%primop :bignump b)
+       (= (%primop :integer-compare a b) 0)))
 
 (defun + (&rest ns)
   (let ((s 0)) (dolist (n ns s) (setq s (+ s n)))))
@@ -80,11 +100,55 @@
 (defun max (n &rest ns) (dolist (m ns n) (when (> m n) (setq n m))))
 (defun min (n &rest ns) (dolist (m ns n) (when (< m n) (setq n m))))
 (defun abs (n) (if (< n 0) (- n) n))
-(defun evenp (n) (%primop :evenp n))
+(defun signum (n) (cond ((> n 0) 1) ((< n 0) -1) (t 0)))
+
+(defun truncate (n &optional (d 1)) (%primop :integer-truncate n d))
+(defun floor (n &optional (d 1)) (%primop :integer-floor n d))
+(defun ceiling (n &optional (d 1)) (%primop :integer-ceiling n d))
+(defun round (n &optional (d 1)) (%primop :integer-round n d))
+(defun mod (n d) (nth-value 1 (floor n d)))
+(defun rem (n d) (nth-value 1 (truncate n d)))
+
+(defmacro define-logop (name fixnum-op integer-op identity)
+  `(progn
+     (defun ,name (&rest ns)
+       (let ((r ,identity))
+         (dolist (n ns r) (setq r (,(intern (format nil "TWO-ARG-~A" name)) r n)))))
+     (defun ,(intern (format nil "TWO-ARG-~A" name)) (a b)
+       (if (and (%primop :fixnump a) (%primop :fixnump b))
+           (%primop ,fixnum-op a b)
+           (%primop ,integer-op a b)))))
+(define-logop logand :fixnum-logand :integer-logand -1)
+(define-logop logior :fixnum-logior :integer-logior 0)
+(define-logop logxor :fixnum-logxor :integer-logxor 0)
+(defun lognot (n) (logxor n -1))
+(defun logtest (a b) (not (zerop (logand a b))))
+(defun logbitp (index n) (logtest (ash 1 index) n))
+(defun ash (n count) (%primop :integer-ash n count))
+(defun integer-length (n) (%primop :integer-length n 0))
+
+(defun evenp (n)
+  (if (%primop :fixnump n) (%primop :evenp n) (zerop (logand n 1))))
 (defun oddp (n) (not (evenp n)))
-(defun floor-2 (n)
-  ;; N divided by 2, rounded down. Replaced by FLOOR in M3.4.
-  (%primop :half n))
+
+(defun gcd (&rest ns)
+  (let ((g 0)) (dolist (n ns g) (setq g (%primop :integer-gcd g n)))))
+(defun lcm (&rest ns)
+  (let ((l 1))
+    (dolist (n ns l)
+      (setq l (if (or (zerop l) (zerop n))
+                  0
+                  (truncate (abs (* l n)) (gcd l n)))))))
+(defun expt (base power)
+  ;; Integer base and non-negative integer power until M3.4.
+  (%primop :integer-expt base power))
+(defun isqrt (n)
+  ;; Newton's method on integers.
+  (if (< n 2)
+      n
+      (let ((x n) (y (ash (+ n 1) -1)))
+        (do () ((>= y x) x)
+          (setq x y y (ash (+ x (truncate n x)) -1))))))
 
 ;;; Characters
 
@@ -226,7 +290,7 @@
       (let ((prev nil))
         (loop-nreverse seq prev))
       (let ((n (length seq)))
-        (dotimes (i (floor-2 n) seq)
+        (dotimes (i (ash n -1) seq)
           (let ((x (aref seq i)))
             (setf (aref seq i) (aref seq (- n i 1)))
             (setf (aref seq (- n i 1)) x))))))

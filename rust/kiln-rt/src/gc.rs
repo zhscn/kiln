@@ -14,7 +14,8 @@
 
 use crate::context::Context;
 use crate::object::{
-    self, KIND_CONS, KIND_FUNCTION, KIND_MASK, KIND_SIMPLE_VECTOR, KIND_STRING, KIND_SYMBOL, LENGTH_SHIFT,
+    self, KIND_BIGNUM, KIND_CONS, KIND_FUNCTION, KIND_MASK, KIND_SIMPLE_VECTOR, KIND_STRING, KIND_SYMBOL,
+    LENGTH_SHIFT,
 };
 use mmtk::util::copy::{CopySemantics, GCWorkerCopyContext};
 use mmtk::util::opaque_pointer::{OpaquePointer, VMMutatorThread, VMThread, VMWorkerThread};
@@ -326,7 +327,7 @@ impl Scanning<Kiln> for KilnScanning {
             KIND_FUNCTION => (16, (h >> LENGTH_SHIFT) as usize),
             // name, package, function, value, TLS index (a fixnum), plist
             KIND_SYMBOL => (8, 6),
-            KIND_STRING => (8, 0),
+            KIND_STRING | KIND_BIGNUM => (8, 0),
             k => panic!("scan_object: unexpected kind {k} in the heap"),
         };
         for i in 0..fields {
@@ -456,6 +457,19 @@ impl ReferenceGlue<Kiln> for KilnReferenceGlue {
 pub unsafe extern "C" fn kiln_rt_alloc(ctx: *mut Context, bytes: u64, header: u64, fp: usize) -> u64 {
     unsafe {
         (*ctx).safepoint_fp = fp;
+        alloc(ctx, bytes, header)
+    }
+}
+
+/// Allocates an object for runtime code. A GC safepoint: the caller must
+/// have set `ctx.safepoint_fp`, and must not hold heap references across
+/// the call (the GC may move objects). Returns the untagged address; the
+/// payload is zeroed and the header written.
+///
+/// # Safety
+/// `ctx` must be the current context.
+pub unsafe fn alloc(ctx: *mut Context, bytes: u64, header: u64) -> u64 {
+    unsafe {
         let mutator = &mut *(*ctx).mutator;
         note_gc_count();
         let bytes = bytes as usize;

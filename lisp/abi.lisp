@@ -17,6 +17,7 @@
 (defconstant +kind-cons+ 3)
 (defconstant +kind-simple-vector+ 4)
 (defconstant +kind-string+ 5)          ; UTF-32, padded to 8 bytes
+(defconstant +kind-bignum+ 6)          ; two's complement 64-bit digits
 
 ;;; Immediates: low 3 bits #b011, bits 3-7 the immediate kind, payload from
 ;;; bit 8 (docs/09 §2).
@@ -95,6 +96,8 @@
 (defconstant +err-not-vector+ 13)
 (defconstant +err-index+ 14)
 (defconstant +err-not-sequence+ 15)
+(defconstant +err-not-integer+ 16)
+(defconstant +err-division-by-zero+ 17)
 
 ;;; Argument registers in the Lisp calling convention.
 (defconstant +reg-args+ 3)
