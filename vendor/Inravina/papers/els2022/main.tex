@@ -1,0 +1,100 @@
+\documentclass[format=sigconf]{acmart}
+
+\usepackage[utf8]{inputenc}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{tikz}
+\usetikzlibrary{shapes,arrows,shapes.multipart}
+
+\title{A Portable and Extensible Common Lisp Pretty Printer}
+\author{Tarn W. Burton}
+\email{tburton@gmc.edu}
+
+\affiliation{
+  \institution{Georgia Military College, Valdosta Campus}
+  \streetaddress{4201 North Forrest Street}
+  \city{Valdosta, GA}
+  \country{USA}
+}
+
+\acmConference[ELS’22]{the 15th European Lisp Symposium}{March 21--22 2021}{Porto, Portugal}
+\acmISBN{}
+\acmDOI{}
+\setcopyright{rightsretained}
+\copyrightyear{2022}
+
+\begin{CCSXML}
+<ccs2012>
+   <concept>
+       <concept_id>10011007.10011006</concept_id>
+       <concept_desc>Software and its engineering~Software notations and tools</concept_desc>
+       <concept_significance>500</concept_significance>
+       </concept>
+ </ccs2012>
+\end{CCSXML}
+
+\ccsdesc[500]{Software and its engineering~Software notations and tools}
+
+\begin{document}
+
+\begin{abstract}
+\end{abstract}
+
+\maketitle
+
+\section{Introduction}
+
+\section{Previous Work}
+
+% Define block styles
+\tikzstyle{gen} = [rectangle split, rectangle split parts=2, draw, anchor=center,text width=2.1cm]
+\tikzstyle{line} = [draw, -latex']
+
+\begin{tikzpicture}[node distance = 2cm, auto]
+  \node[gen] (print) at (0,0)
+    {\textbf{\#print}
+     \nodepart{two}MacLisp 1977};
+
+  \node[gen] (gprint) at (0,-2.25)
+    {\textbf{Gprint}
+     \nodepart{two}MacLisp 1980 \\
+     Symbolics 1982 \\
+     DEC-CL 1983};
+
+  \node[gen] (pp) at (0,-4.9)
+   {\textbf{PP}
+    \nodepart{two}Symbolics 1984 \\
+    DEC-CL 1985};
+
+  \node[gen] (xp) at (0,-7.3)
+    {\textbf{XP}
+     \nodepart{two}CL 1988 \\
+     ABCL 2008 \\
+     CCL 2008};
+
+  \node[gen=5] (lott) at (0,-9.95)
+    {\textbf{Lott}
+     \nodepart{two}CMUCL 1991 \\
+     SBCL 1999 \\
+     ECL 2004 \\
+     CLASP 2014};
+
+  \path[line] (print) -- node {code cleanup} (gprint);
+  \path[line] (gprint) -- node {rewrite in Symbolics Lisp} (pp);
+  \path[line] (pp) -- node {rewrite in Common Lisp} (xp);
+  \path[line] (xp) -- node {rewrite for CMUCL} (lott);
+\end{tikzpicture}
+
+\section{Current Limitations}
+
+\section{Improved Methods}
+
+\section{Extensibility}
+
+\section{Conclusions and Future Work}
+
+\bibliographystyle{plainnat}
+\bibliography{main}
+
+\end{document}
+

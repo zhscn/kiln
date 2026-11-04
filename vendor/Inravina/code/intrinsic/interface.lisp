@@ -1,0 +1,11 @@
+(in-package #:inravina-intrinsic)
+
+(defclass client (incless-intrinsic:client inravina:client) ())
+
+(defclass client-impl (client quaviver/schubfach:client) ())
+
+(setf incless-intrinsic:*client* (make-instance 'client-impl))
+
+(inravina:define-interface :client-form incless-intrinsic:*client*
+                           :client-class client
+                           :intrinsic t)
