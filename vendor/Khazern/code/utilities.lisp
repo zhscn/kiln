@@ -1,0 +1,276 @@
+(cl:in-package #:khazern)
+
+(defun nthcdr-form (n form)
+  (case n
+    (0 form)
+    (1 `(cdr ,form))
+    (2 `(cddr ,form))
+    (3 `(cdddr ,form))
+    (4 `(cddddr ,form))
+    (otherwise
+     (nthcdr-form (- n 4)
+                  `(cddddr ,form)))))
+
+(defun type-or-null (type)
+  (if (typep nil type)
+      type
+      `(or null ,type)))
+
+;;; Loop keywords are symbols, but they are not recognized by symbol
+;;; identity as is usually the case, but instead by their names.  The
+;;; HyperSpec doesn't say what function to use for comparing the
+;;; names.  We assume string= here, meaning that the names are case
+;;; sensitive.
+(defun symbol-equal (symbol1 symbol2)
+  (and (symbolp symbol1)
+       (symbolp symbol2)
+       (string= symbol1 symbol2)))
+
+(defun it-keyword-p (symbol)
+  (symbol-equal symbol :it))
+
+(defun multiple-values-binding-p (pair)
+  (and (consp (first pair))
+       (not (constantp (second pair)))
+       (or (not (consp (second pair)))
+           (not (eq (caadr pair) 'values))
+           (notevery #'constantp (cdadr pair)))))
+
+(defun wrap-let (variable-list declarations forms)
+  (cond ((some #'multiple-values-binding-p variable-list)
+         `((multiple-value-call
+               (lambda ,(mapcan (lambda (pair)
+                                  (if (multiple-values-binding-p pair)
+                                      (copy-list (first pair))
+                                      (list (first pair))))
+                         variable-list)
+                 ,(when declarations
+                    `(declare ,@declarations))
+                 ,@forms)
+             ,@(mapcar (lambda (pair)
+                         (cond ((and (consp (first pair))
+                                     (cdar pair))
+                                (let ((names (unique-names (first pair)))
+                                      (rest (unique-name :rest)))
+                                  `(multiple-value-call
+                                       (lambda (&optional ,@names &rest ,rest)
+                                         (declare (ignore ,rest))
+                                         (values ,@names))
+                                     ,(second pair))))
+                               ((constantp (second pair))
+                                (second pair))
+                               (t
+                                `(values ,(second pair)))))
+                       variable-list))))
+        (variable-list
+         `((let ,(mapcan (lambda (pair)
+                           (cond ((atom (first pair))
+                                  (list pair))
+                                 ((atom (second pair))
+                                  (cons `(,(caar pair) ,(second pair))
+                                        (mapcar (lambda (var)
+                                                  `(,var nil))
+                                                (cdar pair))))
+                                 (t
+                                  (mapcar #'list (car pair) (cdadr pair)))))
+                           variable-list)
+             ,@(when declarations
+                `((declare ,@declarations)))
+             ,@forms)))
+        (declarations
+         `((locally
+               (declare ,@declarations)
+             ,@forms)))
+        (t
+         forms)))
+
+(defun wrap-let* (variable-list declarations forms)
+  (cond ((and variable-list declarations)
+         `((let* ,variable-list
+             (declare ,@declarations)
+             ,@forms)))
+        (variable-list
+         `((let* ,variable-list
+             ,@forms)))
+        (declarations
+         `((locally
+               (declare ,@declarations)
+             ,@forms)))
+        (t
+         forms)))
+
+(defun wrap-macrolet (definitions forms)
+  (if definitions
+      `((macrolet ,definitions
+          ,@forms))
+      forms))
+
+(defun wrap-flet (definitions declarations forms)
+  (cond ((and definitions declarations)
+         `((flet ,definitions
+             (declare ,@declarations)
+             ,@forms)))
+        (definitions
+         `((flet ,definitions
+             ,@forms)))
+        (declarations
+         `((locally
+               (declare ,@declarations)
+             ,@forms)))
+        (t
+         forms)))
+
+(defun wrap-labels (definitions declarations forms)
+  (cond ((and definitions declarations)
+         `((labels ,definitions
+             (declare ,@declarations)
+             ,@forms)))
+        (definitions
+         `((labels ,definitions
+             ,@forms)))
+        (declarations
+         `((locally
+               (declare ,@declarations)
+             ,@forms)))
+        (t
+         forms)))
+
+;;; This is very hacky
+(defun numeric-types ()
+  (let ((types (list 'complex 'number)))
+    (mapc (lambda (type)
+            (pushnew (type-of (coerce 1 type)) types :test #'equalp))
+          '((complex long-float)
+            (complex double-float)
+            (complex single-float)
+            (complex short-float)))
+    (push 'real types)
+    (push 'rational types)
+    (mapc (lambda (type)
+            (pushnew (type-of (coerce 1 type)) types :test #'equalp))
+          '(long-float
+            double-float
+            single-float
+            short-float))
+    (push 'integer types)
+    (push 'fixnum types)
+    types))
+
+(defvar *numeric-types* (numeric-types))
+
+(defun numeric-type-of (value)
+  (find value *numeric-types* :test #'typep))
+
+(defun numeric-super-type (&rest types)
+  (find-if (lambda (supertype)
+             (every (lambda (subtype)
+                      (subtypep subtype supertype))
+                    types))
+           *numeric-types*))
+
+(defvar +initial-values+
+  (remove-duplicates '(nil #\*
+                       0 0s0 0f0 0d0 0l0
+                       #C(0s0 0s0) #C(0f0 0f0) #C(0d0 0d0) #C(0l0 0l0)
+                       "" #P"")))
+
+(defun deduce-initial-value (type)
+  (when (and (consp type)
+             (eq (car type) 'values))
+    (return-from deduce-initial-value
+      (values (mapcar (lambda (arg)
+                        (if (member arg '(values &optional &rest))
+                            arg
+                            (multiple-value-bind (type validp)
+                                (deduce-initial-value arg)
+                              (if validp
+                                  type
+                                  (return-from deduce-initial-value
+                                    (values nil nil))))))
+                      type)
+              t)))
+  (mapc (lambda (value)
+          (when (typep value type)
+            (return-from deduce-initial-value
+              (values (coerce value type)
+                      t))))
+        +initial-values+)
+  (if (consp type)
+      (case (first type)
+        ((integer rational short-float single-float double-float long-float float real)
+         (let ((value (find-if #'numberp (cdr type))))
+           (if value
+               (values (coerce value type) t)
+               (values nil nil))))
+        (complex
+         (multiple-value-bind (value validp)
+             (deduce-initial-value (second type))
+           (if validp
+               (values (complex value value) t)
+               (values nil nil))))
+        (otherwise
+         (values nil nil)))
+      (values nil nil)))
+
+;;; A d-var-spec is a is a destructuring variable specifier: 
+;;; 
+;;;    d-var-spec ::= simple-var | nil | (d-var-spec . d-var-spec)
+;;;
+;;; where simple-var is a symbol (a name of a variable). 
+;;;
+
+;;; Return true if and only if the argument is a valid d-var-spec, in
+;;; other words if it is a tree of CONS cells where the leaves are
+;;; symbols.
+(defun d-var-spec-p (object)
+  (or (null object)
+      (and (symbolp object)
+           (not (constantp object)))
+      (and (consp object)
+           (d-var-spec-p (car object))
+           (d-var-spec-p (cdr object)))))
+
+(defvar *var-spec* nil)
+
+(defun d-type-spec-p (object &optional (var-spec *var-spec*))
+  (or (symbolp var-spec)
+      (symbolp object)
+      (and (consp var-spec)
+           (consp object)
+           (d-type-spec-p (car object) (car var-spec))
+           (d-type-spec-p (cdr object) (cdr var-spec)))))
+
+(defun function-operator-p (value)
+  (and (consp value)
+       (eq (first value) 'cl:function)
+       (cdr value)
+       (symbolp (second value))
+       (null (cddr value))))
+
+(defun delete-name (name names)
+  (delete-if (lambda (keyword-or-keywords)
+               (find-keyword name keyword-or-keywords))
+             names))
+
+(defun unique-name (sym)
+  (gensym (symbol-name sym)))
+
+(define-compiler-macro unique-name (&whole form name)
+  (cond ((and (constantp name)
+              (symbolp name))
+         `(gensym ,(symbol-name name)))
+        ((and (consp name)
+              (eq (first name) 'quote)
+              (symbolp (second name)))
+         `(gensym ,(symbol-name (second name))))
+        (t
+         form)))
+
+(defun unique-names (syms)
+  (mapcar #'unique-name syms))
+
+(defmacro with-unique-names (names &body body)
+  `(let ,(mapcar (lambda (sym)
+                   `(,sym (gensym ,(symbol-name sym))))
+                  names)
+     ,@body))
