@@ -241,10 +241,26 @@
        (go next))
      (return (cdr head))))
 
+;;; kiln: the directives of a control string are cached (by its contents,
+;;; for kiln's only client); FORMAT interprets the control string at run
+;;; time, and parsing it each time was most of the cost.
+#+kiln
+(defvar *parsed-control-strings* (make-hash-table :test 'equal))
+
 (defun parse-control-string (client control-string)
+  #+kiln
+  (multiple-value-bind (items presentp) (gethash control-string *parsed-control-strings*)
+    (when presentp
+      (return-from parse-control-string items)))
   (loop with items = (parse-items client control-string)
         with global = (make-instance 'layout)
         with local = (make-instance 'layout)
         for item in items
-        finally (return items)
+        finally #-kiln (return items)
+                #+kiln (progn
+                         (when (> (hash-table-count *parsed-control-strings*) 1000)
+                           (clrhash *parsed-control-strings*))
+                         (setf (gethash (copy-seq control-string) *parsed-control-strings*)
+                               items)
+                         (return items))
         do (check-item-syntax client item global local nil)))
