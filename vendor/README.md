@@ -118,6 +118,7 @@ Under `#+kiln` (docs/10 §16 of kiln):
 - The macro expansion helpers are defined at compile time too
   (`eval-when`).
 - POSIX file streams read and write octets through kiln's runtime.
+- `stream-advance-to-column` writes spaces (upstream: newlines).
 - UTF-8: three octets encode the codes below `#x10000` (upstream:
   `#x1000`); decoding shifts the octets' bits left (upstream: right).
 

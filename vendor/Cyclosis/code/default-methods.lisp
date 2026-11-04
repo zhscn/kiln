@@ -170,7 +170,8 @@
   (let ((current (stream-line-column stream)))
     (when current
       (dotimes (i (- column current))
-        (stream-write-char stream #\Newline))
+        ;; kiln: spaces (upstream writes newlines).
+        (stream-write-char stream #-kiln #\Newline #+kiln #\Space))
       t)))
 
 (defmethod stream-fresh-line ((stream fundamental-character-output-stream))
