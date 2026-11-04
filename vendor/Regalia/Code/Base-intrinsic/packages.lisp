@@ -2,6 +2,17 @@
 
 (defpackage #:regalia
   (:use #:common-lisp)
+  ;; kiln: simple vectors and strings are native objects, and the CL
+  ;; array functions are kiln's (docs/10 §14); Regalia's classes and
+  ;; functions have their own names.
+  #+kiln
+  (:shadow #:array #:vector #:string #:simple-vector #:bit-vector
+           #:make-array #:aref #:row-major-aref #:array-dimensions
+           #:array-dimension #:array-rank #:array-total-size #:arrayp
+           #:adjustable-array-p #:array-displacement #:array-in-bounds-p
+           #:array-row-major-index #:upgraded-array-element-type
+           #:array-dimension-limit #:array-total-size-limit
+           #:array-rank-limit)
   (:export
    #:make-array-instance
    #:t-aref

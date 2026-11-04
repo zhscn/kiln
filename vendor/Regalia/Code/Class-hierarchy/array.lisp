@@ -14,7 +14,9 @@
 
 ;;; ARRAY is a standard class, so STANDARD-OBJECT will automatically
 ;;; be included as a superclass.
-(defclass array ()
+;;; kiln: also of the built-in class CL:ARRAY (STANDARD-OBJECT must then
+;;; be given), with the elements in a native vector.
+(defclass array (#+kiln standard-object #+kiln cl:array)
   ((%dimensions
     :initarg :dimensions
     :reader array-dimensions)
@@ -31,7 +33,17 @@
    (%displaced-index-offset
     :initform nil
     :initarg :displaced-index-offset
-    :accessor displaced-index-offset)))
+    :accessor displaced-index-offset)
+   #+kiln
+   (%contents
+    :initform nil
+    :initarg :contents
+    :accessor contents)
+   #+kiln
+   (%adjustable
+    :initform nil
+    :initarg :adjustable
+    :accessor adjustable)))
 
 (setf (documentation 'array-dimensions 'function)
       (format nil

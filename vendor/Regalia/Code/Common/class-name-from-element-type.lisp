@@ -2,7 +2,8 @@
 
 (defun vector-class-name-from-element-type (element-type environment)
   (cond ((subtypep element-type 'cl:bit environment)
-         'vector-bit)
+         ;; kiln: the class is named BIT-VECTOR (there is no VECTOR-BIT).
+         #-kiln 'vector-bit #+kiln 'bit-vector)
         ((subtypep element-type '(unsigned-byte 8) environment)
          'vector-unsigned-byte-8)
         ((subtypep element-type '(signed-byte 16) environment)

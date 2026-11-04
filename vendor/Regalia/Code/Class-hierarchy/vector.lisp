@@ -5,7 +5,7 @@
 
 (defgeneric vector-fill-pointer (vector))
 
-(defclass vector (array sequence)
+(defclass vector (array #+kiln cl:vector sequence)
   ((%fill-pointer
     :initform nil
     :initarg :fill-pointer
