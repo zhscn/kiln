@@ -180,28 +180,32 @@
     ((cons (member progv))
      -20
      pprint-progv)
-    #+(or clasp clisp ecl mezzano sbcl)
+    ;; kiln: Eclector's backquote.
+    #+(or clasp clisp ecl mezzano sbcl kiln)
     ((cons (member #+clasp ext:quasiquote
                    #+clisp system::backquote
                    #+ecl si:quasiquote
                    #+mezzano mezzano.internals::backquote
-                   #+sbcl sb-int:quasiquote)
+                   #+sbcl sb-int:quasiquote
+                   #+kiln eclector.reader:quasiquote)
            (cons t null))
      -20
      pprint-macro-char t nil #\`)
-    #+(or clasp clisp ecl mezzano)
+    #+(or clasp clisp ecl mezzano kiln)
     ((cons (member #+clasp ext:unquote
                    #+clisp system::unquote
                    #+ecl si:unquote
-                   #+mezzano mezzano.internals::bq-comma)
+                   #+mezzano mezzano.internals::bq-comma
+                   #+kiln eclector.reader:unquote)
            (cons t null))
      -20
      pprint-macro-char t t #\,)
-    #+(or clasp clisp ecl mezzano)
+    #+(or clasp clisp ecl mezzano kiln)
     ((cons (member #+clasp ext:unquote-splice
                    #+clisp system::splice
                    #+ecl si:unquote-splice
-                   #+mezzano mezzano.internals::bq-comma-atsign)
+                   #+mezzano mezzano.internals::bq-comma-atsign
+                   #+kiln eclector.reader:unquote-splicing)
            (cons t null))
      -20
      pprint-macro-char t t #\, #\@)

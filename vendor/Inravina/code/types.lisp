@@ -47,7 +47,9 @@
                  #+clisp system::backquote
                  #+ecl si:quasiquote
                  #+mezzano mezzano.internals::backquote
-                 #+sbcl sb-int:quasiquote)
+                 #+sbcl sb-int:quasiquote
+                 ;; kiln: Eclector's backquote.
+                 #+kiln eclector.reader:quasiquote)
     (cons t null)))
 
 (defun quasiquote-form-p (form)
@@ -65,7 +67,9 @@
                  #+ecl si:unquote-nsplice
                  #+mezzano mezzano.internals::bq-comma
                  #+mezzano mezzano.internals::bq-comma-atsign
-                 #+mezzano mezzano.internals::bq-comma-dot)
+                 #+mezzano mezzano.internals::bq-comma-dot
+                 #+kiln eclector.reader:unquote
+                 #+kiln eclector.reader:unquote-splicing)
          (cons t null)))
 
 (defun unquote-form-p (form)
