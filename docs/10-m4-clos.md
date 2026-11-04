@@ -652,6 +652,17 @@ Eclector vendor 在 `vendor/Eclector`，同时是宿主前端的 reader 和目�
 | `svref`/`length` 内联，自动机转移内联 | 493 | 615 | 131 |
 | SBCL（同一份 Eclector；`read` 是 SBCL 自己的） | 0.7 | 6.3 | 0.0 |
 
+之后按下面的建议 1–3 继续做（§26、docs/07 §11、docs/08 §8）：
+
+| 阶段 | `read` | CST 读取 | `read-line` |
+|---|---|---|---|
+| 展开调用的判别函数和快速方法函数 | 363 | 460 | 106 |
+| 判别函数里的 EQL 缓存 | 161 | 253 | 108 |
+| 内联分配，GC 扫描改为判断地址范围，256 MiB 堆 | 135 | 205 | 100 |
+| inline 声明，`eql` 原语少调用 kernel | 120 | 187 | 68 |
+
+这时 CST 读取约是 SBCL 的 30 倍。
+
 CST 读取现在约是 SBCL 的 100 倍，开始时是 1600 倍。各项改动：
 - **fixnum 除法**：KIR 加了 `sdiv`/`srem`。`floor`、`truncate`、`mod`、`rem` 对两个 fixnum 内联计算，原来每次都调用 runtime。自动机二分查找里的 `floor` 曾让每次按实例分派的调用花 0.5 µs，现在是 0.08 µs。
 - **哈希**：`eq`、`eql`、`equal` 表的散列函数直接处理 fixnum、字符、符号、字符串和 cons，不再走 Salmagundi 那套逐步累加、为每次散列生成闭包的路径。`gethash` 从 5.6 µs 降到约 1 µs。
