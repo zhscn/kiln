@@ -247,7 +247,98 @@ time only.")
 
     (setf (clo:macro-function client genv 'kiln.sys::closer-mop-aliases)
           #'expand-closer-mop-aliases)
+    (setf (clo:macro-function client genv 'load-time-only) #'expand-load-time-only)
     env))
+
+;;; Libraries that the host has loaded too (the front end's dependencies,
+;;; docs/11 §3) have their macros expanded by the host's definitions at
+;;; compile time, as LOOP is. Their expanders call functions and use data
+;;; (parser.packrat's grammars, let-plus's generic functions) that exist at
+;;; compile time only in the host; some of their macros are defined by
+;;; forms that are not at top level (anaphora's ANAPHORIC). An expansion
+;;; must not contain host objects, which could not be compiled.
+
+(defun host-object-p (object)
+  (not (typep object '(or symbol number character string))))
+
+(defun check-host-expansion (name expansion)
+  (let ((seen (make-hash-table :test 'eq)))
+    (labels ((walk (x)
+               (cond ((gethash x seen))
+                     ((consp x)
+                      (setf (gethash x seen) t)
+                      (walk (car x))
+                      (walk (cdr x)))
+                     ((and (symbolp x) (symbol-package x)
+                           (let ((package (package-name (symbol-package x))))
+                             (and (> (length package) 3) (string= "SB-" package :end2 3))))
+                      (error "The host expansion of ~S contains the host symbol ~S." name x))
+                     ((and (vectorp x) (not (stringp x)))
+                      (setf (gethash x seen) t)
+                      (map nil #'walk x))
+                     ((host-object-p x)
+                      (error "The host expansion of ~S contains ~S." name x)))))
+      (walk expansion))))
+
+;;; A macro-defining macro's expansion contains the host's backquote
+;;; (SB-INT:QUASIQUOTE forms with SB-IMPL::COMMA objects): it is rewritten
+;;; with Eclector's QUASIQUOTE, UNQUOTE and UNQUOTE-SPLICING, which are
+;;; macros at compile time (MAKE-COMPILE-ENVIRONMENT) and run time.
+(defun translate-host-backquote (form)
+  (let ((done (make-hash-table :test 'eq)))
+    (labels ((walk (x)
+               (cond ((typep x 'sb-impl::comma)
+                      (list (if (zerop (sb-impl::comma-kind x))
+                                'eclector.reader:unquote
+                                'eclector.reader:unquote-splicing)
+                            (walk (sb-impl::comma-expr x))))
+                     ((gethash x done))
+                     ((consp x)
+                      (setf (gethash x done)
+                            (cons (if (eq (car x) 'sb-int:quasiquote)
+                                      'eclector.reader:quasiquote
+                                      (walk (car x)))
+                                  (walk (cdr x)))))
+                     ((and (simple-vector-p x) (some (lambda (e) (or (consp e) (typep e 'sb-impl::comma))) x))
+                      (setf (gethash x done) (map 'vector #'walk x)))
+                     (t x))))
+      (walk form))))
+
+;;; (LOAD-TIME-ONLY form...) in a host expansion, at top level: the forms
+;;; are compiled but not evaluated at compile time, even in an EVAL-WHEN
+;;; with :COMPILE-TOPLEVEL (they would change the host's state:
+;;; parser.packrat's DEFRULE there would replace the host's rule by one
+;;; that the compile-time evaluator runs). Not at top level, the forms are
+;;; dropped.
+(defun expand-load-time-only (form env)
+  (declare (ignore env))
+  `(eval-when (:load-toplevel) ,@(rest form)))
+
+(defun use-host-macros (session package-names)
+  "The macros whose home is one of the packages PACKAGE-NAMES are expanded
+by the host's expanders at compile time in SESSION, and code evaluated at
+compile time calls the host's functions of those packages (the expansions
+evaluate some at compile time: parser.packrat's DEFGRAMMAR)."
+  (let* ((client (session-client session))
+         (genv (trucler:global-environment client (session-environment session))))
+    (dolist (package-name package-names)
+      (let ((package (or (find-package package-name)
+                         (error "No host package ~A." package-name))))
+        (do-symbols (s package)
+          (when (eq (symbol-package s) package)
+            (when (and (fboundp s) (not (macro-function s)) (not (special-operator-p s)))
+              (setf (clo:fdefinition client genv s) (fdefinition s)))
+            (when (fboundp `(setf ,s))
+              (setf (clo:fdefinition client genv `(setf ,s)) (fdefinition `(setf ,s)))))
+          (let ((expander (and (eq (symbol-package s) package) (macro-function s))))
+            (when expander
+              (let ((name s))
+                (host-macro client genv s
+                            (lambda (form env)
+                              (let ((expansion (translate-host-backquote
+                                                (funcall expander form env))))
+                                (check-host-expansion name expansion)
+                                expansion)))))))))))
 
 ;;; Inline functions (docs/08 §8). (DECLAIM (INLINE F)) before
 ;;; (DEFUN F ...) at top level makes calls of F that refer to the global
@@ -433,12 +524,24 @@ true; else NIL and NIL."
   (convert-load-time-value client cst environment form next))
 
 (defun convert-load-time-value (client cst environment form next)
-  (if (and (consp form) (eq (first form) 'load-time-value)
-           (consp (rest form)) (consp (cddr form)))
-      (funcall next client
-               (cst:reconstruct client (list 'load-time-value (second form)) cst)
-               environment)
-      (convert-setq-of-symbol-macros client cst environment next)))
+  (cond ((and (consp form) (eq (first form) 'load-time-value)
+              (consp (rest form)) (consp (cddr form)))
+         (funcall next client
+                  (cst:reconstruct client (list 'load-time-value (second form)) cst)
+                  environment))
+        ;; (THE (VALUES ...) X) and (THE (FUNCTION ...) X): Iconoclast has
+        ;; no ASTs for these types (SIMPLIFY-DECLARATION-SPECIFIER).
+        ((and (consp form) (eq (first form) 'the) (consp (rest form))
+              (compound-function-type-p (second form)) (consp (cddr form)))
+         (funcall next client
+                  (cst:reconstruct client
+                                   (list 'the
+                                         (if (eq (first (second form)) 'function) 'function t)
+                                         (third form))
+                                   cst)
+                  environment))
+        (t
+         (convert-setq-of-symbol-macros client cst environment next))))
 
 (defun convert-setq-of-symbol-macros (client cst environment next)
   (let ((form (cst:raw cst)))

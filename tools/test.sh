@@ -22,15 +22,18 @@ args=(--eval "(defvar *session* (kiln.compiler:make-session))"
       --eval "(kiln:compile-kernel \"$build/kernel.kir\" :session *session*)")
 # Tests named clos-*.lisp run with the CLOS module loaded after the kernel,
 # fe-*.lisp also with the front-end module after it, ev-*.lisp with the
-# eval module after CLOS.
+# eval module after CLOS, co-*.lisp with the front-end, eval and compiler
+# modules (docs/11 §3).
 need_clos=0
 need_fe=0
 need_ev=0
+need_co=0
 for src in "${sources[@]}"; do
   case $(basename "$src") in
     clos-*) need_clos=1 ;;
     fe-*) need_clos=1; need_fe=1 ;;
     ev-*) need_clos=1; need_ev=1 ;;
+    co-*) need_clos=1; need_fe=1; need_ev=1; need_co=1 ;;
   esac
 done
 if [ $need_clos = 1 ]; then
@@ -41,6 +44,9 @@ if [ $need_fe = 1 ]; then
 fi
 if [ $need_ev = 1 ]; then
   args+=(--eval "(kiln:compile-eval \"$build/eval.kir\" :session *session*)")
+fi
+if [ $need_co = 1 ]; then
+  args+=(--eval "(kiln:compile-compiler \"$build/compiler.kir\" :session *session*)")
 fi
 for src in "${sources[@]}"; do
   args+=(--eval "(kiln:compile-file-to-kir \"$src\" \"$build/$(basename "${src%.lisp}").kir\" :session *session*)")
@@ -63,6 +69,8 @@ for src in "${sources[@]}"; do
     clos-*) modules+=("$build/clos.kir"); heap=8388608 ;;
     fe-*) modules+=("$build/clos.kir" "$build/frontend.kir"); heap=16777216 ;;
     ev-*) modules+=("$build/clos.kir" "$build/eval.kir"); heap=16777216 ;;
+    co-*) modules+=("$build/clos.kir" "$build/frontend.kir" "$build/eval.kir" "$build/compiler.kir")
+          heap=67108864 ;;
   esac
   if "$cg" jit "${modules[@]}" "$kir" >"$build/$name.jit.out" 2>&1 && diff -u "$expected" "$build/$name.jit.out"; then
     echo "PASS jit $name"

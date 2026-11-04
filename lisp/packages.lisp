@@ -61,11 +61,13 @@
                     (#:cmd #:common-macro-definitions)
                     (#:clo #:clostrum))
   (:documentation "The compiler: Common-boot front end, lowering to KIR.")
-  (:export #:front-end #:make-session #:compile-module #:kiln-compile-error))
+  (:export #:front-end #:make-session #:compile-module #:kiln-compile-error
+           #:use-host-macros))
 
 (defpackage #:kiln
   (:use #:cl)
   (:export #:compile-file-to-kir #:compile-kernel #:compile-clos #:compile-frontend
+           #:compile-compiler
            #:compile-eval))
 
 (defpackage #:kiln.structures

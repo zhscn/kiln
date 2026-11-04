@@ -316,6 +316,7 @@
          (kiln-clos-file "pathnames")
          (kiln-clos-file "files")
          (kiln-clos-file "time")
+         (kiln-clos-file "documentation")
          (kiln-clos-file "closer-mop")
          (kiln-clos-file "trivial-with-current-source-form"))
    *khazern-files*
@@ -457,3 +458,112 @@ SESSION must have compiled the kernel and CLOS."
   "Compiles the eval module to OUTPUT, loaded after the CLOS module.
 SESSION must have compiled the kernel and CLOS."
   (write-module (compile-files *eval-files* session "eval") output))
+
+(defparameter *compiler-files*
+  ;; The compiler module (docs/11 §3, M5.2): the front end's remaining
+  ;; dependencies, Common-boot, then kiln's compiler (M5.3).
+  (flet ((files (system &rest names)
+           (mapcar (lambda (name)
+                     (asdf:system-relative-pathname system (format nil "~A.lisp" name)))
+                   names)))
+    (append
+     (files "utilities.print-items" "code/package" "code/util" "code/protocol")
+     (files "anaphora" "packages" "early" "symbolic" "anaphora")
+     (files "let-plus" "package" "let-plus" "extensions")
+     (files "more-conditions" "src/package" "src/types" "src/variables" "src/protocol"
+            "src/conditions" "src/macros")
+     (files "architecture.builder-protocol" "code/package" "code/util" "code/variables"
+            "code/protocol" "code/macros" "code/mixins" "code/list-builder"
+            "code/top-down-forcing-builder")
+     (files "parser.packrat.cache" "src/cache/package" "src/cache/chunk-cache"
+            "src/cache/stream-cache" "src/cache/packrat-cache")
+     (files "parser.packrat" "src/base/package" "src/base/types"
+            "src/expression/package" "src/expression/protocol" "src/expression/mixins"
+            "src/expression/macros" "src/environment/package" "src/environment/protocol"
+            "src/environment/macros" "src/environment/environment"
+            "src/compiler/package" "src/compiler/conditions" "src/compiler/util"
+            "src/compiler/protocol" "src/grammar/package" "src/grammar/protocol"
+            "src/grammar/conditions" "src/grammar/mixins" "src/grammar/rule"
+            "src/grammar/base/package" "src/grammar/base/expressions"
+            "src/grammar/base/base-grammar" "src/grammar/base/debug"
+            "src/grammar/base/compiler" "src/grammar/sequence/package"
+            "src/grammar/sequence/expressions" "src/grammar/sequence/mixins"
+            "src/grammar/sequence/environment" "src/grammar/sequence/sequence-grammar"
+            "src/grammar/sequence/prepare" "src/grammar/sequence/compiler"
+            "src/grammar/sexp/package" "src/grammar/sexp/expressions"
+            "src/grammar/sexp/sexp-grammar" "src/grammar/sexp/prepare"
+            "src/grammar/sexp/compiler" "src/bootstrap/package" "src/bootstrap/parse"
+            "src/interface/package" "src/interface/variables" "src/interface/protocol"
+            "src/interface/macros" "src/interface/inline-cache"
+            "src/interface/compilation" "src/grammar/base/concrete-syntax"
+            "src/grammar/sequence/concrete-syntax" "src/grammar/sexp/concrete-syntax")
+     (files "s-expression-syntax" "code/expression-grammar/package"
+            "code/expression-grammar/protocol" "code/expression-grammar/stubs"
+            "code/expression-grammar/meta-grammar" "code/expression-grammar/grammar"
+            "code/package" "code/conditions" "code/protocol" "code/semantics"
+            "code/database" "code/macros" "code/definitions/names"
+            "code/definitions/types" "code/definitions/declarations"
+            "code/definitions/forms" "code/definitions/lambda-lists"
+            "code/definitions/grammar" "code/definitions/bindings"
+            "code/definitions/pseudo-operators" "code/definitions/special-operators"
+            "code/definitions/definition-macros" "code/definitions/control-macros"
+            "code/definitions/debug-macros" "code/definitions/iteration-macros"
+            "code/definitions/io-macros" "code/definitions/modify-macros"
+            "code/classify" "code/concrete-syntax-tree/package"
+            "code/concrete-syntax-tree/client"))))
+
+(defparameter *compiler-host-macro-packages*
+  ;; Expanded by the host at compile time (kiln.compiler:use-host-macros).
+  '("ANAPHORA" "LET-PLUS" "MORE-CONDITIONS" "UTILITIES.PRINT-ITEMS"
+    "ARCHITECTURE.BUILDER-PROTOCOL" "PARSER.PACKRAT.CACHE" "PARSER.PACKRAT.BASE"
+    "PARSER.PACKRAT.EXPRESSION" "PARSER.PACKRAT.ENVIRONMENT" "PARSER.PACKRAT.COMPILER"
+    "PARSER.PACKRAT.GRAMMAR" "PARSER.PACKRAT.GRAMMAR.BASE"
+    "PARSER.PACKRAT.GRAMMAR.SEQUENCE" "PARSER.PACKRAT.GRAMMAR.SEXP"
+    "PARSER.PACKRAT.BOOTSTRAP" "PARSER.PACKRAT" "S-EXPRESSION-SYNTAX.EXPRESSION-GRAMMAR"
+    "S-EXPRESSION-SYNTAX" "S-EXPRESSION-SYNTAX.CONCRETE-SYNTAX-TREE"))
+
+(defun load-time-only-definitions (expansion)
+  "EXPANSION of a parser.packrat or s-expression-syntax definition macro
+with its compile-time definitions removed and its load-time ones wrapped
+in KILN.COMPILER::LOAD-TIME-ONLY."
+  (labels ((walk (form)
+             (cond ((atom form) form)
+                   ((and (eq (first form) 'eval-when)
+                         (equal (second form) '(:compile-toplevel)))
+                    nil)
+                   ((member (first form) '(parser.packrat.grammar:ensure-grammar
+                                           parser.packrat.grammar:ensure-rule
+                                           s-expression-syntax::ensure-syntax))
+                    `(kiln.compiler::load-time-only ,form))
+                   ((eq (first form) 'progn)
+                    (cons 'progn (mapcar #'walk (rest form))))
+                   (t form))))
+    (walk expansion)))
+
+(defun compile-compiler (output &key (session (kiln.compiler:make-session)))
+  "Compiles the compiler module to OUTPUT, loaded after the front-end and
+eval modules. SESSION must have compiled the kernel, CLOS, the front end
+and eval."
+  (kiln.compiler:use-host-macros session *compiler-host-macro-packages*)
+  (let* ((client (kiln.compiler::session-client session))
+         (genv (trucler:global-environment
+                client (kiln.compiler::session-environment session))))
+    ;; The host's DEFRULE compiles a rule in the host's current grammar.
+    (kiln.compiler::host-macro
+     client genv 'parser.packrat:in-grammar
+     (lambda (form env)
+       (declare (ignore env))
+       (setf parser.packrat::*grammar* (parser.packrat.grammar:find-grammar (second form)))
+       `(eval-when (:load-toplevel :execute)
+          (setf parser.packrat::*grammar*
+                (parser.packrat.grammar:find-grammar ',(second form))))))
+    ;; The host has the grammars, rules and syntax descriptions already;
+    ;; defining them at compile time would replace the host's.
+    (dolist (name '(parser.packrat:defgrammar parser.packrat:defrule
+                    s-expression-syntax::define-syntax))
+      (let ((expander (clostrum:macro-function client genv name)))
+        (kiln.compiler::host-macro
+         client genv name
+         (lambda (form env)
+           (load-time-only-definitions (funcall expander form env)))))))
+  (write-module (compile-files *compiler-files* session "compiler") output))
