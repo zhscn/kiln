@@ -9,6 +9,13 @@
 
 (in-package #:kiln.kernel)
 
+;;; Small functions whose calls are open-coded (docs/08 §8). Some are
+;;; defined in types.lisp.
+(declaim (inline bignump fixnump single-float-p double-float-p ratiop rationalp floatp realp
+                 characterp char-code simple-string-p simple-vector-p native-vector-p
+                 acons fourth fifth caar cdar caddr cdddr identity byte byte-size byte-position
+                 caaar caadr cadar cdaar cdadr cddar))
+
 ;;; (SETF GET) for the definitions below, which run before GET exists:
 ;;; only primitives.
 (defun %put (symbol indicator value)

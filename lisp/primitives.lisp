@@ -141,12 +141,17 @@ are compared (no short circuit), which also checks every argument."
 ;;; Only fixnums, symbols and conses exist so far, so EQL is EQ.
 (define-primitive eql (a b)
   ;; Identical objects are EQL; otherwise only numbers that are heap
-  ;; objects (bignums) can be, which the kernel decides.
-  (let ((r (copy-to-var (t-value)))
-        (no (new-block)) (slow (new-block)) (false (new-block)) (done (new-block)))
+  ;; objects (bignums, ratios, double floats) can be, which the kernel
+  ;; decides.
+  (let ((r (copy-to-var (t-value))) (kind (new-var :raw))
+        (no (new-block)) (general (new-block)) (slow (new-block)) (false (new-block))
+        (done (new-block)))
     (br `(:eq ,a ,b) done no)
     (start-block no)
-    (br `(:eq (:and ,a ,+tag-mask+) ,+tag-general+) slow false)
+    (br `(:eq (:and ,a ,+tag-mask+) ,+tag-general+) general false)
+    (start-block general)
+    (emit `(:set ,kind (:and (:load ,a ,(- +tag-general+)) ,+kind-mask+)))
+    (br `(:and (:ge ,kind ,+kind-bignum+) (:le ,kind ,+kind-double+)) slow false)
     (start-block slow)
     (emit `(:set ,r ,(emit-slow-call 'kiln.kernel::eql-slow a b)))
     (jump done)

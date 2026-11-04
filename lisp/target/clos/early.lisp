@@ -21,6 +21,11 @@
 
 ;;; Primitives
 
+;;; Open-coded where they are called (docs/08 §8).
+(declaim (inline standard-instance-access slot-value-using-location+1
+                 slot-boundp-using-location+1 slot-makunbound-using-location+1
+                 small-integer= small-integer< instancep class-of+1 stamp+1))
+
 (defvar +unbound-slot-value+ (kiln.sys:%primop :unbound-slot-value))
 
 (defun standard-instance-access (instance location)

@@ -224,6 +224,8 @@ LAMBDA-EXPRESSION."
   (when (and (consp declaration) (eq (first declaration) 'special))
     (dolist (name (rest declaration))
       (clo:make-variable client genv name)))
+  (when (and (consp declaration) (member (first declaration) '(inline notinline)))
+    (note-inline-proclamation (first declaration) (rest declaration)))
   nil)
 
 (defvar *host-macros* (make-hash-table :test 'equal)
@@ -375,6 +377,135 @@ LAMBDA-EXPRESSION."
           #'expand-closer-mop-aliases)
     env))
 
+;;; Inline functions (docs/08 §8). (DECLAIM (INLINE F)) before
+;;; (DEFUN F ...) at top level makes calls of F that refer to the global
+;;; function open-coded: (F A B) is converted as
+;;; (LET ((X A) (Y B)) (BLOCK F ...)). Only functions whose lambda lists
+;;; have required parameters only, defined in the null lexical environment,
+;;; are expanded. A call is not expanded inside the expansion of the same
+;;; function, where a local NOTINLINE declaration applies, or where a local
+;;; function, macro or symbol macro shadows a name the body uses.
+
+(defvar *inline-functions*)
+(defvar *inline-expanding* '()
+  "The inline functions whose expansions are being converted.")
+(defvar *toplevel-environment*)
+(defvar *inline-enabled* nil
+  "True while forms are converted for the target. Calls are not expanded
+in code that runs at compile time (EVAL-CST, the expanders of local
+macros): an expansion can use the kernel's internals.")
+
+(defmethod cb:eval-cst :around ((client client) cst environment)
+  (declare (ignore cst environment))
+  (let ((*inline-enabled* nil))
+    (call-next-method)))
+
+(defmethod cb::finalize-local-macro-ast :around ((client client) ast environment)
+  (declare (ignore ast environment))
+  (let ((*inline-enabled* nil))
+    (call-next-method)))
+
+(defvar *local-notinline* '()
+  "Names declared NOTINLINE by the forms being converted.")
+
+(defun local-notinline-names (form)
+  "The names that the declarations at the head of the body of FORM (a
+LAMBDA, LET, LOCALLY ... form) declare NOTINLINE. Such a declaration is
+taken to cover the whole form: not expanding a call is always correct."
+  (and (consp form)
+       (member (first form) '(lambda let let* locally flet labels macrolet symbol-macrolet
+                              multiple-value-bind destructuring-bind))
+       (let ((body (if (eq (first form) 'locally) (rest form) (and (consp (rest form))
+                                                                     (cddr form)))))
+         (loop for item in (if (listp body) body '())
+               while (or (stringp item) (and (consp item) (eq (first item) 'declare)))
+               when (consp item)
+                 append (loop for spec in (rest item)
+                              when (and (consp spec) (eq (first spec) 'notinline))
+                                append (remove-if-not #'symbolp (rest spec)))))))
+
+(defun note-inline-proclamation (kind names)
+  (when (boundp '*inline-functions*)
+    (dolist (name names)
+      (when (symbolp name)
+        (if (eq kind 'notinline)
+            (setf (gethash name *inline-functions*) :notinline)
+            (unless (consp (gethash name *inline-functions*))
+              (setf (gethash name *inline-functions*) :inline)))))))
+
+(defun split-body (body)
+  "The declarations (and documentation) of BODY, and its forms."
+  (loop with declarations = '()
+        for (form . more) on body
+        do (cond ((and (consp form) (eq (first form) 'declare))
+                  (push form declarations))
+                 ((and (stringp form) more))
+                 (t (return (values (reverse declarations) (cons form more)))))
+        finally (return (values (reverse declarations) '()))))
+
+(defun tree-symbols (tree)
+  (let ((symbols '()) (seen (make-hash-table :test 'eq)))
+    (labels ((walk (x)
+               (cond ((symbolp x) (pushnew x symbols))
+                     ((atom x))
+                     ((gethash x seen))
+                     (t (setf (gethash x seen) t)
+                        (walk (car x)) (walk (cdr x))))))
+      (walk tree))
+    symbols))
+
+(defun note-inline-definition (form)
+  "FORM is a top-level DEFUN: keep its body if its name is declared inline."
+  (destructuring-bind (name lambda-list &rest body) (rest form)
+    (when (and (symbolp name)
+               ;; Declared inline, or inline and defined before: the new
+               ;; definition replaces the expansion.
+               (let ((entry (gethash name *inline-functions*)))
+                 (or (eq entry :inline) (consp entry)))
+               (eq *environment* *toplevel-environment*)
+               (listp lambda-list)
+               (every #'symbolp lambda-list)
+               (notany (lambda (p) (member p lambda-list-keywords)) lambda-list))
+      (multiple-value-bind (declarations forms) (split-body body)
+        (setf (gethash name *inline-functions*)
+              (list lambda-list declarations `(block ,name ,@forms)
+                    (tree-symbols body)))))))
+
+(defun inline-call-p (client environment form)
+  (and *inline-enabled*
+       (consp form)
+       (symbolp (first form))
+       (let ((entry (and (boundp '*inline-functions*)
+                         (gethash (first form) *inline-functions*))))
+         (and (consp entry)
+              (not (member (first form) *inline-expanding*))
+              (not (member (first form) *local-notinline*))
+              (< (length *inline-expanding*) 8)
+              (handler-case (= (length (rest form)) (length (first entry)))
+                (error () nil))
+              (let ((description (trucler:describe-function client environment (first form))))
+                ;; NIL: a function unknown to the compile-time
+                ;; environment (DEFUN does not define it at compile time).
+                (or (null description)
+                    (and (typep description 'trucler:global-function-description)
+                         (not (eq (ignore-errors (trucler:inline description))
+                                  'notinline)))))
+              (notany (lambda (symbol)
+                        (or (typep (trucler:describe-function client environment symbol)
+                                   '(or trucler:local-function-description
+                                     trucler:local-macro-description))
+                            (typep (trucler:describe-variable client environment symbol)
+                                   'trucler:local-symbol-macro-description)))
+                      (fourth entry))))))
+
+(defun inline-expansion (form)
+  (destructuring-bind (lambda-list declarations body &rest more)
+      (gethash (first form) *inline-functions*)
+    (declare (ignore more))
+    `(let ,(mapcar #'list lambda-list (rest form))
+       ,@declarations
+       ,body)))
+
 ;;; SETQ of a symbol macro is SETF of its expansion (CLHS 3.1.2.1.1);
 ;;; Common-boot has no method for it, so the form is rewritten before
 ;;; conversion. WITH-SLOTS and WITH-ACCESSORS rely on this.
@@ -389,16 +520,34 @@ true; else NIL and NIL."
             (values nil nil)))
       (values nil nil)))
 
-;;; The READ-ONLY-P argument of LOAD-TIME-VALUE is dropped (it is only a
-;;; permission): Common-boot cannot convert it.
+;;; Before Common-boot converts a form: calls of inline functions are
+;;; expanded (unless a NOTINLINE declaration of the form covers them);
+;;; the READ-ONLY-P argument of LOAD-TIME-VALUE is dropped (it is only a
+;;; permission): Common-boot cannot convert it; SETQ of symbol macros
+;;; becomes SETF.
 (defmethod cb::convert :around ((client client) cst environment)
   (let ((form (cst:raw cst)))
-    (if (and (consp form) (eq (first form) 'load-time-value)
-             (consp (rest form)) (consp (cddr form)))
-        (call-next-method client
-                          (cst:reconstruct client (list 'load-time-value (second form)) cst)
-                          environment)
-        (convert-setq-of-symbol-macros client cst environment #'call-next-method))))
+    (let ((names (local-notinline-names form)))
+      (when names
+        (return-from cb::convert
+          (let ((*local-notinline* (append names *local-notinline*)))
+            (convert-maybe-inline client cst environment form #'call-next-method)))))
+    (convert-maybe-inline client cst environment form #'call-next-method)))
+
+(defun convert-maybe-inline (client cst environment form next)
+  (when (inline-call-p client environment form)
+    (return-from convert-maybe-inline
+      (let ((*inline-expanding* (cons (first form) *inline-expanding*)))
+        (funcall next client (cst:reconstruct client (inline-expansion form) cst) environment))))
+  (convert-load-time-value client cst environment form next))
+
+(defun convert-load-time-value (client cst environment form next)
+  (if (and (consp form) (eq (first form) 'load-time-value)
+           (consp (rest form)) (consp (cddr form)))
+      (funcall next client
+               (cst:reconstruct client (list 'load-time-value (second form)) cst)
+               environment)
+      (convert-setq-of-symbol-macros client cst environment next)))
 
 (defun convert-setq-of-symbol-macros (client cst environment next)
   (let ((form (cst:raw cst)))
@@ -467,7 +616,9 @@ the file. Reading starts in KILN-USER, with the target's features."
 (defun compile-toplevel-form (cst compile-time-too)
   (when compile-time-too
     (compile-time-eval cst))
-  (push (simplify (cb:cst-to-ast *client* cst *environment*)) *toplevel-asts*))
+  (push (simplify (let ((*inline-enabled* t))
+                    (cb:cst-to-ast *client* cst *environment*)))
+        *toplevel-asts*))
 
 (defun macroexpand-toplevel (form)
   "Returns the expansion of FORM and true if FORM is a macro form."
@@ -542,6 +693,8 @@ whole instead (the declarations would otherwise be lost)."
 
 (defun process-toplevel (cst compile-time-too)
   (let ((form (cst:raw cst)))
+    (when (and (consp form) (eq (first form) 'defun) (consp (rest form)) (consp (cddr form)))
+      (note-inline-definition form))
     (if (and (consp form) (symbolp (first form)))
         (case (first form)
           (progn
@@ -584,7 +737,9 @@ programs compiled after it."
   (structures (make-hash-table :test 'equal))
   ;; Host packages described by the symbol tables of the modules compiled
   ;; so far (lower.lisp).
-  (packages '()))
+  (packages '())
+  ;; Inline proclamations and expansions (*INLINE-FUNCTIONS*).
+  (inline-functions (make-hash-table :test 'eq)))
 
 (defun make-session ()
   (let ((client (make-instance 'client)))
@@ -647,7 +802,9 @@ created."
          (*defined-functions* (session-defined-functions session))
          (*referenced-functions* (make-hash-table :test 'equal))
          (*defined-packages* '())
-         (*structures* (session-structures session)))
+         (*structures* (session-structures session))
+         (*inline-functions* (session-inline-functions session))
+         (*toplevel-environment* *environment*))
     ;; Calls to functions defined later in the file are fine: report
     ;; undefined functions at the end (CLHS 3.2.2.3).
     (handler-bind ((cb:no-function-description

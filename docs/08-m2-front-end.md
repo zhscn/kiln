@@ -166,3 +166,29 @@ Common-boot 本身的顶层处理不完整：`*compile-time-too*` 从来不会�
 9. `progv`：已完成（§5.5）。
 6. 跨环境的符号：现在目标符号就是宿主符号（在 `kiln-user` 包里读入），包系统等 M3 用 Parcl 做。
 7. 运行期的宏环境：`(setf macro-function)` 已完成（10 §20）；`proclaim` 目前是空操作。
+
+## 8. inline 声明（M4.6 之后）
+
+docs/10 §24 的建议 3。实现在 `lisp/front.lisp`。
+
+**规则**：
+- 编译期的 `proclaim` 记录 `inline` 和 `notinline`，存在 session 的 `inline-functions` 表里，所以跨模块有效：kernel 里声明的函数，在 CLOS 模块和程序里调用时也会展开。
+- 顶层的 `(defun f ...)` 若在 `(declaim (inline f))` 之后，就记下它的 lambda list、声明和 `(block f ...)` 形式的函数体。只记录两种情况：lambda list 只有必需参数，且定义在空词法环境里（不在顶层的 `macrolet`、`symbol-macrolet` 里）。之后的同名定义会替换记下的展开。
+- Common-boot 转换形式之前（`cb::convert :around`），`(f a b)` 改写成 `(let ((x a) (y b)) 声明 (block f ...))` 再转换。参数用 `let` 绑定，所以实参按顺序求值，而且在外层环境里求值。以下情况不展开：
+  - f 在调用处是局部函数；
+  - 正在展开 f 自身，所以递归调用只展开一层；展开嵌套深度不超过 8；
+  - 有覆盖这个调用的 `notinline` 声明；
+  - 调用处的局部函数、局部宏或局部 symbol macro 遮蔽了函数体里出现的某个名字；
+  - 实参个数不对，这时照常调用，由运行期报错。
+- **局部 `notinline`**：Common-boot 的环境不记录 inline 声明，所以前端自己处理。转换 `lambda`、`let`、`locally` 等形式时，收集其主体开头的 `notinline` 声明，在转换整个形式期间生效。范围比 CL 规定的宽：绑定的初始化形式也包括在内。不展开总是正确的。
+- **编译期的代码不展开**：展开式里可能用到 kernel 的内部函数和 `%primop`，它们在编译期并不存在。只有 `compile-toplevel-form` 把形式转成目标端 AST 时才打开展开（`*inline-enabled*`）。`cb:eval-cst`（编译期求值，包括宏定义）和 `cb::finalize-local-macro-ast`（局部宏展开函数的函数体）上的 `:around` 方法会把它关掉。
+
+**声明为 inline 的函数**：
+- kernel（`kernel.lisp` 开头）：一行的类型谓词（`fixnump`、`characterp`、`simple-vector-p` 等）、`char-code`、`acons`、`identity`、`fourth`、`fifth` 和 cXXr 等。
+- CLOS（`early.lisp`）：`standard-instance-access`、`slot-value-using-location+1` 等、`small-integer=`、`instancep`、`class-of+1`、`stamp+1`。
+
+**`eql` 原语**：两个不同的一般对象原来都要调用 kernel 的 `eql-slow`。现在先看第一个对象的 kind，只有 bignum、比率、double float 才调用，其他对象直接返回 NIL。
+
+**结果**（`bench/fe-read.lisp`）：CST 读取 205 → 187 ms，`read` 135 → 120 ms，`read-line` 100 → 68 ms；`make-instance` 2.1 → 1.1 µs（`bench/gf.lisp`）。
+
+**还没有**：`&optional`、`&key` 参数的展开；`setf` 函数；编译器宏（`define-compiler-macro` 在编译期仍被忽略）。`member`、`assoc` 这类带 `:test` 的函数，要靠编译器宏或源码变换，按常量 test 生成专门的循环，光 inline 不够，因为 kiln 不做常量传播，`(funcall test ...)` 仍是间接调用。
