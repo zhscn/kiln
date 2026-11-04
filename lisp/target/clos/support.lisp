@@ -46,3 +46,15 @@
 (defun compile (name lambda-expression)
   (declare (ignore name))
   (error "COMPILE is not available" lambda-expression))
+
+;;; Obsolete instances (docs/10 §7, point 8): an instance whose stamp is
+;;; not the unique number of its class. The patched
+;;; DEFAULT-DISCRIMINATING-FUNCTION updates them before dispatching again.
+(defun obsolete-instance-p (object)
+  (and (instancep object)
+       (not (eql (stamp object) (%slot (class-of object) '%unique-number)))))
+
+(defun update-obsolete-instance (instance)
+  ;; Class redefinition is not supported yet, so no instance becomes
+  ;; obsolete; this keeps a stale stamp from looping.
+  (error "obsolete instance: class redefinition is not supported yet" instance))
