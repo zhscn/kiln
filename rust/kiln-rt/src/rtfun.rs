@@ -104,3 +104,38 @@ pub unsafe fn error_with(_ctx: *mut Context, code: u64, obj: u64) -> ! {
 pub unsafe extern "C" fn kiln_rt_poll(ctx: *mut Context, _fp: usize) {
     unsafe { (*ctx).poll_flag = 0 };
 }
+
+static NEXT_IDENTITY_HASH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+/// The identity hash of `obj` as a fixnum: stable across moving
+/// collections. Heap objects get one on first request, stored in header
+/// bits 40..64; static objects (which never move) and immediates hash by
+/// their bits. Not a safepoint.
+///
+/// # Safety
+/// `obj` must be a valid Lisp value.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kiln_rt_identity_hash(_ctx: *mut Context, obj: u64) -> u64 {
+    use crate::object::{HASH_SHIFT, is_cons, is_general, untag};
+    let hash = if (is_cons(obj) || is_general(obj)) && crate::gc::in_mmtk_space(obj) {
+        let header = untag(obj) as *mut u64;
+        let h = unsafe { *header };
+        let existing = h >> HASH_SHIFT;
+        if existing != 0 {
+            existing
+        } else {
+            // Spread consecutive numbers over the 24 bits (Fibonacci hashing).
+            let n = NEXT_IDENTITY_HASH.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let mut new = (n.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 40) & 0xff_ffff;
+            if new == 0 {
+                new = 1;
+            }
+            unsafe { *header = (h & ((1u64 << HASH_SHIFT) - 1)) | (new << HASH_SHIFT) };
+            new
+        }
+    } else {
+        // Static objects and immediates: mix the bits.
+        (obj.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 24) & ((1u64 << 40) - 1)
+    };
+    hash << 1
+}

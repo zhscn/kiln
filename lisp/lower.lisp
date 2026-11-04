@@ -563,6 +563,7 @@ known to hold one), and true; else NIL and NIL."
 ;;; symbol that was never bound (index 0) needs no test.
 
 (defun rt-tls-index () (module-import-func "kiln_rt_tls_index" 2 1))
+(defun rt-identity-hash () (module-import-func "kiln_rt_identity_hash" 2 1))
 
 (defun emit-tls-slot (sym)
   "Raw address of the TLS slot of the symbol operand SYM (index 0 if it

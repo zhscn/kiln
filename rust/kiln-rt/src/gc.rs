@@ -16,7 +16,7 @@ use crate::context::Context;
 use crate::object::{
     self, KIND_BIGNUM, KIND_CONS, KIND_DOUBLE, KIND_FUNCALLABLE_INSTANCE, KIND_FUNCTION, KIND_INSTANCE,
     KIND_RACK, KIND_RATIO, KIND_MASK, KIND_SIMPLE_VECTOR, KIND_STRING, KIND_SYMBOL,
-    LENGTH_SHIFT,
+    header_length,
 };
 use mmtk::util::copy::{CopySemantics, GCWorkerCopyContext};
 use mmtk::util::opaque_pointer::{OpaquePointer, VMMutatorThread, VMThread, VMWorkerThread};
@@ -323,9 +323,9 @@ impl Scanning<Kiln> for KilnScanning {
         // (offset of the first Lisp field, number of fields)
         let (first, fields) = match h & KIND_MASK {
             KIND_CONS => (8, 2),
-            KIND_SIMPLE_VECTOR => (8, (h >> LENGTH_SHIFT) as usize),
+            KIND_SIMPLE_VECTOR => (8, header_length(h)),
             // Skip the entry address; the env words are Lisp values.
-            KIND_FUNCTION => (16, (h >> LENGTH_SHIFT) as usize),
+            KIND_FUNCTION => (16, header_length(h)),
             // name, package, function, value, TLS index (a fixnum), plist,
             // setf function
             KIND_SYMBOL => (8, 7),
@@ -334,7 +334,7 @@ impl Scanning<Kiln> for KilnScanning {
             KIND_INSTANCE => (8, 1),
             // Skip the entry address: rack and installed function.
             KIND_FUNCALLABLE_INSTANCE => (16, 2),
-            KIND_RACK => (8, (h >> LENGTH_SHIFT) as usize),
+            KIND_RACK => (8, header_length(h)),
             k => panic!("scan_object: unexpected kind {k} in the heap"),
         };
         for i in 0..fields {
@@ -513,4 +513,13 @@ pub unsafe extern "C" fn kiln_rt_gc(ctx: *mut Context, fp: usize) -> u64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn kiln_rt_gc_count(_ctx: *mut Context) -> u64 {
     *GC_COUNT.lock().unwrap() << 1
+}
+
+/// Is the tagged heap pointer `v` an object in an MMTk space (as opposed
+/// to static data, which never moves)?
+pub fn in_mmtk_space(v: u64) -> bool {
+    match ObjectReference::from_raw_address(unsafe { Address::from_usize(object::untag(v)) }) {
+        Some(o) => mmtk::memory_manager::is_in_mmtk_spaces(o),
+        None => false,
+    }
 }

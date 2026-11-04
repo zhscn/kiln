@@ -5,12 +5,18 @@
 
 (in-package #:clostrophilia)
 
+;;; Standard types that have no objects in kiln yet: nothing is of them.
+(defparameter *types-without-objects*
+  '(complex package pathname logical-pathname bit-vector simple-bit-vector
+    structure-object stream readtable random-state))
+
 ;;; TYPEP of a class name or a class.
 (defun class-typep (object type)
   (let ((class (if (symbolp type) (find-class type nil) type)))
-    (if (null class)
-        (kiln.kernel::unknown-type type)
-        (if (member class (%slot (class-of object) '%precedence-list)) t nil))))
+    (cond (class
+           (if (member class (%slot (class-of object) '%precedence-list)) t nil))
+          ((member type *types-without-objects*) nil)
+          (t (kiln.kernel::unknown-type type)))))
 
 (setf kiln.kernel::*class-typep* #'class-typep)
 

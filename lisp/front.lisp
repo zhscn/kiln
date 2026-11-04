@@ -102,6 +102,37 @@
       :documentation ',documentation
       :function ,method-lambda)))
 
+;;; Places. Setf expanders live in the compile-time environment
+;;; (DEFINE-SETF-EXPANDER registers them at compile time only: there is no
+;;; GET-SETF-EXPANSION at run time).
+
+(defmethod cmd:wrap-in-setf-setf-expander ((client client) name function environment)
+  (declare (ignore environment))
+  `(eval-when (:compile-toplevel)
+     (kiln.sys::%define-setf-expander ',name ,function)))
+
+(defmethod cmd:get-setf-expansion ((client client) place &optional environment)
+  (let ((environment (or environment *environment*)))
+    (cond ((symbolp place)
+           (multiple-value-bind (expansion macrop)
+               (symbol-macro-expansion client environment place)
+             (if macrop
+                 (cmd:get-setf-expansion client expansion environment)
+                 (call-next-method))))
+          ((and (consp place) (symbolp (first place)))
+           (let ((expander (clo:setf-expander client
+                                              (trucler:global-environment client environment)
+                                              (first place))))
+             (if expander
+                 (funcall expander place environment)
+                 (multiple-value-bind (expansion macrop)
+                     (let ((*environment* environment))
+                       (macroexpand-toplevel place))
+                   (if macrop
+                       (cmd:get-setf-expansion client expansion environment)
+                       (call-next-method))))))
+          (t (call-next-method)))))
+
 (define-condition undefined-function-warning (style-warning)
   ((names :initarg :names :reader undefined-function-names))
   (:report (lambda (c s)
@@ -150,6 +181,18 @@
       (lambda (value name) (setf (clo:symbol-value client genv name) value)))
     (def 'boundp (lambda (name) (clo:boundp client genv name)))
     (def 'proclaim (lambda (declaration) (proclaim-in client genv declaration)))
+    (def 'kiln.sys::%define-setf-expander
+      (lambda (name expander)
+        (setf (clo:setf-expander client genv name) expander)
+        name))
+    (def 'get-setf-expansion
+      (lambda (place &optional env)
+        (cmd:get-setf-expansion client place env)))
+    ;; DEFCONSTANT's compile-time side (lisp/target/kernel.lisp).
+    (def 'kiln.sys::%define-constant
+      (lambda (name value)
+        (clo:make-constant client genv name value)
+        name))
     ;; Expanders may call MACROEXPAND with their &ENVIRONMENT (Predicament's
     ;; RESTART-CASE does).
     (def 'macroexpand-1
@@ -224,15 +267,22 @@ true; else NIL and NIL."
 
 ;;; Reading
 
+(defparameter *target-features*
+  '(:kiln :common-lisp :ansi-cl :64-bit :x86-64 :little-endian
+    :ieee-floating-point :unix :linux)
+  "The features of the target, for #+ and #- in target sources (not the
+host's: an #+SBCL branch must not be read into kiln code).")
+
 (defun map-file-csts (function path)
   "Reads the forms of PATH one at a time and calls FUNCTION on each CST
 before reading the next, so that IN-PACKAGE takes effect for the rest of
-the file. Reading starts in KILN-USER."
+the file. Reading starts in KILN-USER, with the target's features."
   (with-open-file (in path)
     (let ((*package* (find-package '#:kiln-user))
           (*read-eval* nil))
       (loop with eof = (list nil)
-            for cst = (eclector.concrete-syntax-tree:read in nil eof)
+            for cst = (let ((*features* *target-features*))
+                        (eclector.concrete-syntax-tree:read in nil eof))
             until (eq cst eof)
             do (funcall function cst)))))
 
@@ -372,6 +422,41 @@ programs compiled after it."
   (let ((client (make-instance 'client)))
     (%make-session :client client :environment (make-compile-environment client))))
 
+;;; Iconoclast has no ASTs for FUNCTION and VALUES type specifiers with
+;;; arguments, so Common-boot cannot convert declarations that use them.
+;;; They are only hints for now: in DECLARE forms, such a type becomes
+;;; FUNCTION (or T), and FTYPE declarations are dropped.
+
+(defun compound-function-type-p (type)
+  (and (consp type) (member (first type) '(function values))))
+
+(defun simplify-declaration-specifier (spec)
+  "SPEC with compound FUNCTION and VALUES types replaced, or NIL to drop it."
+  (cond ((atom spec) spec)
+        ((eq (first spec) 'ftype) nil)
+        ((and (eq (first spec) 'type) (compound-function-type-p (second spec)))
+         (list* 'type (if (eq (first (second spec)) 'function) 'function t) (cddr spec)))
+        ((compound-function-type-p (first spec))
+         (list* 'type (if (eq (first (first spec)) 'function) 'function t) (rest spec)))
+        (t spec)))
+
+(defun simplify-declarations (form depth)
+  "FORM with its DECLARE forms simplified, or FORM itself if nothing
+changes. DEPTH bounds the walk (forms are trees, but data may be cyclic)."
+  (cond ((or (atom form) (zerop depth)) form)
+        ((and (eq (first form) 'declare) (listp (rest form)))
+         (let ((specs (loop for spec in (rest form)
+                            for new = (simplify-declaration-specifier spec)
+                            when new collect new)))
+           (if (equal specs (rest form)) form (cons 'declare specs))))
+        ((eq (first form) 'quote) form)
+        (t
+         (let ((car (simplify-declarations (car form) (1- depth)))
+               (cdr (simplify-declarations (cdr form) (1- depth))))
+           (if (and (eq car (car form)) (eq cdr (cdr form)))
+               form
+               (cons car cdr))))))
+
 (defun forget-global-descriptions (environment)
   "Trucler's reference environment caches the descriptions of global
 functions and variables it has looked up. The session's environment lives
@@ -405,6 +490,10 @@ forms to compile, in order."
         (let ((compile-time-too (and (consp path) (eq (first path) :compile-time-too))))
           (map-file-csts (lambda (cst)
                            (forget-global-descriptions *environment*)
+                           (let* ((raw (cst:raw cst))
+                                  (simplified (simplify-declarations raw 10000)))
+                             (unless (eq simplified raw)
+                               (setf cst (cst:reconstruct *client* simplified cst))))
                            (process-toplevel cst compile-time-too))
                          (if compile-time-too (second path) path)))))
     (let ((undefined (loop for name being the hash-keys of *referenced-functions*

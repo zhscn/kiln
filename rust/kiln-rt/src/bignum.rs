@@ -7,7 +7,7 @@
 //! during allocation cannot invalidate them.
 
 use crate::context::Context;
-use crate::object::{self, KIND_BIGNUM, KIND_MASK, LENGTH_SHIFT, TAG_GENERAL};
+use crate::object::{self, KIND_BIGNUM, KIND_MASK, LENGTH_SHIFT, TAG_GENERAL, header_length};
 use crate::rtfun::{ERR_DIVISION_BY_ZERO, ERR_NOT_INTEGER, error_with};
 use num_bigint::BigInt;
 use num_integer::Integer;
@@ -31,7 +31,7 @@ pub unsafe fn to_bigint(v: u64) -> BigInt {
         return BigInt::from(object::fixnum_value(v));
     }
     unsafe {
-        let n = (object::header(v) >> LENGTH_SHIFT) as usize;
+        let n = header_length(object::header(v));
         let digits = std::slice::from_raw_parts((object::untag(v) + 8) as *const u64, n);
         let bytes: Vec<u8> = digits.iter().flat_map(|d| d.to_le_bytes()).collect();
         BigInt::from_signed_bytes_le(&bytes)

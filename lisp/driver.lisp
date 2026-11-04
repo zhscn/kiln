@@ -130,7 +130,13 @@
          (kiln-clos-file "conditions"))
    *predicament-files*
    (list (kiln-clos-file "early-conditions")
-         (kiln-clos-file "runtime-errors")))
+         (kiln-clos-file "runtime-errors"))
+   (mapcar (lambda (name)
+             (asdf:system-relative-pathname
+              "kiln" (format nil "vendor/Salmagundi/code/~A.lisp" name)))
+           '("packages" "utility" "generic-functions" "hash-table" "hash"
+             "buckets/packages" "buckets/bucket-hash-table"))
+   (list (kiln-clos-file "hash-tables")))
   "Sources of the CLOS module, in load order (docs/10 §7).")
 
 (defun write-module (module output)

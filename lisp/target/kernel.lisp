@@ -9,6 +9,46 @@
 
 (in-package #:kiln.kernel)
 
+;;; Byte specifiers are conses (size . position).
+(defun byte (size position) (cons size position))
+(defun byte-size (bytespec) (car bytespec))
+(defun byte-position (bytespec) (cdr bytespec))
+(defun ldb (bytespec integer)
+  (logand (ash integer (- (cdr bytespec))) (- (ash 1 (car bytespec)) 1)))
+(defun mask-field (bytespec integer)
+  (logand integer (ash (- (ash 1 (car bytespec)) 1) (cdr bytespec))))
+(defun dpb (newbyte bytespec integer)
+  (let ((mask (ash (- (ash 1 (car bytespec)) 1) (cdr bytespec))))
+    (logior (logand integer (lognot mask))
+            (logand (ash newbyte (cdr bytespec)) mask))))
+(defun ldb-test (bytespec integer) (not (zerop (ldb bytespec integer))))
+(define-setf-expander ldb (bytespec place &environment env)
+  (multiple-value-bind (temps vals stores store-form access-form)
+      (get-setf-expansion place env)
+    (let ((byte-temp (gensym "BYTE"))
+          (store (gensym "NEW")))
+      (values (cons byte-temp temps)
+              (cons bytespec vals)
+              (list store)
+              `(let ((,(first stores) (dpb ,store ,byte-temp ,access-form)))
+                 ,store-form
+                 ,store)
+              `(ldb ,byte-temp ,access-form)))))
+
+;;; DEFCONSTANT: at compile time the name becomes a constant of the
+;;; compile-time environment, so that references compile to the value; at
+;;; load time the symbol gets the value.
+(defmacro defconstant (name value &optional documentation)
+  (declare (ignore documentation))
+  `(progn
+     (eval-when (:compile-toplevel)
+       (kiln.sys::%define-constant ',name ,value))
+     (setf (symbol-value ',name) ,value)
+     ',name))
+
+(defconstant most-positive-fixnum 4611686018427387903)
+(defconstant most-negative-fixnum -4611686018427387904)
+
 ;;; Errors detected by compiled code call this with the error code
 ;;; (lisp/abi.lisp) and the offending object; the condition system
 ;;; redefines it to signal a condition (lisp/target/clos/conditions.lisp).
@@ -306,6 +346,17 @@
 (defun (setf aref) (x v i)
   (if (stringp v) (setf (schar v i) x) (setf (svref v i) x)))
 
+;;; Until Regalia, every array is a one-dimensional simple vector or string.
+(defun check-array (a) (unless (vectorp a) (%primop :type-error-vector a)) a)
+(defun array-rank (a) (check-array a) 1)
+(defun array-dimensions (a) (list (length (check-array a))))
+(defun array-dimension (a axis)
+  (unless (eql axis 0) (%primop :type-error-integer axis))
+  (length (check-array a)))
+(defun array-total-size (a) (length (check-array a)))
+(defun row-major-aref (a i) (aref a i))
+(defun (setf row-major-aref) (x a i) (setf (aref a i) x))
+
 (defun make-string (n &key (initial-element #\Space))
   (%primop :make-string n (check-character initial-element)))
 (defun make-array (n &key initial-element)
@@ -504,6 +555,26 @@
   (do ((l plist (cddr l)))
       ((null l) default)
     (when (eq (car l) indicator) (return (cadr l)))))
+(defun put-plist-value (plist indicator value)
+  ;; PLIST with INDICATOR's value set to VALUE (destructively if present).
+  (do ((l plist (cddr l)))
+      ((null l) (list* indicator value plist))
+    (when (eq (car l) indicator)
+      (setf (cadr l) value)
+      (return plist))))
+(define-setf-expander getf (place indicator &optional default &environment env)
+  (multiple-value-bind (temps vals stores store-form access-form)
+      (get-setf-expansion place env)
+    (let ((indicator-temp (gensym "INDICATOR"))
+          (default-temp (gensym "DEFAULT"))
+          (store (gensym "NEW")))
+      (values (append temps (list indicator-temp default-temp))
+              (append vals (list indicator default))
+              (list store)
+              `(let ((,(first stores) (put-plist-value ,access-form ,indicator-temp ,store)))
+                 ,store-form
+                 ,store)
+              `(getf ,access-form ,indicator-temp ,default-temp)))))
 (defun get-properties (plist indicator-list)
   (do ((l plist (cddr l)))
       ((null l) (values nil nil nil))

@@ -45,6 +45,15 @@ pub const CHARACTER_SHIFT: u32 = 8;
 
 pub const KIND_MASK: u64 = 0xff;
 pub const LENGTH_SHIFT: u32 = 8;
+/// The length field is bits 8..40; bits 40..64 hold the identity hash
+/// (0 until assigned, see `kiln_rt_identity_hash`).
+pub const LENGTH_MASK: u64 = 0xffff_ffff;
+pub const HASH_SHIFT: u32 = 40;
+
+/// The length field of a header.
+pub fn header_length(h: u64) -> usize {
+    ((h >> LENGTH_SHIFT) & LENGTH_MASK) as usize
+}
 
 /// Layout: [header, car, cdr].
 pub const CONS_BYTES: usize = 24;
@@ -211,16 +220,16 @@ pub fn untag(v: u64) -> usize {
 pub fn object_bytes(header: u64) -> usize {
     match header & KIND_MASK {
         KIND_CONS => CONS_BYTES,
-        KIND_SIMPLE_VECTOR => 8 + 8 * (header >> LENGTH_SHIFT) as usize,
+        KIND_SIMPLE_VECTOR => 8 + 8 * header_length(header),
         KIND_SYMBOL => SYMBOL_BYTES,
-        KIND_STRING => 8 + (4 * (header >> LENGTH_SHIFT) as usize).next_multiple_of(8),
-        KIND_BIGNUM => 8 + 8 * (header >> LENGTH_SHIFT) as usize,
+        KIND_STRING => 8 + (4 * header_length(header)).next_multiple_of(8),
+        KIND_BIGNUM => 8 + 8 * header_length(header),
         KIND_RATIO => 24,
         KIND_DOUBLE => 16,
         KIND_INSTANCE => 16,
         KIND_FUNCALLABLE_INSTANCE => 32,
-        KIND_RACK => 8 + 8 * (header >> LENGTH_SHIFT) as usize,
-        KIND_FUNCTION => 16 + 8 * (header >> LENGTH_SHIFT) as usize,
+        KIND_RACK => 8 + 8 * header_length(header),
+        KIND_FUNCTION => 16 + 8 * header_length(header),
         k => panic!("object_bytes: unknown kind {k}"),
     }
 }
@@ -302,7 +311,7 @@ pub unsafe fn write_object(out: &mut String, v: u64) {
             }
             KIND_SIMPLE_VECTOR => {
                 out.push_str("#(");
-                let n = (h >> LENGTH_SHIFT) as usize;
+                let n = header_length(h);
                 for i in 0..n {
                     if i > 0 {
                         out.push(' ');
@@ -350,7 +359,7 @@ pub unsafe fn write_object(out: &mut String, v: u64) {
 /// `v` must be a string object.
 pub unsafe fn string_value(v: u64) -> String {
     unsafe {
-        let n = (header(v) >> LENGTH_SHIFT) as usize;
+        let n = header_length(header(v));
         let chars = std::slice::from_raw_parts((untag(v) + 8) as *const u32, n);
         chars.iter().map(|&c| char::from_u32(c).unwrap_or('\u{fffd}')).collect()
     }

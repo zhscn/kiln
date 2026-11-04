@@ -426,7 +426,8 @@ are compared (no short circuit), which also checks every argument."
 
 (defun vector-length (v)
   "Fixnum length of the vector or string V."
-  `(:shl (:shr (:load ,v ,(- +tag-general+)) ,+length-shift+) ,+fixnum-shift+))
+  ;; The length field is 32 bits; the identity hash is above it.
+  `(:shl (:and (:shr (:load ,v ,(- +tag-general+)) ,+length-shift+) #xffffffff) ,+fixnum-shift+))
 
 (defun emit-check-index (v i)
   (let ((bad (new-block)) (ok (new-block)))
@@ -689,6 +690,17 @@ and slots), zero-filled."
           ,(- 8 +tag-general+)))
 
 (define-primop :unbound-slot-value () +unbound-slot+)
+
+;;; Hashing (Salmagundi). The identity hash survives moving collections
+;;; (header bits 40..64, rust/kiln-rt/src/rtfun.rs).
+(define-primop :identity-hash (x)
+  (let ((r (new-var)))
+    (emit `(:call-rt ,(rt-identity-hash) (,r) (:ctx ,x) :nil))
+    r))
+;;; One FNV-1a step on fixnums H and V, wrapping: (H xor V) * prime. Both
+;;; are tagged (even), so the product is too.
+(define-primop :hash-mix (h v)
+  (copy-to-var `(:mul (:xor ,h ,v) #x100000001b3)))
 (define-primop :standard-instance-p (x) (boolean-value (emit-kind-test x +kind-instance+)))
 (define-primop :funcallable-instance-p (x)
   (boolean-value (emit-kind-test x +kind-funcallable-instance+)))

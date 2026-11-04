@@ -179,3 +179,30 @@ Clostrophilia 也为此打了补丁：standard 方法组合不再要求必须有
 - `invoke-debugger` 也还没有交互式 debugger。
 
 `tests/m4/clos-conditions.lisp` 覆盖：`handler-case`、`handler-bind`、`signal`、`restart-case` 和 `invoke-restart`、`muffle-warning`、`ignore-errors`、`with-simple-restart`，condition 类型的 `typep`，带清理的非局部退出，嵌套的 handler，以及 Clostrophilia 报出的 `no-applicable-method-error`。还覆盖编译代码和 runtime 发现的错误：`car` 的类型错误、未定义函数、除零、参数个数不对、未绑定变量、下标越界、非数值参与运算。
+
+## 11. M4.5：哈希表（Salmagundi）
+
+Salmagundi vendor 在 `vendor/Salmagundi`，补丁都放在 `#+kiln` 分支里（见 `vendor/README.md`）。用的是它的 bucket 哈希表，接口层由 kiln 自己写（`lisp/target/clos/hash-tables.lisp`），没有用 Trinsic：
+
+- `cl:make-hash-table`、`cl:sxhash`、`cl:with-hash-table-iterator` 由 kiln 定义；
+- EQ、EQL、EQUAL、EQUALP 的默认哈希函数是 `default-hash-function` 上的 EQL 方法；
+- `gethash` 等直接就是 CL 的符号（kiln 的补丁只遮蔽了 `make-hash-table` 和 `sxhash`）。
+
+**身份哈希**：header 的第 40–63 位存身份哈希，长度字段限制为 32 位（第 8–39 位）。`%primop :identity-hash` 调用 runtime 的 `kiln_rt_identity_hash`：
+
+- MMTk 堆里的对象第一次用到时分配一个哈希（计数器经 Fibonacci 散列得到的 24 位数，写进 header），GC 复制对象时连同 header 一起复制，所以对象移动后哈希不变；
+- 静态对象（模块数据、runtime 的静态对象）不会移动，立即数没有 header，这两类都按位模式计算哈希。
+
+Rust 和编译器里所有从 header 读长度的地方都改为只取 32 位（`header_length`）。
+
+**哈希状态**：Salmagundi 的 FNV 实现每一步都会产生 bignum，kiln 的 client 改用 `%primop :hash-mix`：在 fixnum 上做一步按 64 位截断的 FNV-1a，大整数按 62 位一段依次混入。
+
+为此做的通用修改：
+
+- **读入用目标端的 features**：Eclector 读目标源码时，`*features*` 绑定为 kiln 的列表（`:kiln :common-lisp :64-bit :x86-64 ...`），不再用宿主 SBCL 的，否则 `#+sbcl` 的分支会被读进 kiln 的代码。
+- **`defconstant`**（kernel 宏）：编译期把名字登记为编译期环境里的常量，引用处直接编译成值；加载时给 symbol 设值。kernel 定义了 `most-positive-fixnum`、`most-negative-fixnum`。
+- **setf 展开器**：kiln 的 client 实现了 Common-macros 的 `get-setf-expansion`（展开 symbol macro 和宏形式、查 setf 展开器），`define-setf-expander` 在编译期把展开器登记到 Clostrum 环境。kernel 用它定义了 `getf` 和 `ldb` 的展开器。
+- **声明里的函数类型**：Iconoclast 没有 `(function ...)`、`(values ...)` 这类复合类型的 AST，前端在转换之前把 `declare` 里的这类类型降级为 `function` 或 `t`，并去掉 `ftype` 声明。它们目前只是提示，不影响语义。
+- **类型**：`typep` 对 `complex`、`package`、`pathname`、`bit-vector`、`structure-object` 等现在还没有对象的标准类型返回 NIL。kernel 加了 `byte`、`ldb`、`dpb`、`mask-field`、`ldb-test`，以及按一维向量实现的 `array-rank`、`array-dimensions`、`array-total-size`、`row-major-aref`。
+
+`tests/m4/clos-hash-tables.lisp` 覆盖：四种测试函数；实例、symbol、cons 作 EQ 键，并在大量分配和 GC 之后查找；bignum、浮点、字符作 EQL 键；字符串和列表作 EQUAL 键；大小写无关的字符串和不同类型的数作 EQUALP 键；扩容、`remhash`、`maphash`、`clrhash`、迭代器和 `sxhash`。
