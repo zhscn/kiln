@@ -305,7 +305,9 @@
   (def single-float (range-ctype client 'single-float '* '* env))
   (def standard-char (charset (standard-charset-pairs client)))
   (def string
-      (apply #'disjoin
+      ;; kiln: DISJOIN takes the client first (upstream omits it, so the
+      ;; one ctype is taken for the client and STRING parses as NIL).
+      (apply #'disjoin #+kiln client
              (loop for uaet in (string-uaets client)
                    collect (array-ctype client :either uaet '(*) env))))
   (def t (top))

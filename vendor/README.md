@@ -12,7 +12,7 @@ shows exactly what kiln changed. Changes are not sent upstream for now.
 | Predicament | https://github.com/robert-strandh/Predicament | 715b3ae57ac8aa9b7ff07eb5ad864485d29aacbd (2025-06-02) | `Predicament/LICENSE.text` |
 | Parcl | https://github.com/s-expressionists/Parcl | bec1c13abb9f77deecf44f2e9a37b99be962e783 (2025-06-04) | BSD (`Parcl/LICENSE`) |
 | ctype | https://github.com/s-expressionists/ctype | 554b725de79ed170ca1452a7562950ecdeac5a47 (2026-06-23) | BSD (`ctype/LICENSE`) |
-| Regalia | https://github.com/s-expressionists/Regalia | 76b2f27f521edf072f8c9012e714caed3fed2194 (2026-06-04) | BSD (`Regalia/LICENSE`) |
+| Regalia | https://github.com/s-expressionists/Regalia | 76b2f27f521edf072f8c9012e714caed3fed2194 (2026-06-04) | BSD (`Regalia/LICENSE.text`) |
 
 ## Clostrophilia patches
 
@@ -77,7 +77,24 @@ functions); under `#+kiln`:
 
 ## ctype patches
 
+- `string` passes the client to `disjoin` (upstream omits it, so `string`
+  parsed as the empty type).
 - The `ctypep` method specialized on `complex` is not read under kiln
   (no complex numbers yet). `host.lisp`, `runtime.lisp` and
   `interface.lisp` are not loaded: kiln has its own client and interface
   (`lisp/target/clos/ctype-*.lisp`).
+
+## Regalia patches
+
+Under `#+kiln` (docs/10 §14 of kiln: simple vectors and strings stay
+native):
+
+- The package shadows the CL array names (`array`, `vector`, `string`,
+  `make-array`, `aref`, ...): kiln defines the CL functions.
+- `array` has `standard-object` and `cl:array` as superclasses, and slots
+  for the native vector holding the elements and the adjustable flag;
+  `vector`, `string` and `bit-vector` also have the CL classes of those
+  names as superclasses.
+- `vector-unsigned-byte-16.lisp` defines `vector-unsigned-byte-16`
+  (upstream: a second `vector-unsigned-byte-32`); the vector class for
+  bits is `bit-vector` (upstream: the undefined `vector-bit`).
