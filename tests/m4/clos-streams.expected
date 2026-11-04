@@ -1,0 +1,22 @@
+hello world
+
+"abcd
+yz"
+"one"
+"two"
+"line 1"
+#\l
+#\i
+"ine 2"
+("end" T)
+:EOF
+T
+T
+NIL
+T
+("both" "both")
+(#\a #\b #\c #\d :EOF)
+fresh
+unicode: λ→✓
+to stderr
+EOF

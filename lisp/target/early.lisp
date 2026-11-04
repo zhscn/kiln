@@ -118,6 +118,9 @@ slot is a property list as in a canonicalized DEFCLASS slot.")
       (list ,@(mapcar #'slot-form slot-specs))
       (list ,@(mapcar #'option-form options)))))
 
+(defvar *features* '(:kiln :common-lisp :ansi-cl :64-bit :x86-64 :little-endian
+                     :ieee-floating-point :unix :linux))
+
 ;;; The standard stream variables, NIL until there are streams (Cyclosis).
 (defvar *standard-input* nil)
 (defvar *standard-output* nil)

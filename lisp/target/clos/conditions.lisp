@@ -86,7 +86,4 @@
 
 (defvar predicament::*default-debugger* 'kiln-default-debugger)
 
-(defun write-string (string &optional stream &key (start 0) end)
-  (declare (ignore stream))
-  (print (subseq string start end))
-  string)
+;;; WRITE-STRING (for string reports) is Cyclosis' (streams.lisp).

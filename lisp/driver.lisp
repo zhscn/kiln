@@ -115,6 +115,18 @@
                   '("Common/variables" "Common/class-name-from-element-type"
                     "Common/check-dimensions" "Common/condition-types"))))
 
+(defparameter *cyclosis-files*
+  ;; As cyclosis.asd; kiln's streams.lisp replaces the intrinsic interface.
+  (mapcar (lambda (name)
+            (asdf:system-relative-pathname
+             "kiln" (format nil "vendor/Cyclosis/code/~A.lisp" name)))
+          '("packages" "interface" "conditions" "default-methods" "stream"
+            "broadcast-stream" "concatenated-stream" "string-stream"
+            "synonym-stream" "two-way-stream" "echo-stream" "posix-file-stream"
+            "transcode/common" "transcode/character" "transcode/ascii"
+            "transcode/iso-8859" "transcode/dos" "transcode/mac" "transcode/windows"
+            "transcode/utf-8" "transcode/utf-32" "transcode/unsigned-byte")))
+
 (defun clostrophilia-files (groups)
   "GROUPS: lists (DIRECTORY FILE...); a FILE is a name or
 (:COMPILE-TIME-TOO name)."
@@ -202,7 +214,12 @@
    (list (kiln-clos-file "ctype-interface"))
    *regalia-files*
    (list (kiln-clos-file "arrays")
-         (kiln-clos-file "structures")))
+         (kiln-clos-file "structures")
+         (kiln-clos-file "trivial-package-locks")
+         ;; Trinsic, for the interfaces of Cyclosis and the printer modules.
+         (asdf:system-relative-pathname "trinsic" "code/interface.lisp"))
+   *cyclosis-files*
+   (list (kiln-clos-file "streams")))
   "Sources of the CLOS module, in load order (docs/10 §7).")
 
 (defun write-module (module output)

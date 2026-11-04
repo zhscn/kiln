@@ -363,3 +363,36 @@ kiln 的 client（`lisp/structures.lisp`）覆盖这几处：
 - 在结构上定义方法，以及把结构用作哈希键。
 
 至此 M4.5 计划中的模块都已接入：Predicament、Salmagundi、Parcl、ctype、Regalia、Anatomicl。
+
+## 16. 流（Cyclosis）
+
+Cyclosis vendor 在 `vendor/Cyclosis`，用的是 intrinsic 接口：CL 的流函数都是 Cyclosis 的。kiln 的 client 在 `lisp/target/clos/streams.lisp`，补丁见 `vendor/README.md`。
+
+**Trinsic**：Cyclosis 和后面的打印器模块都用 Trinsic 的 `make-define-interface` 生成 CL 层的接口，所以 Trinsic 作为目标端代码编译进 CLOS 模块。它的宏在编译期环境里展开，生成 `define-interface` 宏，后者在 kiln 的 client 文件里展开成全部 CL 流函数和宏。展开式外面包着 `trivial-package-locks:with-unlocked-packages`，kiln 把它定义成 `progn`。
+
+**和包的关系**：上游的 intrinsic 接口依赖加载时的包操作。Cyclosis 在自己的包里遮蔽 `stream`、`close`、`streamp` 等名字，加载时再把这些 symbol `shadowing-import` 进 CL。kiln 的源码由宿主读进宿主的包，运行期的包又是宿主包的镜像（§12），这一步做不了，所以补丁让 Cyclosis 直接使用这些 CL symbol，并去掉运行期的 `shadowing-import`/`export`。需要 client 参数的函数（`open`、`peek-char` 等）仍然遮蔽。展开函数（`expand-with-output-to-string` 等）在宏展开时要用，补丁把它们放进 `eval-when`。宿主的 `alexandria:parse-body` 已登记到编译期环境。
+
+**标准流**：
+- 文件描述符 0、1、2 上的 POSIX 文件流，经 synonym stream 绑定到 `*standard-input*`、`*standard-output*`、`*error-output*` 等；
+- 读写通过两个新的 runtime 函数 `kiln_rt_fd_read` 和 `kiln_rt_fd_write`（`%primop :fd-read`/`:fd-write`），参数是 `(unsigned-byte 8)` 向量的原生存储；
+- Cyclosis 每个字符都直接调用一次 `write(2)`，不缓冲，所以和 runtime 的 `print`（每次写一整行）的输出不会互相错乱。以后加缓冲时要一起处理。
+
+**上游的错误**（已打补丁）：
+- UTF-8 编码时把三字节的上界写成了 `#x1000`；
+- 解码时移位方向是反的。
+
+**编译器**：调用的参数个数受 ABI 限制（寄存器参数加上 transfer 区，共 67 个）。超过这个数的 `list`、`list*`、`vector` 调用改写成分块的 `list*` 嵌套（`vector` 再加一次 `coerce`），`nconc`、`append` 改写成嵌套调用。其他函数超过时报出函数名。
+
+kernel 补上了全部 CxR 及其 setf 函数，还有 `*features*` 和 `nunion`。
+
+**还没做**：
+- `open`，因为还没有 pathname；
+- 输出不缓冲；
+- `print` 仍然是 runtime 的打印器，接 Incless 之后改为写 `*standard-output*`；
+- `y-or-n-p` 要等 FORMAT。
+
+`tests/m4/clos-streams.lisp` 覆盖：
+- 标准输出和标准错误输出；
+- `with-output-to-string`、字符串输出流和输入流、`read-line` 的两个值和 EOF；
+- broadcast stream、concatenated stream；
+- `fresh-line`、UTF-8 编码、`end-of-file`。

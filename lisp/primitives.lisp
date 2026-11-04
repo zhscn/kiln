@@ -701,6 +701,17 @@ and slots), zero-filled."
   (let ((r (new-var)))
     (emit `(:call-rt ,(rt-identity-hash) (,r) (:ctx ,x) :nil))
     r))
+;;; File descriptor I/O (Cyclosis' POSIX file streams, docs/10 §16): VECTOR
+;;; is a simple vector of octets as fixnums; the result is the count, or -1.
+;;; The callers check the arguments.
+(define-primop :fd-write (fd vector start end)
+  (let ((r (new-var)))
+    (emit `(:call-rt ,(rt-fd-write) (,r) (:ctx ,fd ,vector ,start ,end) :nil))
+    r))
+(define-primop :fd-read (fd vector start end)
+  (let ((r (new-var)))
+    (emit `(:call-rt ,(rt-fd-read) (,r) (:ctx ,fd ,vector ,start ,end) :nil))
+    r))
 ;;; One FNV-1a step on fixnums H and V, wrapping: (H xor V) * prime. Both
 ;;; are tagged (even), so the product is too.
 (define-primop :hash-mix (h v)

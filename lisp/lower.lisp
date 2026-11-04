@@ -569,6 +569,8 @@ known to hold one), and true; else NIL and NIL."
 
 (defun rt-tls-index () (module-import-func "kiln_rt_tls_index" 2 1))
 (defun rt-identity-hash () (module-import-func "kiln_rt_identity_hash" 2 1))
+(defun rt-fd-write () (module-import-func "kiln_rt_fd_write" 5 1))
+(defun rt-fd-read () (module-import-func "kiln_rt_fd_read" 5 1))
 
 (defun emit-tls-slot (sym)
   "Raw address of the TLS slot of the symbol operand SYM (index 0 if it
@@ -1072,6 +1074,35 @@ safepoint (docs/08 §4)."
     (double-float . kiln.kernel::double-float-p))
   "Atomic types whose TYPEP is a call to a predicate (docs/09 §10).")
 
+(defun call-ast (name arg-asts)
+  (make-instance 'ico:application-ast
+                 :function-name-ast (make-instance 'ico:global-function-name-reference-ast
+                                                   :name name)
+                 :argument-asts arg-asts))
+
+(defun long-call-ast (name arg-asts)
+  "An AST equivalent to the call of NAME (LIST, LIST*, VECTOR, NCONC or
+APPEND) with ARG-ASTS, whose calls have few enough arguments: (LIST* a1
+... an REST) in chunks, (COERCE list 'SIMPLE-VECTOR) for VECTOR, nested
+calls for the associative NCONC and APPEND."
+  (let ((chunk 60))
+    (labels ((list-ast (asts tail-ast)
+               ;; The list of ASTS's values followed by TAIL-AST's value.
+               (if (<= (length asts) chunk)
+                   (call-ast 'list* (append asts (list tail-ast)))
+                   (call-ast 'list* (append (subseq asts 0 chunk)
+                                            (list (list-ast (nthcdr chunk asts) tail-ast)))))))
+      (ecase name
+        ((nconc append)
+         ;; Associative: (F (F a1 ... a60) (F a61 ...)).
+         (call-ast name (list (call-ast name (subseq arg-asts 0 chunk))
+                              (call-ast name (nthcdr chunk arg-asts)))))
+        (list (list-ast arg-asts (make-instance 'ico:literal-ast :literal nil)))
+        (list* (list-ast (butlast arg-asts) (car (last arg-asts))))
+        (vector (call-ast 'coerce
+                          (list (list-ast arg-asts (make-instance 'ico:literal-ast :literal nil))
+                                (make-instance 'ico:literal-ast :literal 'simple-vector))))))))
+
 (defun lower-global-call (name arg-asts)
   (when (and (eq name 'typep) (= (length arg-asts) 2))
     (multiple-value-bind (type constantp) (constant-value (second arg-asts))
@@ -1102,7 +1133,15 @@ safepoint (docs/08 §4)."
              f))
           (primop
            (funcall primop (lower-args (rest arg-asts))))
+          ((and (> (length arg-asts) (+ +reg-args+ +values-max+))
+                (member name '(list list* vector nconc append)))
+           ;; Calls are limited to +REG-ARGS+ + +VALUES-MAX+ arguments:
+           ;; build long lists in chunks, and vectors from them.
+           (lower (long-call-ast name arg-asts)))
           (t
+           (when (> (length arg-asts) (+ +reg-args+ +values-max+))
+             (fail "the call to ~S has ~D arguments; at most ~D are supported"
+                   name (length arg-asts) (+ +reg-args+ +values-max+)))
            (let ((primitive (gethash name *primitives*))
                  (vals (lower-args arg-asts)))
              (if primitive

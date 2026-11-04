@@ -237,6 +237,9 @@
     (do-external-symbols (s '#:ecclesia)
       (when (and (fboundp s) (not (macro-function s)))
         (setf (clo:fdefinition client genv s) (fdefinition s))))
+    ;; Cyclosis' macro expanders (streams, docs/10 §16).
+    (setf (clo:fdefinition client genv 'alexandria:parse-body)
+          (fdefinition 'alexandria:parse-body))
     ;; LOOP is Khazern's, expanded in the host; its expansions use only
     ;; standard operators.
     (setf (clo:macro-function client genv 'loop)

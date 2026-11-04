@@ -61,6 +61,7 @@
     (dolist (x a result)
       (unless (member (if key (funcall key x) x) b :test test :test-not test-not :key key)
         (push x result)))))
+(defun nunion (a b &rest args) (apply #'union a b args))
 (defun intersection (a b &key test test-not key)
   (let ((result nil))
     (dolist (x a (nreverse result))

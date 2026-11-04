@@ -80,6 +80,8 @@ pub fn symbols() -> Vec<(&'static str, *const u8)> {
         ("kiln_rt_print", rtfun::kiln_rt_print as *const u8),
         ("kiln_rt_error", rtfun::kiln_rt_error as *const u8),
         ("kiln_rt_identity_hash", rtfun::kiln_rt_identity_hash as *const u8),
+        ("kiln_rt_fd_write", rtfun::kiln_rt_fd_write as *const u8),
+        ("kiln_rt_fd_read", rtfun::kiln_rt_fd_read as *const u8),
         ("kiln_rt_poll", rtfun::kiln_rt_poll as *const u8),
         ("kiln_rt_alloc", gc::kiln_rt_alloc as *const u8),
         ("kiln_rt_gc", gc::kiln_rt_gc as *const u8),

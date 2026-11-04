@@ -139,3 +139,84 @@ pub unsafe extern "C" fn kiln_rt_identity_hash(_ctx: *mut Context, obj: u64) -> 
     };
     hash << 1
 }
+
+/// Writes the octets `vec[start..end]` to the file descriptor `fd`: `vec`
+/// is a simple vector of fixnums (the contents of an `(unsigned-byte 8)`
+/// vector, docs/10 §16). Returns the number of octets written (a fixnum),
+/// or -1 on error.
+///
+/// # Safety
+/// `vec` must be a simple vector of fixnums with `start <= end <= length`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kiln_rt_fd_write(
+    _ctx: *mut Context,
+    fd: u64,
+    vec: u64,
+    start: u64,
+    end: u64,
+) -> u64 {
+    use crate::object::{fixnum_value, untag};
+    let (start, end) = (fixnum_value(start) as usize, fixnum_value(end) as usize);
+    let elements = (untag(vec) + 8) as *const u64;
+    let bytes: Vec<u8> = (start..end)
+        .map(|i| fixnum_value(unsafe { *elements.add(i) }) as u8)
+        .collect();
+    let mut written = 0;
+    while written < bytes.len() {
+        let n = unsafe {
+            libc::write(
+                fixnum_value(fd) as libc::c_int,
+                bytes[written..].as_ptr() as *const libc::c_void,
+                bytes.len() - written,
+            )
+        };
+        if n < 0 {
+            if std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
+                continue;
+            }
+            return (-1i64 as u64) << 1;
+        }
+        written += n as usize;
+    }
+    (written as u64) << 1
+}
+
+/// Reads at most `end - start` octets from `fd` into `vec[start..]` (a
+/// simple vector, elements stored as fixnums). Returns the number read (0
+/// at end of file), or -1 on error.
+///
+/// # Safety
+/// As `kiln_rt_fd_write`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kiln_rt_fd_read(
+    _ctx: *mut Context,
+    fd: u64,
+    vec: u64,
+    start: u64,
+    end: u64,
+) -> u64 {
+    use crate::object::{fixnum_value, untag};
+    let (start, end) = (fixnum_value(start) as usize, fixnum_value(end) as usize);
+    let mut buffer = vec![0u8; end.saturating_sub(start)];
+    let n = loop {
+        let n = unsafe {
+            libc::read(
+                fixnum_value(fd) as libc::c_int,
+                buffer.as_mut_ptr() as *mut libc::c_void,
+                buffer.len(),
+            )
+        };
+        if n < 0 && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
+            continue;
+        }
+        break n;
+    };
+    if n < 0 {
+        return (-1i64 as u64) << 1;
+    }
+    let elements = (untag(vec) + 8) as *mut u64;
+    for (i, b) in buffer[..n as usize].iter().enumerate() {
+        unsafe { *elements.add(start + i) = (*b as u64) << 1 };
+    }
+    (n as u64) << 1
+}
