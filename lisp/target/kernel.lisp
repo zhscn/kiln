@@ -698,6 +698,21 @@
                  ,store-form
                  ,store)
               `(getf ,access-form ,indicator-temp ,default-temp)))))
+;;; (SETF (VALUES place...) form)
+(define-setf-expander values (&rest places &environment env)
+  (let ((temps '()) (vals '()) (stores '()) (store-forms '()) (access-forms '()))
+    (dolist (place places)
+      (multiple-value-bind (ts vs ss store-form access-form)
+          (get-setf-expansion place env)
+        (setq temps (append temps ts)
+              vals (append vals vs)
+              stores (append stores (list (car ss)))
+              store-forms (append store-forms (list store-form))
+              access-forms (append access-forms (list access-form)))))
+    (values temps vals stores
+            `(values ,@store-forms)
+            `(values ,@access-forms))))
+
 (defun get-properties (plist indicator-list)
   (do ((l plist (cddr l)))
       ((null l) (values nil nil nil))

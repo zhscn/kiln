@@ -129,6 +129,13 @@
             (globally-special-p environment)
             (t (trucler:add-local-special-variable client environment variable-name))))))
 
+;;; WITH-OUTPUT-TO-STRING with a string: an output stream that appends to
+;;; it (Cyclosis' string output stream, docs/10 §16).
+(defmethod cmd::output-stream-from-string-function-name ((client client))
+  ;; CYCLOSIS is created when the CLOS module's sources are read.
+  `(lambda (string)
+     (make-instance ',(intern "STRING-OUTPUT-STREAM" "CYCLOSIS") :string string)))
+
 (defmethod cmd:setf-type-function-wrapper ((client client))
   ;; Common-macros' DEFTYPE puts this in an EVAL-WHEN with all three
   ;; situations: the compile-time environment's %DEFTYPE records the
@@ -197,6 +204,18 @@
       (lambda (function name &optional env)
         (declare (ignore env))
         (setf (clo:macro-function client genv name) function)))
+    ;; DEFINE-COMPILER-MACRO at compile time: ignored (the host's would
+    ;; change the host's functions; Common-boot would call its unfinished
+    ;; EXPAND-COMPILER-MACRO on those in the environment). The compiler
+    ;; does not use compiler macros yet.
+    (def 'compiler-macro-function
+      (lambda (name &optional env)
+        (declare (ignore name env))
+        nil))
+    (def '(setf compiler-macro-function)
+      (lambda (function name &optional env)
+        (declare (ignore name env))
+        function))
     (def 'fdefinition (lambda (name) (clo:fdefinition client genv name)))
     (def 'symbol-function (lambda (name) (clo:fdefinition client genv name)))
     (def '(setf fdefinition)

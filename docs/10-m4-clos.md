@@ -430,3 +430,41 @@ Incless vendor 在 `vendor/Incless`，用的是 intrinsic 接口，源码没有�
 - 点对列表、向量、多维数组、bit vector、带 fill pointer 的向量；
 - `princ`、`:base`/`:radix`、`:case`、`*print-length*`、`*print-level*`；
 - 结构的 `#S(...)`、用户定义的 `print-object` 和 `print-unreadable-object`。
+
+## 18. FORMAT（Invistra）
+
+Invistra vendor 在 `vendor/Invistra`，用的是 intrinsic 接口：`format` 和 `formatter` 都是 Invistra 的。kiln 的 client 在 `lisp/target/clos/format.lisp`，它同时也是打印器的 client（Invistra 通过 Incless 打印对象），并替换掉 `incless::*client*`。
+
+**依赖**：
+- Quaviver：只用到 §17 替身里的三个函数；
+- nontrivial-gray-streams：kiln 定义了 `ngray` 包，转出 Cyclosis 中同名的 Gray 流 symbol（`ngray.lisp`）；
+- Acclimation：用于条件报告的本地化，只加载 English 部分，作为目标端代码编译；
+- Inravina（美化打印）：没有加载。补丁把 `#-sicl` 改成 `#-(or sicl kiln)`，走 SICL 那条不用 Inravina 的分支。所以 `~<...~:>`、`~_`、`~I` 和 `~:T` 还不能用。
+
+**补丁**（见 `vendor/README.md`）：
+- `formatter` 展开成在运行期解释控制串的函数，返回 NIL 而不是剩余参数，因为 Invistra 的格式编译器是目标端代码，宏展开时不可用；
+- 宏展开要用的 `unique-name` 在编译期也定义；
+- 浮点的无穷和 NaN 通过 `float-triple` 判断；
+- 输出到带 fill pointer 的字符串时，先在它上面开一个字符串输出流（上游直接把字符串当成了流）。
+
+**其他补充**：
+- `change-class`（`change-class.lisp`）：Invistra 解析指令时用它改变实例的类。实例的类、stamp 和槽都在 rack 里，所以做法是：先建一个新类的实例，复制同名的槽，原实例接管这个新实例的 rack，再用 initarg 初始化新增的槽；
+- 条件的 `print-object`：不转义时打印它的报告；
+- kernel 加了 `parse-integer`、`complexp`（总是 NIL），以及 `(setf (values ...))` 的 setf 展开器；
+- 编译期环境里的 `(setf compiler-macro-function)` 什么也不做。之前用的是宿主的函数，会改掉宿主 SBCL 的编译器宏；而如果真把编译器宏登记进 Clostrum，Common-boot 又会去调用它尚未实现的 `expand-compiler-macro`；
+- Common-macros 的 `with-output-to-string` 在给出字符串时调用 client 提供的构造函数，kiln 返回 Cyclosis 的字符串输出流。
+
+**kiln-cg 变快**：接入流、打印器和 FORMAT 之后，CLOS 模块的 KIR 有 45 MB，debug 构建下每个 CLOS 测试启动要 32 秒，几乎都花在 kiln-cg 上。改动有三处：
+- 编译器把模块的顶层形式每 16 个分成一块，各块编成单独的函数，由 init 函数依次调用（`*toplevel-chunk-size*`）。原来整个模块的顶层形式都在一个 6 MB 的函数里，而寄存器分配对函数大小是超线性的。
+- kiln-cg 先串行构造各函数的 CLIF，再在所有核上并行生成机器码，最后按顺序用 `define_function_bytes` 定义，调用点表和栈图照旧从编译结果里取。JIT 和目标文件两条路径都适用。
+- dev profile 下 kiln-cg 和 kiln-rt 也用 opt-level 2，debug 断言保持打开。Cranelift 的 IR verifier 默认关闭，`KILN_VERIFY=1` 打开；`KILN_CG_OPT` 设定 Cranelift 的 opt_level；`KILN_TIME=1` 打印各阶段耗时。
+
+改完后启动约 10 秒：读入 KIR 2 秒，构造 CLIF 3 秒，生成机器码 3 秒，运行 2 秒。下一步可以把 CLIF 的构造也并行化（目前需要 `&mut Module` 来声明函数引用），或者让模块分别编译后再链接，这样 CLOS 模块只需编译一次。
+
+`tests/m4/clos-format.lisp` 覆盖：
+- `~A`/`~S`、`~D` 的宽度、填充字符和逗号分组，`~B`/`~O`/`~X`/`~R`；
+- 英文基数词和序数词、罗马数字；
+- `~F`/`~E`/`~$`、`~C`、`~%`/`~&`；
+- 迭代、条件、大小写转换、`~*`、`~?`、`~P`、对齐；
+- 输出目标：`t`、流、带 fill pointer 的字符串；
+- `formatter`、格式错误的条件、条件报告。

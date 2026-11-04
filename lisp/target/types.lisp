@@ -162,6 +162,9 @@
 (defun unknown-type (type)
   (%primop :type-error-type type))
 
+;;; There are no complex numbers yet.
+(defun complexp (object) (declare (ignore object)) nil)
+
 (defvar *instance-type-of* nil)
 
 (defun type-of (object)

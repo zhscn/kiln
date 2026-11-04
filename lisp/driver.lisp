@@ -137,6 +137,18 @@
             "random-state" "pathname" "standard-object" "structure" "package"
             "symbol")))
 
+(defparameter *invistra-files*
+  ;; As invistra.asd; kiln's format.lisp replaces the intrinsic interface.
+  (mapcar (lambda (name)
+            (asdf:system-relative-pathname
+             "kiln" (format nil "vendor/Invistra/code/~A.lisp" name)))
+          '("packages" "utilities" "conditions" "generic-functions" "directive"
+            "parse-control-string" "format" "expansion" "basic-output"
+            "radix-control" "floating-point-printers" "printer-operations"
+            "pretty-printer-operations" "layout-control" "control-flow-operations"
+            "miscellaneous-operations" "miscellaneous-pseudo-operations"
+            "condition-reporters-en" "interface")))
+
 (defun clostrophilia-files (groups)
   "GROUPS: lists (DIRECTORY FILE...); a FILE is a name or
 (:COMPILE-TIME-TOO name)."
@@ -225,6 +237,7 @@
    *regalia-files*
    (list (kiln-clos-file "arrays")
          (kiln-clos-file "structures")
+         (kiln-clos-file "change-class")
          (kiln-clos-file "trivial-package-locks")
          ;; Trinsic, for the interfaces of Cyclosis and the printer modules.
          (asdf:system-relative-pathname "trinsic" "code/interface.lisp"))
@@ -233,7 +246,13 @@
          (kiln-clos-file "printer-support")
          (kiln-clos-file "quaviver"))
    *incless-files*
-   (list (kiln-clos-file "printer")))
+   (list (kiln-clos-file "printer"))
+   (mapcar (lambda (name)
+             (asdf:system-relative-pathname "acclimation" (format nil "~A.lisp" name)))
+           '("packages" "locale" "language" "language-english" "condition" "init"))
+   (list (kiln-clos-file "ngray"))
+   *invistra-files*
+   (list (kiln-clos-file "format")))
   "Sources of the CLOS module, in load order (docs/10 §7).")
 
 (defun write-module (module output)
