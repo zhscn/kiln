@@ -371,7 +371,10 @@ subtype of unsigned-byte or signed-byte."))
      (write-string-sym cl:write-string)
      (y-or-n-p-sym cl:y-or-n-p)
      (yes-or-no-p-sym cl:yes-or-no-p))
-  (let* ((intrinsic-pkg (if intrinsicp (find-package '#:common-lisp) *package*))
+  ;; kiln: a package name, not a package (packages cannot be constants in
+  ;; compiled code).
+  (let* ((intrinsic-pkg #-kiln (if intrinsicp (find-package '#:common-lisp) *package*)
+                        #+kiln (if intrinsicp "COMMON-LISP" (package-name *package*)))
          (symbols '(broadcast-stream
                     close
                     concatenated-stream
@@ -399,9 +402,10 @@ subtype of unsigned-byte or signed-byte."))
                             ,debug-io-sym
                             ,query-io-sym)
                    #+sbcl (sb-ext:muffle-conditions sb-c::&optional-and-&key-in-lambda-list))
-        (shadowing-import ',symbols ,intrinsic-pkg)
+        ;; kiln: the symbols are the CL symbols already (packages.lisp).
+        #-kiln (shadowing-import ',symbols ,intrinsic-pkg)
 
-      (export ',symbols ,intrinsic-pkg)
+      #-kiln (export ',symbols ,intrinsic-pkg)
 
       (defparameter ,standard-input-sym
         (trinsic:initial-cell-value ,client-var 'cl:*standard-input* 'cl:variable))

@@ -13,7 +13,7 @@ shows exactly what kiln changed. Changes are not sent upstream for now.
 | Parcl | https://github.com/s-expressionists/Parcl | bec1c13abb9f77deecf44f2e9a37b99be962e783 (2025-06-04) | BSD (`Parcl/LICENSE`) |
 | ctype | https://github.com/s-expressionists/ctype | 554b725de79ed170ca1452a7562950ecdeac5a47 (2026-06-23) | BSD (`ctype/LICENSE`) |
 | Regalia | https://github.com/s-expressionists/Regalia | 76b2f27f521edf072f8c9012e714caed3fed2194 (2026-06-04) | BSD (`Regalia/LICENSE.text`) |
-| Cyclosis | https://github.com/s-expressionists/Cyclosis | c918406 (2026-06-22) | BSD (`Cyclosis/LICENSE-BSD`) |
+| Cyclosis | https://github.com/s-expressionists/Cyclosis | c918406b78a6e450d4543fe7bff0ff443f4c6641 (2026-06-22) | BSD (`Cyclosis/LICENSE-BSD`) |
 
 ## Clostrophilia patches
 
@@ -99,3 +99,19 @@ native):
 - `vector-unsigned-byte-16.lisp` defines `vector-unsigned-byte-16`
   (upstream: a second `vector-unsigned-byte-32`); the vector class for
   bits is `bit-vector` (upstream: the undefined `vector-bit`).
+
+## Cyclosis patches
+
+Under `#+kiln` (docs/10 §16 of kiln):
+
+- The package does not shadow the names whose definitions in Cyclosis are
+  the CL ones (`stream`, `close`, `streamp`, the stream classes, ...), and
+  the intrinsic interface does not `shadowing-import` and `export` them
+  at run time: kiln reads the sources into the host's packages, and its
+  run-time packages mirror those. The package for the interface is a
+  name, not a package object.
+- The macro expansion helpers are defined at compile time too
+  (`eval-when`).
+- POSIX file streams read and write octets through kiln's runtime.
+- UTF-8: three octets encode the codes below `#x10000` (upstream:
+  `#x1000`); decoding shifts the octets' bits left (upstream: right).

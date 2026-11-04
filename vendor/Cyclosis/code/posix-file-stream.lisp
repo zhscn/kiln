@@ -43,7 +43,10 @@
         (truename path)
         nil)))
 
+;;; kiln: OCTETS is an (UNSIGNED-BYTE 8) vector of Regalia; its contents
+;;; are a native simple vector, which the runtime reads and fills.
 (defmethod stream-read-octets ((stream posix-file-stream) octets &optional (start 0) end)
+  #+kiln (kiln.kernel::%fd-read (descriptor stream) octets start (or end (length octets)))
   #+sbcl (sb-posix:read (descriptor stream)
                         (sb-sys:sap+ (sb-sys:vector-sap octets)
                                      start)
@@ -52,6 +55,7 @@
                                octets :start start :end (or end (length octets))))
 
 (defmethod stream-write-octets ((stream posix-file-stream) octets &optional (start 0) end)
+  #+kiln (kiln.kernel::%fd-write (descriptor stream) octets start (or end (length octets)))
   #+sbcl (sb-posix:write (descriptor stream)
                          (sb-sys:sap+ (sb-sys:vector-sap octets)
                                       start)

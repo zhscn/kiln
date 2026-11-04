@@ -82,6 +82,8 @@
 (defmethod stream-element-type ((stream string-output-stream))
   (array-element-type (stream-string stream)))
 
+;;; kiln: used by a macro at compile time.
+(eval-when (:compile-toplevel :load-toplevel :execute)
 (defun expand-with-output-to-string
     (var string-form element-type body)
   (if string-form
@@ -97,7 +99,7 @@
                                                                    :element-type ,element-type
                                                                    :fill-pointer 0 :adjustable t))
                                `(,@body
-                                 (copy-seq (stream-string ,var))))))
+                                 (copy-seq (stream-string ,var)))))))
 
 ;;; String input stream and with-input-from-string.
 
@@ -165,6 +167,8 @@
     (incf (slot-value stream 'start) provided)
     (+ start provided)))
 
+;;; kiln: used by a macro at compile time.
+(eval-when (:compile-toplevel :load-toplevel :execute)
 (defun expand-with-input-from-string
     (var string start end position body)
   (if position
@@ -184,4 +188,4 @@
                                                :string ,string
                                                :start ,start
                                                :end ,end)
-                               body)))
+                               body))))

@@ -28,6 +28,10 @@
 
 ;;; Macro expansion
 
+;;; kiln: the expanders run at compile time (in kiln's compile-time
+;;; environment), so they are defined then too.
+(eval-when (:compile-toplevel :load-toplevel :execute)
+
 (defun expand-with-open-stream (var stream body)
   (multiple-value-bind (body-forms declares)
       (alexandria:parse-body body)
@@ -50,6 +54,8 @@
                 (setf ,abortp nil))
            (when ,var
              (close ,var :abort ,abortp)))))))
+
+) ; kiln: EVAL-WHEN
 
 (defclass binary-output-stream (fundamental-binary-output-stream)
   ((element-type :initarg :element-type

@@ -2,6 +2,7 @@
 
 (defclass utf-8-transcoder (character-transcoder) ())
 
+#-kiln
 (defmethod read-element ((transcoder utf-8-transcoder) stream)
   (let (octet1 octet2 octet3 octet4)
     (cond ((eq (setf octet1 (stream-read-octet stream)) :eof)
@@ -37,6 +38,45 @@
                                  (- octet4 #b10000000)))
                    (stream-element-type stream))))))
 
+;;; kiln: the method above shifts the octets the wrong way (ASH with
+;;; negative counts); the leading octet's bits are the high bits.
+#+kiln
+(defmethod read-element ((transcoder utf-8-transcoder) stream)
+  (let (octet1 octet2 octet3 octet4)
+    (flet ((char-of (code)
+             (coerce (code-char code) (stream-element-type stream))))
+      (cond ((eq (setf octet1 (stream-read-octet stream)) :eof)
+             :eof)
+            ((< octet1 #b10000000)
+             (char-of octet1))
+            ((eq (setf octet2 (stream-read-octet stream)) :eof)
+             (unexpected-eof transcoder stream octet1))
+            ((not (<= #b10000000 octet2 #b10111111))
+             (illegal-sequence transcoder stream octet1 octet2))
+            ((< octet1 #b11100000)
+             (char-of (logior (ash (logand octet1 #b00011111) 6)
+                              (logand octet2 #b00111111))))
+            ((eq (setf octet3 (stream-read-octet stream)) :eof)
+             (unexpected-eof transcoder stream octet1 octet2))
+            ((not (<= #b10000000 octet3 #b10111111))
+             (illegal-sequence transcoder stream octet1 octet2 octet3))
+            ((< octet1 #b11110000)
+             (char-of (logior (ash (logand octet1 #b00001111) 12)
+                              (ash (logand octet2 #b00111111) 6)
+                              (logand octet3 #b00111111))))
+            ((eq (setf octet4 (stream-read-octet stream)) :eof)
+             (unexpected-eof transcoder stream octet1 octet2 octet3))
+            ((not (and (<= #b10000000 octet4 #b10111111)
+                       (< octet1 #b11111000)))
+             (illegal-sequence transcoder stream octet1 octet2 octet3 octet4))
+            (t
+             (char-of (logior (ash (logand octet1 #b00000111) 18)
+                              (ash (logand octet2 #b00111111) 12)
+                              (ash (logand octet3 #b00111111) 6)
+                              (logand octet4 #b00111111))))))))
+
+;;; kiln: three octets encode the codes below #x10000 (upstream: #x1000),
+;;; here and in ENCODED-LENGTH.
 (defmethod write-element ((transcoder utf-8-transcoder) stream element)
   (let ((code (char-code element))
         (m1 #b10000000)
@@ -46,7 +86,7 @@
           ((< code #x800)
            (stream-write-octet stream (logior #b11000000 (ash code -6)))
            (stream-write-octet stream (logior m1 (logand code m2))))
-          ((< code #x1000)
+          (#-kiln (< code #x1000) #+kiln (< code #x10000)
            (stream-write-octet stream (logior #b11100000 (ash code -12)))
            (stream-write-octet stream (logior m1 (logand (ash code -6) m2)))
            (stream-write-octet stream (logior m1 (logand code m2))))
@@ -63,7 +103,7 @@
             (+ previous
                (cond ((< code #x80) 1)
                      ((< code #x800) 2)
-                     ((< code #x1000) 3)
+                     (#-kiln (< code #x1000) #+kiln (< code #x10000) 3)
                      (t 4))))
           elements
           :initial-value 0))

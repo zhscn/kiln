@@ -2,6 +2,7 @@
 
 (defpackage #:cyclosis
   (:use #:common-lisp)
+  #-kiln
   (:shadow #:broadcast-stream
            #:broadcast-stream-streams
            #:close
@@ -27,6 +28,22 @@
            #:synonym-stream-symbol
            #:truename
            #:two-way-stream
+           #:two-way-stream-input-stream
+           #:two-way-stream-output-stream
+           #:y-or-n-p
+           #:yes-or-no-p)
+  ;; kiln: the classes and generic functions that Cyclosis defines for
+  ;; CL itself are the CL symbols (the intrinsic interface would
+  ;; shadowing-import them into CL at run time; kiln reads the sources
+  ;; into the host's packages, docs/10 §12).
+  #+kiln
+  (:shadow #:broadcast-stream-streams
+           #:concatenated-stream-streams
+           #:echo-stream-input-stream
+           #:echo-stream-output-stream
+           #:open
+           #:peek-char
+           #:synonym-stream-symbol
            #:two-way-stream-input-stream
            #:two-way-stream-output-stream
            #:y-or-n-p
