@@ -34,3 +34,20 @@
                                :format-arguments (list object)))
       (21 (error 'undefined-function :name (list 'setf object)))
       (t (kiln.sys:%primop :fatal-error code object)))))
+
+;;; What the expansions of Common-macros' macros signal or call at run time.
+
+(define-condition common-macro-definitions::ecase-type-error (type-error) ())
+(define-condition common-macro-definitions::ccase-type-error (type-error) ())
+(define-condition common-macro-definitions::etypecase-type-error (type-error) ())
+(define-condition common-macro-definitions::ctypecase-type-error (type-error) ())
+(define-condition common-macro-definitions::both-test-and-test-not-given (error) ())
+
+(defun common-macro-definitions::check-type-error (place value type type-string)
+  (error 'simple-type-error
+         :datum value
+         :expected-type type
+         :format-control (if type-string
+                             "The value of ~S is ~S, which is not ~A."
+                             "The value of ~S is ~S, which is not of type ~S.")
+         :format-arguments (list place value (or type-string type))))

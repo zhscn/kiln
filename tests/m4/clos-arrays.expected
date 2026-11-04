@@ -1,0 +1,57 @@
+T
+T
+#(A B C)
+2
+(2 3)
+6
+6
+(20 20)
+4
+NIL
+T
+NIL
+T
+T
+OUT-OF-BOUNDS
+0
+5
+5
+(0 16 9)
+(0 1 4 9 16)
+16
+4
+T
+T
+T
+NIL
+3
+#(9 4 1 0)
+4
+1
+2
+NIL
+(7 8 9)
+T
+NIL
+T
+#\e
+"jello"
+T
+"JELLO"
+(0 0 1 0)
+BIT
+T
+TYPE-ERROR
+(UNSIGNED-BYTE 8)
+255
+0.0d0
+(UNSIGNED-BYTE 8)
+CHARACTER
+T
+4
+TWO
+(#(0 1 TWO 3 4 5) 2)
+(1 2 3 4 0)
+(3 3)
+(T T)
+(T T)

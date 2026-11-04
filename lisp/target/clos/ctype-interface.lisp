@@ -9,9 +9,6 @@
              (specifier-ctype *kiln-client* type1 environment)
              (specifier-ctype *kiln-client* type2 environment)))
 
-(defun cl:upgraded-array-element-type (specifier &optional environment)
-  (upgraded-array-element-type *kiln-client* specifier environment))
-
 (defun cl:upgraded-complex-part-type (specifier &optional environment)
   (upgraded-complex-part-type *kiln-client* specifier environment))
 

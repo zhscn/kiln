@@ -276,3 +276,53 @@ ctype 的泛函用长形式 method combination `basic`，它生成 `(surely (cal
 - `tests/m4/clos-types.lisp`：
   - `subtypep` 覆盖整数范围、`member`/`eql`、`or`/`and`/`not`、列表和序列、浮点、类、`nil`/`t`、`satisfies`（结果不确定）、`keyword`、`deftype` 定义的名字；
   - 复合类型的 `typep`，以及 `upgraded-array-element-type`。
+
+## 14. M4.5：数组（Regalia）
+
+**混合表示**：
+- 元素为 T 的一维 simple vector 和 simple string 仍是原生对象，`svref`、`schar` 和 kernel 的快路径不变。
+- 其余数组都是 Regalia 的标准类的实例：多维数组、特化元素类型的数组，以及可调整、带 fill pointer 或 displaced 的数组。
+
+**类层次**：
+- CL 的 `array`、`simple-array`、`vector`、`simple-vector`、`string`、`simple-string`、`bit-vector`、`simple-bit-vector` 都是内建类。
+- 原生对象的类是 `simple-vector` 和 `simple-string`，后者以前叫 `string`。
+- Regalia 的类在 `regalia` 包里，补丁把同名的 CL 符号遮蔽掉。它的 `array` 以 `standard-object` 和 `cl:array` 为父类，`vector`、`string`、`bit-vector` 再分别加上对应的 CL 类。
+- 简单与否由实例的状态决定：不可调整、没有 fill pointer、没有 displaced 的才是 simple。类本身不区分。
+
+**存储**：Regalia 实例的元素存在 `contents` 槽里的原生向量中，补丁给 `array` 加了 `%contents` 和 `%adjustable` 两个槽。字符数组用字符串存，其他元素类型都用 simple-vector 存，特化类型在写入时检查元素类型。displaced 数组没有存储，读写时转到目标数组，加上偏移。
+
+**kernel 的钩子**：kernel 的 `stringp`、`vectorp`、`arrayp`、`length`、`aref`、`char`、`row-major-aref`、`array-rank`、`array-dimensions` 等先处理原生向量，其余对象交给两个钩子：
+- `*complex-array-kind*`：把对象映射为 `:string`、`:vector`、`:array` 或 NIL。kernel 在泛函分派内部也会问这个问题（`gethash` 的分派会调用 `stringp`），所以这里不能再调用泛函。答案来自加载时预先算好的「类 → 种类」alist，算之前先 finalize 每个类。
+- `*complex-array-op*`：按关键字执行具体操作。
+
+`string` 把非 simple 的字符串复制成 simple 的，所以字符串函数照旧用 `schar`。kernel 内部改用 `make-simple-vector` 构造向量，因为 `cl:make-array` 被数组层重新定义了，而它会经由 ctype 的 `subtypep` 间接构造向量。另外，`make-array` 对元素类型为 T 或 character 的简单情况直接返回原生对象，不调用 `subtypep`。
+
+**kiln 自己写的部分**（`lisp/target/clos/arrays.lisp`）。Regalia 的这些部分不完整或有错，没有加载：
+- `make-array`：从不设置 fill pointer；displaced 的读写忽略偏移；adjustable 分支递归调用自己时把参数原样传下去。
+- `aref` 只有读，没有写。
+
+kiln 自己实现的有：
+- `make-array` 的全部关键字参数；
+- `aref`/`row-major-aref` 及其 setf，并检查下标；
+- `fill-pointer`、`vector-push`、`vector-push-extend`、`vector-pop`；
+- `adjust-array`：可调整的数组就地修改，保留新旧维度都合法的元素；
+- `array-displacement`、`array-in-bounds-p`、`array-row-major-index`、`adjustable-array-p`、`array-has-fill-pointer-p`；
+- `bit`、`sbit`、`bit-vector-p`；
+- `upgraded-array-element-type`：按 Regalia 的类划分，有 bit、8/16/32/64 位有符号和无符号整数、single-float、double-float、character，其余是 T。
+
+从 Regalia 加载的有：类层次、`class-name-from-element-type`、维度检查、condition 类型。ctype 的 `upgraded-array-element-type` 和 `simple-array-p` 也改用这一层。
+
+Common-macros 的展开式在运行期要用的 `ecase-type-error` 等 condition 类和 `check-type-error` 也在这一步补上了（`runtime-errors.lisp`）。
+
+**还没做**：
+- 打印器不认识 Regalia 数组；
+- 序列函数对非 simple 向量先转成列表，结果是 simple 向量；
+- `bit-and` 等位数组运算。
+
+`tests/m4/clos-arrays.lisp` 覆盖：
+- 原生对象的快路径；
+- 多维数组和越界错误；
+- fill pointer 和 `vector-push-extend`；
+- 带 fill pointer 的字符串参与字符串函数；
+- bit 和 `(unsigned-byte 8)` 数组，以及写入时的类型检查；
+- displaced 数组、`adjust-array`、数组类型的 `subtypep`。

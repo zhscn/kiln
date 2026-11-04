@@ -90,6 +90,31 @@
             "cmember" "carray" "csequence" "charset" "cvalues" "cfunction"
             "csatisfies" "pairwise" "parse")))
 
+(defparameter *regalia-files*
+  ;; The class hierarchy and a few common functions; kiln's arrays.lisp
+  ;; does the rest (docs/10 §14).
+  (mapcar (lambda (name)
+            (asdf:system-relative-pathname
+             "kiln" (format nil "vendor/Regalia/Code/~A.lisp" name)))
+          (append '("Base-intrinsic/packages")
+                  (mapcar (lambda (name) (format nil "Class-hierarchy/~A" name))
+                          '("array" "array-t" "array-unsigned-byte-64"
+                            "array-signed-byte-64" "array-unsigned-byte-32"
+                            "array-signed-byte-32" "array-unsigned-byte-16"
+                            "array-signed-byte-16" "array-unsigned-byte-8"
+                            "array-signed-byte-8" "array-double-float"
+                            "array-single-float" "array-complex-double-float"
+                            "array-complex-single-float" "array-character" "vector"
+                            "simple-vector" "vector-unsigned-byte-64"
+                            "vector-signed-byte-64" "vector-unsigned-byte-32"
+                            "vector-signed-byte-32" "vector-unsigned-byte-16"
+                            "vector-signed-byte-16" "vector-unsigned-byte-8"
+                            "vector-single-float" "vector-double-float"
+                            "vector-complex-single-float" "vector-complex-double-float"
+                            "array-bit" "bit-vector" "string"))
+                  '("Common/variables" "Common/class-name-from-element-type"
+                    "Common/check-dimensions" "Common/condition-types"))))
+
 (defun clostrophilia-files (groups)
   "GROUPS: lists (DIRECTORY FILE...); a FILE is a name or
 (:COMPILE-TIME-TOO name)."
@@ -174,7 +199,9 @@
    *parcl-files*
    (list (kiln-clos-file "package-system"))
    *ctype-files*
-   (list (kiln-clos-file "ctype-interface")))
+   (list (kiln-clos-file "ctype-interface"))
+   *regalia-files*
+   (list (kiln-clos-file "arrays")))
   "Sources of the CLOS module, in load order (docs/10 §7).")
 
 (defun write-module (module output)

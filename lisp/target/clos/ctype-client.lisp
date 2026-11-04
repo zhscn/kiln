@@ -25,7 +25,9 @@
   cl:most-negative-fixnum)
 
 ;;; Floats: single-float is a short float, double-float a long float.
-(defmethod reduce-float-type ((client kiln-client) type)
+;;; Not specialized on the client: ctype's UNPARSE calls it with NIL.
+(defmethod reduce-float-type (client type)
+  (declare (ignore client))
   (ecase type
     ((short-float single-float) 'single-float)
     ((double-float long-float) 'double-float)))
@@ -58,7 +60,9 @@
          'rational)
         (t 'real)))
 
-;;; Arrays: so far, simple vectors of T and strings (of characters).
+;;; Arrays: these methods are for the time before Regalia is loaded,
+;;; when there are only simple vectors of T and strings; arrays.lisp
+;;; replaces them.
 (defmethod upgraded-array-element-type ((client kiln-client) specifier &optional env)
   (if (and (not (eq specifier 'nil))
            (subctypep client (specifier-ctype client specifier env)

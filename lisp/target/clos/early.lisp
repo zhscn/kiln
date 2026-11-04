@@ -119,7 +119,7 @@ list, slots), the slots unbound."
         ((kiln.kernel::single-float-p object) 'single-float)
         ((kiln.kernel::double-float-p object) 'double-float)
         ((characterp object) 'character)
-        ((stringp object) 'string)
+        ((kiln.kernel::simple-string-p object) 'simple-string)
         ((simple-vector-p object) 'simple-vector)
         ((functionp object) 'function)
         (t 't)))

@@ -16,10 +16,17 @@
   (symbol t)
   (null symbol list)
   (cons list)
+  ;; Arrays (docs/10 §14): simple vectors and strings are native objects;
+  ;; the other arrays are instances of Regalia's standard classes, which
+  ;; are subclasses of these.
   (array t)
+  (simple-array array)
   (vector array sequence)
-  (simple-vector vector)
+  (simple-vector vector simple-array)
   (string vector)
+  (simple-string string simple-array)
+  (bit-vector vector)
+  (simple-bit-vector bit-vector simple-array)
   (character t)
   (number t)
   (real number)
