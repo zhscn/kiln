@@ -1,5 +1,11 @@
 (cl:in-package #:common-macro-definitions)
 
+;;; kiln: the extrinsic system's names; kiln compiles the macros for its
+;;; target in a package that uses CL and shadows only GET-SETF-EXPANSION,
+;;; ENSURE-GENERIC-FUNCTION and PROCLAIM, where these would redefine CL's
+;;; functions.
+#-kiln
+(progn
 (defun transform-name (name)
   (intern (string-downcase (symbol-name name))
           (find-package "COMMON-MACRO-DEFINITIONS")))
@@ -16,7 +22,7 @@
 (defun macroexpand-1 (form &optional environment)
   (declare (ignore environment))
   (cl:macroexpand-1 (cons (transform-name (first form))
-                          (rest form))))
+                          (rest form)))))
 
 (defgeneric get-setf-expansion (client place &optional environment)
   (:method (client place &optional environment)

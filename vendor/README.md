@@ -189,6 +189,14 @@ Under `#+kiln` (docs/10 §18 of kiln):
 - `defclass`: a slot specifier that is a symbol is canonicalized into the
   form `(list :name 'slot)` (upstream: `(:name 'slot)`, which is then
   evaluated as a call of `:name`). Khazern has such a slot.
+- `Low/utilities.lisp`: the definitions that only the extrinsic system
+  uses (`transform-name`, `macro-function`, `macro-function-exists-p`,
+  `defmacro`, `macroexpand-1`) are read only `#-kiln`. kiln's target
+  compiles the macros in its own package `kiln.cmd` (it uses CL and shadows
+  only `get-setf-expansion`, `ensure-generic-function` and `proclaim`),
+  where these would redefine CL's functions. Upstream's intrinsic package
+  shadows too little for the same files: `get-setf-expansion` taking a
+  client would become CL's.
 
 ## Eclector patches
 
