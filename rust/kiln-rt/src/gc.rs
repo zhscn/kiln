@@ -359,6 +359,9 @@ pub struct KilnCollection;
 /// Number of completed collections.
 static GC_COUNT: Mutex<u64> = Mutex::new(0);
 static GC_DONE: Condvar = Condvar::new();
+/// Mutators waiting in `block_for_gc`; `stop_all_mutators` waits for all.
+static BLOCKED_MUTATORS: Mutex<usize> = Mutex::new(0);
+static MUTATORS_BLOCKED: Condvar = Condvar::new();
 
 thread_local! {
     /// GC_COUNT as seen by this mutator before it last requested memory.
@@ -375,7 +378,17 @@ impl Collection<Kiln> for KilnCollection {
     where
         F: FnMut(&'static mut KilnMutator),
     {
-        // The only mutator is blocked inside its allocation request.
+        // Every collection is requested by a mutator, which then blocks in
+        // `block_for_gc`; wait until all of them are there. (MMTk starts
+        // the collection as soon as it is requested, while the requesting
+        // mutator is still on its way out of the allocator: it releases
+        // its page reservation, and its stack is not yet still.)
+        let count = MUTATORS.lock().unwrap().len();
+        let mut blocked = BLOCKED_MUTATORS.lock().unwrap();
+        while *blocked < count {
+            blocked = MUTATORS_BLOCKED.wait(blocked).unwrap();
+        }
+        drop(blocked);
         for (_, m) in MUTATORS.lock().unwrap().iter() {
             mutator_visitor(unsafe { &mut *(*m as *mut KilnMutator) });
         }
@@ -388,10 +401,15 @@ impl Collection<Kiln> for KilnCollection {
 
     fn block_for_gc(_tls: VMMutatorThread) {
         let seen = SEEN_GC_COUNT.with(Cell::get);
+        // Taken before announcing that this mutator is blocked, so that the
+        // collection cannot finish (and notify) before this thread waits.
         let mut n = GC_COUNT.lock().unwrap();
+        *BLOCKED_MUTATORS.lock().unwrap() += 1;
+        MUTATORS_BLOCKED.notify_all();
         while *n == seen {
             n = GC_DONE.wait(n).unwrap();
         }
+        *BLOCKED_MUTATORS.lock().unwrap() -= 1;
         SEEN_GC_COUNT.with(|c| c.set(*n));
     }
 
