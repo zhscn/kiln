@@ -404,3 +404,74 @@ evaluate some at compile time: parser.packrat's DEFGRAMMAR)."
                                                 (funcall expander form env))))
                                 (check-host-expansion name expansion)
                                 expansion)))))))))))
+
+;;; Compiling the compiler module (docs/11 §8), on the host or on kiln.
+
+(defparameter *compiler-host-macro-packages*
+  ;; Expanded by the host at compile time (USE-HOST-MACROS).
+  '("ANAPHORA" "LET-PLUS" "MORE-CONDITIONS" "UTILITIES.PRINT-ITEMS"
+    "ARCHITECTURE.BUILDER-PROTOCOL" "PARSER.PACKRAT.CACHE" "PARSER.PACKRAT.BASE"
+    "PARSER.PACKRAT.EXPRESSION" "PARSER.PACKRAT.ENVIRONMENT" "PARSER.PACKRAT.COMPILER"
+    "PARSER.PACKRAT.GRAMMAR" "PARSER.PACKRAT.GRAMMAR.BASE"
+    "PARSER.PACKRAT.GRAMMAR.SEQUENCE" "PARSER.PACKRAT.GRAMMAR.SEXP"
+    "PARSER.PACKRAT.BOOTSTRAP" "PARSER.PACKRAT" "S-EXPRESSION-SYNTAX.EXPRESSION-GRAMMAR"
+    "S-EXPRESSION-SYNTAX" "S-EXPRESSION-SYNTAX.CONCRETE-SYNTAX-TREE" "ICONOCLAST"
+    "ICONOCLAST-BUILDER" "TRUCLER-REFERENCE" "CLOSTRUM-SYS" "CLOSTRUM"
+    "CLOSTRUM-IMPLEMENTATION" "CLOSTRUM-BASIC" "CLOSTRUM-TRUCLER" "ICONOCLAST-AST-WALKER"
+    "ICONOCLAST-AST-TRANSFORMATIONS" "COMMON-MACROS" "COMMON-BOOT" "COMMON-BOOT-HIR"
+    "COMMON-BOOT-AST-TO-HIR" "COMMON-BOOT-HIR-EVALUATOR"))
+
+(defun load-time-only-definitions (expansion)
+  "EXPANSION of a parser.packrat or s-expression-syntax definition macro
+with its compile-time definitions removed and its load-time ones wrapped
+in LOAD-TIME-ONLY."
+  (labels ((walk (form)
+             (cond ((atom form) form)
+                   ((and (eq (first form) 'eval-when)
+                         (equal (second form) '(:compile-toplevel)))
+                    nil)
+                   ((member (first form) '(parser.packrat.grammar:ensure-grammar
+                                           parser.packrat.grammar:ensure-rule
+                                           s-expression-syntax::ensure-syntax))
+                    `(load-time-only ,form))
+                   ((eq (first form) 'progn)
+                    (cons 'progn (mapcar #'walk (rest form))))
+                   (t form))))
+    (walk expansion)))
+
+(defun prepare-compiler-session (session)
+  "Makes SESSION, which has compiled the kernel, CLOS, the front end and
+eval, ready to compile the compiler module: the host libraries' macros and
+the compile-time definitions that the module needs."
+  (use-host-macros session *compiler-host-macro-packages*)
+  (let* ((client (session-client session))
+         (genv (trucler:global-environment client (session-environment session))))
+    ;; The host's DEFRULE compiles a rule in the host's current grammar.
+    (host-macro
+     client genv 'parser.packrat:in-grammar
+     (lambda (form env)
+       (declare (ignore env))
+       (setf parser.packrat::*grammar* (parser.packrat.grammar:find-grammar (second form)))
+       `(eval-when (:load-toplevel :execute)
+          (setf parser.packrat::*grammar*
+                (parser.packrat.grammar:find-grammar ',(second form))))))
+    ;; The host has the grammars, rules and syntax descriptions already;
+    ;; defining them at compile time would replace the host's.
+    (dolist (name '(parser.packrat:defgrammar parser.packrat:defrule
+                    s-expression-syntax::define-syntax))
+      (let ((expander (clo:macro-function client genv name)))
+        (host-macro
+         client genv name
+         (lambda (form env)
+           (load-time-only-definitions (funcall expander form env))))))
+    ;; The inline functions of the modules compiled so far
+    ;; (lisp/target/compiler/session.lisp).
+    (host-macro
+     client genv 'host-inline-functions
+     (lambda (form env)
+       (declare (ignore form env))
+       (let ((entries '()))
+         (maphash (lambda (name entry) (push (cons name entry) entries))
+                  (session-inline-functions session))
+         (check-host-expansion 'host-inline-functions entries)
+         `',entries)))))
