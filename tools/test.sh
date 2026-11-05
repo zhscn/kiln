@@ -51,7 +51,7 @@ fi
 for src in "${sources[@]}"; do
   args+=(--eval "(kiln:compile-file-to-kir \"$src\" \"$build/$(basename "${src%.lisp}").kir\" :session *session*)")
 done
-sbcl --noinform --non-interactive \
+sbcl --dynamic-space-size 4GB --noinform --non-interactive \
   --load "$root/tools/env.lisp" \
   --eval '(ql:quickload "kiln" :silent t)' \
   "${args[@]}" >"$build/compile.log" 2>&1 || { cat "$build/compile.log"; exit 1; }

@@ -20,3 +20,11 @@ and class that NAME has."
           (setf (find-class alias) class))))))
 
 (kiln.sys::closer-mop-aliases)
+
+;;; closer-mop's own functions.
+(defun closer-mop:ensure-finalized (class &optional (errorp t))
+  (when (and (symbolp class))
+    (setf class (find-class class errorp)))
+  (when (and class (not (clostrophilia:class-finalized-p class)))
+    (clostrophilia:finalize-inheritance class))
+  class)

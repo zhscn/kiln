@@ -60,6 +60,8 @@ Each patched place is marked with a `kiln:` comment.
   keyword parameters, which its `&rest` parameter then sees
   (architecture.builder-protocol stores such a list). kiln's method lambdas
   have `&allow-other-keys` instead (`lisp/macro-client.lisp`).
+- The storage of a slot with `:allocation :class` starts unbound
+  (upstream: `nil`, so its initform was never used).
 - The standard method combination does not require primary methods: an
   effective method without them signals an error only if the primary
   methods are reached (an `:around` method need not call

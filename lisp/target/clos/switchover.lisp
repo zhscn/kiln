@@ -32,20 +32,39 @@
         unless (member key keys)
           append (list key value)))
 
+;;; A superclass that is not defined yet is a forward-referenced class.
+;;; When it is defined, the forward reference itself becomes the class
+;;; (CHANGE-CLASS, then INITIALIZE-INSTANCE with the DEFCLASS's initargs),
+;;; so that the classes that refer to it, and the methods specialized on
+;;; it (its slot readers), see one object.
+(defun ensure-superclass (name)
+  (or (find-class name nil)
+      (setf (find-class name)
+            (make-instance 'forward-referenced-class :name name))))
+
 (defun mop-ensure-class (name &rest initargs
                          &key (metaclass 'standard-class) direct-superclasses
                          &allow-other-keys)
-  (when (find-class name nil)
-    (error "redefining a class is not supported yet" name))
-  (let* ((metaclass (if (symbolp metaclass) (find-class metaclass) metaclass))
-         (superclasses (loop for super in direct-superclasses
-                             collect (if (symbolp super) (find-class super) super)))
-         (class (apply #'make-instance metaclass
-                       :name name
-                       :direct-superclasses superclasses
-                       (remove-keys initargs '(:name :metaclass :direct-superclasses)))))
-    (setf (find-class name) class)
-    class))
+  (let ((existing (find-class name nil)))
+    (when (and existing (not (typep existing 'forward-referenced-class)))
+      (error "redefining a class is not supported yet" name))
+    (let* ((metaclass (if (symbolp metaclass) (find-class metaclass) metaclass))
+           (superclasses (loop for super in direct-superclasses
+                               collect (if (symbolp super) (ensure-superclass super) super)))
+           (initargs (list* :name name
+                            :direct-superclasses superclasses
+                            (remove-keys initargs
+                                         '(:name :metaclass :direct-superclasses))))
+           (class (if existing
+                      (apply #'initialize-instance
+                             ;; CHANGE-CLASS's SHARED-INITIALIZE runs the
+                             ;; :AFTER method of classes.
+                             (let ((*existing-superclasses* '()))
+                               (change-class existing metaclass))
+                             initargs)
+                      (apply #'make-instance metaclass initargs))))
+      (setf (find-class name) class)
+      class)))
 
 (defun mop-ensure-generic-function
     (name &key lambda-list (argument-precedence-order nil apo-p)
@@ -151,3 +170,13 @@ satiated; their call histories fill as they are called.")
     (setf *switched-p* t)))
 
 (switch-to-mop)
+
+;;; CL:ENSURE-GENERIC-FUNCTION (Iconoclast calls it at load time).
+(defun cl:ensure-generic-function
+    (name &rest initargs &key environment declare method-combination &allow-other-keys)
+  (declare (ignore environment declare))
+  (apply #'mop-ensure-generic-function name
+         (append (and method-combination
+                      (list :method-combination-name (first method-combination)
+                            :method-combination-arguments (rest method-combination)))
+                 (remove-keys initargs '(:environment :declare :method-combination)))))

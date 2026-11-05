@@ -21,6 +21,10 @@
   (cmd:macro-function-exists-p operator))
 
 (defvar *client*)
+(defvar *host-library-packages* '()
+  "The packages of the libraries whose macros and functions are the host's
+at compile time (USE-HOST-MACROS).")
+
 (defvar *defined-functions*)            ; names defined by DEFUN in this file
 (defvar *referenced-functions*)         ; undefined names seen by Common-boot
 (defvar *toplevel-environment*)          ; Trucler environment of the top level
@@ -162,10 +166,14 @@ time only.")
       (lambda (name expander)
         (setf (clo:type-expander client genv name) expander)
         name))
-    ;; DEFCONSTANT's compile-time side (lisp/target/kernel.lisp).
+    ;; DEFCONSTANT's compile-time side (lisp/target/kernel.lisp). The
+    ;; constants of the libraries the host has loaded are the host's
+    ;; (USE-HOST-MACROS): Clostrum-basic's +UNBOUND+ is the marker of an
+    ;; unbound cell of the compile-time environment itself.
     (def 'kiln.sys::%define-constant
       (lambda (name value)
-        (clo:make-constant client genv name value)
+        (unless (host-constant-p name)
+          (clo:make-constant client genv name value))
         name))
     ;; Expanders may call MACROEXPAND with their &ENVIRONMENT (Predicament's
     ;; RESTART-CASE does).
@@ -304,6 +312,17 @@ time only.")
                      (t x))))
       (walk form))))
 
+(defun host-constant-p (name)
+  (and (symbolp name)
+       (member (symbol-package name) *host-library-packages*)
+       (constantp name)))
+
+(defmethod trucler:describe-variable :around ((client client) environment name)
+  (or (call-next-method)
+      (and (host-constant-p name)
+           (make-instance 'trucler:constant-variable-description
+             :name name :value (symbol-value name)))))
+
 ;;; (LOAD-TIME-ONLY form...) in a host expansion, at top level: the forms
 ;;; are compiled but not evaluated at compile time, even in an EVAL-WHEN
 ;;; with :COMPILE-TOPLEVEL (they would change the host's state:
@@ -324,6 +343,7 @@ evaluate some at compile time: parser.packrat's DEFGRAMMAR)."
     (dolist (package-name package-names)
       (let ((package (or (find-package package-name)
                          (error "No host package ~A." package-name))))
+        (pushnew package *host-library-packages*)
         (do-symbols (s package)
           (when (eq (symbol-package s) package)
             (when (and (fboundp s) (not (macro-function s)) (not (special-operator-p s)))
@@ -685,6 +705,18 @@ whole instead (the declarations would otherwise be lost)."
           (dolist (c body)
             (process-toplevel c compile-time-too))))))
 
+(defvar *file-sets-package*)             ; an IN-PACKAGE in this file sets *PACKAGE*
+
+(defun find-package-function ()
+  "Parcl's FIND-PACKAGE-OR-ERROR (the package exists once the CLOS module's
+sources have been read)."
+  (and (find-package '#:parcl) (find-symbol "FIND-PACKAGE-OR-ERROR" '#:parcl)))
+
+(defun run-time-packages-p ()
+  "True if the package system has been compiled (the CLOS module)."
+  (let ((name (find-package-function)))
+    (and name (gethash name *defined-functions*))))
+
 (defun renamed-package-name (designator)
   (let ((entry (assoc (string designator) *package-renames* :test #'string=)))
     (if entry (cdr entry) (string designator))))
@@ -701,11 +733,20 @@ whole instead (the declarations would otherwise be lost)."
           (eval-when
            (process-eval-when cst compile-time-too))
           ;; The host reader reads the rest of the file in the package.
-          ;; Nothing is compiled for it: compiled modules do not change
-          ;; *PACKAGE* when they are loaded.
+          ;; Once the package system exists at run time, *PACKAGE* is
+          ;; set at load time too, as LOAD would (code run at load time
+          ;; uses it: Iconoclast EXPORTs), and reset to CL-USER at the end
+          ;; of the file (FRONT-END).
           (in-package
            (setf *package* (or (find-package (renamed-package-name (second form)))
-                               (error "IN-PACKAGE: no package named ~S" (second form)))))
+                               (error "IN-PACKAGE: no package named ~S" (second form))))
+           (when (run-time-packages-p)
+             (setf *file-sets-package* t)
+             (compile-toplevel-form
+              (cst:cst-from-expression
+               `(setq *package* (,(find-package-function)
+                                 ',(package-name *package*))))
+              nil)))
           ;; DEFPACKAGE creates the package in the host, so that the rest
           ;; of the sources can be read. Nothing is compiled: the run-time
           ;; package is built from the module's symbol table, which
@@ -819,7 +860,8 @@ created."
         (let ((compile-time-too (and (consp path) (eq (first path) :compile-time-too)))
               (*package-renames* (if (and (consp path) (eq (first path) :renames))
                                      (second path)
-                                     '())))
+                                     '()))
+              (*file-sets-package* nil))
           (map-file-csts (lambda (cst)
                            (forget-global-descriptions *environment*)
                            (let* ((raw (cst:raw cst))
@@ -827,7 +869,12 @@ created."
                              (unless (eq simplified raw)
                                (setf cst (cst:reconstruct *client* simplified cst))))
                            (process-toplevel cst compile-time-too))
-                         (if (consp path) (car (last path)) path)))))
+                         (if (consp path) (car (last path)) path))
+          (when *file-sets-package*
+            (compile-toplevel-form
+             (cst:cst-from-expression
+              `(setq *package* (,(find-package-function) "COMMON-LISP-USER")))
+             nil)))))
     (let ((undefined (loop for name being the hash-keys of *referenced-functions*
                            unless (or (gethash name *defined-functions*)
                                       (gethash name *primitives*)

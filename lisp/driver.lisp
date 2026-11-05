@@ -459,6 +459,18 @@ SESSION must have compiled the kernel and CLOS."
 SESSION must have compiled the kernel and CLOS."
   (write-module (compile-files *eval-files* session "eval") output))
 
+(defun system-files (name &key exclude)
+  "The Lisp source files of the ASDF system NAME, in load order, without
+those whose names are in EXCLUDE."
+  (loop for c in (asdf:required-components (asdf:find-system name)
+                                           :other-systems nil
+                                           :goal-operation 'asdf:load-op
+                                           :keep-operation 'asdf:compile-op)
+        when (and (typep c 'asdf:cl-source-file)
+                  (not (member (pathname-name (asdf:component-pathname c)) exclude
+                               :test #'string=)))
+          collect (asdf:component-pathname c)))
+
 (defparameter *compiler-files*
   ;; The compiler module (docs/11 §3, M5.2): the front end's remaining
   ;; dependencies, Common-boot, then kiln's compiler (M5.3).
@@ -510,7 +522,20 @@ SESSION must have compiled the kernel and CLOS."
             "code/definitions/debug-macros" "code/definitions/iteration-macros"
             "code/definitions/io-macros" "code/definitions/modify-macros"
             "code/classify" "code/concrete-syntax-tree/package"
-            "code/concrete-syntax-tree/client"))))
+            "code/concrete-syntax-tree/client")
+     (system-files "iconoclast")
+     (system-files "iconoclast-builder")
+     (system-files "trucler-reference")
+     (list (asdf:system-relative-pathname "kiln" "lisp/target/compiler/environment.lisp"))
+     ;; Not the documentation strings (documentation-utils).
+     (system-files "clostrum" :exclude '("documentation"))
+     (system-files "clostrum-basic")
+     (system-files "clostrum-trucler")
+     (system-files "iconoclast-ast-walker")
+     (system-files "iconoclast-ast-transformations")
+     (system-files "common-macros")
+     (mapcar (lambda (path) (list :renames '(("COMMON-MACRO-DEFINITIONS" . "KILN.CMD")) path))
+             (system-files "common-boot")))))
 
 (defparameter *compiler-host-macro-packages*
   ;; Expanded by the host at compile time (kiln.compiler:use-host-macros).
@@ -520,7 +545,10 @@ SESSION must have compiled the kernel and CLOS."
     "PARSER.PACKRAT.GRAMMAR" "PARSER.PACKRAT.GRAMMAR.BASE"
     "PARSER.PACKRAT.GRAMMAR.SEQUENCE" "PARSER.PACKRAT.GRAMMAR.SEXP"
     "PARSER.PACKRAT.BOOTSTRAP" "PARSER.PACKRAT" "S-EXPRESSION-SYNTAX.EXPRESSION-GRAMMAR"
-    "S-EXPRESSION-SYNTAX" "S-EXPRESSION-SYNTAX.CONCRETE-SYNTAX-TREE"))
+    "S-EXPRESSION-SYNTAX" "S-EXPRESSION-SYNTAX.CONCRETE-SYNTAX-TREE" "ICONOCLAST"
+    "ICONOCLAST-BUILDER" "TRUCLER-REFERENCE" "CLOSTRUM-SYS" "CLOSTRUM"
+    "CLOSTRUM-IMPLEMENTATION" "CLOSTRUM-BASIC" "CLOSTRUM-TRUCLER" "ICONOCLAST-AST-WALKER"
+    "ICONOCLAST-AST-TRANSFORMATIONS" "COMMON-MACROS" "COMMON-BOOT"))
 
 (defun load-time-only-definitions (expansion)
   "EXPANSION of a parser.packrat or s-expression-syntax definition macro

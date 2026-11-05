@@ -28,6 +28,8 @@
    ;; The CAR of the CONS cell stored in this slot is used to hold
    ;; values when :ALLOCATION is :CLASS.  In this case, the CONS cell
    ;; becomes the location of the effective slot definition.
+   ;; kiln: the slot starts unbound, so that SHARED-INITIALIZE gives it
+   ;; the value of its initform (upstream: NIL, a bound slot).
    (%storage
-    :initform (list nil)
+    :initform (list +unbound-slot-value+)
     :reader slot-definition-storage)))

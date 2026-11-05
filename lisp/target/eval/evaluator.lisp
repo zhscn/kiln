@@ -7,7 +7,7 @@
   (:use #:common-lisp)
   (:local-nicknames (#:m #:maclina.machine)
                     (#:mc #:maclina.compile))
-  (:export #:client))
+  (:export #:client #:environment-client))
 
 (in-package #:kiln.eval)
 
@@ -51,11 +51,19 @@
 (defmethod trucler:describe-declarations ((client client) (env null))
   (make-instance 'trucler:declarations-description :declarations '()))
 
-;;; The macro functions of Maclina's lexical environments, for
-;;; MACRO-FUNCTION and MACROEXPAND with an environment (the kernel).
+;;; The macro functions of lexical environments, for MACRO-FUNCTION and
+;;; MACROEXPAND with an environment (the kernel). Environments are Trucler
+;;; environments, queried with the client of the evaluator or compiler
+;;; that made them: Maclina's (here), Common-boot's (the compiler module).
+(defgeneric environment-client (environment)
+  (:method (environment)
+    (declare (ignore environment))
+    m:*client*))
+
 (setf kiln.kernel::*environment-macro-function*
       (lambda (name environment)
-        (let ((description (trucler:describe-function m:*client* environment name)))
+        (let ((description (trucler:describe-function
+                            (environment-client environment) environment name)))
           (and (typep description 'trucler:macro-description)
                (trucler:expander description)))))
 
