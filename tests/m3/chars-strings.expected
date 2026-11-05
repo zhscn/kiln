@@ -31,3 +31,7 @@ T
 ("ffffff" "eeeee" "dddd" "ccc" "bb" "a")
 100000
 #\z
+(T T T NIL)
+(2 NIL 2 2 3 3 NIL 2)
+(T 2 0 NIL 3 2)
+(T NIL NIL T T)

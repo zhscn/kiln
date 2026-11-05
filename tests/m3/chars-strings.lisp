@@ -45,3 +45,15 @@
   (%gc)
   (print (length big))
   (print (char big 99999)))
+
+;;; Bounds and the whole comparison family (CLHS string=).
+(print (list (string= "SB-IMPL" "SB-" :end1 3) (string= "SB-" "SB-IMPL" :end2 3)
+             (string= "abc" "xbc" :start1 1 :start2 1) (string= "abc" "abd")))
+(print (list (string< "abc" "abd") (string< "abd" "abc") (string< "ab" "abc")
+             (string> "abd" "abc") (string> "xabd" "abc" :start1 1)
+             (string<= "abc" "abc") (string>= "abc" "abd") (string/= "abc" "abd")))
+(print (list (string-equal "ABC" "abc") (string-lessp "abc" "ABD") (string-greaterp "B" "a")
+             (string-not-equal "abc" "ABC") (string-not-lessp "abc" "ABC")
+             (string-not-greaterp "abc" "ABD")))
+(print (list (char-lessp #\a #\B) (char-greaterp #\a #\B) (char-not-equal #\a #\A)
+             (char-not-lessp #\b #\A) (char-not-greaterp #\a #\A)))

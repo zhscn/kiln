@@ -477,6 +477,20 @@
   (if (upper-case-p c) (code-char (+ (char-code c) 32)) c))
 (defun char-equal (a &rest more)
   (apply #'char= (char-downcase a) (mapcar #'char-downcase more)))
+(defmacro define-char-comparison-ignoring-case (name test)
+  `(defun ,name (a &rest more)
+     (let ((x (char-code (char-downcase a))))
+       (dolist (b more t)
+         (let ((y (char-code (char-downcase b))))
+           (unless (,test x y) (return nil))
+           (setq x y))))))
+(define-char-comparison-ignoring-case char-lessp <)
+(define-char-comparison-ignoring-case char-greaterp >)
+(define-char-comparison-ignoring-case char-not-greaterp <=)
+(define-char-comparison-ignoring-case char-not-lessp >=)
+(defun char-not-equal (a &rest more)
+  (apply #'/= (char-code (char-downcase a))
+         (mapcar (lambda (c) (char-code (char-downcase c))) more)))
 (defun alpha-char-p (c)
   (or (both-case-p c) (= (char-code c) 223) (= (char-code c) 255)))
 (defun digit-char-p (c &optional (radix 10))
@@ -741,7 +755,7 @@
 (defun equal (a b)
   (cond ((eql a b) t)
         ((consp a) (and (consp b) (equal (car a) (car b)) (equal (cdr a) (cdr b))))
-        ((stringp a) (and (stringp b) (string= a b)))
+        ((stringp a) (and (stringp b) (%string= (string a) (string b))))
         ((and *instance-equal* (%primop :standard-instance-p a))
          (funcall *instance-equal* a b))
         (t nil)))
@@ -759,27 +773,79 @@
         ((characterp x) (make-string 1 :initial-element x))
         (t (%primop :type-error-string x))))
 
-(defun string= (a b)
-  ;; STRING returns simple strings: their characters are compared as
-  ;; immediates, without calls (EQUAL on strings, hash tables of names).
-  (let* ((a (string a)) (b (string b)) (n (%primop :length a)))
+;;; String comparison (CLHS string=, string<): the strings' designators,
+;;; their bounds :START1 :END1 :START2 :END2.
+
+(defun %string-bounds (s start end)
+  (let ((n (%primop :length s)))
+    (unless end (setq end n))
+    (unless (and (%primop :fixnump start) (%primop :fixnump end) (<= 0 start end n))
+      (error 'type-error :datum (list start end) :expected-type `(integer 0 ,n)))
+    end))
+
+(defun %string-mismatch (a b start1 end1 start2 end2 fold)
+  "The indices in A and B of the first characters that differ (by CHAR=,
+or by CHAR-EQUAL if FOLD), or of the end of either string."
+  (let ((i start1) (j start2))
+    (loop
+      (when (or (= i end1) (= j end2)) (return))
+      (let ((x (%primop :schar a i)) (y (%primop :schar b j)))
+        (unless (or (eq x y) (and fold (eq (char-downcase x) (char-downcase y))))
+          (return)))
+      (setq i (+ i 1) j (+ j 1)))
+    (values i j)))
+
+(defun %string= (a b)
+  ;; Simple strings (STRING returns them): their characters are compared
+  ;; as immediates, without calls (EQUAL on strings, hash tables of names).
+  (let ((n (%primop :length a)))
     (and (= n (%primop :length b))
          (dotimes (i n t)
            (unless (eq (%primop :schar a i) (%primop :schar b i)) (return nil))))))
 
-(defun string-equal (a b)
-  (let ((a (string a)) (b (string b)))
-    (and (= (length a) (length b))
-         (dotimes (i (length a) t)
-           (unless (char-equal (schar a i) (schar b i)) (return nil))))))
+(defun %string-compare (a b start1 end1 start2 end2 fold)
+  "The index in A of the first difference, and how A compares with B
+there: -1, 0 or 1."
+  (let* ((a (string a)) (b (string b))
+         (end1 (%string-bounds a start1 end1))
+         (end2 (%string-bounds b start2 end2)))
+    (multiple-value-bind (i j) (%string-mismatch a b start1 end1 start2 end2 fold)
+      (values i
+              (cond ((= i end1) (if (= j end2) 0 -1))
+                    ((= j end2) 1)
+                    (t (let ((x (char-code (%primop :schar a i)))
+                             (y (char-code (%primop :schar b j))))
+                         (when fold
+                           (setq x (char-code (char-downcase (%primop :schar a i)))
+                                 y (char-code (char-downcase (%primop :schar b j)))))
+                         (if (< x y) -1 1))))))))
 
-(defun string< (a b)
-  ;; The index of the first difference if A < B, else NIL.
-  (let* ((a (string a)) (b (string b)) (la (length a)) (lb (length b)))
-    (dotimes (i (min la lb) (if (< la lb) la nil))
-      (let ((x (schar a i)) (y (schar b i)))
-        (cond ((char< x y) (return i))
-              ((char> x y) (return nil)))))))
+(defun string= (a b &key (start1 0) end1 (start2 0) end2)
+  (if (and (eql start1 0) (null end1) (eql start2 0) (null end2))
+      (%string= (string a) (string b))
+      (multiple-value-bind (i order) (%string-compare a b start1 end1 start2 end2 nil)
+        (declare (ignore i))
+        (= order 0))))
+
+(defun string-equal (a b &key (start1 0) end1 (start2 0) end2)
+  (multiple-value-bind (i order) (%string-compare a b start1 end1 start2 end2 t)
+    (declare (ignore i))
+    (= order 0)))
+
+(defmacro define-string-comparison (name fold orders)
+  `(defun ,name (a b &key (start1 0) end1 (start2 0) end2)
+     (multiple-value-bind (i order) (%string-compare a b start1 end1 start2 end2 ,fold)
+       (if (member order ',orders) i nil))))
+(define-string-comparison string/= nil (-1 1))
+(define-string-comparison string< nil (-1))
+(define-string-comparison string> nil (1))
+(define-string-comparison string<= nil (-1 0))
+(define-string-comparison string>= nil (0 1))
+(define-string-comparison string-not-equal t (-1 1))
+(define-string-comparison string-lessp t (-1))
+(define-string-comparison string-greaterp t (1))
+(define-string-comparison string-not-greaterp t (-1 0))
+(define-string-comparison string-not-lessp t (0 1))
 
 ;;; Case conversion: the N versions change STRING in place (CHAR, so that
 ;;; strings that are not simple work too).
