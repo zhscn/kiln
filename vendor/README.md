@@ -219,6 +219,11 @@ Under `#+kiln` (docs/10 §18 of kiln):
 - `define-modify-macro`: the expansion binds the place's temporaries and
   the store variable with `let*` (upstream `let`: the new value's form,
   which reads the place, referred to unbound temporaries).
+- `Low/utilities.lisp`: the extrinsic `macroexpand-1` calls the macro's
+  expander with the environment (upstream calls the host's
+  `macroexpand-1` without it, so local macros and symbol macros were
+  invisible to the expanders: `(setf (m) x)` with `m` a local macro became
+  a call of `(setf m)`).
 
 ## Eclector patches
 

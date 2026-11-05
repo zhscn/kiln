@@ -1,5 +1,5 @@
-;;;; The front end on kiln (docs/11 §8, M5.3). Loaded after front.lisp, in
-;;;; place of host.lisp. The compile-time environment is the run-time one,
+;;;; Compiling in the running image (docs/11 §8, M5.3): IMAGE-CLIENT. Loaded
+;;;; after front.lisp and cross.lisp. The compile-time environment is the run-time one,
 ;;;; as in other implementations: macros, special variables and constants
 ;;;; are the global environment's, and the code evaluated at compile time
 ;;;; (EVAL-WHEN, DEFMACRO, the proclamations of DEFVAR) runs in Maclina's VM
@@ -9,28 +9,18 @@
 
 (in-package #:kiln.compiler)
 
-(defmethod cb:convert-with-ordinary-macro-p ((client client) operator)
+(defclass image-client (client) ())
+
+(defmethod cb:convert-with-ordinary-macro-p ((client image-client) operator)
   (declare (ignore operator))
   nil)
 
-(defmethod kiln.cmd:defun-compile-time-action ((client client) name lambda-list environment)
-  (declare (ignore lambda-list environment))
-  (setf (gethash name *defined-functions*) t)
-  nil)
-
-(defmethod kiln.cmd:defgeneric-compile-time-action
-    ((client client) name lambda-list argument-precedence-order
-     generic-function-class-name method-class-name method-combination-name
-     method-combination-arguments documentation-option environment)
-  (declare (ignore lambda-list argument-precedence-order
-                   generic-function-class-name method-class-name method-combination-name
-                   method-combination-arguments documentation-option environment))
-  (setf (gethash name *defined-functions*) t)
-  nil)
+(defmethod run-time-packages-p ((client image-client))
+  t)
 
 ;;; Places: a symbol macro of the lexical environment, else as at run time
 ;;; (lisp/target/eval/macros.lisp).
-(defmethod kiln.cmd:get-setf-expansion ((client client) place &optional environment)
+(defmethod kiln.cmd:get-setf-expansion ((client image-client) place &optional environment)
   (let ((environment (or environment *environment*)))
     (multiple-value-bind (expansion macrop) (symbol-macro-expansion client environment place)
       (if macrop
@@ -76,8 +66,7 @@
   (make-instance 'trucler:optimize-description
     :speed 3 :debug 3 :space 3 :safety 3 :compilation-speed 3))
 
-(defun make-compile-environment (client)
-  (declare (ignore client))
+(defmethod make-compile-environment ((client image-client))
   (make-instance 'trucler-reference:environment
     :global-environment *run-time-environment*))
 
@@ -100,10 +89,10 @@
                                                     (trucler:name d) (trucler:expansion d))))))
     env))
 
-(defmethod cb:eval-cst ((client client) cst environment)
+(defmethod cb:eval-cst ((client image-client) cst environment)
   (maclina.compile:eval (cst:raw cst) (maclina-environment environment)))
 
-(defmethod cb:compile-local-macro-function-ast ((client client) lambda-ast environment)
+(defmethod cb:compile-local-macro-function-ast ((client image-client) lambda-ast environment)
   (declare (ignore lambda-ast environment))
   (error "The compiler on kiln does not compile MACROLET not at top level yet (docs/11 §8)."))
 
@@ -111,12 +100,13 @@
 ;;; through the kernel's PROCLAIM.
 (setf kiln.kernel::*proclaim-hook*
       (lambda (declaration)
-        (when (and (consp declaration) (member (first declaration) '(inline notinline)))
+        (when (and (boundp '*client*) (typep *client* 'image-client)
+                   (consp declaration) (member (first declaration) '(inline notinline)))
           (note-inline-proclamation (first declaration) (rest declaration)))))
 
 (defvar *host-inline-functions*)        ; session.lisp
 
-(defun initialize-session (session)
+(defmethod initialize-session ((client image-client) session)
   ;; The packages of the image exist at run time (a symbol table's use
   ;; lists name only those, lower.lisp).
   (setf (session-packages session) (list-all-packages))

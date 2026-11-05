@@ -16,9 +16,20 @@
 
 (defclass client (#-kiln kiln.macros:macro-client
                   #+kiln kiln.macros-target:macro-client
-                  trucler-reference:client
-                  #-kiln cbe:client)
-  ())
+                  trucler-reference:client)
+  ()
+  (:documentation "The front end's client. CROSS-CLIENT (cross.lisp) compiles
+in a compile-time environment of its own: SBCL's, and kiln's when it
+compiles kiln (M5.4). On kiln, IMAGE-CLIENT
+(lisp/target/compiler/client.lisp) compiles in the running image, as
+COMPILE-FILE does."))
+
+(defgeneric make-compile-environment (client))
+
+(defgeneric initialize-session (client session)
+  (:method (client session)
+    (declare (ignore client))
+    session))
 
 (defmethod cb:convert-with-parser-p ((client client) operator)
   (special-operator-p operator))
@@ -34,6 +45,24 @@ target library whose package has the name of a host one, docs/11 §3).
 Their definitions of macros that exist at compile time take effect at load
 time only.")
 
+
+;;; Compile-time actions of Common-macros' DEFUN and DEFGENERIC: calls to
+;;; the function are not calls to an undefined function.
+(defmethod #-kiln cmd:defun-compile-time-action #+kiln kiln.cmd:defun-compile-time-action
+    ((client client) name lambda-list environment)
+  (declare (ignore lambda-list environment))
+  (setf (gethash name *defined-functions*) t)
+  nil)
+
+(defmethod #-kiln cmd:defgeneric-compile-time-action #+kiln kiln.cmd:defgeneric-compile-time-action
+    ((client client) name lambda-list argument-precedence-order
+     generic-function-class-name method-class-name method-combination-name
+     method-combination-arguments documentation-option environment)
+  (declare (ignore lambda-list argument-precedence-order
+                   generic-function-class-name method-class-name method-combination-name
+                   method-combination-arguments documentation-option environment))
+  (setf (gethash name *defined-functions*) t)
+  nil)
 
 (define-condition undefined-function-warning (style-warning)
   ((names :initarg :names :reader undefined-function-names))
@@ -311,28 +340,8 @@ the file. Reading starts in KILN-USER, with the target's features."
 (defun compile-time-eval (cst)
   (cb:eval-cst *client* cst *environment*))
 
-;;; As Common-boot's SIMPLIFY-AST (AST-to-HIR/ast-to-hir.lisp), whose
-;;; system the compiler module does not have.
 (defun simplify (ast)
-  (let* ((ast (iconoclast-ast-transformations:macrolet-to-locally ast))
-         (ast (iconoclast-ast-transformations:lexify-lambda-list ast))
-         (ast (iconoclast-ast-transformations:split-let-or-let* ast))
-         (ast (iconoclast-ast-transformations:replace-special-let-with-bind ast))
-         (ast (iconoclast-ast-transformations:let-to-labels ast))
-         (ast (iconoclast-ast-transformations:flet-to-labels ast))
-         (ast (iconoclast-ast-transformations:split-setq ast))
-         (ast (iconoclast-ast-transformations:inline-inlinable-functions ast))
-         (ast (iconoclast-ast-transformations:remove-degenerate-labels ast))
-         (ast (iconoclast-ast-transformations:assignment-conversion ast))
-         (ast (iconoclast-ast-transformations:convert-block ast))
-         (ast (iconoclast-ast-transformations:remove-unused-blocks ast))
-         (ast (iconoclast-ast-transformations:convert-tagbody ast))
-         (ast (iconoclast-ast-transformations:transform-function-definition-and-reference ast))
-         (ast (iconoclast-ast-transformations:eliminate-function ast))
-         (ast (iconoclast-ast-transformations:closure-conversion ast))
-         (ast (iconoclast-ast-transformations:replace-trivial-locally-by-progn ast))
-         (ast (iconoclast-ast-transformations:eliminate-trivial-progn ast)))
-    ast))
+  (cbah::simplify-ast ast))
 
 (defun compile-toplevel-form (cst compile-time-too)
   (when compile-time-too
@@ -420,11 +429,13 @@ whole instead (the declarations would otherwise be lost)."
 sources have been read)."
   (and (find-package '#:parcl) (find-symbol "FIND-PACKAGE-OR-ERROR" '#:parcl)))
 
-(defun run-time-packages-p ()
-  "True if the package system has been compiled (the CLOS module)."
-  #+kiln t
-  #-kiln (let ((name (find-package-function)))
-           (and name (gethash name *defined-functions*))))
+(defgeneric run-time-packages-p (client)
+  (:documentation "True if the package system has been compiled (the CLOS
+module).")
+  (:method (client)
+    (declare (ignore client))
+    (let ((name (find-package-function)))
+      (and name (gethash name *defined-functions*)))))
 
 (defun renamed-package-name (designator)
   (let ((entry (assoc (string designator) *package-renames* :test #'string=)))
@@ -449,7 +460,7 @@ sources have been read)."
           (in-package
            (setf *package* (or (find-package (renamed-package-name (second form)))
                                (error "IN-PACKAGE: no package named ~S" (second form))))
-           (when (run-time-packages-p)
+           (when (run-time-packages-p *client*)
              (setf *file-sets-package* t)
              (compile-toplevel-form
               (cst:cst-from-expression
@@ -491,12 +502,13 @@ programs compiled after it."
   ;; Keys are function names: symbols and (SETF symbol).
   (inline-functions (make-hash-table :test 'equal)))
 
-(defun make-session ()
-  (let* ((client (make-instance 'client))
+(defun make-session (&key (client-class #-kiln 'cross-client #+kiln 'image-client))
+  "A session whose client is an instance of CLIENT-CLASS: CROSS-CLIENT, or
+on kiln IMAGE-CLIENT (the default there)."
+  (let* ((client (make-instance client-class))
          (session (%make-session :client client
                                  :environment (make-compile-environment client))))
-    #+kiln (initialize-session session)
-    session))
+    (initialize-session client session)))
 
 ;;; Iconoclast has no ASTs for FUNCTION and VALUES type specifiers with
 ;;; arguments, so Common-boot cannot convert declarations that use them.

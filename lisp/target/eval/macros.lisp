@@ -3,6 +3,18 @@
 
 (in-package #:kiln.kernel)
 
+;;; Common-macros' definitions of the standard macros, before kiln's own
+;;; replace some of them: the compile-time environment of a cross
+;;; compilation starts with these, as the host's does with
+;;; COMMON-MACRO-DEFINITIONS' (lisp/cross.lisp, docs/11 §9).
+(defvar *common-macros*
+  (let ((macros '()))
+    (do-external-symbols (s '#:common-lisp)
+      (let ((f (macro-function s)))
+        (when (and f (not (eq f (cdr (assoc s *kiln-macros*)))))
+          (push (cons s f) macros))))
+    macros))
+
 (dolist (entry *kiln-macros*)
   (setf (macro-function (car entry)) (cdr entry)))
 

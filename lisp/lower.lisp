@@ -1592,11 +1592,15 @@ package system (docs/10 §12)."
         (*module-symbols* '()))
     (let ((*load-time-values* (make-hash-table :test 'eq)))
       (compile-toplevel-function asts))
-    (dolist (sym extra-symbols)
+    ;; Sorted by name: the order of a package's symbols differs between
+    ;; images (docs/11 §9).
+    (dolist (sym (sort (copy-list extra-symbols) #'string< :key #'symbol-name))
       (symbol-word sym))
     (dolist (package defined-packages)
-      (do-symbols (sym package)
-        (when (eq (nth-value 1 (find-symbol (symbol-name sym) package)) :external)
+      (let ((externals '()))
+        (do-external-symbols (sym package)
+          (push sym externals))
+        (dolist (sym (sort externals #'string< :key #'symbol-name))
           (symbol-word sym))))
     (module-data (symbol-table-cell)
                  `(:words ,(constant-word (symbol-table-literal

@@ -19,10 +19,11 @@
 (cl:defmacro defmacro (name lambda-list &body body)
   `(cl:defmacro ,(transform-name name) ,lambda-list ,@body))
 
+;;; kiln: the expander gets the environment (the host's MACROEXPAND-1 was
+;;; called without it, so local macros and symbol macros were invisible to
+;;; SETF's places, for instance).
 (defun macroexpand-1 (form &optional environment)
-  (declare (ignore environment))
-  (cl:macroexpand-1 (cons (transform-name (first form))
-                          (rest form)))))
+  (values (funcall (macro-function (first form)) form environment) t)))
 
 (defgeneric get-setf-expansion (client place &optional environment)
   (:method (client place &optional environment)

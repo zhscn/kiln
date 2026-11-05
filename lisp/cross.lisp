@@ -1,42 +1,41 @@
-;;;; The front end in the host (SBCL): the compile-time environment is a
-;;;; Clostrum environment, in which Common-boot's HIR evaluator runs the
-;;;; code evaluated at compile time; host CL functions are imported into
-;;;; it, so macro expanders can call them. Loaded after front.lisp; on kiln,
-;;;; lisp/target/compiler/client.lisp takes its place (docs/11 §8).
+;;;; Cross compilation (docs/11 §9): the compile-time environment is a
+;;;; Clostrum environment, separate from the image that compiles, in which
+;;;; Common-boot's HIR evaluator runs the code evaluated at compile time.
+;;;; The functions of the compiling image ("the host") are imported into
+;;;; it, so macro expanders can call them. SBCL compiles kiln this way, and
+;;;; so does kiln (M5.4): there the host is kiln itself. Loaded after
+;;;; front.lisp.
 
 (in-package #:kiln.compiler)
 
-(defmethod cb:convert-with-ordinary-macro-p ((client client) operator)
-  (cmd:macro-function-exists-p operator))
+(defclass cross-client (client cbe:client)
+  ())
+
+(defmethod cb:convert-with-ordinary-macro-p ((client cross-client) operator)
+  #-kiln (cmd:macro-function-exists-p operator)
+  ;; kiln: the compile-time environment has Common-macros' macros
+  ;; (MAKE-COMPILE-ENVIRONMENT).
+  #+kiln (declare (ignore operator))
+  #+kiln nil)
+
+(defun common-macro-p (name)
+  "True if Common-macros defines the standard macro NAME."
+  #-kiln (cmd:macro-function-exists-p name)
+  #+kiln (and (assoc name kiln.kernel::*common-macros*) t))
 
 (defvar *host-library-packages* '()
   "The packages of the libraries whose macros and functions are the host's
 at compile time (USE-HOST-MACROS).")
 
-(defmethod cmd:defun-compile-time-action ((client client) name lambda-list environment)
-  (declare (ignore lambda-list environment))
-  (setf (gethash name *defined-functions*) t)
-  nil)
-
-(defmethod cmd:defgeneric-compile-time-action
-    ((client client) name lambda-list argument-precedence-order
-     generic-function-class-name method-class-name method-combination-name
-     method-combination-arguments documentation-option environment)
-  (declare (ignore lambda-list argument-precedence-order
-                   generic-function-class-name method-class-name method-combination-name
-                   method-combination-arguments documentation-option environment))
-  ;; Calls to the generic function are not calls to an undefined function.
-  (setf (gethash name *defined-functions*) t)
-  nil)
-
-
-(defmethod cmd:get-setf-expansion ((client client) place &optional environment)
+(defmethod #-kiln cmd:get-setf-expansion #+kiln kiln.cmd:get-setf-expansion
+    ((client cross-client) place &optional environment)
   (let ((environment (or environment *environment*)))
     (cond ((symbolp place)
            (multiple-value-bind (expansion macrop)
                (symbol-macro-expansion client environment place)
              (if macrop
-                 (cmd:get-setf-expansion client expansion environment)
+                 (#-kiln cmd:get-setf-expansion #+kiln kiln.cmd:get-setf-expansion
+                  client expansion environment)
                  (call-next-method))))
           ((and (consp place) (symbolp (first place)))
            (let ((expander (clo:setf-expander client
@@ -48,7 +47,8 @@ at compile time (USE-HOST-MACROS).")
                      (let ((*environment* environment))
                        (macroexpand-toplevel place))
                    (if macrop
-                       (cmd:get-setf-expansion client expansion environment)
+                       (#-kiln cmd:get-setf-expansion #+kiln kiln.cmd:get-setf-expansion
+                        client expansion environment)
                        (call-next-method))))))
           (t (call-next-method)))))
 
@@ -96,7 +96,7 @@ at compile time (USE-HOST-MACROS).")
                          (or (clo:macro-function client genv name)
                              (and (symbolp name)
                                   (eq (symbol-package name) (find-package '#:common-lisp))
-                                  (cmd:macro-function-exists-p name)))))
+                                  (common-macro-p name)))))
           (setf (clo:macro-function client genv name) function))
         function))
     ;; DEFINE-COMPILER-MACRO at compile time: ignored (the host's would
@@ -127,7 +127,7 @@ at compile time (USE-HOST-MACROS).")
         name))
     (def 'get-setf-expansion
       (lambda (place &optional env)
-        (cmd:get-setf-expansion client place env)))
+        (#-kiln cmd:get-setf-expansion #+kiln kiln.cmd:get-setf-expansion client place env)))
     (def 'kiln.sys::%deftype
       (lambda (name expander)
         (setf (clo:type-expander client genv name) expander)
@@ -183,9 +183,18 @@ at compile time (USE-HOST-MACROS).")
       `(kiln.sys::%alias-names
         ',(sort pairs #'string< :key (lambda (pair) (symbol-name (car pair))))))))
 
-(defun make-compile-environment (client)
+(defmethod make-compile-environment ((client cross-client))
   (let* ((env (cb:create-environment))
          (genv (trucler:global-environment client env)))
+    ;; Common-macros' macros: CREATE-ENVIRONMENT takes them from the host's
+    ;; COMMON-MACRO-DEFINITIONS package; on kiln they are the ones the eval
+    ;; module saved (lisp/target/eval/macros.lisp).
+    #-kiln (do-external-symbols (s '#:common-lisp)
+             (let ((expander (and (not (special-operator-p s)) (cmd:macro-function s))))
+               (when expander
+                 (setf (clo:macro-function client genv s) expander))))
+    #+kiln (loop for (name . expander) in kiln.kernel::*common-macros*
+                 do (setf (clo:macro-function client genv name) expander))
     (import-host-functions client genv)
     ;; Eclector reads `X as (ECLECTOR.READER:QUASIQUOTE X); its expansion
     ;; uses only APPEND, LIST and QUOTE. SICL does the same
@@ -205,8 +214,9 @@ at compile time (USE-HOST-MACROS).")
           (fdefinition 'alexandria:parse-body))
     ;; LOOP is Khazern's, expanded in the host; its expansions use only
     ;; standard operators.
-    (host-macro client genv 'loop (macro-function 'khazern-extrinsic:loop))
-    (host-macro client genv 'loop-finish (macro-function 'khazern-extrinsic:loop-finish))
+    (host-macro client genv 'loop (macro-function #-kiln 'khazern-extrinsic:loop #+kiln 'loop))
+    (host-macro client genv 'loop-finish
+                (macro-function #-kiln 'khazern-extrinsic:loop-finish #+kiln 'loop-finish))
     ;; DEFPACKAGE not at top level (top-level ones are processed in the
     ;; host, PROCESS-TOPLEVEL) runs at run time (lisp/target/clos/package-system.lisp).
     (host-macro client genv 'defpackage
@@ -259,6 +269,8 @@ at compile time (USE-HOST-MACROS).")
 ;;; with Eclector's QUASIQUOTE, UNQUOTE and UNQUOTE-SPLICING, which are
 ;;; macros at compile time (MAKE-COMPILE-ENVIRONMENT) and run time.
 (defun translate-host-backquote (form)
+  #-sbcl form
+  #+sbcl
   (let ((done (make-hash-table :test 'eq)))
     (labels ((walk (x)
                (cond ((typep x 'sb-impl::comma)
@@ -283,7 +295,7 @@ at compile time (USE-HOST-MACROS).")
        (member (symbol-package name) *host-library-packages*)
        (constantp name)))
 
-(defmethod trucler:describe-variable :around ((client client) environment name)
+(defmethod trucler:describe-variable :around ((client cross-client) environment name)
   (or (call-next-method)
       (and (host-constant-p name)
            (make-instance 'trucler:constant-variable-description

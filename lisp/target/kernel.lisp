@@ -197,8 +197,11 @@
   (if (setf-function-name-p name)
       (%primop :set-symbol-setf-function (cadr name) f)
       (%primop :set-symbol-function name f)))
+;;; (SETF NIL) and (SETF T) have no function (the runtime defines NIL and
+;;; T without a setf function cell).
 (defun fboundp (name)
-  (not (%primop :undefined-function-p (fdefinition name))))
+  (and (or (symbolp name) (setf-function-name-p name))
+       (not (%primop :undefined-function-p (fdefinition name)))))
 (defun fmakunbound (name)
   (if (setf-function-name-p name)
       (%primop :unbind-setf-function (cadr name))

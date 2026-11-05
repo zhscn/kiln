@@ -536,9 +536,13 @@ those whose names are in EXCLUDE."
      (system-files "common-macros")
      (mapcar (lambda (path) (list :renames '(("COMMON-MACRO-DEFINITIONS" . "KILN.CMD")) path))
              (system-files "common-boot"))
+     ;; Common-boot's HIR evaluator, for cross compilation (lisp/cross.lisp).
+     (system-files "common-boot-hir")
+     (system-files "common-boot-ast-to-hir")
+     (system-files "common-boot-hir-evaluator")
      ;; kiln's compiler (M5.3, docs/11 §8): its packages are the host's.
      (mapcar (lambda (name) (asdf:system-relative-pathname "kiln" (format nil "lisp/~A.lisp" name)))
-             '("abi" "kir" "lower" "values" "primitives" "front"
+             '("abi" "kir" "lower" "values" "primitives" "front" "cross"
                "target/compiler/client" "target/compiler/session")))))
 
 (defparameter *compiler-host-macro-packages*
@@ -552,7 +556,8 @@ those whose names are in EXCLUDE."
     "S-EXPRESSION-SYNTAX" "S-EXPRESSION-SYNTAX.CONCRETE-SYNTAX-TREE" "ICONOCLAST"
     "ICONOCLAST-BUILDER" "TRUCLER-REFERENCE" "CLOSTRUM-SYS" "CLOSTRUM"
     "CLOSTRUM-IMPLEMENTATION" "CLOSTRUM-BASIC" "CLOSTRUM-TRUCLER" "ICONOCLAST-AST-WALKER"
-    "ICONOCLAST-AST-TRANSFORMATIONS" "COMMON-MACROS" "COMMON-BOOT"))
+    "ICONOCLAST-AST-TRANSFORMATIONS" "COMMON-MACROS" "COMMON-BOOT" "COMMON-BOOT-HIR"
+    "COMMON-BOOT-AST-TO-HIR" "COMMON-BOOT-HIR-EVALUATOR"))
 
 (defun load-time-only-definitions (expansion)
   "EXPANSION of a parser.packrat or s-expression-syntax definition macro
