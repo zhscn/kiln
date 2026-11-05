@@ -48,4 +48,5 @@
 (print (fill (list 1 2 3) 0))
 (print (replace (list 1 2 3 4) '(a b) :start1 1))
 (print (list (third '(1 2 3)) (butlast '(1 2 3)) (make-list 2 :initial-element 'x)))
+(print (list (butlast '(1 2 . 3)) (butlast '(1 2 3) 2) (butlast '(1) 5)))
 (print (list-length '(1 2 3)))
