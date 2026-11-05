@@ -66,19 +66,19 @@
 (defconstant +ctx-poll-flag+ 0)
 (defconstant +ctx-dynenv+ 8)
 ;;; Transfer area: arguments beyond the register arguments, and (later)
-;;; values beyond the first. VALUES_MAX words.
-(defconstant +ctx-values+ 56)
+;;; values beyond the first. VALUES_MAX words, at the end of the context.
+(defconstant +ctx-values+ 80)
 ;;; Pointer to the context's TLS table of special variable values.
 (defconstant +ctx-tls+ 48)
 ;;; Empty TLS slot: the symbol is not bound in this context.
 (defconstant +no-tls-value+ #x23)
-(defconstant +values-max+ 64)
+(defconstant +values-max+ 1021)
 ;;; Number of words of the transfer area that are GC roots (normally 0).
-(defconstant +ctx-values-live+ 568)
+(defconstant +ctx-values-live+ 56)
 ;;; Addresses of the cursor and the limit of the context's bump allocator
 ;;; (inline allocation, docs/07).
-(defconstant +ctx-alloc-cursor+ 576)
-(defconstant +ctx-alloc-limit+ 584)
+(defconstant +ctx-alloc-cursor+ 64)
+(defconstant +ctx-alloc-limit+ 72)
 
 ;;; Dynamic-environment entries (stack-allocated in the establishing frame).
 (defconstant +dyn-catch+ 1)

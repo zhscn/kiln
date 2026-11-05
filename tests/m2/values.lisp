@@ -62,3 +62,10 @@
   (block b
     (call (lambda () (return-from b (values 'x 'y 'z))))))
 (print (multiple-value-list (nonlocal)))
+;; More arguments and values than the old transfer area (64 words) held.
+(let ((l '()))
+  (dotimes (i 300) (push i l))
+  (print (list (length (apply #'list l))
+               (apply #'+ l)
+               (length (multiple-value-list (values-list l)))
+               (multiple-value-call #'+ (values-list l) (values-list l)))))

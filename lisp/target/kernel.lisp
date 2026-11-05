@@ -115,9 +115,9 @@
 
 ;;; Calls pass at most 3 + 64 arguments, and return at most 1 + 64 values
 ;;; (docs/08 §4, §5.3).
-(defconstant call-arguments-limit 67)
-(defconstant lambda-parameters-limit 67)
-(defconstant multiple-values-limit 65)
+(defconstant call-arguments-limit 1024)
+(defconstant lambda-parameters-limit 1024)
+(defconstant multiple-values-limit 1022)
 (defconstant char-code-limit #x110000)
 (defconstant lambda-list-keywords
   '(&optional &rest &key &allow-other-keys &aux &body &whole &environment))

@@ -603,7 +603,7 @@ Eclector vendor 在 `vendor/Eclector`，同时是宿主前端的 reader 和目�
 - **Common-boot 补丁**：`load-time-value` 的子形式在一个只含全局环境的词法环境里转换（上游直接用全局环境，里面的 `lambda` 无法加入局部函数和变量）。
 
 **kernel 的补充**：
-- 标准常量：`lambda-list-keywords`、`call-arguments-limit`（67）、`lambda-parameters-limit`、`multiple-values-limit`（65）、`char-code-limit`、浮点的极值和 epsilon、`pi`；
+- 标准常量：`lambda-list-keywords`、`call-arguments-limit`（1024，docs/06）、`lambda-parameters-limit`、`multiple-values-limit`（1022）、`char-code-limit`、浮点的极值和 epsilon、`pi`；
 - `nstring-upcase`/`downcase`/`capitalize`，以及 `string-upcase` 等的 `:start`/`:end` 参数；
 - `make-sequence` 和 `coerce` 支持位向量等其他向量类型。
 

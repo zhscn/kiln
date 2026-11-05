@@ -5,7 +5,9 @@
 use crate::gc::KilnMutator;
 use crate::stack::Segment;
 
-pub const VALUES_MAX: usize = 64;
+/// Words of the transfer area: CALL-ARGUMENTS-LIMIT is 3 (the register
+/// arguments) more, MULTIPLE-VALUES-LIMIT 1 more.
+pub const VALUES_MAX: usize = 1021;
 
 #[repr(C)]
 pub struct Context {
@@ -27,29 +29,30 @@ pub struct Context {
     /// the symbol's TLS index (see special.rs). NO_TLS_VALUE means unbound
     /// in this context: use the global value.
     pub tls: *mut u64,
-    /// Offset 56. Transfer area: arguments beyond the register arguments,
-    /// and later extra return values.
-    pub values: [u64; VALUES_MAX],
-    /// Offset 568. Number of words of `values` that the GC must treat as
+    /// Offset 56. Number of words of `values` that the GC must treat as
     /// roots. Normally 0: values are consumed right after a return. Set
     /// while compiled code turns multiple values into a list, which
     /// allocates.
     pub values_live: u64,
-    /// Offset 576. Address of the cursor of this context's bump allocator
+    /// Offset 64. Address of the cursor of this context's bump allocator
     /// (MMTk's default allocator): compiled code allocates small objects
     /// by bumping it, and calls `kiln_rt_alloc` when it would pass the
     /// limit (docs/07).
     pub alloc_cursor: *mut usize,
-    /// Offset 584. Address of the limit of the bump allocator.
+    /// Offset 72. Address of the limit of the bump allocator.
     pub alloc_limit: *mut usize,
+    /// Offset 80, last so that its size does not move the other fields.
+    /// Transfer area: arguments beyond the register arguments, and return
+    /// values beyond the first.
+    pub values: [u64; VALUES_MAX],
 }
 
 pub const CTX_STACK_BASE_FP: i32 = core::mem::offset_of!(Context, stack_base_fp) as i32;
 const _: () = assert!(core::mem::offset_of!(Context, tls) == 48);
-const _: () = assert!(core::mem::offset_of!(Context, values) == 56);
-const _: () = assert!(core::mem::offset_of!(Context, values_live) == 568);
-const _: () = assert!(core::mem::offset_of!(Context, alloc_cursor) == 576);
-const _: () = assert!(core::mem::offset_of!(Context, alloc_limit) == 584);
+const _: () = assert!(core::mem::offset_of!(Context, values) == 80);
+const _: () = assert!(core::mem::offset_of!(Context, values_live) == 56);
+const _: () = assert!(core::mem::offset_of!(Context, alloc_cursor) == 64);
+const _: () = assert!(core::mem::offset_of!(Context, alloc_limit) == 72);
 
 impl Context {
     pub fn new() -> Box<Context> {

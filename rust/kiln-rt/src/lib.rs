@@ -48,12 +48,39 @@ pub unsafe fn function_entry(fobj: u64) -> *const u8 {
     unsafe { (*((fobj - object::TAG_GENERAL) as *const object::FunctionObj)).entry }
 }
 
+/// Size of the stack Lisp runs on: `KILN_STACK_SIZE` bytes if set, else
+/// 64 MiB. A main thread has 8 MiB, which deep recursions of the compiler
+/// on kiln exceed (docs/11 §9). The pages are reserved, not committed.
+fn lisp_stack_size() -> usize {
+    std::env::var("KILN_STACK_SIZE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(64 << 20)
+}
+
 /// Registers the module's call sites, stack maps and roots, then runs its
-/// init functions in order.
+/// init functions in order, on a thread with a stack of
+/// `lisp_stack_size()` bytes.
 ///
 /// # Safety
 /// `info` must describe correctly compiled and loaded code.
 pub unsafe fn run_module(info: &ModuleInfo) -> i32 {
+    struct Info(*const ModuleInfo);
+    unsafe impl Send for Info {}
+    let info = Info(info);
+    std::thread::Builder::new()
+        .name("lisp".into())
+        .stack_size(lisp_stack_size())
+        .spawn(move || {
+            let info = info;
+            unsafe { run_module_here(&*info.0) }
+        })
+        .expect("cannot start the Lisp thread")
+        .join()
+        .unwrap_or(1)
+}
+
+unsafe fn run_module_here(info: &ModuleInfo) -> i32 {
     object::init_statics();
     unsafe {
         let records = std::slice::from_raw_parts(info.callsites, info.ncallsites as usize);
