@@ -1,6 +1,8 @@
 # 11 M5：编译器在 kiln 上运行，自举
 
-**状态**：M5.1 完成（2026-11，§5）：目标端有了运行期的标准宏、`eval`、`compile`、`load` 和 REPL。
+**状态**：
+- M5.1 完成（2026-11，§5）：目标端有了运行期的标准宏、`eval`、`compile`、`load` 和 REPL。
+- M5.2 完成（2026-11，§7）：Common-boot 和它的依赖编成 compiler 模块，kiln 上 `cst-to-ast` 的结果和 SBCL 逐字相同。
 
 ## 1. 目标和验证
 
@@ -46,7 +48,7 @@
 | 步骤 | 内容 | 验证 |
 |---|---|---|
 | M5.1 ✅ | 目标端 Maclina：Ecclesia、Common-macros、Trucler 和 Maclina 编成 `eval` 模块（§5）；`eval`、`compile`（字节码）、`load` 源文件；最简 REPL | 测试里对字节码函数 `funcall`、和原生函数互相调用、`load` 一个源文件；不读文件时 REPL 能读入并求值 |
-| M5.2 | 前端的其余依赖编成目标端模块：alexandria、let-plus、anaphora、more-conditions、print-items、builder-protocol、parser.packrat、s-expression-syntax、Iconoclast、Common-macros、Common-boot | 在 kiln 上 `cst-to-ast` 一个形式，打印 AST 的类和结构，和 SBCL 比对 |
+| M5.2 ✅ | 前端的其余依赖编成目标端的 compiler 模块（§7）：let-plus、anaphora、more-conditions、print-items、builder-protocol、parser.packrat、s-expression-syntax、Iconoclast、Trucler reference、Clostrum、Common-macros（AST 展开器）、Common-boot | 在 kiln 上 `cst-to-ast` 一组形式，打印 AST 的类和结构，和 SBCL 比对（`tests/m5/co-ast`） |
 | M5.3 | kiln 的 `lisp/*.lisp` 编进目标端；在 kiln 上把一个测试文件编成 KIR | 和 SBCL 产出的 KIR 逐字一致；先查 KIR 输出是否确定（§1） |
 | M5.4 | kiln0 编译全部 kiln 源码（kernel、CLOS、前端、编译器各模块），kiln-cg AOT 链接成 kiln1；kiln1 再编出 kiln2 | kiln0 和 kiln1 产出的 KIR 一致；kiln1 和 kiln2 的一致；`tools/test.sh` 在 kiln1 上通过 |
 | M5.5 | 原生 `compile`：kiln-cg 作为库链进 kiln-rt，`compile` → KIR → 进程内 JIT，代码登记进运行中的 image；s-expression-syntax 等的 `compile` 改走这条路径 | `compile` 出的函数和 AOT 的结果一致；编译时间 |
@@ -203,4 +205,77 @@ M5.4 每次编译都要跑完整的前端，速度取决于 CLOS 分派和 GC（
 - 解决办法是在编译器里对不逃逸的局部函数做 lambda lifting，或者内联小的局部函数。这对所有代码都有用，不只是 VM。
 - 其余开销：Maclina 自己的泛函（`m:entry-pc` 等，每次调用要访问五次）；`max`，以及 `logand`/`logior` 的全局调用。
 
-下一步是原生 `compile`（M5.5，提前做）。
+原生 `compile` 不能提前：它要在 kiln 上产出 KIR，前提是前端和 `lower.lisp` 在 kiln 上运行（M5.2、M5.3），而运行期编译的代码怎样引用运行期才有的符号和字面量，也要和 M5.3 一起设计。所以仍按 M5.2 → M5.3 → M5.5 的顺序。
+
+## 7. M5.2：compiler 模块
+
+compiler 模块（`kiln:compile-compiler`，`lisp/driver.lisp` 的 `*compiler-files*`）在 frontend 和 eval 模块之后载入，现在有 511 个源文件。顺序是：
+1. print-items、anaphora、let-plus、more-conditions、builder-protocol；
+2. parser.packrat、s-expression-syntax（含 CST client）；
+3. Iconoclast（AST、builder、walker、transformations）、Trucler reference、Clostrum（basic、trucler；不含文档字符串）；
+4. Common-macros（宏到 AST 的展开器，不是 M5.1 的 Common-macro-definitions）、Common-boot。
+
+大多数文件的列表从 ASDF 取（`system-files`）。测试 `co-*.lisp` 和 kernel、CLOS、frontend、eval、compiler 五个模块一起运行：
+- `co-syntax`：s-expression-syntax 用 list builder 解析特殊形式；
+- `co-ast`：Common-boot `cst-to-ast` 十个形式，输出和 SBCL 逐字相同。
+
+规模：KIR 约 100 MB，链接后的可执行文件约 120 MB。`co-ast` 的 AOT 可执行文件连启动共 1.4 秒。
+
+### 7.1 宿主的宏展开这些库
+
+这些库宿主也载入了（它们是宿主前端的依赖），所以编译期直接用宿主的定义，像 LOOP 一样（`kiln.compiler:use-host-macros`，包列表在 `*compiler-host-macro-packages*`）：
+- 这些包的宏在编译期由宿主的展开函数展开，宏还是照常编进模块，供运行期使用。宿主的 `defmacro` 不在编译期生效。
+- 编译期求值调用的这些包的函数，也是宿主的函数。
+- 这些包的常量用宿主的值。
+
+**为什么不在编译期求值这些库本身**：
+- 它们的宏在展开时要用编译期没有的东西：parser.packrat 的 `defrule` 在宏展开时编译规则，要用 grammar 对象（CLOS）；let-plus 用泛函做展开。宿主的编译期环境里没有 CLOS。
+- 有些宏不是在顶层定义的（anaphora 的 `anaphoric` 在 `let` 里定义）。按 `compile-file` 的语义它在编译期不存在，但 ASDF 编完一个文件就载入，下一个文件就能用。
+
+**宿主展开结果的处理**：
+- 宏定义宏的展开里有 SBCL 的反引号（`sb-int:quasiquote` 和 `sb-impl::comma` 对象）。这些被改写成 Eclector 的 `quasiquote`/`unquote`/`unquote-splicing`（`translate-host-backquote`）。
+- 改写之后如果还有宿主对象或 `SB-` 包的符号，就报错（`check-host-expansion`）。
+
+**不能在编译期改宿主的状态**：
+- s-expression-syntax 把一些 `defrule` 放在 `(eval-when (:compile-toplevel ...))` 里。如果在编译期求值，会把宿主语法里的规则换成编译期求值器执行的闭包，而宿主自己也在用这些规则解析。
+- 所以 `defgrammar`、`defrule`、`define-syntax` 的展开去掉 `(eval-when (:compile-toplevel) ...)` 部分。`ensure-grammar`、`ensure-rule`、`ensure-syntax` 包进 `kiln.compiler::load-time-only`，它展开成 `(eval-when (:load-toplevel) ...)`，在顶层只编译、不求值。
+- `in-grammar` 在宏展开时设置宿主的 `*grammar*`，宿主的 `defrule` 在当前 grammar 里编译规则。
+
+**常量**：Clostrum-basic 的 `(defconstant +unbound+ 'unbound)`，其值正是宿主 Clostrum（编译期环境本身）表示未绑定格子的标记。存进编译期环境后，这个常量看起来就是未绑定的。
+
+### 7.2 补丁和修正
+
+vendor 补丁（`vendor/README.md`）：
+- parser.packrat 和 s-expression-syntax 原样 vendor，两者都是宿主库。
+- parser.packrat 的 `%uses?` 用 `sb-cltl2:macroexpand-all`（§2.1），改成保守的树遍历。
+- s-expression-syntax：
+  - `constant?` 改用 `constantp`；
+  - `pprint-logical-block` 的语法里，`suffix` 被写成了连字 ﬃ（U+FB03），SBCL 只警告了一下。
+- Common-macros 的 `define-modify-macro` 用 `let` 绑定位置的临时变量，新值的形式引用不到它们，改成 `let*`。
+- Clostrophilia：
+  - 调用带 `&key` 的方法时，上游在参数后追加 `:allow-other-keys t`，方法的 `&rest` 参数也看得到它（builder-protocol 会把这样的列表存进节点）。kiln 改为在方法 lambda 的 lambda list 里加 `&allow-other-keys`（`lisp/macro-client.lisp`）。
+  - `:allocation :class` 的槽一开始就绑定为 `nil`，所以 initform 永远不起作用。改成一开始未绑定。
+
+kiln 自己的修正：
+- **前端**：
+  - `(the (values ...) x)` 和 `(the (function ...) x)`：Iconoclast 没有这些类型的 AST，降成 `t` 和 `function`，和 DECLARE 的处理一样（08）。
+  - 在包系统存在之后编译的文件里，顶层 `in-package` 在载入时也设置 `*package*`，文件末尾恢复成 CL-USER。这和 `load` 一样；Iconoclast 在载入时用当前包 `export`。
+- **CLOS**：
+  - 前向引用的超类：先是 `forward-referenced-class`；定义时，这个对象本身经 `change-class` 和 `initialize-instance` 成为真正的类。这样子类的 CPL 和特化在它上面的方法看到的是同一个对象。
+  - 新增 `cl:ensure-generic-function`、closer-mop 的 `ensure-finalized`。
+  - funcallable 实例的 `change-class`。
+  - `documentation` 和 `(setf documentation)` 改成泛函。Maclina 给它们加方法，原来会把 kernel 的函数整个换掉。
+- **kernel**：
+  - 新增 `fmakunbound`；
+  - `map`、`map-into` 不再复制列表参数。builder-protocol 传进来的是循环列表，`map` 应当在最短的序列处停止。
+- **运行期宏环境**：`macro-function` 和 `macroexpand` 带环境时，用造出这个环境的那个 client 去查询（`kiln.eval:environment-client`）。Common-boot 的 trucler-reference 环境用 reference client 查询（`lisp/target/compiler/environment.lisp`）。
+
+**测试基础设施**：一个 SBCL 会话编完五个模块和所有测试，需要 `--dynamic-space-size 4GB`。
+
+### 7.3 M5.3 要做的
+
+- kiln 的 `lisp/*.lisp`（前端 client、`lower.lisp`、`primitives.lisp` 等）编进 compiler 模块。
+- 目标端的前端 client：
+  - 宏直接来自运行期的全局环境（`convert-with-ordinary-macro-p` 为假）；
+  - 编译期求值用 Maclina。
+- `front.lisp` 里那些处理宿主和目标差异的部分（宿主宏、包改名、`import-host-functions`），在目标端大都不需要，要分出来。
