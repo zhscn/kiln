@@ -51,6 +51,13 @@ fn load_all(files: &[&String]) -> Result<kir::Module, String> {
 
 fn run_jit(kir: &kir::Module, opts: &Options) -> Result<i32, String> {
     let mut builder = JITBuilder::with_isa(isa(false)?, default_libcall_names());
+    // All code and data in one reserved region: PC-relative references
+    // between them are 32 bits, which blobs malloc'ed far apart (the brk
+    // heap and mmap'ed memory) can exceed. Pages are committed as used.
+    builder.memory_provider(Box::new(
+        cranelift_jit::ArenaMemoryProvider::new_with_size(1 << 31)
+            .map_err(|e| format!("cannot reserve the JIT's memory: {e}"))?,
+    ));
     for (name, ptr) in kiln_rt::symbols() {
         builder.symbol(name, ptr);
     }

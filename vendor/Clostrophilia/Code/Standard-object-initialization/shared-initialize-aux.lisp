@@ -23,23 +23,28 @@
              ;; infinite recursion.
              (let ((value nil)
                    (foundp nil))
-               (loop with slot-initargs = (slot-definition-initargs slot)
-                     for (i v) on initargs by #'cddr
-                     when (member i slot-initargs)
-                       do (setf value v foundp t)
-                          (loop-finish))
+               ;; kiln: the slot's initargs only if there are initargs.
+               (when initargs
+                 (loop with slot-initargs = (slot-definition-initargs slot)
+                       for (i v) on initargs by #'cddr
+                       when (member i slot-initargs)
+                         do (setf value v foundp t)
+                            (loop-finish)))
                (if foundp
                    ;; Found an explicit initarg in initargs.
                    ;; Initialize the slot from its value.
                    (setf (slot-value-using-class class instance slot)
                          value)
                    ;; No explicit initarg found.
-                   (when (and (not (slot-boundp-using-class
+                   ;; kiln: SLOT-NAMES first, which is NIL for
+                   ;; REINITIALIZE-INSTANCE: no generic function calls.
+                   (when (and (or (eq slot-names t)
+                                  (and slot-names
+                                       (member (slot-definition-name slot)
+                                               slot-names)))
+                              (not (slot-boundp-using-class
                                     class instance slot))
-                              (not (null (slot-definition-initfunction slot)))
-                              (or (eq slot-names t)
-                                  (member (slot-definition-name slot)
-                                          slot-names)))
+                              (not (null (slot-definition-initfunction slot))))
                      ;; Evaluate the initform by executing the
                      ;; initfunction.
                      (setf (slot-value-using-class class instance slot)

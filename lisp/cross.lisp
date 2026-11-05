@@ -183,6 +183,46 @@ at compile time (USE-HOST-MACROS).")
       `(kiln.sys::%alias-names
         ',(sort pairs #'string< :key (lambda (pair) (symbol-name (car pair))))))))
 
+;;; On kiln, Common-macros is the eval module's KILN.CMD. A cross
+;;; compilation must produce what the host's does, where it is
+;;; COMMON-MACRO-DEFINITIONS: the symbols of KILN.CMD that an expansion
+;;; introduces (CHECK-TYPE-ERROR, WITH-STORE-VALUE-RESTART) are renamed to
+;;; that package's. Those of the form expanded are kept: the eval module's
+;;; sources name KILN.CMD's symbols themselves.
+#+kiln
+(defun host-cmd-symbol (symbol)
+  (intern (symbol-name symbol) '#:common-macro-definitions))
+
+#+kiln
+(defun cross-common-macro (expander)
+  (let ((cmd (find-package '#:kiln.cmd)))
+    (lambda (form env)
+      (let ((own (make-hash-table :test 'eq))
+            (done (make-hash-table :test 'eq)))
+        (labels ((note (x)
+                   (cond ((gethash x own))
+                         ((consp x) (setf (gethash x own) t) (note (car x)) (note (cdr x)))
+                         ((and (symbolp x) (eq (symbol-package x) cmd)) (setf (gethash x own) t))))
+                 ;; The conses of FORM are kept, for their source
+                 ;; positions; others are copied only if they change.
+                 (walk (x)
+                   (cond ((gethash x own) x)
+                         ((gethash x done))
+                         ((consp x)
+                          (setf (gethash x done) x)
+                          (let ((car (walk (car x)))
+                                (cdr (walk (cdr x))))
+                            (setf (gethash x done)
+                                  (if (and (eq car (car x)) (eq cdr (cdr x)))
+                                      x
+                                      (cons car cdr)))))
+                         ((and (symbolp x) (eq (symbol-package x) cmd) (not (gethash x own)))
+                          (host-cmd-symbol x))
+                         (t x))))
+          (note form)
+          (let ((expansion (funcall expander form env)))
+            (if (eq expansion form) form (walk expansion))))))))
+
 (defmethod make-compile-environment ((client cross-client))
   (let* ((env (cb:create-environment))
          (genv (trucler:global-environment client env)))
@@ -194,7 +234,14 @@ at compile time (USE-HOST-MACROS).")
                (when expander
                  (setf (clo:macro-function client genv s) expander))))
     #+kiln (loop for (name . expander) in kiln.kernel::*common-macros*
-                 do (setf (clo:macro-function client genv name) expander))
+                 do (setf (clo:macro-function client genv name)
+                          (cross-common-macro expander)))
+    ;; Their internal macros (CHECK-TYPE's WITH-STORE-VALUE-RESTART), with
+    ;; the host's names.
+    #+kiln (do-symbols (s '#:kiln.cmd)
+             (when (and (eq (symbol-package s) (find-package '#:kiln.cmd)) (macro-function s))
+               (setf (clo:macro-function client genv (host-cmd-symbol s))
+                     (cross-common-macro (macro-function s)))))
     (import-host-functions client genv)
     ;; Eclector reads `X as (ECLECTOR.READER:QUASIQUOTE X); its expansion
     ;; uses only APPEND, LIST and QUOTE. SICL does the same

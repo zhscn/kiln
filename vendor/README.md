@@ -63,6 +63,11 @@ Each patched place is marked with a `kiln:` comment.
   history it was made from (or that history was short). The call cache
   of the classes is looked up comparing the classes with `eq` (upstream
   `equal`).
+- `shared-initialize-aux` checks `slot-names` before calling
+  `slot-boundp-using-class` and `slot-definition-initfunction`, and reads a
+  slot's initargs only when there are initargs: `reinitialize-instance`
+  (`slot-names` NIL) with one initarg made three generic function calls per
+  slot (Iconoclast's AST walker sets slots that way).
 - Method functions are called with the generic function's arguments
   unchanged: upstream appends `:allow-other-keys t` for a method with
   keyword parameters, which its `&rest` parameter then sees

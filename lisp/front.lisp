@@ -497,11 +497,14 @@ module).")
           ;; package is built from the module's symbol table, which
           ;; mirrors the host package (docs/10 §12). A package that
           ;; exists already (a host system such as Ecclesia) is left
-          ;; alone.
+          ;; alone, but it is a package of the module too: its external
+          ;; symbols are in the module whichever host compiles it (on
+          ;; kiln, every package of kiln's sources exists).
           (defpackage
            (let ((name (renamed-package-name (second form))))
-             (unless (find-package name)
-               (push (eval `(defpackage ,name ,@(cddr form))) *defined-packages*))))
+             (pushnew (or (find-package name)
+                          (eval `(defpackage ,name ,@(cddr form))))
+                      *defined-packages*)))
           ((locally macrolet symbol-macrolet)
            (process-toplevel-body cst compile-time-too))
           (t
@@ -579,6 +582,10 @@ cleared before each top-level form. At top level the environment holds
 nothing else."
   (reinitialize-instance environment :function-description '() :variable-description '()))
 
+(defvar *trace-toplevel* nil
+  "True: FRONT-END prints each file and the head of each top-level form
+to *ERROR-OUTPUT*, for finding the form that an error comes from.")
+
 (defun front-end (paths &optional (session (make-session)))
   "Reads and processes the top-level forms of the files PATHS (or
 (:COMPILE-TIME-TOO path) elements), in order,
@@ -611,8 +618,16 @@ created."
                                      (second path)
                                      '()))
               (*file-sets-package* nil))
+          (when *trace-toplevel*
+            (format *error-output* "~&~A~%" (if (consp path) (car (last path)) path)))
           (map-file-csts (lambda (cst)
                            (forget-global-descriptions *environment*)
+                           (when *trace-toplevel*
+                             (let ((raw (cst:raw cst)))
+                               (format *error-output* "~&  ~S~@[ ~S~]~%"
+                                       (if (consp raw) (first raw) raw)
+                                       (and (consp raw) (consp (rest raw))
+                                            (atom (second raw)) (second raw)))))
                            (let* ((raw (cst:raw cst))
                                   (simplified (simplify-declarations raw 10000)))
                              (unless (eq simplified raw)

@@ -760,10 +760,12 @@
         (t (%primop :type-error-string x))))
 
 (defun string= (a b)
-  (let ((a (string a)) (b (string b)))
-    (and (= (length a) (length b))
-         (dotimes (i (length a) t)
-           (unless (char= (schar a i) (schar b i)) (return nil))))))
+  ;; STRING returns simple strings: their characters are compared as
+  ;; immediates, without calls (EQUAL on strings, hash tables of names).
+  (let* ((a (string a)) (b (string b)) (n (%primop :length a)))
+    (and (= n (%primop :length b))
+         (dotimes (i n t)
+           (unless (eq (%primop :schar a i) (%primop :schar b i)) (return nil))))))
 
 (defun string-equal (a b)
   (let ((a (string a)) (b (string b)))

@@ -540,9 +540,11 @@ those whose names are in EXCLUDE."
      (system-files "common-boot-hir")
      (system-files "common-boot-ast-to-hir")
      (system-files "common-boot-hir-evaluator")
+     ;; Anatomicl, which expands DEFSTRUCT in cross compilation (lisp/structures.lisp).
+     (system-files "anatomicl")
      ;; kiln's compiler (M5.3, docs/11 §8): its packages are the host's.
      (mapcar (lambda (name) (asdf:system-relative-pathname "kiln" (format nil "lisp/~A.lisp" name)))
-             '("abi" "kir" "lower" "values" "primitives" "front" "cross"
+             '("abi" "kir" "lower" "values" "primitives" "structures" "front" "cross"
                "target/compiler/client" "target/compiler/session")))))
 
 (defparameter *compiler-host-macro-packages*
