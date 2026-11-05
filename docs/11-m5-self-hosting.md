@@ -356,7 +356,7 @@ M5.3 的 client 在运行中的 image 里编译。这对用户程序是对的，
 ### 9.3 kiln 上编译器的速度
 
 kernel 的交叉编译一开始跑了一个多小时也没结束。测量工具：
-- perf 在这台机器上用 `-e cpu-clock` 就不需要特权；带调用链的采样打不开。
+- perf：`kernel.perf_event_paranoid` 为 2 时，只有软件事件（`-e cpu-clock`）能用。默认的 `cycles` 事件也计内核态，`-g` 要内核调用链，所以都被拒绝。设为 1 后，硬件事件和 `-g` 都能用；kiln 的 AOT 代码有帧指针，`perf report --children` 能给出包含时间。
 - kiln-cg 的 JIT 设了 `KILN_PERF_MAP=1` 时，写出 `/tmp/perf-PID.map`，perf 能显示 JIT 函数的名字。
 - AOT 程序有帧指针，gdb 能回溯。每次 attach 一次 gdb 抽一个调用栈；在同一次 gdb 会话里连续抽样时，进程一直停着，得到的其实是同一个瞬间。
 - 很多函数的标签里没有名字：`block` 没有 `return-from` 时在简化阶段被删掉了。从 KIR 里「把哪个函数对象存进哪个符号」可以得到对应关系。
