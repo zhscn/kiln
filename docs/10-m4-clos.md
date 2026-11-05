@@ -215,11 +215,12 @@ Parcl vendor 在 `vendor/Parcl`，以 intrinsic 方式加载：`parcl-low`（泛
 
 - **编译期**：每个模块编译完后，编译器生成一张 symbol 表，记下两类宿主包，即模块里 symbol 的 home 包和模块的 `defpackage` 新建的包。每个包记录：
   - 名字、昵称、use 列表（只保留运行期存在的包）；
-  - 模块里每个在该包中 present 的 symbol 及其状态（internal/external、是否 shadowing、该包是否是它的 home 包）。
+  - 模块里每个在该包中 present 的 symbol 及其状态（internal/external、是否 shadowing、该包是否是它的 home 包）；
+  - 包局部昵称（同样只保留指向运行期存在的包的，按昵称排序）。没有这一项时，kiln 上交叉编译 eval 模块会读不了 `ecc:`：`KILN.CMD` 在运行期的包没有局部昵称（docs/11 §9）。
   
   `defpackage` 新建的包，它的外部 symbol 都会放进表里，哪怕模块没有引用。kernel 额外带上 CL 的全部 978 个外部 symbol，这样运行期每个标准 symbol 都存在。宿主的 `KILN-USER`（测试程序读入的包）在运行期叫 `COMMON-LISP-USER`，昵称 `CL-USER`。
 - **加载时**：模块的 init 函数第一件事是把这张表推到 `kiln.kernel::*module-symbol-tables*`，然后如果 `%register-module-symbols` 已经定义就调用它。CLOS 模块加载完 Parcl 和 client 后自己调用一次，把 kernel 和 CLOS 模块的表登记成包对象。登记过程：
-  - 新建 Parcl 的包对象，填好符号表和 use 列表（宿主已经检查过冲突，所以直接写入，不走 `use-package` 的检查）；
+  - 新建 Parcl 的包对象，填好符号表、use 列表和包局部昵称（宿主已经检查过冲突，所以直接写入，不走 `use-package` 的检查）；
   - 把每个 symbol 的 `package` 槽从包名字符串换成 home 包对象；
   - NIL 和 T 由 runtime 定义，单独登记。
   

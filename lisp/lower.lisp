@@ -1582,6 +1582,17 @@ the top-level forms in order, in chunks."
       '("CL-USER")
       (sort (copy-list (package-nicknames package)) #'string<)))
 
+(defun target-package-local-nicknames (package known)
+  "PACKAGE's local nicknames for packages among KNOWN: a list of
+nickname, package name..., sorted by nickname."
+  (loop for (nickname . actual)
+          in (sort (copy-list (#+sbcl sb-ext:package-local-nicknames
+                               #+kiln parcl::package-local-nicknames
+                               package))
+                   #'string< :key #'car)
+        when (member actual known)
+          append (list nickname (target-package-name actual))))
+
 (defun package-entries (package symbols)
   (let ((shadowing (package-shadowing-symbols package)))
     (coerce (loop for sym in symbols
@@ -1611,7 +1622,8 @@ use list only names packages that exist at run time."
                                                 when (member u known)
                                                   collect (target-package-name u))
                                           #'string<)
-                                    (package-entries p symbols)))
+                                    (package-entries p symbols)
+                                    (target-package-local-nicknames p known)))
               'simple-vector))))
 
 (defun compile-module (asts module-name &key session defined-packages extra-symbols)

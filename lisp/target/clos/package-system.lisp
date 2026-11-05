@@ -259,6 +259,10 @@
     (when (logbitp 2 code)
       (kiln.sys:%primop :set-symbol-package symbol package))))
 
+(defun lookup-local-nickname (nickname package)
+  (second (assoc (string nickname) (parcl-low:local-nicknames *client* package)
+                 :test #'string=)))
+
 (defun register-symbol-table (table)
   (let ((uses '()))
     (dotimes (i (length table))
@@ -271,14 +275,24 @@
               (store-package package (parcl-low:name *client* package) (list nickname))
               (push nickname nicknames)))
           (setf (parcl-low:nicknames *client* package) nicknames))
-        (push (cons package (svref description 2)) uses)
+        (push (list package (svref description 2) (svref description 4)) uses)
         (do ((j 0 (+ j 2)))
             ((>= j (length entries)))
           (register-symbol package (svref entries j) (svref entries (1+ j))))))
-    ;; Use lists, once every package of the table exists.
+    ;; Use lists and local nicknames, once every package of the table
+    ;; exists.
     (dolist (use uses)
-      (let ((package (car use)))
-        (dolist (name (cdr use))
+      (let ((package (first use)))
+        (do ((nicknames (third use) (cddr nicknames)))
+            ((null nicknames))
+          (let ((actual (find-package (second nicknames))))
+            ;; Written directly, as the use lists (the host has checked
+            ;; them; Parcl's functions are not usable this early).
+            (when (and actual (not (lookup-local-nickname (first nicknames) package)))
+              (push (list (first nicknames) actual)
+                    (parcl-low:local-nicknames *client* package))
+              (push package (parcl-low:locally-nicknamed-by *client* actual)))))
+        (dolist (name (second use))
           (let ((used (find-package name)))
             (unless (or (null used)
                         (member used (parcl-low:use-list *client* package)))
@@ -305,7 +319,7 @@
 ;;; programs it compiles (KILN-USER, lisp/lower.lisp): with the nickname
 ;;; CL-USER, using CL and KILN.SYS.
 (register-symbol-table
- (vector (vector "COMMON-LISP-USER" '("CL-USER") '("COMMON-LISP" "KILN.SYS") (vector))))
+ (vector (vector "COMMON-LISP-USER" '("CL-USER") '("COMMON-LISP" "KILN.SYS") (vector) '())))
 (setf *package* (find-package "COMMON-LISP-USER"))
 
 ;;; DEFPACKAGE and IN-PACKAGE at run time (docs/10 §23). Compiled modules
@@ -358,10 +372,6 @@ interned symbols, exports; then local nicknames."
                (unless (eq (lookup-local-nickname nickname package) actual)
                  (parcl:add-package-local-nickname nickname actual package))))
     package))
-
-(defun lookup-local-nickname (nickname package)
-  (second (assoc (string nickname) (parcl-low:local-nicknames *client* package)
-                 :test #'string=)))
 
 (setf (macro-function 'defpackage)
       (lambda (form environment)
