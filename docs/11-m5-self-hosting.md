@@ -319,6 +319,9 @@ compiler 模块的末尾加上 kiln 自己的 `lisp/abi.lisp`、`kir.lisp`、`lo
 - 不在顶层的 `macrolet`：Common-boot 从 AST 编译局部宏的展开函数（`compile-local-macro-function-ast`），Maclina 要的是形式。目标端现在直接报错。
 - `defstruct`：Anatomicl 不在目标端，运行期也没有 `defstruct` 宏。session 里的结构布局也没有传给目标端。
 - `defclass` 的访问函数在两边都被报成未定义函数（`cmd:defclass-compile-time-action` 拿不到槽）。
+- 全局符号宏（`define-symbol-macro`）：运行期环境的描述（eval 模块的 Maclina client）只有常量和特殊变量，没有全局符号宏，所以目标端的编译器看不到它们。
+- inline 表是宿主编完 compiler 模块那一刻的快照。宿主在同一会话里后来编译的文件（比如别的测试）再定义 inline 函数，目标端不知道。`co-compile-input` 用自己的包，不受影响。
+- Common-boot 里 `cmd:` 前缀的符号仍按宿主的 COMMON-MACRO-DEFINITIONS 读入：`:renames` 只作用于 `in-package` 和 `defpackage`。所以运行期 `common-macro-definitions:macroexpand-1` 等没有定义。目标端的 client 不走这条路径（`convert-with-ordinary-macro-p` 为假），现在没有影响。
 
 ### 8.4 M5.4 要做的
 
