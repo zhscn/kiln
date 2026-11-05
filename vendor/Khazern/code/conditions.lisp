@@ -169,6 +169,6 @@
 (defun check-nullable-simple-var-spec (d-spec)
   (check-single-values-var-spec d-spec)
   (unless (and (symbolp (var-spec d-spec))
-               (or (not (constantp (var-spec d-spec)))
+               (or (not (constant-form-p (var-spec d-spec)))
                    (null (var-spec d-spec))))
     (error 'non-nullable-simple-d-var-spec :var-spec (var-spec d-spec))))

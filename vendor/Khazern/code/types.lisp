@@ -1,7 +1,7 @@
 (cl:in-package #:khazern)
 
 (deftype constant ()
-  '(satisfies constantp))
+  '(satisfies constant-form-p))
 
 (deftype simple-type-spec ()
   '(or null (member fixnum float t)))

@@ -114,6 +114,13 @@ Under `#+kiln` (kiln reads target sources with its own features):
   `hash-float` hashes the exact rational value instead of using Quaviver.
 - `hash-hash-table` refers to its parameter `object`, not an undefined
   `table` (an upstream bug).
+- The bucket hash table iterates in the order SBCL's hash tables do:
+  insertion order, a removed entry's place reused by the next insertion
+  (the last freed first). An entry is `(key value . index)` in the buckets
+  and in an insertion-ordered vector. Upstream iterates bucket by bucket,
+  in the order of the keys' hashes (identity hashes: different in every
+  run). Macro expanders iterate over hash tables (Khazern's destructuring
+  temporaries), and kiln compiling kiln must make SBCL's KIR (docs/11 §9).
 
 ## Parcl patches
 
@@ -215,6 +222,12 @@ Under `#+kiln` (docs/10 §18 of kiln):
 - No complexes or pathnames among the initial values of accumulation
   variables, and no complex numeric types (kiln has neither yet):
   `#-kiln`.
+- `constant-form-p` instead of `constantp`: only self-evaluating objects,
+  constant variables and `quote` forms are constant. SBCL's `constantp`
+  also folds calls of pure functions (`(integer-length
+  most-positive-fixnum)`), kiln's does not, and LOOP expanded differently
+  in the host and on kiln (`for i below FORM` binds FORM to a variable or
+  not; docs/11 §9).
 
 ## Common-macros patches
 

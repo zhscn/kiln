@@ -16,7 +16,7 @@ sources=("${@:-$root/tests/*/*.lisp}")
 # shellcheck disable=SC2206
 sources=(${sources[@]})
 # A test NAME.lisp with a file NAME.slow (holding a heap size in bytes)
-# runs only when named on the command line, with that heap in every mode.
+# runs only when named on the command line, once, with that heap.
 if [ $# -eq 0 ]; then
   fast=()
   for src in "${sources[@]}"; do
@@ -102,13 +102,18 @@ for src in "${sources[@]}"; do
   case $name in
     co-kernel) heap=268435456 ;;
   esac
-  # The default heap (256 MiB) in the other modes, unless the test is slow.
-  normal=()
+  # A slow test runs once, with the JIT and its heap: the three modes run
+  # the same code, and its heap is too big for GC stress.
   if [ -f "${src%.lisp}.slow" ]; then
-    heap=$(cat "${src%.lisp}.slow")
-    normal=(env "MMTK_GC_TRIGGER=FixedHeapSize:$heap")
+    if MMTK_GC_TRIGGER=FixedHeapSize:$(cat "${src%.lisp}.slow") "$cg" jit "${modules[@]}" "$kir" \
+         >"$build/$name.jit.out" 2>&1 && diff -q "$expected" "$build/$name.jit.out"; then
+      echo "PASS jit $name"
+    else
+      echo "FAIL jit $name"; fail=1
+    fi
+    continue
   fi
-  if "${normal[@]}" "$cg" jit "${modules[@]}" "$kir" >"$build/$name.jit.out" 2>&1 && diff -u "$expected" "$build/$name.jit.out"; then
+  if "$cg" jit "${modules[@]}" "$kir" >"$build/$name.jit.out" 2>&1 && diff -u "$expected" "$build/$name.jit.out"; then
     echo "PASS jit $name"
   else
     echo "FAIL jit $name"; fail=1
@@ -121,7 +126,7 @@ for src in "${sources[@]}"; do
   fi
   if "$cg" obj "${modules[@]}" "$kir" -o "$build/$name.o" \
      && cc "$build/$name.o" "$launcher" -o "$build/$name" -lpthread -ldl -lm \
-     && "${normal[@]}" "$build/$name" >"$build/$name.aot.out" 2>&1 \
+     && "$build/$name" >"$build/$name.aot.out" 2>&1 \
      && diff -u "$expected" "$build/$name.aot.out"; then
     echo "PASS aot $name"
   else

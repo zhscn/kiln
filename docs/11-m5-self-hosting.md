@@ -4,7 +4,7 @@
 - M5.1 完成（2026-11，§5）：目标端有了运行期的标准宏、`eval`、`compile`、`load` 和 REPL。
 - M5.2 完成（2026-11，§7）：Common-boot 和它的依赖编成 compiler 模块，kiln 上 `cst-to-ast` 的结果和 SBCL 逐字相同。
 - M5.3 完成（2026-11，§8）：kiln 自己的前端和 `lower.lisp` 也编进 compiler 模块，kiln 上编出的 KIR 和 SBCL 的逐字相同。
-- M5.4 进行中（§9）：kiln 交叉编译自己的 kernel，KIR 和 SBCL 的逐字相同（`tests/m5/co-kernel`，38 秒）。
+- M5.4 进行中（§9）：kiln 交叉编译自己的 kernel 和 CLOS 模块，KIR 和 SBCL 的逐字相同（`tests/m5/co-kernel`，35 秒；`tests/m5/co-clos`，约 16 分钟）。
 
 ## 1. 目标和验证
 
@@ -379,11 +379,46 @@ kernel 的交叉编译一开始跑了一个多小时也没结束。测量工具�
 
 还没处理的开销：parser.packrat 的 inline cache 和 s-expression-syntax 的解析器，仍然是载入时或首次使用时用 Maclina 编成字节码（`compile-parser`）。在整个编译里，它们的执行占了相当一部分时间。
 
-### 9.4 接下来
+### 9.4 kiln 编 CLOS 模块
 
-- CLOS、frontend、eval、compiler 模块在 kiln 上交叉编译，逐个和 SBCL 比对。宿主特有的部分要有 kiln 上的对应：
-  - `closer-mop-aliases` 现在遍历宿主的 CLOSER-MOP 包；
-  - `defstruct` 由宿主的 Anatomicl 展开；
-  - 宿主库的 compiler macro 在 kiln 上没有（kiln 还没有 compiler macro）。
+`tests/m5/co-clos`：同一个交叉编译会话里先编 kernel，再编 CLOS（约 150 个文件），输出的 CLOS 模块和 SBCL 编出的逐字节相同。
+- 文件列表由宿主宏 `kiln.compiler::module-files` 在编译测试时给出。
+- 这个测试很慢（JIT 约 20 分钟，要 2 GiB 堆），有 `co-clos.slow`，只在命令行点名时才跑（`tools/test.sh tests/m5/co-clos.lisp`）。
+
+宿主特有的部分在 kiln 上的对应：
+- **`defstruct`**：Anatomicl 和 `lisp/structures.lisp` 编进 compiler 模块，kiln 上的交叉编译同样用它展开。
+- **Common-macros 的包**：kiln 上 Common-macros 是 eval 模块的 `KILN.CMD`，宿主上是 `COMMON-MACRO-DEFINITIONS`。
+  - kiln 上交叉编译时，这些宏展开结果里新出现的 `KILN.CMD` 符号换成 `COMMON-MACRO-DEFINITIONS` 的同名符号（如 `check-type` 展开出的 `check-type-error`），被展开的形式里原有的保留。
+  - 它们的内部宏（`with-store-value-restart`）也以宿主的名字放进编译期环境。宿主上这些宏是退回到宿主定义上展开的，kiln 上没有这条退路，所以要显式放进去。
+- **`closer-mop-aliases`**：kiln image 里也有 CLOSER-MOP 包（CLOS 模块建的），原样可用。
+- **宿主库的 compiler macro**：CLOS 模块用不到。
+
+修正：
+- **`defpackage` 处理过的包都算本模块的包**：原来只有宿主里原本没有的包才算（才输出全部外部符号）。SBCL 上 Eclector、Khazern、Alexandria 已经存在，kiln 上所有包都已存在，两边结果就不一样了。
+- **反引号的共享结构**：Eclector 把 `` `(a ,@x) `` 展开成 `(append (list 'a) x 'nil)`，会复制 `x`；SBCL 的反引号则共用 `x`。
+  - 宿主上的宏展开函数（如 Ecclesia 的）是 SBCL 编的，kiln 上的是 kiln 从 Eclector 的展开编的。于是 `` `(:allow-other-keys ,@keywords) `` 和 `keywords` 在 SBCL 上共用尾部，合成一个常量，在 kiln 上是两个。
+  - 现在 Eclector 也把最后的 `,@x` 直接当作尾部（vendor/README.md），CLHS 2.4.6 允许这样做。
+- **无名符号**：模块常量里的无名符号（如宏展开留下的 `#:G123`）以前按名字取标签，名字里沿用宿主当时的计数器。现在照 SBCL 的做法：
+  - 前端处理每个顶层形式时，把 `*gensym-counter*` 绑定为 0，和 SBCL 的 `compile-file` 一样。
+  - `compile-module` 按无名符号在模块里第一次出现的顺序给它们编号，标签用这个序号和模块名，不用名字。这相当于 SBCL fasl 按对象本身保存无名符号：同名的两个仍是两个符号，不同模块的也不会合并。
+  - 名字以数字结尾的（gensym）改用这个序号作结尾。宿主自己也会调用 `gensym`（SBCL 的 PCL 在运行期为分派生成代码时就会），同一个形式里的编号两边可能错开。代价是源码里写的 `#:x1` 这类名字也会被改掉，只影响打印。
+- `butlast` 对点结尾列表（Ecclesia 解析 `(a b . body)`）报错。
+- `call-arguments-limit` 原来是 67（3 个寄存器参数加 64 字的传递区）。Trinsic 的宏在编译期 `apply` 了更多参数，现在是 1024（docs/06 §5）。
+- Lisp 程序在一个栈为 64 MiB 的线程上运行（docs/07 §10）：HIR 求值器给长指令链建 thunk 时递归约 3500 层，超出了主线程的 8 MiB。
+- kiln-cg 的 JIT 把代码和数据放进同一块 2 GiB 的预留区：模块变大后，malloc 来的几块内存可能相距超过 2 GB，32 位 PC 相对重定位溢出。
+- 调试：`kiln.compiler::*trace-toplevel*` 为真时，前端把每个文件和每个顶层形式的开头打印到 `*error-output*`。
+
+速度（perf 采样，`perf report --children`）：
+- Iconoclast 的 AST 遍历器用 `reinitialize-instance` 设置一个槽，约占 40% 的时间。
+  - Clostrophilia 的 `shared-initialize-aux` 对每个槽都先调 `slot-boundp-using-class` 和 `slot-definition-initfunction`，然后才看 `slot-names`。现在先看 `slot-names`，它在这里是 NIL，这两次泛函调用就省掉了（vendor/README.md）。
+  - 它每次还要 `(intern name (find-package "KEYWORD"))`：按名字查包时 `equal` 哈希表里的 `string=` 逐个字符调用 `char=` 和 `schar`。现在 `string=` 用 primop 比较字符。
+- 剩下的大头是泛函分派本身：判别函数解释自动机，每层二分查找；Iconoclast 和 builder 协议的泛函调用非常密集。
+- kernel 交叉编译从 38 秒降到 35 秒（AOT），CLOS 约 16 分钟（JIT）。
+
+### 9.5 接下来
+
+- frontend、eval、compiler 模块在 kiln 上交叉编译，逐个和 SBCL 比对。
+  - compiler 模块要用宿主库的 compiler macro（parser.packrat 的 `parse`），kiln 上还没有 compiler macro；
+  - 还有 `use-host-macros` 的那些宿主宏。
 - 之后用 kiln0 编出的 KIR 链接 kiln1，再比较 kiln1 和 kiln2。
 

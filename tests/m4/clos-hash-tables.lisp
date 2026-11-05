@@ -62,3 +62,12 @@
   (print (list (= (sxhash "abc") (sxhash (copy-seq "abc")))
                (= (sxhash '(1 2)) (sxhash (list 1 2)))
                (integerp (sxhash 'foo)))))
+;; Iteration order is SBCL's: insertion order, freed places reused last
+;; freed first (docs/11 §9).
+(let ((h (make-hash-table)) (keys '()))
+  (dolist (k '(a b c d e)) (setf (gethash k h) t))
+  (remhash 'b h)
+  (remhash 'd h)
+  (setf (gethash 'x h) t (gethash 'y h) t (gethash 'z h) t)
+  (maphash (lambda (k v) (declare (ignore v)) (push k keys)) h)
+  (print (reverse keys)))

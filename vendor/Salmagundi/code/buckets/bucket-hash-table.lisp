@@ -1,5 +1,12 @@
 (cl:in-package #:salmagundi/bucket)
 
+;;; kiln: the entries are kept in the order SBCL's hash tables iterate in
+;;; too: insertion order, a removed entry's place reused by the next
+;;; insertion (the last freed first). An entry is (KEY VALUE . INDEX),
+;;; INDEX its place in ORDER; the buckets hold the same entries. kiln's
+;;; compiler on kiln must make the KIR SBCL makes, and macro expanders
+;;; iterate over hash tables (Khazern's destructuring temporaries).
+
 (defclass bucket-client (salmagundi:standard-client) ())
 
 (defclass bucket-hash-table (salmagundi:hash-table)
@@ -10,12 +17,18 @@
    (data :accessor hash-table-data)
    (count :accessor %bucket-hash-table-count
           :reader salmagundi:hash-table-count
-          :initform 0)))
+          :initform 0)
+   (order :accessor hash-table-order)
+   (fill :accessor hash-table-fill :initform 0)
+   (free :accessor hash-table-free :initform '())))
 
 (defmethod initialize-instance :after ((hash-table bucket-hash-table) &key)
   (setf (hash-table-data hash-table)
         (make-array (salmagundi:hash-table-size hash-table)
-                    :initial-element '())))
+                    :initial-element '())
+        (hash-table-order hash-table)
+        (make-array (max 4 (salmagundi:hash-table-size hash-table))
+                    :initial-element nil)))
 
 (defmethod salmagundi:make-hash-table ((client bucket-client) &rest initargs
                                        &key test size rehash-size rehash-threshold)
@@ -23,22 +36,15 @@
   (apply #'make-instance 'bucket-hash-table initargs))
 
 (defmethod salmagundi:make-hash-table-iterator ((hash-table bucket-hash-table))
-  (let ((data (hash-table-data hash-table))
-        (size (salmagundi:hash-table-size hash-table))
-        (position 0)
-        (contents '()))
+  (let ((position 0))
     (lambda ()
-      (block hash-table-iterator
-        ;; Look for the next bucket which contains mappings.
-        (loop while (null contents)
-              when (= position size)
-                ;; When we run out of mappings, we return the single value NIL.
-                do (return-from hash-table-iterator nil)
-              do (setf contents (aref data position))
-                 (incf position))
-        ;; Otherwise, we return values T, key and value.
-        (let ((entry (pop contents)))
-          (values t (car entry) (cdr entry)))))))
+      (loop
+        (when (>= position (hash-table-fill hash-table))
+          (return nil))
+        (let ((entry (svref (hash-table-order hash-table) position)))
+          (incf position)
+          (when entry
+            (return (values t (car entry) (cadr entry)))))))))
 
 (defun grow-and-rehash (hash-table)
   (with-accessors ((rehash-size salmagundi:hash-table-rehash-size)
@@ -48,12 +54,12 @@
     (let* ((new-size (if (integerp rehash-size)
                          (+ size rehash-size)
                          (round (* size rehash-size))))
-           (new-data (make-array new-size :initial-element '())))
-      (salmagundi:maphash (lambda (key value)
-                            (let* ((key-hash (funcall hash-function key))
-                                   (index (mod key-hash new-size)))
-                              (push (cons key value) (aref new-data index))))
-                          hash-table)
+           (new-data (make-array new-size :initial-element '()))
+           (order (hash-table-order hash-table)))
+      (dotimes (i (hash-table-fill hash-table))
+        (let ((entry (svref order i)))
+          (when entry
+            (push entry (aref new-data (mod (funcall hash-function (car entry)) new-size))))))
       (setf (hash-table-data hash-table) new-data
             (%bucket-hash-table-size hash-table) new-size))))
 
@@ -72,13 +78,28 @@
             (,entry (assoc ,key entries :test (salmagundi:hash-table-test ,hash-table))))
        ,@body)))
 
+(defun new-entry-index (hash-table)
+  (if (hash-table-free hash-table)
+      (pop (hash-table-free hash-table))
+      (let ((index (hash-table-fill hash-table))
+            (order (hash-table-order hash-table)))
+        (when (= index (length order))
+          (let ((new (make-array (* 2 (length order)) :initial-element nil)))
+            (replace new order)
+            (setf (hash-table-order hash-table) new)))
+        (setf (hash-table-fill hash-table) (1+ index))
+        index)))
+
 (defmethod (setf salmagundi:gethash) (value key (hash-table bucket-hash-table) &optional default)
   (declare (ignore default))
   (with-entry (index entries entry key hash-table)
     (cond (entry
-           (setf (cdr entry) value))
+           (setf (cadr entry) value))
           (t
-           (push (cons key value) (aref (hash-table-data hash-table) index))
+           (let* ((position (new-entry-index hash-table))
+                  (entry (list* key value position)))
+             (setf (svref (hash-table-order hash-table) position) entry)
+             (push entry (aref (hash-table-data hash-table) index)))
            (incf (%bucket-hash-table-count hash-table))
            (maybe-grow-and-rehash hash-table))))
   value)
@@ -87,22 +108,31 @@
   (with-entry (index entries entry key hash-table)
     (if (null entry)
         (values default nil)
-        (values (cdr entry) t))))
+        (values (cadr entry) t))))
 
 (defmethod salmagundi:remhash (key (hash-table bucket-hash-table))
   (with-entry (index entries entry key hash-table)
     (unless (null entry)
       (setf (aref (hash-table-data hash-table) index)
-            (delete key entries :key #'car :test (salmagundi:hash-table-test hash-table)))
+            (delete entry entries :test #'eq))
+      (setf (svref (hash-table-order hash-table) (cddr entry)) nil)
+      (push (cddr entry) (hash-table-free hash-table))
       (decf (%bucket-hash-table-count hash-table)))
     (not (null entry))))
 
 (defmethod salmagundi:clrhash ((hash-table bucket-hash-table))
   (fill (hash-table-data hash-table) '())
-  (setf (%bucket-hash-table-count hash-table) 0)
+  (fill (hash-table-order hash-table) nil)
+  (setf (%bucket-hash-table-count hash-table) 0
+        (hash-table-fill hash-table) 0
+        (hash-table-free hash-table) '())
   hash-table)
 
 (defmethod salmagundi:maphash (function (hash-table bucket-hash-table))
-  (loop for bucket across (hash-table-data hash-table)
-        do (loop for (key . value) in bucket
-                 do (funcall function key value))))
+  ;; The entries are read as the function may change the table (CLHS
+  ;; 3.6: it may set or remove the current entry).
+  (let ((order (hash-table-order hash-table)))
+    (dotimes (i (hash-table-fill hash-table))
+      (let ((entry (svref order i)))
+        (when entry
+          (funcall function (car entry) (cadr entry)))))))

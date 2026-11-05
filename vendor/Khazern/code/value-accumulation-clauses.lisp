@@ -142,7 +142,7 @@
            (accumulate-func ()
              `((,(scope-reference var name) ,form)))
            (quote-form (form)
-             (if (constantp form)
+             (if (constant-form-p form)
                  form
                  `(quote ,form))))
       (if (consp form)
@@ -164,7 +164,7 @@
                     (go next))
                  (accumulate-func)))
             (cons
-             (if (constantp (third form))
+             (if (constant-form-p (third form))
                  (append-cons (second form) (third form))
                  (nconc (append-cons (second form) nil)
                         (accumulate-form var name (third form)))))
@@ -175,11 +175,11 @@
             (list*
              (mapcon (lambda (head)
                        (cond ((null (cdr head))
-                              (unless (constantp (car head))
+                              (unless (constant-form-p (car head))
                                 (accumulate-form var name (car head))))
                              ((null (cddr head))
                               (append-cons (car head)
-                                           (when (constantp (second head))
+                                           (when (constant-form-p (second head))
                                              (second head))))
                              (t
                               (append-cons (car head) nil))))

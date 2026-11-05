@@ -1,5 +1,14 @@
 (cl:in-package #:khazern)
 
+;;; kiln: whether FORM is a constant form, conservatively: a self-evaluating
+;;; object, a constant variable or a QUOTE form. CL:CONSTANTP may also fold
+;;; calls of pure functions (SBCL's does), so the host and kiln would
+;;; expand the same LOOP differently (docs/11 §9).
+(defun constant-form-p (form &optional environment)
+  (if (consp form)
+      (eq (first form) 'quote)
+      (constantp form environment)))
+
 (defun nthcdr-form (n form)
   (case n
     (0 form)
@@ -31,10 +40,10 @@
 
 (defun multiple-values-binding-p (pair)
   (and (consp (first pair))
-       (not (constantp (second pair)))
+       (not (constant-form-p (second pair)))
        (or (not (consp (second pair)))
            (not (eq (caadr pair) 'values))
-           (notevery #'constantp (cdadr pair)))))
+           (notevery #'constant-form-p (cdadr pair)))))
 
 (defun wrap-let (variable-list declarations forms)
   (cond ((some #'multiple-values-binding-p variable-list)
@@ -57,7 +66,7 @@
                                          (declare (ignore ,rest))
                                          (values ,@names))
                                      ,(second pair))))
-                               ((constantp (second pair))
+                               ((constant-form-p (second pair))
                                 (second pair))
                                (t
                                 `(values ,(second pair)))))
@@ -229,7 +238,7 @@
 (defun d-var-spec-p (object)
   (or (null object)
       (and (symbolp object)
-           (not (constantp object)))
+           (not (constant-form-p object)))
       (and (consp object)
            (d-var-spec-p (car object))
            (d-var-spec-p (cdr object)))))
@@ -260,7 +269,7 @@
   (gensym (symbol-name sym)))
 
 (define-compiler-macro unique-name (&whole form name)
-  (cond ((and (constantp name)
+  (cond ((and (constant-form-p name)
               (symbolp name))
          `(gensym ,(symbol-name name)))
         ((and (consp name)

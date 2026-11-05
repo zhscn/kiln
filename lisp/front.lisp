@@ -601,9 +601,7 @@ created."
          (*defined-packages* '())
          (*structures* (session-structures session))
          (*inline-functions* (session-inline-functions session))
-         (*toplevel-environment* *environment*)
-         (*gensym-counter* *gensym-counter*)
-         (form-index 0))
+         (*toplevel-environment* *environment*))
     ;; Calls to functions defined later in the file are fine: report
     ;; undefined functions at the end (CLHS 3.2.2.3).
     (handler-bind ((cb:no-function-description
@@ -624,11 +622,6 @@ created."
             (format *error-output* "~&~A~%" (if (consp path) (car (last path)) path)))
           (map-file-csts (lambda (cst)
                            (forget-global-descriptions *environment*)
-                           ;; Gensyms in a module's constants are named by
-                           ;; the form's index in the module, not by
-                           ;; whatever the host's counter was: SBCL and
-                           ;; kiln make the same KIR (docs/11 §9).
-                           (setf *gensym-counter* (* 100000 (incf form-index)))
                            (when *trace-toplevel*
                              (let ((raw (cst:raw cst)))
                                (format *error-output* "~&  ~S~@[ ~S~]~%"
@@ -639,7 +632,12 @@ created."
                                   (simplified (simplify-declarations raw 10000)))
                              (unless (eq simplified raw)
                                (setf cst (cst:reconstruct *client* simplified cst))))
-                           (process-toplevel cst compile-time-too))
+                           ;; As SBCL's COMPILE-FILE: gensyms are numbered
+                           ;; from 0 in each top-level form.
+                           ;; COMPILE-MODULE names those in constants by
+                           ;; their order in the module (MODULE-SYMBOL-NAME).
+                           (let ((*gensym-counter* 0))
+                             (process-toplevel cst compile-time-too)))
                          (if (consp path) (car (last path)) path))
           (when *file-sets-package*
             (compile-toplevel-form

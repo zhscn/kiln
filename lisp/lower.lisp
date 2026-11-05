@@ -25,10 +25,42 @@
                  (write-char c out)
                  (format out "_~X_" (char-code c))))))
 
+(defvar *uninterned-symbols* nil
+  "Uninterned symbol -> (INDEX . NAME) in the module (COMPILE-MODULE).")
+(defvar *uninterned-count*)
+
+(defun uninterned-entry (sym)
+  "An uninterned symbol is the module's own, numbered by the order in
+which the module first names it, as SBCL's fasl dumper keeps them by
+identity: its label has that number, not its name, so two of the same name
+stay two symbols. A name ending in digits (a gensym's) gets that number
+instead: the host's own gensyms (SBCL's PCL makes some while compiling)
+shift the counter, so the numbers differ between hosts (docs/11 §9)."
+  (or (gethash sym *uninterned-symbols*)
+      (setf (gethash sym *uninterned-symbols*)
+            (let* ((index (incf *uninterned-count*))
+                   (name (symbol-name sym))
+                   (end (position-if-not #'digit-char-p name :from-end t)))
+              (cons index
+                    (if (and (plusp (length name))
+                             (digit-char-p (char name (1- (length name)))))
+                        (format nil "~A~D" (subseq name 0 (if end (1+ end) 0)) index)
+                        name))))))
+
+(defun module-symbol-name (sym)
+  "The name of SYM in the module."
+  (if (or (symbol-package sym) (null *uninterned-symbols*))
+      (symbol-name sym)
+      (cdr (uninterned-entry sym))))
+
 (defun symbol-label (sym)
-  (mangle (format nil "~A:~A"
-                  (let ((p (symbol-package sym))) (if p (target-package-name p) "#"))
-                  (symbol-name sym))))
+  (mangle (cond ((symbol-package sym)
+                 (format nil "~A:~A" (target-package-name (symbol-package sym)) (symbol-name sym)))
+                (*uninterned-symbols*
+                 (let ((entry (uninterned-entry sym)))
+                   (format nil "#~A:~D:~A" (kiln.kir::kmodule-name *module*)
+                           (car entry) (cdr entry))))
+                (t (format nil "#:~A" (symbol-name sym))))))
 
 (defvar *counter*)
 
@@ -139,7 +171,7 @@ name of its package as a string."
   (let* ((label (symbol-label sym))
          (obj (format nil "kiln_sym_~A" label)))
     (unless (gethash obj (kiln.kir::kmodule-defined *module*))
-      (let ((name (string-data (format nil "kiln_name_~A" label) (symbol-name sym)))
+      (let ((name (string-data (format nil "kiln_name_~A" label) (module-symbol-name sym)))
             (undef (format nil "kiln_undef_~A" label))
             (undef-setf (format nil "kiln_undef_setf_~A" label)))
         (module-data undef `(:words ,(logior +kind-function+ (ash 1 +length-shift+))
@@ -1544,9 +1576,11 @@ the top-level forms in order, in chunks."
       (package-name package)))
 
 (defun target-package-nicknames (package)
+  ;; Sorted, as the use list (SYMBOL-TABLE-LITERAL): their order differs
+  ;; between images (ALEXANDRIA's nicknames, docs/11 §9).
   (if (eq package (find-package '#:kiln-user))
       '("CL-USER")
-      (package-nicknames package)))
+      (sort (copy-list (package-nicknames package)) #'string<)))
 
 (defun package-entries (package symbols)
   (let ((shadowing (package-shadowing-symbols package)))
@@ -1573,9 +1607,10 @@ use list only names packages that exist at run time."
       (coerce (loop for p in packages
                     collect (vector (target-package-name p)
                                     (target-package-nicknames p)
-                                    (loop for u in (package-use-list p)
-                                          when (member u known)
-                                            collect (target-package-name u))
+                                    (sort (loop for u in (package-use-list p)
+                                                when (member u known)
+                                                  collect (target-package-name u))
+                                          #'string<)
                                     (package-entries p symbols)))
               'simple-vector))))
 
@@ -1591,7 +1626,9 @@ package system (docs/10 §12)."
         (*exits* (make-hash-table :test 'eq))
         (*constants* (make-hash-table :test 'eql))
         (*constant-vars* (make-hash-table :test 'eq))
-        (*module-symbols* '()))
+        (*module-symbols* '())
+        (*uninterned-symbols* (make-hash-table :test 'eq))
+        (*uninterned-count* 0))
     (let ((*load-time-values* (make-hash-table :test 'eq)))
       (compile-toplevel-function asts))
     ;; Sorted by name: the order of a package's symbols differs between
