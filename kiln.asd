@@ -20,4 +20,5 @@
                (:file "structures")
                (:file "macro-client")
                (:file "front")
+               (:file "host")
                (:file "driver")))

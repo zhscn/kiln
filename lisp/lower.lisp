@@ -27,7 +27,7 @@
 
 (defun symbol-label (sym)
   (mangle (format nil "~A:~A"
-                  (let ((p (symbol-package sym))) (if p (package-name p) "#"))
+                  (let ((p (symbol-package sym))) (if p (target-package-name p) "#"))
                   (symbol-name sym))))
 
 (defvar *counter*)
@@ -35,6 +35,11 @@
 ;;; Primitives (primitives.lisp)
 (defvar *primitives* (make-hash-table :test 'equal)
   "Function name -> function of the list of argument operands.")
+
+(defvar *primops* (make-hash-table :test 'eq)
+  "Keyword -> function of the list of argument operands (primitives.lisp).")
+
+(defvar *regions* '())                  ; dynamic-extent regions (REGION below)
 
 
 (defvar *module-label*)                 ; mangled module name
@@ -122,7 +127,7 @@ two per word (little-endian), padded."
   "Until package objects exist (M3.3), a symbol's package slot holds the
 name of its package as a string."
   (if package
-      (let ((name (package-name package)))
+      (let ((name (target-package-name package)))
         `(:data ,(module-shared (string-data (format nil "kiln_pkg_~A" (mangle name)) name))
                 ,+tag-general+))
       (nil-word)))
@@ -174,6 +179,20 @@ name of its package as a string."
 (defconstant +most-positive-fixnum+ (1- (ash 1 62)))
 (defconstant +most-negative-fixnum+ (- (ash 1 62)))
 
+;;; The bits of floats, unsigned: in the host (SBCL) and on kiln (the
+;;; compiler module, docs/11 §8).
+(defun single-float-bits (x)
+  #+sbcl (ldb (byte 32 0) (sb-kernel:single-float-bits x))
+  #+kiln (kiln.sys:%primop :single-float-bits x))
+
+(defun double-float-high-bits (x)
+  #+sbcl (ldb (byte 32 0) (sb-kernel:double-float-high-bits x))
+  #+kiln (kiln.sys:%primop :double-float-high-bits x))
+
+(defun double-float-low-bits (x)
+  #+sbcl (sb-kernel:double-float-low-bits x)
+  #+kiln (kiln.sys:%primop :double-float-low-bits x))
+
 (defvar *constants*)                    ; host object -> data word
 
 (defun constant-word (x)
@@ -192,15 +211,15 @@ name of its package as a string."
                (setf (gethash x *constants*) `(:data ,label ,+tag-general+))))))
     (symbol (symbol-word x))
     (single-float
-     (signed-word (logior (ash (ldb (byte 32 0) (sb-kernel:single-float-bits x)) 32)
+     (signed-word (logior (ash (single-float-bits x) 32)
                           +single-float-tag+)))
     (double-float
      (or (gethash x *constants*)
          (let ((label (fresh-label "kiln_double_")))
            (module-data label `(:words ,+kind-double+
                                        ,(signed-word
-                                         (logior (ash (ldb (byte 32 0) (sb-kernel:double-float-high-bits x)) 32)
-                                                 (sb-kernel:double-float-low-bits x)))))
+                                         (logior (ash (double-float-high-bits x) 32)
+                                                 (double-float-low-bits x)))))
            (setf (gethash x *constants*) `(:data ,label ,+tag-general+)))))
     (ratio
      (or (gethash x *constants*)
@@ -249,8 +268,6 @@ name of its package as a string."
   handler         ; block that dispatches exceptional entry into this frame
   cleanup         ; unwind-protect cleanup ASTs
   outer)          ; regions outside this one
-
-(defvar *regions* '())
 
 (defun handler ()
   "The handler block for calls here: that of the innermost region that has
@@ -1004,13 +1021,21 @@ DEFMETHOD's name), mangled, for the function's label: profiles show it."
                      ((not (typep node 'ico:local-function-ast))
                       (setf queue (append queue (ast-children node)))))))))
 
+(defun local-function-label-name (name)
+  "NAME's part of the label of a local function: a gensym's without its
+number, so that the labels do not depend on the image that compiles (the
+host or kiln, docs/11 §8)."
+  (mangle (cond ((and (symbolp name) (symbol-package name)) (symbol-name name))
+                ((symbolp name) (string-right-trim "0123456789" (symbol-name name)))
+                (t (princ-to-string name)))))
+
 (define-mv-lowering ico:labels-ast (ast)
   (let ((functions
           (loop for lf in (ico:binding-asts ast)
                 for def = (ico:name-ast lf)
                 for hint = (or (function-name-hint (ico:form-asts lf)) *name-hint*)
                 for label = (fresh-label (format nil "kiln_f_~A_~@[~A_~]"
-                                                 (mangle (princ-to-string (ico:name def)))
+                                                 (local-function-label-name (ico:name def))
                                                  hint))
                 do (let ((*name-hint* hint))
                      (compile-function label

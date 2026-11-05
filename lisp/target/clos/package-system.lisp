@@ -301,10 +301,12 @@
 
 (setf kiln.kernel::*keyword-package* (ensure-package "KEYWORD"))
 
-(let ((cl-user (ensure-package "COMMON-LISP-USER")))
-  (unless (member (find-package "COMMON-LISP") (parcl-low:use-list *client* cl-user))
-    (parcl-low:use-packages *client* cl-user (list (find-package "COMMON-LISP"))))
-  (setf *package* cl-user))
+;;; COMMON-LISP-USER is the package that the host describes for the
+;;; programs it compiles (KILN-USER, lisp/lower.lisp): with the nickname
+;;; CL-USER, using CL and KILN.SYS.
+(register-symbol-table
+ (vector (vector "COMMON-LISP-USER" '("CL-USER") '("COMMON-LISP" "KILN.SYS") (vector))))
+(setf *package* (find-package "COMMON-LISP-USER"))
 
 ;;; DEFPACKAGE and IN-PACKAGE at run time (docs/10 §23). Compiled modules
 ;;; get their packages from their symbol tables; these are for code that

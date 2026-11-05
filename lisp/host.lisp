@@ -1,0 +1,327 @@
+;;;; The front end in the host (SBCL): the compile-time environment is a
+;;;; Clostrum environment, in which Common-boot's HIR evaluator runs the
+;;;; code evaluated at compile time; host CL functions are imported into
+;;;; it, so macro expanders can call them. Loaded after front.lisp; on kiln,
+;;;; lisp/target/compiler/client.lisp takes its place (docs/11 §8).
+
+(in-package #:kiln.compiler)
+
+(defmethod cb:convert-with-ordinary-macro-p ((client client) operator)
+  (cmd:macro-function-exists-p operator))
+
+(defvar *host-library-packages* '()
+  "The packages of the libraries whose macros and functions are the host's
+at compile time (USE-HOST-MACROS).")
+
+(defmethod cmd:defun-compile-time-action ((client client) name lambda-list environment)
+  (declare (ignore lambda-list environment))
+  (setf (gethash name *defined-functions*) t)
+  nil)
+
+(defmethod cmd:defgeneric-compile-time-action
+    ((client client) name lambda-list argument-precedence-order
+     generic-function-class-name method-class-name method-combination-name
+     method-combination-arguments documentation-option environment)
+  (declare (ignore lambda-list argument-precedence-order
+                   generic-function-class-name method-class-name method-combination-name
+                   method-combination-arguments documentation-option environment))
+  ;; Calls to the generic function are not calls to an undefined function.
+  (setf (gethash name *defined-functions*) t)
+  nil)
+
+
+(defmethod cmd:get-setf-expansion ((client client) place &optional environment)
+  (let ((environment (or environment *environment*)))
+    (cond ((symbolp place)
+           (multiple-value-bind (expansion macrop)
+               (symbol-macro-expansion client environment place)
+             (if macrop
+                 (cmd:get-setf-expansion client expansion environment)
+                 (call-next-method))))
+          ((and (consp place) (symbolp (first place)))
+           (let ((expander (clo:setf-expander client
+                                              (trucler:global-environment client environment)
+                                              (first place))))
+             (if expander
+                 (funcall expander place environment)
+                 (multiple-value-bind (expansion macrop)
+                     (let ((*environment* environment))
+                       (macroexpand-toplevel place))
+                   (if macrop
+                       (cmd:get-setf-expansion client expansion environment)
+                       (call-next-method))))))
+          (t (call-next-method)))))
+
+(defun proclaim-in (client genv declaration)
+  (when (and (consp declaration) (eq (first declaration) 'special))
+    (dolist (name (rest declaration))
+      (clo:make-variable client genv name)))
+  (when (and (consp declaration) (member (first declaration) '(inline notinline)))
+    (note-inline-proclamation (first declaration) (rest declaration)))
+  nil)
+
+(defvar *host-macros* (make-hash-table :test 'equal)
+  "Names of the macros expanded by host functions at compile time.")
+
+(defun host-macro (client genv name function)
+  (setf (gethash name *host-macros*) t)
+  (setf (clo:macro-function client genv name) function))
+
+(defun import-host-functions (client genv)
+  (do-external-symbols (s '#:common-lisp)
+    (when (and (fboundp s) (not (macro-function s)) (not (special-operator-p s)))
+      (setf (clo:fdefinition client genv s) (fdefinition s)))
+    (let ((setf-name `(setf ,s)))
+      (when (fboundp setf-name)
+        (setf (clo:fdefinition client genv setf-name) (fdefinition setf-name)))))
+  ;; Functions that consult the global environment must use the
+  ;; compile-time environment, not the host's.
+  (flet ((def (name function)
+           (setf (clo:fdefinition client genv name) function))
+         (resolve (f)
+           (if (functionp f) f (clo:fdefinition client genv f))))
+    (def 'macro-function
+      (lambda (name &optional env)
+        (declare (ignore env))
+        (clo:macro-function client genv name)))
+    ;; A macro whose compile-time expander is the host's (HOST-MACRO) keeps
+    ;; it: the target's definition (Khazern's LOOP, Eclector's QUASIQUOTE,
+    ;; alexandria's macros) takes effect at load time only. Its expander
+    ;; would call functions that exist in the target, not at compile time.
+    (def '(setf macro-function)
+      (lambda (function name &optional env)
+        (declare (ignore env))
+        (unless (or (gethash name *host-macros*)
+                    (and *package-renames*
+                         (or (clo:macro-function client genv name)
+                             (and (symbolp name)
+                                  (eq (symbol-package name) (find-package '#:common-lisp))
+                                  (cmd:macro-function-exists-p name)))))
+          (setf (clo:macro-function client genv name) function))
+        function))
+    ;; DEFINE-COMPILER-MACRO at compile time: ignored (the host's would
+    ;; change the host's functions; Common-boot would call its unfinished
+    ;; EXPAND-COMPILER-MACRO on those in the environment). The compiler
+    ;; does not use compiler macros yet.
+    (def 'compiler-macro-function
+      (lambda (name &optional env)
+        (declare (ignore name env))
+        nil))
+    (def '(setf compiler-macro-function)
+      (lambda (function name &optional env)
+        (declare (ignore name env))
+        function))
+    (def 'fdefinition (lambda (name) (clo:fdefinition client genv name)))
+    (def 'symbol-function (lambda (name) (clo:fdefinition client genv name)))
+    (def '(setf fdefinition)
+      (lambda (function name) (setf (clo:fdefinition client genv name) function)))
+    (def 'fboundp (lambda (name) (clo:fboundp client genv name)))
+    (def 'symbol-value (lambda (name) (clo:symbol-value client genv name)))
+    (def '(setf symbol-value)
+      (lambda (value name) (setf (clo:symbol-value client genv name) value)))
+    (def 'boundp (lambda (name) (clo:boundp client genv name)))
+    (def 'proclaim (lambda (declaration) (proclaim-in client genv declaration)))
+    (def 'kiln.sys::%define-setf-expander
+      (lambda (name expander)
+        (setf (clo:setf-expander client genv name) expander)
+        name))
+    (def 'get-setf-expansion
+      (lambda (place &optional env)
+        (cmd:get-setf-expansion client place env)))
+    (def 'kiln.sys::%deftype
+      (lambda (name expander)
+        (setf (clo:type-expander client genv name) expander)
+        name))
+    ;; DEFCONSTANT's compile-time side (lisp/target/kernel.lisp). The
+    ;; constants of the libraries the host has loaded are the host's
+    ;; (USE-HOST-MACROS): Clostrum-basic's +UNBOUND+ is the marker of an
+    ;; unbound cell of the compile-time environment itself.
+    (def 'kiln.sys::%define-constant
+      (lambda (name value)
+        (unless (host-constant-p name)
+          (clo:make-constant client genv name value))
+        name))
+    ;; Expanders may call MACROEXPAND with their &ENVIRONMENT (Predicament's
+    ;; RESTART-CASE does).
+    (def 'macroexpand-1
+      (lambda (form &optional env)
+        (compile-time-macroexpand-1 form env)))
+    (def 'macroexpand
+      (lambda (form &optional env)
+        (loop with expanded = nil
+              do (multiple-value-bind (expansion macrop)
+                     (compile-time-macroexpand-1 form env)
+                   (if macrop
+                       (setf form expansion expanded t)
+                       (return (values form expanded)))))))
+    ;; EVAL in a macro expander (Maclina's DEFOPS) sees the compile-time
+    ;; definitions.
+    (def 'eval
+      (lambda (form)
+        (cb:eval-cst client (cst:cst-from-expression form) *toplevel-environment*)))
+    (def 'funcall (lambda (f &rest args) (apply (resolve f) args)))
+    (def 'apply (lambda (f &rest args) (apply #'apply (resolve f) args)))))
+
+;;; Libraries written against closer-mop are read with the host's
+;;; CLOSER-MOP package, whose symbols mostly belong to the host's MOP
+;;; package (SB-MOP). (KILN.SYS::CLOSER-MOP-ALIASES) expands into a call
+;;; giving each of those symbols the function and class of the
+;;; Clostrophilia (or else CL) symbol of the same name
+;;; (lisp/target/clos/closer-mop.lisp).
+(defun expand-closer-mop-aliases (form env)
+  (declare (ignore form env))
+  ;; Clostrophilia does not export all of the MOP (GENERIC-FUNCTION-METHODS
+  ;; for instance); names without a definition are skipped at run time.
+  (flet ((accessible (name package)
+           (multiple-value-bind (symbol status) (find-symbol name package)
+             (and status symbol))))
+    (let ((pairs '()))
+      (do-external-symbols (s '#:closer-mop)
+        (let ((target (accessible (symbol-name s) '#:clostrophilia)))
+          (when (and target (not (eq target s)))
+            (push (cons s target) pairs))))
+      `(kiln.sys::%alias-names
+        ',(sort pairs #'string< :key (lambda (pair) (symbol-name (car pair))))))))
+
+(defun make-compile-environment (client)
+  (let* ((env (cb:create-environment))
+         (genv (trucler:global-environment client env)))
+    (import-host-functions client genv)
+    ;; Eclector reads `X as (ECLECTOR.READER:QUASIQUOTE X); its expansion
+    ;; uses only APPEND, LIST and QUOTE. SICL does the same
+    ;; (New-boot/Shared/define-backquote-macros.lisp).
+    (dolist (name '(eclector.reader:quasiquote eclector.reader:unquote
+                    eclector.reader:unquote-splicing))
+      (host-macro client genv name (macro-function name)))
+    (setf (clo:fdefinition client genv 'eclector.reader::expand)
+          (fdefinition 'eclector.reader::expand))
+    ;; Ecclesia, for macro expanders such as Clostrophilia's
+    ;; DEFINE-METHOD-COMBINATION.
+    (do-external-symbols (s '#:ecclesia)
+      (when (and (fboundp s) (not (macro-function s)))
+        (setf (clo:fdefinition client genv s) (fdefinition s))))
+    ;; Cyclosis' macro expanders (streams, docs/10 §16).
+    (setf (clo:fdefinition client genv 'alexandria:parse-body)
+          (fdefinition 'alexandria:parse-body))
+    ;; LOOP is Khazern's, expanded in the host; its expansions use only
+    ;; standard operators.
+    (host-macro client genv 'loop (macro-function 'khazern-extrinsic:loop))
+    (host-macro client genv 'loop-finish (macro-function 'khazern-extrinsic:loop-finish))
+    ;; DEFPACKAGE not at top level (top-level ones are processed in the
+    ;; host, PROCESS-TOPLEVEL) runs at run time (lisp/target/clos/package-system.lisp).
+    (host-macro client genv 'defpackage
+                (lambda (form env)
+                  (declare (ignore env))
+                  `(eval-when (:compile-toplevel :load-toplevel :execute)
+                     (kiln.kernel::%defpackage ',(second form) ',(cddr form)))))
+    ;; Code evaluated at compile time sees the target's features.
+    (clo:make-variable client genv '*features* (copy-list *target-features*))
+    ;; DEFSTRUCT is Anatomicl's, expanded in the host (structures.lisp).
+    (host-macro client genv 'defstruct #'expand-defstruct)
+
+    (setf (clo:macro-function client genv 'kiln.sys::closer-mop-aliases)
+          #'expand-closer-mop-aliases)
+    (setf (clo:macro-function client genv 'load-time-only) #'expand-load-time-only)
+    env))
+
+;;; Libraries that the host has loaded too (the front end's dependencies,
+;;; docs/11 §3) have their macros expanded by the host's definitions at
+;;; compile time, as LOOP is. Their expanders call functions and use data
+;;; (parser.packrat's grammars, let-plus's generic functions) that exist at
+;;; compile time only in the host; some of their macros are defined by
+;;; forms that are not at top level (anaphora's ANAPHORIC). An expansion
+;;; must not contain host objects, which could not be compiled.
+
+(defun host-object-p (object)
+  (not (typep object '(or symbol number character string))))
+
+(defun check-host-expansion (name expansion)
+  (let ((seen (make-hash-table :test 'eq)))
+    (labels ((walk (x)
+               (cond ((gethash x seen))
+                     ((consp x)
+                      (setf (gethash x seen) t)
+                      (walk (car x))
+                      (walk (cdr x)))
+                     ((and (symbolp x) (symbol-package x)
+                           (let ((package (package-name (symbol-package x))))
+                             (and (> (length package) 3) (string= "SB-" package :end2 3))))
+                      (error "The host expansion of ~S contains the host symbol ~S." name x))
+                     ((and (vectorp x) (not (stringp x)))
+                      (setf (gethash x seen) t)
+                      (map nil #'walk x))
+                     ((host-object-p x)
+                      (error "The host expansion of ~S contains ~S." name x)))))
+      (walk expansion))))
+
+;;; A macro-defining macro's expansion contains the host's backquote
+;;; (SB-INT:QUASIQUOTE forms with SB-IMPL::COMMA objects): it is rewritten
+;;; with Eclector's QUASIQUOTE, UNQUOTE and UNQUOTE-SPLICING, which are
+;;; macros at compile time (MAKE-COMPILE-ENVIRONMENT) and run time.
+(defun translate-host-backquote (form)
+  (let ((done (make-hash-table :test 'eq)))
+    (labels ((walk (x)
+               (cond ((typep x 'sb-impl::comma)
+                      (list (if (zerop (sb-impl::comma-kind x))
+                                'eclector.reader:unquote
+                                'eclector.reader:unquote-splicing)
+                            (walk (sb-impl::comma-expr x))))
+                     ((gethash x done))
+                     ((consp x)
+                      (setf (gethash x done)
+                            (cons (if (eq (car x) 'sb-int:quasiquote)
+                                      'eclector.reader:quasiquote
+                                      (walk (car x)))
+                                  (walk (cdr x)))))
+                     ((and (simple-vector-p x) (some (lambda (e) (or (consp e) (typep e 'sb-impl::comma))) x))
+                      (setf (gethash x done) (map 'vector #'walk x)))
+                     (t x))))
+      (walk form))))
+
+(defun host-constant-p (name)
+  (and (symbolp name)
+       (member (symbol-package name) *host-library-packages*)
+       (constantp name)))
+
+(defmethod trucler:describe-variable :around ((client client) environment name)
+  (or (call-next-method)
+      (and (host-constant-p name)
+           (make-instance 'trucler:constant-variable-description
+             :name name :value (symbol-value name)))))
+
+;;; (LOAD-TIME-ONLY form...) in a host expansion, at top level: the forms
+;;; are compiled but not evaluated at compile time, even in an EVAL-WHEN
+;;; with :COMPILE-TOPLEVEL (they would change the host's state:
+;;; parser.packrat's DEFRULE there would replace the host's rule by one
+;;; that the compile-time evaluator runs). Not at top level, the forms are
+;;; dropped.
+(defun expand-load-time-only (form env)
+  (declare (ignore env))
+  `(eval-when (:load-toplevel) ,@(rest form)))
+
+(defun use-host-macros (session package-names)
+  "The macros whose home is one of the packages PACKAGE-NAMES are expanded
+by the host's expanders at compile time in SESSION, and code evaluated at
+compile time calls the host's functions of those packages (the expansions
+evaluate some at compile time: parser.packrat's DEFGRAMMAR)."
+  (let* ((client (session-client session))
+         (genv (trucler:global-environment client (session-environment session))))
+    (dolist (package-name package-names)
+      (let ((package (or (find-package package-name)
+                         (error "No host package ~A." package-name))))
+        (pushnew package *host-library-packages*)
+        (do-symbols (s package)
+          (when (eq (symbol-package s) package)
+            (when (and (fboundp s) (not (macro-function s)) (not (special-operator-p s)))
+              (setf (clo:fdefinition client genv s) (fdefinition s)))
+            (when (fboundp `(setf ,s))
+              (setf (clo:fdefinition client genv `(setf ,s)) (fdefinition `(setf ,s)))))
+          (let ((expander (and (eq (symbol-package s) package) (macro-function s))))
+            (when expander
+              (let ((name s))
+                (host-macro client genv s
+                            (lambda (form env)
+                              (let ((expansion (translate-host-backquote
+                                                (funcall expander form env))))
+                                (check-host-expansion name expansion)
+                                expansion)))))))))))

@@ -535,7 +535,11 @@ those whose names are in EXCLUDE."
      (system-files "iconoclast-ast-transformations")
      (system-files "common-macros")
      (mapcar (lambda (path) (list :renames '(("COMMON-MACRO-DEFINITIONS" . "KILN.CMD")) path))
-             (system-files "common-boot")))))
+             (system-files "common-boot"))
+     ;; kiln's compiler (M5.3, docs/11 §8): its packages are the host's.
+     (mapcar (lambda (name) (asdf:system-relative-pathname "kiln" (format nil "lisp/~A.lisp" name)))
+             '("abi" "kir" "lower" "values" "primitives" "front"
+               "target/compiler/client" "target/compiler/session")))))
 
 (defparameter *compiler-host-macro-packages*
   ;; Expanded by the host at compile time (kiln.compiler:use-host-macros).
@@ -593,5 +597,16 @@ and eval."
         (kiln.compiler::host-macro
          client genv name
          (lambda (form env)
-           (load-time-only-definitions (funcall expander form env)))))))
+           (load-time-only-definitions (funcall expander form env))))))
+    ;; The inline functions of the modules compiled so far
+    ;; (lisp/target/compiler/session.lisp).
+    (kiln.compiler::host-macro
+     client genv 'kiln.compiler::host-inline-functions
+     (lambda (form env)
+       (declare (ignore form env))
+       (let ((entries '()))
+         (maphash (lambda (name entry) (push (cons name entry) entries))
+                  (kiln.compiler::session-inline-functions session))
+         (kiln.compiler::check-host-expansion 'kiln.compiler::host-inline-functions entries)
+         `',entries))))
   (write-module (compile-files *compiler-files* session "compiler") output))

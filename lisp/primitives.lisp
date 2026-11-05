@@ -9,9 +9,6 @@
 ;;;; Primops are the operations reachable only through
 ;;;; (KILN.SYS:%PRIMOP :NAME ARGS...), for kernel code (docs/09 §4).
 
-(defvar *primops* (make-hash-table :test 'eq)
-  "Keyword -> function of the list of argument operands.")
-
 (defmacro define-primitive (name lambda-list &body body)
   "Defines a primitive with a fixed number of arguments."
   (let ((vals (gensym "VALS")))
@@ -676,6 +673,13 @@ cells (both by default)."
 
 (define-primop :ratiop (x) (boolean-value (emit-kind-test x +kind-ratio+)))
 (define-primop :double-float-p (x) (boolean-value (emit-kind-test x +kind-double+)))
+;;; The bits of a float, as unsigned fixnums (lower.lisp writes float
+;;; constants with them when it runs on kiln, docs/11 §8).
+(define-primop :single-float-bits (x) (copy-to-var `(:shl (:shr ,x 32) ,+fixnum-shift+)))
+(define-primop :double-float-high-bits (x)
+  (copy-to-var `(:shl (:shr (:load ,x ,+vector-data+) 32) ,+fixnum-shift+)))
+(define-primop :double-float-low-bits (x)
+  (copy-to-var `(:shl (:and (:load ,x ,+vector-data+) #xffffffff) ,+fixnum-shift+)))
 (define-primop :single-float-p (x)
   (boolean-value `(:eq (:and ,x ,+immediate-mask+) ,+single-float-tag+)))
 (define-primop :type-error-number (x) (emit-error +err-not-number+ x) (nil-value))

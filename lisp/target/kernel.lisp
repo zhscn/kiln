@@ -11,12 +11,17 @@
 
 ;;; Proclamations at run time: SPECIAL is recorded on the plist, for the
 ;;; evaluator (the eval module). The others take effect at compile time
-;;; only. (Defined first: the DECLAIM below calls it at load time; %PUT is
-;;; defined before any SPECIAL proclamation runs.)
+;;; only: the compiler on kiln sees them through *PROCLAIM-HOOK*
+;;; (lisp/target/compiler/client.lisp). (Defined first: the DECLAIM below
+;;; calls it at load time; %PUT is defined before any SPECIAL proclamation
+;;; runs.)
 (defun proclaim (declaration)
+  (declare (special *proclaim-hook*))
   (when (and (consp declaration) (eq (car declaration) 'special))
     (dolist (name (cdr declaration))
       (%put name 'special t)))
+  (when (and (boundp '*proclaim-hook*) *proclaim-hook*)
+    (funcall *proclaim-hook* declaration))
   nil)
 
 
@@ -42,6 +47,8 @@
     (when (eq (car l) indicator)
       (rplaca (cdr l) value)
       (return value))))
+
+(defvar *proclaim-hook* nil)
 
 ;;; The run-time macro environment: macro functions are kept on the
 ;;; symbol's plist under MACRO-FUNCTION. DEFMACRO calls (SETF
@@ -85,7 +92,15 @@
 
 ;;; DEFCONSTANT: at compile time the name becomes a constant of the
 ;;; compile-time environment, so that references compile to the value; at
-;;; load time the symbol gets the value.
+;;; load time the symbol gets the value. The compile-time environment of
+;;; the compiler on kiln is the run-time one (docs/11 §8): there
+;;; %DEFINE-CONSTANT is this function (the host's compile-time
+;;; environment has its own).
+(defun kiln.sys::%define-constant (name value)
+  (setf (symbol-value name) value)
+  (%put name 'constant t)
+  name)
+
 (defmacro defconstant (name value &optional documentation)
   (declare (ignore documentation))
   `(progn

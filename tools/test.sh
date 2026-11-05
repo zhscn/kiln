@@ -15,6 +15,19 @@ launcher=$root/target/debug/libkiln_launcher.a
 sources=("${@:-$root/tests/*/*.lisp}")
 # shellcheck disable=SC2206
 sources=(${sources[@]})
+# A test NAME.lisp with a file NAME.same-kir prints a module compiled on
+# kiln (docs/11 §8): its expected output is the KIR that SBCL made of the
+# test that the file names, in the same session. That test is run too.
+for src in "${sources[@]}"; do
+  same=${src%.lisp}.same-kir
+  if [ -f "$same" ]; then
+    other=$(dirname "$src")/$(cat "$same").lisp
+    case " ${sources[*]} " in
+      *" $other "*) ;;
+      *) sources+=("$other") ;;
+    esac
+  fi
+done
 
 # One SBCL session: the kernel is compiled once, then every test in the
 # same compile-time environment.
@@ -61,6 +74,9 @@ for src in "${sources[@]}"; do
   name=$(basename "${src%.lisp}")
   kir=$build/$name.kir
   expected=${src%.lisp}.expected
+  if [ -f "${src%.lisp}.same-kir" ]; then
+    expected=$build/$(cat "${src%.lisp}.same-kir").kir
+  fi
   modules=("$build/kernel.kir")
   # GC stress: a small heap forces frequent moving collections; CLOS's
   # live data (metaobjects, satiated call histories) needs more than 1 MiB.
