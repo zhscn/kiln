@@ -244,6 +244,11 @@ Under `#+kiln` (docs/10 §18 of kiln):
   a superclass too (with `standard-object`).
 - The replacement for a bad `#P` is `(pathname ".")`, not the literal
   `#P"."` (no pathname constants in kiln's compiled code).
+- A backquoted list ending in `,@x` has `x` as its tail, as SBCL's
+  backquote makes it: `(append ... x)`, not `(append ... x 'nil)`, which
+  copies `x`. Macro expanders compiled by SBCL (in the host) and by kiln
+  from Eclector's expansion (on kiln) then make expansions with the same
+  shared structure, and so the same constants in the KIR (docs/11 §9).
 
 ## Inravina patches
 

@@ -32,6 +32,11 @@
 (defun transform-compound (compound)
   (labels ((rec (object)
              (typecase object
+               ;; kiln: a final ,@X is the tail of the list, as SBCL's
+               ;; backquote makes it (CLHS 2.4.6 allows sharing it):
+               ;; (APPEND ... X), not (APPEND ... X 'NIL), which copies X.
+               ((cons (cons (eql unquote-splicing)) null)
+                (list (transform (car object))))
                ((cons t (or (not cons) (cons (eql unquote))))
                 (list (transform (car object)) (transform (cdr object) nil)))
                ((cons t (cons (eql unquote-splicing)))

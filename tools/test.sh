@@ -15,6 +15,15 @@ launcher=$root/target/debug/libkiln_launcher.a
 sources=("${@:-$root/tests/*/*.lisp}")
 # shellcheck disable=SC2206
 sources=(${sources[@]})
+# A test NAME.lisp with a file NAME.slow (holding a heap size in bytes)
+# runs only when named on the command line, with that heap in every mode.
+if [ $# -eq 0 ]; then
+  fast=()
+  for src in "${sources[@]}"; do
+    [ -f "${src%.lisp}.slow" ] || fast+=("$src")
+  done
+  sources=("${fast[@]}")
+fi
 # A test NAME.lisp with a file NAME.same-kir prints a module compiled on
 # kiln (docs/11 §8, §9): its expected output is the KIR that SBCL made, in
 # the same session, of the test or the module (kernel, clos...) that the
@@ -93,7 +102,13 @@ for src in "${sources[@]}"; do
   case $name in
     co-kernel) heap=268435456 ;;
   esac
-  if "$cg" jit "${modules[@]}" "$kir" >"$build/$name.jit.out" 2>&1 && diff -u "$expected" "$build/$name.jit.out"; then
+  # The default heap (256 MiB) in the other modes, unless the test is slow.
+  normal=()
+  if [ -f "${src%.lisp}.slow" ]; then
+    heap=$(cat "${src%.lisp}.slow")
+    normal=(env "MMTK_GC_TRIGGER=FixedHeapSize:$heap")
+  fi
+  if "${normal[@]}" "$cg" jit "${modules[@]}" "$kir" >"$build/$name.jit.out" 2>&1 && diff -u "$expected" "$build/$name.jit.out"; then
     echo "PASS jit $name"
   else
     echo "FAIL jit $name"; fail=1
@@ -106,7 +121,7 @@ for src in "${sources[@]}"; do
   fi
   if "$cg" obj "${modules[@]}" "$kir" -o "$build/$name.o" \
      && cc "$build/$name.o" "$launcher" -o "$build/$name" -lpthread -ldl -lm \
-     && "$build/$name" >"$build/$name.aot.out" 2>&1 \
+     && "${normal[@]}" "$build/$name" >"$build/$name.aot.out" 2>&1 \
      && diff -u "$expected" "$build/$name.aot.out"; then
     echo "PASS aot $name"
   else

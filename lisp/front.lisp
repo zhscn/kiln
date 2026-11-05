@@ -601,7 +601,9 @@ created."
          (*defined-packages* '())
          (*structures* (session-structures session))
          (*inline-functions* (session-inline-functions session))
-         (*toplevel-environment* *environment*))
+         (*toplevel-environment* *environment*)
+         (*gensym-counter* *gensym-counter*)
+         (form-index 0))
     ;; Calls to functions defined later in the file are fine: report
     ;; undefined functions at the end (CLHS 3.2.2.3).
     (handler-bind ((cb:no-function-description
@@ -622,6 +624,11 @@ created."
             (format *error-output* "~&~A~%" (if (consp path) (car (last path)) path)))
           (map-file-csts (lambda (cst)
                            (forget-global-descriptions *environment*)
+                           ;; Gensyms in a module's constants are named by
+                           ;; the form's index in the module, not by
+                           ;; whatever the host's counter was: SBCL and
+                           ;; kiln make the same KIR (docs/11 §9).
+                           (setf *gensym-counter* (* 100000 (incf form-index)))
                            (when *trace-toplevel*
                              (let ((raw (cst:raw cst)))
                                (format *error-output* "~&  ~S~@[ ~S~]~%"

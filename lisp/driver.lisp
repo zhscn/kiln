@@ -605,6 +605,22 @@ and eval."
          client genv name
          (lambda (form env)
            (load-time-only-definitions (funcall expander form env))))))
+    ;; The source files of a module, for tests that compile modules on
+    ;; kiln (tests/m5/co-clos.lisp): (KILN.COMPILER::MODULE-FILES "clos").
+    (kiln.compiler::host-macro
+     client genv 'kiln.compiler::module-files
+     (lambda (form env)
+       (declare (ignore env))
+       (let ((files (cdr (assoc (second form)
+                                `(("kernel" . ,*kernel-files*) ("clos" . ,*clos-files*)
+                                  ("frontend" . ,*frontend-files*) ("eval" . ,*eval-files*)
+                                  ("compiler" . ,*compiler-files*))
+                                :test #'string=))))
+         `',(mapcar (lambda (file)
+                      (if (consp file)
+                          (append (butlast file) (list (namestring (car (last file)))))
+                          (namestring file)))
+                    files))))
     ;; The inline functions of the modules compiled so far
     ;; (lisp/target/compiler/session.lisp).
     (kiln.compiler::host-macro
