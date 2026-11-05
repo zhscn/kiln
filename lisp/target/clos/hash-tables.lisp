@@ -78,6 +78,24 @@
 (defmethod default-hash-function ((client kiln-client) (name (eql 'equal))) 'kiln-equal-hash)
 (defmethod default-hash-function ((client kiln-client) (name (eql 'equalp))) 'kiln-equalp-hash)
 
+;;; GETHASH, (SETF GETHASH) and REMHASH go straight to the bucket table's
+;;; functions; they are Salmagundi's generic functions otherwise
+;;; (vendor/README.md).
+(defun cl:gethash (key hash-table &optional default)
+  (if (salmagundi/bucket::bucket-hash-table-p hash-table)
+      (salmagundi/bucket::bucket-gethash key hash-table default)
+      (gethash key hash-table default)))
+
+(defun (setf cl:gethash) (value key hash-table &optional default)
+  (if (salmagundi/bucket::bucket-hash-table-p hash-table)
+      (salmagundi/bucket::bucket-set value key hash-table)
+      (setf (gethash key hash-table default) value)))
+
+(defun cl:remhash (key hash-table)
+  (if (salmagundi/bucket::bucket-hash-table-p hash-table)
+      (salmagundi/bucket::bucket-remhash key hash-table)
+      (remhash key hash-table)))
+
 (defun cl:make-hash-table (&rest initargs
                            &key test size rehash-size rehash-threshold hash-function
                            &allow-other-keys)

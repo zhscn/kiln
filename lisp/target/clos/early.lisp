@@ -91,11 +91,31 @@ list, slots), the slots unbound."
 (defvar *slot-name-location*)
 (defvar *slot-location-location*)
 
+;;; A direct-mapped cache of (SLOTS NAME LOCATION) triples, SLOTS being the
+;;; slot list of an instance's class: CLASS-TYPEP and the method functions
+;;; read slots by name at every call. A class's slot list is replaced, not
+;;; changed, when the class changes.
+(defvar *slot-location-cache* (kiln.kernel::make-simple-vector (* 3 256) nil))
+
 (defun %slot-location (object name)
-  (loop for slot in (standard-instance-access object -1)
-        when (eq (standard-instance-access slot *slot-name-location*) name)
-          return (standard-instance-access slot *slot-location-location*)
-        finally (error "no slot named" name object)))
+  (let* ((slots (standard-instance-access object -1))
+         (cache *slot-location-cache*)
+         (index (* 3 (kiln.sys:%primop :fixnum-logand
+                                       (kiln.sys:%primop :fixnum-logxor
+                                                         (kiln.sys:%primop :identity-hash slots)
+                                                         (kiln.sys:%primop :identity-hash name))
+                                       255))))
+    (if (and (eq (svref cache index) slots) (eq (svref cache (+ index 1)) name))
+        (svref cache (+ index 2))
+        (let ((location
+                (loop for slot in slots
+                      when (eq (standard-instance-access slot *slot-name-location*) name)
+                        return (standard-instance-access slot *slot-location-location*)
+                      finally (error "no slot named" name object))))
+          (setf (svref cache index) slots
+                (svref cache (+ index 1)) name
+                (svref cache (+ index 2)) location)
+          location))))
 
 (defun %slot (object name)
   (let ((location (%slot-location object name)))

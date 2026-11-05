@@ -790,8 +790,22 @@ and slots), zero-filled."
 ;;; Hashing (Salmagundi). The identity hash survives moving collections
 ;;; (header bits 40..64, rust/kiln-rt/src/rtfun.rs).
 (define-primop :identity-hash (x)
-  (let ((r (new-var)))
+  ;; A heap object's hash, once assigned, is in its header above the
+  ;; length (kiln_rt_identity_hash, HASH_SHIFT): read it inline. The
+  ;; runtime assigns it, and hashes static objects and immediates.
+  (let ((r (new-var)) (tag (copy-to-var `(:and ,x 7) :raw))
+        (heap (new-block)) (fast (new-block)) (slow (new-block)) (done (new-block)))
+    (br `(:or (:eq ,tag ,+tag-cons+) (:eq ,tag ,+tag-general+)) heap slow)
+    (start-block heap)
+    (let ((h (copy-to-var `(:shr (:load (:sub ,x ,tag) 0) 40) :raw)))
+      (br `(:ne ,h 0) fast slow)
+      (start-block fast)
+      (emit `(:set ,r (:shl ,h 1)))
+      (jump done))
+    (start-block slow)
     (emit `(:call-rt ,(rt-identity-hash) (,r) (:ctx ,x) :nil))
+    (jump done)
+    (start-block done)
     r))
 ;;; File descriptor I/O (Cyclosis' POSIX file streams, docs/10 §16): VECTOR
 ;;; is a simple vector of octets as fixnums; the result is the count, or -1.

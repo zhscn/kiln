@@ -4,7 +4,7 @@
 - M5.1 完成（2026-11，§5）：目标端有了运行期的标准宏、`eval`、`compile`、`load` 和 REPL。
 - M5.2 完成（2026-11，§7）：Common-boot 和它的依赖编成 compiler 模块，kiln 上 `cst-to-ast` 的结果和 SBCL 逐字相同。
 - M5.3 完成（2026-11，§8）：kiln 自己的前端和 `lower.lisp` 也编进 compiler 模块，kiln 上编出的 KIR 和 SBCL 的逐字相同。
-- M5.4 进行中（§9）：kiln 交叉编译自己的 kernel 和 CLOS 模块，KIR 和 SBCL 的逐字相同（`tests/m5/co-kernel`，35 秒；`tests/m5/co-clos`，约 16 分钟）。
+- M5.4 进行中（§9）：kiln 交叉编译自己的 kernel 和 CLOS 模块，KIR 和 SBCL 的逐字相同（`tests/m5/co-kernel`，17 秒；`tests/m5/co-clos`，约 8 分钟）。
 
 ## 1. 目标和验证
 
@@ -383,7 +383,7 @@ kernel 的交叉编译一开始跑了一个多小时也没结束。测量工具�
 
 `tests/m5/co-clos`：同一个交叉编译会话里先编 kernel，再编 CLOS（约 150 个文件），输出的 CLOS 模块和 SBCL 编出的逐字节相同。
 - 文件列表由宿主宏 `kiln.compiler::module-files` 在编译测试时给出。
-- 这个测试很慢（JIT 约 20 分钟，要 2 GiB 堆），有 `co-clos.slow`，只在命令行点名时才跑（`tools/test.sh tests/m5/co-clos.lisp`）。
+- 这个测试很慢（约 8 分钟，要 2 GiB 堆），有 `co-clos.slow`，只在命令行点名时才跑，只跑 JIT 一遍（`tools/test.sh tests/m5/co-clos.lisp`）。
 
 宿主特有的部分在 kiln 上的对应：
 - **`defstruct`**：Anatomicl 和 `lisp/structures.lisp` 编进 compiler 模块，kiln 上的交叉编译同样用它展开。
@@ -414,6 +414,13 @@ kernel 的交叉编译一开始跑了一个多小时也没结束。测量工具�
   - 它每次还要 `(intern name (find-package "KEYWORD"))`：按名字查包时 `equal` 哈希表里的 `string=` 逐个字符调用 `char=` 和 `schar`。现在 `string=` 用 primop 比较字符。
 - 剩下的大头是泛函分派本身：判别函数解释自动机，每层二分查找；Iconoclast 和 builder 协议的泛函调用非常密集。
 - kernel 交叉编译从 38 秒降到 35 秒（AOT），CLOS 约 16 分钟（JIT）。
+
+之后又做了一轮（和 SBCL 的对比：SBCL 编 kernel 1.8 秒、编 CLOS 25.6 秒；微基准里 `fib` 和分配持平，泛函调用约慢 4 倍，`equal` 哈希表约慢 28 倍）：
+- **哈希表**：分桶表把查找要用的数据放在一个简单向量里，按固定位置从实例读出，eq、eql、equal 内联比较；`cl:gethash`、`(setf gethash)`、`remhash` 遇到分桶表时直接调用它的函数，不经过泛函。微基准 642 → 190 ms（SBCL 23 ms）。
+- **分派**：只按一个或两个展开参数分派、没有 EQL 特化的泛函，判别闭包记住上一次调用的 stamp 和有效方法，命中时不走自动机。泛函调用微基准 211 → 95 ms（SBCL 50 ms）。
+- **按名字读槽**（`%slot`，`class-typep` 和 `call-next-method` 每次都用）：按槽列表和名字缓存位置；`:identity-hash` 在对象头里已有哈希时内联读出，不调用运行时。
+- **GC**：MMTk 的 debug assertions 检查每次 side metadata 访问，GC 占了约三分之一的时间，dev 构建里对 mmtk 关掉；默认堆从 256 MiB 改为 1 GiB。
+- 结果：kernel 交叉编译 35 → 17 秒（AOT，SBCL 1.8 秒）；kernel 加 CLOS 约 16 → 7.7 分钟（JIT，SBCL 约 27 秒）。
 
 ### 9.5 接下来
 

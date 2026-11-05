@@ -1,7 +1,7 @@
 ;;; kiln compiles its CLOS module (docs/11 §9, M5.4): a cross compilation,
 ;;; kernel first, then CLOS in the same session, as SBCL compiles them. The
 ;;; KIR printed must be the CLOS module that SBCL made (co-clos.same-kir).
-;;; Slow (about 15 minutes, a 2 GiB heap): run only when named, with the JIT
+;;; Slow (about 8 minutes, a 2 GiB heap): run only when named, with the JIT
 ;;; (co-clos.slow).
 
 (let ((session (kiln.compiler:make-session :client-class 'kiln.compiler::cross-client))

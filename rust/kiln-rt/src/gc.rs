@@ -55,7 +55,7 @@ fn mmtk() -> &'static MMTK<Kiln> {
         // Defaults; MMTK_* environment variables override them.
         let defaults = [
             ("plan", "SemiSpace"),
-            ("gc_trigger", "FixedHeapSize:268435456"),
+            ("gc_trigger", "FixedHeapSize:1073741824"),
             ("threads", "2"),
         ];
         for (k, v) in defaults {

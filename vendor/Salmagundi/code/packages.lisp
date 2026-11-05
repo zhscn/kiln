@@ -4,11 +4,12 @@
   (:use #:common-lisp)
   ;; Shadow these for now.  Ultimately, import them with
   ;; the rest of the CL package. 
-  ;; kiln: only MAKE-HASH-TABLE and SXHASH, whose Salmagundi versions take
-  ;; a client; the others are the CL functions (kiln has no other hash
-  ;; tables).
+  ;; kiln: MAKE-HASH-TABLE and SXHASH, whose Salmagundi versions take a
+  ;; client, and GETHASH and REMHASH: kiln's CL functions call the bucket
+  ;; table's directly (lisp/target/clos/hash-tables.lisp). The others are
+  ;; the CL functions (kiln has no other hash tables).
   (:shadow #+(not kiln) #:clrhash
-           #+(not kiln) #:gethash
+           #:gethash
            #+(not kiln) #:hash-table
            #+(not kiln) #:hash-table-count
            #+(not kiln) #:hash-table-p
@@ -18,7 +19,7 @@
            #+(not kiln) #:hash-table-test
            #:make-hash-table
            #+(not kiln) #:maphash
-           #+(not kiln) #:remhash
+           #:remhash
            #:sxhash)
   (:export #:ceiling-pow2
            #:clrhash

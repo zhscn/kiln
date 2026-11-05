@@ -68,6 +68,10 @@ Each patched place is marked with a `kiln:` comment.
   slot's initargs only when there are initargs: `reinitialize-instance`
   (`slot-names` NIL) with one initarg made three generic function calls per
   slot (Iconoclast's AST walker sets slots that way).
+- A generic function that dispatches on one or two of its spread
+  parameters, without EQL specializers, has a discriminating closure that
+  remembers the stamps of the last call's arguments and its effective
+  method, and calls it again without walking the automaton.
 - Method functions are called with the generic function's arguments
   unchanged: upstream appends `:allow-other-keys t` for a method with
   keyword parameters, which its `&rest` parameter then sees
@@ -114,6 +118,14 @@ Under `#+kiln` (kiln reads target sources with its own features):
   `hash-float` hashes the exact rational value instead of using Quaviver.
 - `hash-hash-table` refers to its parameter `object`, not an undefined
   `table` (an upstream bug).
+- `gethash` and `remhash` are shadowed too: kiln's `cl:gethash`,
+  `(setf cl:gethash)` and `cl:remhash` call the bucket table's functions
+  directly and Salmagundi's generic functions otherwise
+  (`lisp/target/clos/hash-tables.lisp`).
+- The bucket hash table keeps what lookups need in one simple vector (its
+  core), read at a fixed location in the instance, and compares with
+  `eq`, `eql` and `equal` inline: upstream calls several accessors and
+  `assoc` with the test at each lookup.
 - The bucket hash table iterates in the order SBCL's hash tables do:
   insertion order, a removed entry's place reused by the next insertion
   (the last freed first). An entry is `(key value . index)` in the buckets

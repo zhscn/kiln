@@ -876,6 +876,68 @@
         (1 (discriminator 1)) (2 (discriminator 2)) (3 (discriminator 3))
         (4 (discriminator 4)) (5 (discriminator 5)) (6 (discriminator 6))))))
 
+;;; kiln: a generic function that dispatches on one of its (spread)
+;;; parameters, without EQL specializers, has a discriminating closure
+;;; with a one-entry cache: the stamp of the last call's argument and its
+;;; effective method. Most generic functions (accessors, AST walkers) are
+;;; called with instances of one class many times in a row.
+(defun make-single-dispatch-closure (generic-function arity position profile initial)
+  (let ((cached-stamp -1)
+        (cached-function nil))
+    (macrolet ((dispatcher (n k)
+                 (let ((parameters (spread-parameters n)))
+                   `(lambda ,parameters
+                      (let ((stamp (argument-stamp ,(nth k parameters))))
+                        (if (eq stamp cached-stamp)
+                            (funcall cached-function ,@parameters)
+                            (let ((state (automaton-transition initial stamp)))
+                              (if (consp state)
+                                  (progn (setf cached-stamp stamp
+                                               cached-function (cdr state))
+                                         (funcall (cdr state) ,@parameters))
+                                  (default-discriminating-function
+                                   generic-function (list ,@parameters) profile))))))))
+               (dispatchers ()
+                 `(ecase arity
+                    ,@(loop for n from 1 to 6
+                            collect `(,n (ecase position
+                                           ,@(loop for k from 0 below n
+                                                   collect `(,k (dispatcher ,n ,k)))))))))
+      (dispatchers))))
+
+(defun make-double-dispatch-closure (generic-function arity first second profile initial)
+  ;; As MAKE-SINGLE-DISPATCH-CLOSURE, for two specialized parameters,
+  ;; FIRST < SECOND (SLOT-VALUE-USING-CLASS and the like).
+  (let ((cached-first -1)
+        (cached-second -1)
+        (cached-function nil))
+    (macrolet ((dispatcher (n j k)
+                 (let ((parameters (spread-parameters n)))
+                   `(lambda ,parameters
+                      (let ((s1 (argument-stamp ,(nth j parameters)))
+                            (s2 (argument-stamp ,(nth k parameters))))
+                        (if (and (eq s1 cached-first) (eq s2 cached-second))
+                            (funcall cached-function ,@parameters)
+                            (let ((state (automaton-transition initial s1)))
+                              (when state
+                                (setf state (automaton-transition state s2)))
+                              (if (consp state)
+                                  (progn (setf cached-first s1
+                                               cached-second s2
+                                               cached-function (cdr state))
+                                         (funcall (cdr state) ,@parameters))
+                                  (default-discriminating-function
+                                   generic-function (list ,@parameters) profile))))))))
+               (dispatchers ()
+                 `(ecase arity
+                    ,@(loop for n from 2 to 6
+                            collect `(,n (ecase first
+                                           ,@(loop for j from 0 below n
+                                                   collect `(,j (ecase second
+                                                                  ,@(loop for k from (1+ j) below n
+                                                                          collect `(,k (dispatcher ,n ,j ,k))))))))))))
+      (dispatchers))))
+
 (defun make-discriminating-closure (generic-function)
   (let* ((specializer-profile (specializer-profile generic-function))
          (active-arg-count (loop for x in specializer-profile count x))
@@ -904,8 +966,19 @@
                                       (effective-method-cache call-cache)))
                    (automaton-states (extract-transition-information automaton))))))
       (if arity
-          (make-spread-discriminating-closure
-           generic-function arity specializer-profile initial eql-cache)
+          (cond ((and initial (null eql-cache) (small-integer= active-arg-count 1))
+                 (make-single-dispatch-closure generic-function arity
+                                               (position-if #'identity specializer-profile)
+                                               specializer-profile initial))
+                ((and initial (null eql-cache) (small-integer= active-arg-count 2))
+                 (let ((first (position-if #'identity specializer-profile)))
+                   (make-double-dispatch-closure
+                    generic-function arity first
+                    (position-if #'identity specializer-profile :start (1+ first))
+                    specializer-profile initial)))
+                (t
+                 (make-spread-discriminating-closure
+                  generic-function arity specializer-profile initial eql-cache)))
           (lambda (&rest arguments)
             (let ((state initial))
               (loop for p in specializer-profile
