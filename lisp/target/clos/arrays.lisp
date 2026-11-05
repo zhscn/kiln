@@ -59,9 +59,22 @@
       (walk root))
     result))
 
+;;; The kinds by stamp (an instance's stamp is its class's unique number):
+;;; the kernel asks about every instance, mostly of other classes.
+(defparameter *stamp-kinds*
+  (let ((kinds (kiln.kernel::make-simple-vector
+                (1+ (loop for (class) in *class-kinds*
+                          maximize (clostrophilia::unique-number class)))
+                nil)))
+    (loop for (class . kind) in *class-kinds*
+          do (setf (svref kinds (clostrophilia::unique-number class)) kind))
+    kinds))
+
 (defun complex-array-kind (object)
   (if (clostrophilia::instancep object)
-      (cdr (assoc (class-of object) *class-kinds* :test #'eq))
+      (let ((stamp (clostrophilia::standard-instance-access object -2))
+            (kinds *stamp-kinds*))
+        (and (< stamp (length kinds)) (svref kinds stamp)))
       nil))
 
 ;;; Element types are looked up often (each store checks the element), so

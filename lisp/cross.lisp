@@ -311,6 +311,12 @@ at compile time (USE-HOST-MACROS).")
   (declare (ignore env))
   `(eval-when (:load-toplevel) ,@(rest form)))
 
+(defvar *host-compiler-macros* (make-hash-table :test 'eq)
+  "Function names -> the host's compiler macros, wrapped (USE-HOST-MACROS).")
+
+(defmethod client-compiler-macro ((client cross-client) name)
+  (gethash name *host-compiler-macros*))
+
 (defun use-host-macros (session package-names)
   "The macros whose home is one of the packages PACKAGE-NAMES are expanded
 by the host's expanders at compile time in SESSION, and code evaluated at
@@ -328,6 +334,20 @@ evaluate some at compile time: parser.packrat's DEFGRAMMAR)."
               (setf (clo:fdefinition client genv s) (fdefinition s)))
             (when (fboundp `(setf ,s))
               (setf (clo:fdefinition client genv `(setf ,s)) (fdefinition `(setf ,s)))))
+          (let ((expander (and (eq (symbol-package s) package) (compiler-macro-function s))))
+            (when expander
+              (let ((name s))
+                ;; A compiler macro may decline: an expansion that is not
+                ;; target code (host objects) declines too.
+                (setf (gethash s *host-compiler-macros*)
+                      (lambda (form env)
+                        (let ((raw (funcall expander form env)))
+                          (if (eq raw form)
+                              form
+                              (let ((expansion (translate-host-backquote raw)))
+                                (handler-case (progn (check-host-expansion name expansion)
+                                                     expansion)
+                                  (error () form))))))))))
           (let ((expander (and (eq (symbol-package s) package) (macro-function s))))
             (when expander
               (let ((name s))

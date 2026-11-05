@@ -506,13 +506,15 @@ visited once."
 (defmethod lower ((ast ico:literal-ast))
   (constant-object (ico:literal ast)))
 
-(defmethod lower ((ast ico:quote-ast))
+(defun quoted-object (ast)
   (let ((object (ico:object-ast ast)))
-    (constant-object
-     (if (typep object 'ico:unparsed-form-ast)
-         (let ((form (ico:form object)))
-           (if (typep form 'cst:cst) (cst:raw form) form))
-         (fail "unexpected QUOTE object ~S" object)))))
+    (if (typep object 'ico:unparsed-form-ast)
+        (let ((form (ico:form object)))
+          (if (typep form 'cst:cst) (cst:raw form) form))
+        (fail "unexpected QUOTE object ~S" object))))
+
+(defmethod lower ((ast ico:quote-ast))
+  (constant-object (quoted-object ast)))
 
 (defmethod lower ((ast ico:variable-reference-ast))
   (copy-to-var (var-of (ico:definition-ast ast))))

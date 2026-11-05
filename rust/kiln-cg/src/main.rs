@@ -61,6 +61,9 @@ fn run_jit(kir: &kir::Module, opts: &Options) -> Result<i32, String> {
     if std::env::var("KILN_TIME").is_ok() {
         eprintln!("kiln-cg: compiled in {:?}", t.elapsed());
     }
+    if std::env::var("KILN_PERF_MAP").is_ok() {
+        write_perf_map(&module)?;
+    }
     let records: Vec<CallSiteRecord> = out
         .callsites
         .iter()
@@ -105,6 +108,27 @@ fn run_jit(kir: &kir::Module, opts: &Options) -> Result<i32, String> {
         nroots: roots.len() as u64,
     };
     Ok(unsafe { kiln_rt::run_module(&info) })
+}
+
+/// With KILN_PERF_MAP set, the JIT writes /tmp/perf-PID.map (perf's format,
+/// "START SIZE NAME" in hex), for profilers and for mapping addresses
+/// sampled with gdb to functions. A function's size is up to the next one.
+fn write_perf_map(module: &JITModule) -> Result<(), String> {
+    use cranelift_module::Module;
+    let mut funcs: Vec<(usize, String)> = module
+        .declarations()
+        .get_functions()
+        .filter(|(_, d)| d.linkage.is_definable())
+        .map(|(id, d)| (module.get_finalized_function(id) as usize, d.linkage_name(id).into_owned()))
+        .collect();
+    funcs.sort();
+    let mut text = String::new();
+    for (i, (start, name)) in funcs.iter().enumerate() {
+        let size = funcs.get(i + 1).map_or(4096, |(next, _)| next - start);
+        text.push_str(&format!("{start:x} {size:x} {name}\n"));
+    }
+    let path = format!("/tmp/perf-{}.map", std::process::id());
+    std::fs::write(&path, text).map_err(|e| format!("{path}: {e}"))
 }
 
 fn write_obj(kir: &kir::Module, opts: &Options, out_path: &str) -> Result<(), String> {

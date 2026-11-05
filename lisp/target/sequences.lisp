@@ -11,6 +11,14 @@
           (test (funcall test item k))
           (t (eql item k)))))
 
+;;; EQ or EQL if the test compares the elements themselves with that
+;;; function: the common case, done without calls (the compiler on kiln,
+;;; docs/11 §9).
+(defun simple-test (test test-not key)
+  (and (null key) (null test-not)
+       (cond ((or (null test) (eq test #'eql) (eq test 'eql)) 'eql)
+             ((or (eq test #'eq) (eq test 'eq)) 'eq))))
+
 (defun seq-list (seq start end)
   "The elements of SEQ from START below END (NIL: the end) as a fresh list."
   (let ((result nil) (i 0))
@@ -33,16 +41,28 @@
 ;;; Membership and association
 
 (defun member (item list &key test test-not key)
-  (do ((l list (cdr l)))
-      ((null l) nil)
-    (when (satisfies-test item (car l) test test-not key) (return l))))
+  (case (simple-test test test-not key)
+    (eq (do ((l list (cdr l)))
+            ((null l) nil)
+          (when (eq item (car l)) (return l))))
+    (eql (do ((l list (cdr l)))
+             ((null l) nil)
+           (when (eql item (car l)) (return l))))
+    (t (do ((l list (cdr l)))
+           ((null l) nil)
+         (when (satisfies-test item (car l) test test-not key) (return l))))))
 (defun member-if (pred list &key key)
   (do ((l list (cdr l)))
       ((null l) nil)
     (when (funcall pred (if key (funcall key (car l)) (car l))) (return l))))
 (defun assoc (item alist &key test test-not key)
-  (dolist (pair alist nil)
-    (when (and pair (satisfies-test item (car pair) test test-not key)) (return pair))))
+  (case (simple-test test test-not key)
+    (eq (dolist (pair alist nil)
+          (when (and pair (eq item (car pair))) (return pair))))
+    (eql (dolist (pair alist nil)
+           (when (and pair (eql item (car pair))) (return pair))))
+    (t (dolist (pair alist nil)
+         (when (and pair (satisfies-test item (car pair) test test-not key)) (return pair))))))
 (defun assoc-if (pred alist &key key)
   (dolist (pair alist nil)
     (when (and pair (funcall pred (if key (funcall key (car pair)) (car pair)))) (return pair))))
@@ -138,6 +158,13 @@
 ;;; Searching
 
 (defun find (item seq &key test test-not key (start 0) end from-end)
+  ;; A list from its start: without copying it.
+  (when (and (listp seq) (eql start 0) (null end) (null from-end))
+    (return-from find
+      (case (simple-test test test-not key)
+        (eq (dolist (x seq nil) (when (eq item x) (return x))))
+        (eql (dolist (x seq nil) (when (eql item x) (return x))))
+        (t (dolist (x seq nil) (when (satisfies-test item x test test-not key) (return x)))))))
   (let ((l (seq-list seq start end)))
     (when from-end (setq l (nreverse l)))
     (dolist (x l nil)
@@ -150,6 +177,12 @@
 (defun find-if-not (pred seq &rest args)
   (apply #'find-if (complement pred) seq args))
 (defun position (item seq &key test test-not key (start 0) end from-end)
+  (when (and (listp seq) (eql start 0) (null end) (null from-end))
+    (return-from position
+      (let ((i 0))
+        (dolist (x seq nil)
+          (when (satisfies-test item x test test-not key) (return i))
+          (setq i (+ i 1))))))
   (let ((i start) (found nil))
     (dolist (x (seq-list seq start end) found)
       (when (satisfies-test item x test test-not key)

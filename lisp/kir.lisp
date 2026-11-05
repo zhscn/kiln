@@ -137,33 +137,62 @@ entry block current. Unterminated blocks end with a trap."
                             blocks))
           (kmodule-funcs *module*))))
 
-;;; Printing
+;;; Printing. Each form is built in a string, written with one
+;;; WRITE-STRING: on kiln, writing a character to a stream is a generic
+;;; function call and an unbuffered write (docs/11 §9).
+
+(defvar *out*)                          ; simple string being filled
+(defvar *fill*)                         ; its fill index
+
+(defun out-char (c)
+  (when (= *fill* (length *out*))
+    (let ((new (make-string (* 2 (length *out*)))))
+      (replace new *out*)
+      (setf *out* new)))
+  (setf (char *out* *fill*) c)
+  (setf *fill* (+ *fill* 1)))
+
+(defun out-string (string)
+  (loop for c across string do (out-char c)))
+
+(defun out-integer (n)
+  (cond ((minusp n) (out-char #\-) (out-integer (- n)))
+        ((< n 10) (out-char (code-char (+ (char-code #\0) n))))
+        (t (out-integer (floor n 10))
+           (out-char (code-char (+ (char-code #\0) (mod n 10)))))))
+
+(defun out-kir (x)
+  (etypecase x
+    (null (out-string "()"))
+    (keyword (loop for c across (symbol-name x) do (out-char (char-downcase c))))
+    (string
+     (out-char #\")
+     (loop for c across x
+           do (when (member c '(#\" #\\)) (out-char #\\))
+              (out-char c))
+     (out-char #\"))
+    (integer (out-integer x))
+    (cons
+     (out-char #\()
+     (loop for (item . rest) on x
+           do (out-kir item)
+              (when rest (out-char #\Space)))
+     (out-char #\)))))
 
 (defun print-kir (x stream)
-  (etypecase x
-    (null (write-string "()" stream))
-    (keyword (write-string (string-downcase (symbol-name x)) stream))
-    (string
-     (write-char #\" stream)
-     (loop for c across x
-           do (when (member c '(#\" #\\)) (write-char #\\ stream))
-              (write-char c stream))
-     (write-char #\" stream))
-    (integer (format stream "~D" x))
-    (cons
-     (write-char #\( stream)
-     (loop for (item . rest) on x
-           do (print-kir item stream)
-              (when rest (write-char #\Space stream)))
-     (write-char #\) stream))))
+  (let ((*out* (make-string 256)) (*fill* 0))
+    (out-kir x)
+    (write-string *out* stream :end *fill*)))
 
 (defun print-module (module stream)
-  (format stream "(module ")
+  (write-string "(module " stream)
   (print-kir (kmodule-name module) stream)
-  (format stream "~%  ")
+  (write-string (string #\Newline) stream)
+  (write-string "  " stream)
   (print-kir `(:init ,(kmodule-init module)) stream)
   (when (kmodule-shared module)
-    (format stream "~%  ")
+    (write-string (string #\Newline) stream)
+    (write-string "  " stream)
     (print-kir `(:shared ,@(reverse (kmodule-shared module))) stream))
   (dolist (group (list (reverse (kmodule-imports module))
                        (reverse (kmodule-import-data module))
@@ -171,6 +200,8 @@ entry block current. Unterminated blocks end with a trap."
                        (reverse (kmodule-roots module))
                        (reverse (kmodule-funcs module))))
     (dolist (form group)
-      (format stream "~%  ")
+      (write-string (string #\Newline) stream)
+      (write-string "  " stream)
       (print-kir form stream)))
-  (format stream ")~%"))
+  (write-string ")" stream)
+  (write-string (string #\Newline) stream))

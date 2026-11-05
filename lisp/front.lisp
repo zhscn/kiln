@@ -257,7 +257,32 @@ true; else NIL and NIL."
     (return-from convert-maybe-inline
       (let ((*inline-expanding* (cons (inline-call form) *inline-expanding*)))
         (funcall next client (cst:reconstruct client (inline-expansion form) cst) environment))))
+  (let ((expansion (compiler-macro-expansion client environment form)))
+    (when expansion
+      (return-from convert-maybe-inline
+        (funcall next client (cst:reconstruct client expansion cst) environment))))
   (convert-load-time-value client cst environment form next))
+
+;;; Compiler macros: kiln has none of its own yet, but the host's of the
+;;; libraries whose macros are the host's (USE-HOST-MACROS, cross.lisp)
+;;; apply to the code compiled for the target (parser.packrat's PARSE
+;;; compiles constant grammar expressions when it expands, docs/11 §9).
+(defgeneric client-compiler-macro (client name)
+  (:method (client name)
+    (declare (ignore client name))
+    nil))
+
+(defun compiler-macro-expansion (client environment form)
+  "The expansion of FORM, a call of a global function, by its compiler
+macro, or NIL (none, or the compiler macro declines)."
+  (and *inline-enabled*
+       (consp form) (symbolp (first form))
+       (let ((expander (client-compiler-macro client (first form))))
+         (and expander
+              (typep (trucler:describe-function client environment (first form))
+                     '(or null trucler:global-function-description))
+              (let ((expansion (funcall expander form environment)))
+                (and (not (eq expansion form)) expansion))))))
 
 (defun convert-load-time-value (client cst environment form next)
   (cond ((and (consp form) (eq (first form) 'load-time-value)

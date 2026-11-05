@@ -476,6 +476,34 @@
 ;;; must supply the GENERIC-FUNCTION argument either from a
 ;;; closed-over variable, from a compiled-in constant, or perhaps by
 ;;; some other mechanism.
+;;; kiln: the discriminating function is not remade at each miss (that
+;;; adds every entry of the call history to a new automaton, which made
+;;; the misses of a generic function with N call caches cost N^3).  A
+;;; miss whose classes have a call cache calls its effective method; the
+;;; discriminating function is remade when the misses since it was made
+;;; reach a quarter of the call history it was made from, or that history
+;;; was short.  *BUILT-HISTORIES* maps a generic function to (LENGTH .
+;;; MISSES): the length of that call history, and the misses since.
+(defvar *built-histories* '())
+
+(defun note-built-history (generic-function length)
+  (let ((entry (assoc generic-function *built-histories* :test #'eq)))
+    (if entry
+        (setf (cdr entry) (cons length 0))
+        (push (cons generic-function (cons length 0)) *built-histories*))))
+
+(defun remake-discriminating-function-p (generic-function)
+  (let ((entry (cdr (assoc generic-function *built-histories* :test #'eq))))
+    (or (null entry)
+        (< (car entry) 16)
+        (>= (setf (cdr entry) (+ (cdr entry) 1))
+            (+ (kiln.sys:%primop :fixnum-quotient (car entry) 4) 1)))))
+
+(defun call-effective-method-function (generic-function function arguments)
+  (if (spread-arity generic-function)
+      (apply function arguments)
+      (funcall function arguments)))
+
 (defun default-discriminating-function (generic-function arguments profile)
   (let* ((required-argument-count (length profile))
          (required-arguments (subseq arguments 0 required-argument-count))
@@ -501,9 +529,21 @@
                                  for p in profile
                                  when p
                                    collect class))
-         (entry (car (member relevant-classes (call-history generic-function)
-                             :key #'class-cache :test #'equal))))
+         (entry #-kiln (car (member relevant-classes (call-history generic-function)
+                                    :key #'class-cache :test #'equal))
+                ;; kiln: classes are compared by identity (EQUAL on
+                ;; instances goes through TYPEP).
+                #+kiln (loop for call-cache in (call-history generic-function)
+                             when (loop for a in relevant-classes
+                                        for b in (class-cache call-cache)
+                                        always (eq a b))
+                               return call-cache)))
     (unless (null entry)
+      #+kiln
+      (unless (remake-discriminating-function-p generic-function)
+        (return-from default-discriminating-function
+          (call-effective-method-function
+           generic-function (effective-method-cache entry) arguments)))
       (compute-and-install-discriminating-function generic-function)
       (return-from default-discriminating-function
         (apply generic-function arguments)))
@@ -517,6 +557,11 @@
                                  classes
                                  relevant-classes
                                  applicable-methods)))
+          #+kiln
+          (unless (remake-discriminating-function-p generic-function)
+            (return-from default-discriminating-function
+              (call-effective-method-function
+               generic-function effective-method-function arguments)))
           (set-funcallable-instance-function
            generic-function
            (compute-discriminating-function generic-function))
@@ -837,6 +882,7 @@
          (call-history (call-history generic-function))
          (arity (spread-arity generic-function))
          (eql-cache (eql-dispatch-cache-if-any generic-function)))
+    (note-built-history generic-function (length call-history))
     (when (and (null call-history) (null eql-cache))
       (return-from make-discriminating-closure
         (lambda (&rest arguments)

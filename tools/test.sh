@@ -16,11 +16,12 @@ sources=("${@:-$root/tests/*/*.lisp}")
 # shellcheck disable=SC2206
 sources=(${sources[@]})
 # A test NAME.lisp with a file NAME.same-kir prints a module compiled on
-# kiln (docs/11 §8): its expected output is the KIR that SBCL made of the
-# test that the file names, in the same session. That test is run too.
+# kiln (docs/11 §8, §9): its expected output is the KIR that SBCL made, in
+# the same session, of the test or the module (kernel, clos...) that the
+# file names. Such a test is run too.
 for src in "${sources[@]}"; do
   same=${src%.lisp}.same-kir
-  if [ -f "$same" ]; then
+  if [ -f "$same" ] && [ -f "$(dirname "$src")/$(cat "$same").lisp" ]; then
     other=$(dirname "$src")/$(cat "$same").lisp
     case " ${sources[*]} " in
       *" $other "*) ;;
@@ -87,6 +88,10 @@ for src in "${sources[@]}"; do
     ev-*) modules+=("$build/clos.kir" "$build/eval.kir"); heap=16777216 ;;
     co-*) modules+=("$build/clos.kir" "$build/frontend.kir" "$build/eval.kir" "$build/compiler.kir")
           heap=67108864 ;;
+  esac
+  # Compiling a module on kiln keeps the module and the session live.
+  case $name in
+    co-kernel) heap=268435456 ;;
   esac
   if "$cg" jit "${modules[@]}" "$kir" >"$build/$name.jit.out" 2>&1 && diff -u "$expected" "$build/$name.jit.out"; then
     echo "PASS jit $name"

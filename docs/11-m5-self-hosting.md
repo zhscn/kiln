@@ -4,6 +4,7 @@
 - M5.1 完成（2026-11，§5）：目标端有了运行期的标准宏、`eval`、`compile`、`load` 和 REPL。
 - M5.2 完成（2026-11，§7）：Common-boot 和它的依赖编成 compiler 模块，kiln 上 `cst-to-ast` 的结果和 SBCL 逐字相同。
 - M5.3 完成（2026-11，§8）：kiln 自己的前端和 `lower.lisp` 也编进 compiler 模块，kiln 上编出的 KIR 和 SBCL 的逐字相同。
+- M5.4 进行中（§9）：kiln 交叉编译自己的 kernel，KIR 和 SBCL 的逐字相同（`tests/m5/co-kernel`，38 秒）。
 
 ## 1. 目标和验证
 
@@ -327,4 +328,62 @@ compiler 模块的末尾加上 kiln 自己的 `lisp/abi.lisp`、`kir.lisp`、`lo
 
 - 在 kiln 上编译 kiln 全部源码（kernel、CLOS、frontend、eval、compiler），和 SBCL 的 KIR 比对。kernel 和 CLOS 要求宿主宏、`:compile-time-too` 文件项、包改名在目标端也有对应的做法。
 - 前端在 kiln 上的速度决定 M5.4 是否可行（§3）。
+
+## 9. M5.4：kiln 编译 kiln
+
+### 9.1 交叉编译模式
+
+M5.3 的 client 在运行中的 image 里编译。这对用户程序是对的，但编译 kiln 自己不行：
+- kernel 定义了早期的 `assert`、`define-condition`，CLOS 模块在编译期求值 Clostrophilia 的函数，这些都会改掉正在运行编译器的 image；
+- SBCL 的会话从一个空的编译期环境开始，依次编译各模块，两边的起点必须一样。
+
+所以 kiln 也用宿主那套交叉编译：`lisp/host.lisp` 改成两边共用的 `lisp/cross.lisp`（`cross-client`），M5.3 的 client 改名 `image-client`。`make-session` 的 `:client-class` 选择用哪个；宿主默认 `cross-client`，kiln 上默认 `image-client`。
+
+在 kiln 上，`cross-client` 的「宿主」就是 kiln 自己：
+- 编译期环境是 Clostrum 环境，编译期求值用 Common-boot 的 HIR 求值器。它的三个系统（HIR、AST-to-HIR、HIR-evaluator）也编进了 compiler 模块。
+- 导入的函数和宿主宏是 image 里的：LOOP 是 image 的 Khazern，反引号是 Eclector 的。
+- 标准宏用 Common-macros 的定义。eval 模块载入 Common-macros 之后、换回 kiln 自己的宏之前，把它们存在 `kiln.kernel::*common-macros*`；宿主则取 `cmd:macro-function`。
+
+### 9.2 修正
+
+- **Common-macros 的 `macroexpand-1` 丢掉了环境**（上游 bug）。宿主的编译期环境里本来没有 Common-macros 的宏：`cb:create-environment` 用错了名字去找，所以标准宏都经 `cmd:macroexpand-1` 展开，局部宏和符号宏对它们不可见。例如 `(setf (m) x)`，`m` 是 `macrolet` 定义的局部宏，结果被编成对 `(setf m)` 的调用。
+  - 现在 vendor 补丁把环境传给展开函数（vendor/README.md），宿主的编译期环境也直接放进这些宏。
+  - HIR 求值器的 `make-thunk` 就有这样的 `setf`。
+  - 回归测试 `tests/m5/local-macro-places`。
+- `fboundp` 对 `(setf t)`、`(setf nil)` 报类型错误，现在返回假。
+- 模块的额外符号和新定义包的外部符号按名字排序后输出，因为包里符号的遍历顺序因 image 而异。
+
+### 9.3 kiln 上编译器的速度
+
+kernel 的交叉编译一开始跑了一个多小时也没结束。测量工具：
+- perf 在这台机器上用 `-e cpu-clock` 就不需要特权；带调用链的采样打不开。
+- kiln-cg 的 JIT 设了 `KILN_PERF_MAP=1` 时，写出 `/tmp/perf-PID.map`，perf 能显示 JIT 函数的名字。
+- AOT 程序有帧指针，gdb 能回溯。每次 attach 一次 gdb 抽一个调用栈；在同一次 gdb 会话里连续抽样时，进程一直停着，得到的其实是同一个瞬间。
+- 很多函数的标签里没有名字：`block` 没有 `return-from` 时在简化阶段被删掉了。从 KIR 里「把哪个函数对象存进哪个符号」可以得到对应关系。
+
+改动和效果（`co-compile` 的 AOT 程序从 12 秒到 2.3 秒；kernel 从超过一小时到 38 秒）：
+
+1. **CLOS 分派没命中时重建判别函数**：Clostrophilia 每次没命中，都把整个调用历史重新加进一个新的自动机，而 `add-path` 每加一条路径还要线性查找转移。`walk-ast-node` 的调用历史有 1500 项，一次编译要加 170 万条路径，总代价是 N³。
+   - 现在没命中时，如果调用历史里已有这组类，就直接调用它的有效方法；没命中的次数达到上次构建时历史长度的四分之一才重建（vendor/README.md）。
+   - 这一组类在调用历史里的查找按 `eq` 比较。原来用的 `equal`，比较 instance 时要走 `typep`。
+2. **parser.packrat 的 `parse` 靠 compiler macro 在编译期编译常量表达式**。kiln 不用 compiler macro，于是 s-expression-syntax 的 `classify` 每转换一个形式，都要在运行期重新解析一遍表达式，再用 Maclina 编译。
+   - 现在宿主库（`use-host-macros` 的那些包）的宿主 compiler macro 也用于为目标编译的代码（`client-compiler-macro`）。展开结果照样经过反引号改写和 `check-host-expansion`；不合格的，当作 compiler macro 放弃展开。
+3. **输出**：kiln 的文件流没有缓冲，每个字节都要分配一个向量、做一次 `write` 系统调用。
+   - 没有加缓冲：runtime 的 `print` 直接写 fd 1，Lisp 这边一缓冲，两边的输出顺序就会乱。
+   - 改为 POSIX 文件流的 `stream-write-string` 一次编码整个字符串，只写一次。
+   - KIR 打印器先在字符串里拼好每个顶层形式，再一次写出。
+4. **kernel 的序列函数**：
+   - `member`、`assoc`、`find`、`position` 在 test 是 `eq`/`eql`、又没有 key 时，直接循环比较；
+   - 列表上的 `find`/`position` 不再先复制一份列表；
+   - Regalia 判断数组种类（`stringp`、`length` 对每个 instance 都要问）改用 stamp 查向量，原来是扫一张 30 项的 alist。
+
+还没处理的开销：parser.packrat 的 inline cache 和 s-expression-syntax 的解析器，仍然是载入时或首次使用时用 Maclina 编成字节码（`compile-parser`）。在整个编译里，它们的执行占了相当一部分时间。
+
+### 9.4 接下来
+
+- CLOS、frontend、eval、compiler 模块在 kiln 上交叉编译，逐个和 SBCL 比对。宿主特有的部分要有 kiln 上的对应：
+  - `closer-mop-aliases` 现在遍历宿主的 CLOSER-MOP 包；
+  - `defstruct` 由宿主的 Anatomicl 展开；
+  - 宿主库的 compiler macro 在 kiln 上没有（kiln 还没有 compiler macro）。
+- 之后用 kiln0 编出的 KIR 链接 kiln1，再比较 kiln1 和 kiln2。
 

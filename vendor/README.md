@@ -55,6 +55,14 @@ Each patched place is marked with a `kiln:` comment.
 - `default-discriminating-function` checks for obsolete instances (stamp
   differs from the class's unique number) and updates them before
   dispatching again, as its comment describes.
+- A miss does not remake the discriminating function each time (upstream
+  adds every call cache of the call history to a new automaton at each
+  miss: with N call caches, N misses cost N^3). A miss whose classes have
+  a call cache calls its effective method; the discriminating function is
+  remade once the misses since it was made reach a quarter of the call
+  history it was made from (or that history was short). The call cache
+  of the classes is looked up comparing the classes with `eq` (upstream
+  `equal`).
 - Method functions are called with the generic function's arguments
   unchanged: upstream appends `:allow-other-keys t` for a method with
   keyword parameters, which its `&rest` parameter then sees
