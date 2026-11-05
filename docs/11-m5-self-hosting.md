@@ -3,6 +3,7 @@
 **状态**：
 - M5.1 完成（2026-11，§5）：目标端有了运行期的标准宏、`eval`、`compile`、`load` 和 REPL。
 - M5.2 完成（2026-11，§7）：Common-boot 和它的依赖编成 compiler 模块，kiln 上 `cst-to-ast` 的结果和 SBCL 逐字相同。
+- M5.3 完成（2026-11，§8）：kiln 自己的前端和 `lower.lisp` 也编进 compiler 模块，kiln 上编出的 KIR 和 SBCL 的逐字相同。
 
 ## 1. 目标和验证
 
@@ -49,7 +50,7 @@
 |---|---|---|
 | M5.1 ✅ | 目标端 Maclina：Ecclesia、Common-macros、Trucler 和 Maclina 编成 `eval` 模块（§5）；`eval`、`compile`（字节码）、`load` 源文件；最简 REPL | 测试里对字节码函数 `funcall`、和原生函数互相调用、`load` 一个源文件；不读文件时 REPL 能读入并求值 |
 | M5.2 ✅ | 前端的其余依赖编成目标端的 compiler 模块（§7）：let-plus、anaphora、more-conditions、print-items、builder-protocol、parser.packrat、s-expression-syntax、Iconoclast、Trucler reference、Clostrum、Common-macros（AST 展开器）、Common-boot | 在 kiln 上 `cst-to-ast` 一组形式，打印 AST 的类和结构，和 SBCL 比对（`tests/m5/co-ast`） |
-| M5.3 | kiln 的 `lisp/*.lisp` 编进目标端；在 kiln 上把一个测试文件编成 KIR | 和 SBCL 产出的 KIR 逐字一致；先查 KIR 输出是否确定（§1） |
+| M5.3 ✅ | kiln 的 `lisp/*.lisp` 编进目标端（§8）；在 kiln 上把一个测试文件编成 KIR | 和 SBCL 产出的 KIR 逐字一致（`tests/m5/co-compile`）；KIR 不依赖 gensym 计数器（§8.2） |
 | M5.4 | kiln0 编译全部 kiln 源码（kernel、CLOS、前端、编译器各模块），kiln-cg AOT 链接成 kiln1；kiln1 再编出 kiln2 | kiln0 和 kiln1 产出的 KIR 一致；kiln1 和 kiln2 的一致；`tools/test.sh` 在 kiln1 上通过 |
 | M5.5 | 原生 `compile`：kiln-cg 作为库链进 kiln-rt，`compile` → KIR → 进程内 JIT，代码登记进运行中的 image；s-expression-syntax 等的 `compile` 改走这条路径 | `compile` 出的函数和 AOT 的结果一致；编译时间 |
 
@@ -272,10 +273,55 @@ kiln 自己的修正：
 
 **测试基础设施**：一个 SBCL 会话编完五个模块和所有测试，需要 `--dynamic-space-size 4GB`。
 
-### 7.3 M5.3 要做的
+M5.3 的做法见 §8。
 
-- kiln 的 `lisp/*.lisp`（前端 client、`lower.lisp`、`primitives.lisp` 等）编进 compiler 模块。
-- 目标端的前端 client：
-  - 宏直接来自运行期的全局环境（`convert-with-ordinary-macro-p` 为假）；
-  - 编译期求值用 Maclina。
-- `front.lisp` 里那些处理宿主和目标差异的部分（宿主宏、包改名、`import-host-functions`），在目标端大都不需要，要分出来。
+## 8. M5.3：编译器在 kiln 上编出 KIR
+
+compiler 模块的末尾加上 kiln 自己的 `lisp/abi.lisp`、`kir.lisp`、`lower.lisp`、`values.lisp`、`primitives.lisp`、`front.lisp`，以及目标端的 `lisp/target/compiler/client.lisp` 和 `session.lisp`。这些文件读进宿主已有的包（`kiln.compiler` 等），运行期的包从符号表得到。
+
+验证用 `tests/m5/co-compile`：在 kiln 上用 `front-end` 和 `compile-module` 编译 `co-compile-input.lisp`，打印 KIR。期望输出是同一个 SBCL 会话里宿主编出的那个模块。`co-compile.same-kir` 写着输入文件的测试名，`tools/test.sh` 据此拿 `build/test/` 下的 KIR 当期望输出，不必提交 KIR 文件。输入本身也是普通测试，检查编出的程序运行结果。输入用到了：
+- 包、`defvar`、`defparameter`、`defconstant`、`eval-when` 和 `defmacro`；
+- inline 函数、闭包、`flet`/`labels`、多值、`handler-case`、`catch`、`unwind-protect`；
+- LOOP、`defclass`/`defgeneric`/`defmethod`、`setf` 和 `push`；
+- 顶层的 `macrolet` 和 `symbol-macrolet`；
+- 字符串、字符、单双精度浮点、分数、bignum。
+
+两边的 KIR 逐字相同（1113 行）。kiln 上编这个约 100 行的文件，AOT 可执行文件连启动要 12 秒，SBCL 不到 1 秒。
+
+### 8.1 前端拆成三个文件
+
+- `lisp/front.lisp` 两边共用：顶层形式处理、inline 展开、声明简化、读入、session。少量差异用 `#+kiln` 区分，因为宿主为目标端编译时用的是目标的 features：
+  - `client` 的超类：宿主是 `kiln.macros:macro-client` 加 HIR 求值器的 client，目标端是 `kiln.macros-target:macro-client`；
+  - `macroexpand-toplevel` 在目标端不排除 `defmacro`，也没有 Common-macros 的后备展开；
+  - 目标端读入的包是 CL-USER，宿主是 KILN-USER；
+  - 绑定的是 `kiln.cmd:*client*`，宿主是 `cmd:*client*`。
+  - `simplify` 抄了 Common-boot 的 `simplify-ast`：目标端没有它所在的 AST-to-HIR 系统。
+- `lisp/host.lisp` 只在宿主：Clostrum 编译期环境、导入宿主函数、宿主宏（§7.1）、宿主常量。
+- `lisp/target/compiler/client.lisp` 只在目标端。编译期环境就是运行期的环境，和一般的实现一样：
+  - Trucler 的全局环境是一个 `run-time-environment` 对象。对它的查询转给 eval 模块的 Maclina client，它描述的就是运行中的 image：宏、特殊变量、常量、已定义的函数。
+  - 编译期求值用 Maclina。顶层 `macrolet`、`symbol-macrolet` 引入的局部宏，换成 Maclina 词法环境里的局部宏。
+  - 编译期的效果直接落在 image 里：`defmacro` 定义宏，`defvar` 宣告特殊变量，`deftype` 和 `define-setf-expander` 记在 plist 上。`defconstant` 的编译期部分 `kiln.sys::%define-constant`，在 kernel 里补了运行期的定义（宿主的编译期环境有自己的定义）。
+  - `declaim inline` 经 kernel `proclaim` 的 `*proclaim-hook*` 通知前端。
+- **session**：目标端的编译器不知道宿主编译前面几个模块时记下的 inline 函数。`session.lisp` 的 `(host-inline-functions)` 是宿主宏（`compile-compiler`），展开成宿主 session 的 inline 表。`make-session` 在目标端用它初始化，包列表用 `list-all-packages`。
+- `lower.lisp` 取浮点数的位模式：宿主用 `sb-kernel`，目标端用新的 primop `:single-float-bits`、`:double-float-high-bits`、`:double-float-low-bits`。
+
+### 8.2 两边一致需要的修正
+
+- **标签不依赖 gensym 计数器**：名字是 gensym 的局部函数，标签里去掉数字（`local-function-label-name`），由 `fresh-label` 的计数保证唯一。
+- **包名**：符号的标签和包名字符串原来用宿主包名，测试程序的符号因此带 KILN-USER。现在统一用 `target-package-name`，即 COMMON-LISP-USER。
+- **运行期的 CL-USER**：原来没有 CL-USER 这个昵称，也不 use KILN.SYS。宿主为测试程序描述的包有这两样，载入第一个测试模块后运行期也就有了。现在 CLOS 模块一开始就按这个描述建 CL-USER。
+- **`defvar` 的位置**：`lower.lisp` 在 `*regions*` 的 `defvar` 之前就绑定了它，SBCL 把那个 `let` 编成了词法绑定；`*primops*` 定义在后面的 `primitives.lisp`。Common-boot 遇到未宣告的自由变量会报错，两处都挪到了前面。
+
+还不确定的地方：字面数据里的未 intern 符号，名字里带 gensym 的计数，标签和名字字符串都会不同。现在的输入没有这样的数据。
+
+### 8.3 还没做
+
+- 不在顶层的 `macrolet`：Common-boot 从 AST 编译局部宏的展开函数（`compile-local-macro-function-ast`），Maclina 要的是形式。目标端现在直接报错。
+- `defstruct`：Anatomicl 不在目标端，运行期也没有 `defstruct` 宏。session 里的结构布局也没有传给目标端。
+- `defclass` 的访问函数在两边都被报成未定义函数（`cmd:defclass-compile-time-action` 拿不到槽）。
+
+### 8.4 M5.4 要做的
+
+- 在 kiln 上编译 kiln 全部源码（kernel、CLOS、frontend、eval、compiler），和 SBCL 的 KIR 比对。kernel 和 CLOS 要求宿主宏、`:compile-time-too` 文件项、包改名在目标端也有对应的做法。
+- 前端在 kiln 上的速度决定 M5.4 是否可行（§3）。
+
