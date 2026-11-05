@@ -1647,12 +1647,25 @@ package system (docs/10 §12)."
     ;; images (docs/11 §9).
     (dolist (sym (sort (copy-list extra-symbols) #'string< :key #'symbol-name))
       (symbol-word sym))
-    (dolist (package defined-packages)
-      (let ((externals '()))
-        (do-external-symbols (sym package)
-          (push sym externals))
-        (dolist (sym (sort externals #'string< :key #'symbol-name))
-          (symbol-word sym))))
+    ;; A package of the module has its external symbols, and those it
+    ;; imports from packages that exist at run time: the module's code
+    ;; may not refer to them (a macro imported and expanded away), but
+    ;; source read in the package at run time does.
+    (let ((target-packages (append defined-packages
+                                   (and session (session-packages session))
+                                   (list (find-package '#:common-lisp)))))
+      (dolist (package defined-packages)
+        (let ((symbols '()))
+          (do-symbols (sym package)
+            (let ((home (symbol-package sym)))
+              (when (or (eq (nth-value 1 (find-symbol (symbol-name sym) package)) :external)
+                        (and home (not (eq home package))
+                             (member home target-packages)
+                             (eq (nth-value 1 (find-symbol (symbol-name sym) package))
+                                 :internal)))
+                (pushnew sym symbols))))
+          (dolist (sym (sort symbols #'string< :key #'symbol-name))
+            (symbol-word sym)))))
     (module-data (symbol-table-cell)
                  `(:words ,(constant-word (symbol-table-literal
                                            *module-symbols* session defined-packages))))
