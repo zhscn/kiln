@@ -583,4 +583,5 @@ frontend 模块不需要改动。其余的不一致和错误，大多是“在 S
 
 - 代码回收：函数对象不再被引用后，代码和它的表也不会释放。
 - `compile` 的前端开销：每次都新建 session，复制宿主 inline 表。
+- 不在顶层的 `macrolet`（§8.3）：image-client 还不能编译局部宏的展开函数，含有它的 lambda 表达式 `compile` 时会报错。Maclina 能编译，所以 parser.packrat 的 `%uses?` 仍用 Maclina（§11.4）。
 - `compile-file` 和 FASL：现在只有 `compile`。
