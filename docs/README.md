@@ -16,6 +16,7 @@ kiln 是一个现代 Common Lisp 实现：开发时是完整的活 image，交�
 | [10-m4-clos.md](10-m4-clos.md) | M4：CLOS 引导，复用 Clostrophilia 的方式、分派的解释执行、实例表示、分步计划 |
 | [11-m5-self-hosting.md](11-m5-self-hosting.md) | M5：编译器在 kiln 上运行和自举的分步计划，目标端 `eval`/`compile`（Maclina），调试基础设施的数据格式（定义记录、调用点源码位置、宏展开追踪） |
 | [12-abi-policy.md](12-abi-policy.md) | ABI 的稳定性方针：同一构建内部的契约、不承诺跨版本兼容、ABI 指纹、内联依赖，和 Swift ABI 稳定化的对照 |
+| [13-modern-practices.md](13-modern-practices.md) | 可借鉴的现代编译器实践：构建期初始化和堆快照、依赖追踪和增量重编译、PGO 和内联缓存、逃逸分析和拆箱、并行编译和缓存、诊断和工具协议、测试方法；暂不采用的做法；内存模型；优先级 |
 
 ## 状态
 
