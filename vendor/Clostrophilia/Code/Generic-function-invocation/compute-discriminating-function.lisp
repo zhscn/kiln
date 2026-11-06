@@ -945,6 +945,32 @@ discriminating closure's hit path needs no frame for it."
           (cdr state))
         nil)))
 
+(defun make-single-dispatch-list-closure
+    (generic-function position profile initial history-length)
+  ;; As MAKE-SINGLE-DISPATCH-CLOSURE, for a generic function whose lambda
+  ;; list has &OPTIONAL, &REST or &KEY parameters: the effective method
+  ;; function takes the argument list. (STREAM-WRITE-STRING,
+  ;; SHARED-INITIALIZE and the builder protocol's RELATE took the automaton
+  ;; at every call.) Too few arguments take the general way, which
+  ;; signals the error.
+  (let* ((size (dispatch-cache-size history-length))
+         (mask (- size 1))
+         (cache (kiln.kernel::make-simple-vector (+ size size) nil)))
+    (lambda (&rest arguments)
+      (let ((tail (nthcdr position arguments)))
+        (if (null tail)
+            (default-discriminating-function generic-function arguments profile)
+            (let* ((stamp (argument-stamp (car tail)))
+                   (index (let ((i (kiln.sys:%primop :fixnum-logand stamp mask)))
+                            (+ i i))))
+              (if (eq (svref cache index) stamp)
+                  (funcall (svref cache (+ index 1)) arguments)
+                  (let ((function (single-dispatch-miss cache index stamp initial)))
+                    (if function
+                        (funcall function arguments)
+                        (default-discriminating-function
+                         generic-function arguments profile))))))))))
+
 (defun make-double-dispatch-closure
     (generic-function arity first second profile initial history-length)
   ;; As MAKE-SINGLE-DISPATCH-CLOSURE, for two specialized parameters,
@@ -1021,6 +1047,10 @@ discriminating closure's hit path needs no frame for it."
                 (t
                  (make-spread-discriminating-closure
                   generic-function arity specializer-profile initial eql-cache)))
+          (if (and initial (null eql-cache) (small-integer= active-arg-count 1))
+              (make-single-dispatch-list-closure
+               generic-function (position-if #'identity specializer-profile)
+               specializer-profile initial (length call-history))
           (lambda (&rest arguments)
             (let ((state initial))
               (loop for p in specializer-profile
@@ -1034,7 +1064,7 @@ discriminating closure's hit path needs no frame for it."
                     (if function
                         (funcall function arguments)
                         (default-discriminating-function
-                         generic-function arguments specializer-profile))))))))))
+                         generic-function arguments specializer-profile)))))))))))
 
 (defun make-cdr (n)
   (if (small-integer= n 0)

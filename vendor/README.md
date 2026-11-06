@@ -94,7 +94,10 @@ Each patched place is marked with a `kiln:` comment.
   history (4 to 256 entries), instead of a one-entry cache; a miss takes
   the automaton in a separate function (`single-dispatch-miss`,
   `double-dispatch-miss`), so that the hit path needs no large frame
-  (docs/10 §27).
+  (docs/10 §27). Generic functions with `&optional`, `&rest` or `&key`
+  parameters that dispatch on one parameter have the same cache
+  (`make-single-dispatch-list-closure`; they took the automaton at every
+  call).
 - `slot-value` and `(setf slot-value)` of a standard instance of a class
   whose metaclass is `standard-class` read and write the slot's location
   from the cache of `%slot-location` (`fast-slot-location`, kiln's

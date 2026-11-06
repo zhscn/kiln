@@ -780,4 +780,6 @@ kiln 编译自己时（docs/11 §10.2），CLOS 的通用机制占了大部分�
 
 **判别闭包的缓存表**：只按一个或两个参数分派的泛函，原来的判别闭包只缓存上一次的 stamp 和函数。AST walker 的泛函面对几十个类，几乎每次都不命中，然后在自动机里二分查找。现在每个判别闭包带一张直接映射表，以 stamp 的低位（两个 stamp 时是 `3·s1 xor s2`）为下标，大小是不小于调用历史长度的 2 的幂（4 到 256）。stamp 是连续分配的类编号，低位分布均匀。未命中的路径（查自动机、填表）放在单独的函数里：放在闭包里时，命中路径也要为它保存 callee-saved 寄存器、开一个大栈帧。
 
-kiln 编 CLOS 模块：148 秒 → 129 秒。
+lambda list 里有 `&optional`、`&rest`、`&key` 的泛函（`stream-write-string`、`shared-initialize`、builder protocol 的 `relate`），原来的判别闭包没有任何缓存，每次调用都在自动机里查找。只按一个参数分派时，现在也用同样的缓存表（`make-single-dispatch-list-closure`），有效方法仍然接收参数列表。
+
+kiln 编 CLOS 模块：148 秒 → 129 秒（加上 docs/11 §10.2 里其他改动之后是 88 秒）。
