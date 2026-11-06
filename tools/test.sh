@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Runs the end-to-end tests: SBCL compiles each tests/*/*.lisp to KIR,
+# Runs the end-to-end tests: SBCL (or kiln, with KILN_COMPILER set to a
+# kiln executable such as build/boot/kiln1) compiles each tests/*/*.lisp to KIR,
 # then kiln-cg runs it with the JIT (normally and under GC stress) and
 # builds/runs an AOT executable.
 # Each output must match the .expected file.
@@ -74,10 +75,27 @@ fi
 for src in "${sources[@]}"; do
   args+=(--eval "(kiln:compile-file-to-kir \"$src\" \"$build/$(basename "${src%.lisp}").kir\" :session *session*)")
 done
-sbcl --dynamic-space-size 4GB --noinform --non-interactive \
-  --load "$root/tools/env.lisp" \
-  --eval '(ql:quickload "kiln" :silent t)' \
-  "${args[@]}" >"$build/compile.log" 2>&1 || { cat "$build/compile.log"; exit 1; }
+if [ -n "${KILN_COMPILER:-}" ]; then
+  # kiln compiles the tests (docs/11 §10.1): KILN_COMPILER is a kiln built
+  # by tools/bootstrap.sh (build/boot/kiln1). SBCL only writes the
+  # manifest; the build program compiles the five modules and then each
+  # test, in one session, as SBCL does above.
+  compiler=$(realpath "$KILN_COMPILER")
+  programs=""
+  for src in "${sources[@]}"; do programs+=" \"$src\""; done
+  sbcl --noinform --non-interactive \
+    --load "$root/tools/env.lisp" \
+    --eval '(ql:quickload "kiln" :silent t)' \
+    --eval "(kiln:write-manifest \"$build/modules.lisp-expr\" :programs '($programs))" \
+    >"$build/compile.log" 2>&1 || { cat "$build/compile.log"; exit 1; }
+  (cd "$build" && MMTK_GC_TRIGGER=FixedHeapSize:${KILN_COMPILER_HEAP:-8589934592} "$compiler") \
+    >>"$build/compile.log" 2>&1 || { cat "$build/compile.log"; exit 1; }
+else
+  sbcl --dynamic-space-size 4GB --noinform --non-interactive \
+    --load "$root/tools/env.lisp" \
+    --eval '(ql:quickload "kiln" :silent t)' \
+    "${args[@]}" >"$build/compile.log" 2>&1 || { cat "$build/compile.log"; exit 1; }
+fi
 
 fail=0
 for src in "${sources[@]}"; do

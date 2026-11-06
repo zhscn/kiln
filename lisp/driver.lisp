@@ -596,12 +596,22 @@ itself as here."
       (compile-eval (out "eval") :session session)
       (compile-compiler (out "compiler") :session session)
       (compile-file-to-kir build (out "build") :session session))
-    (with-open-file (out (merge-pathnames "modules.lisp-expr" dir)
-                         :direction :output :if-exists :supersede)
-      (with-standard-io-syntax
-        (let ((*print-readably* nil))
-          (format out "~S~%"
-                  (append (mapcar (lambda (name) (cons name (module-file-names name)))
-                                  '("kernel" "clos" "frontend" "eval" "compiler"))
-                          (list (list "build" (namestring build))))))))
+    (write-manifest (merge-pathnames "modules.lisp-expr" dir) :programs (list build))
     dir))
+
+(defun write-manifest (output &key programs)
+  "Writes the build program's manifest (lisp/target/build.lisp) to OUTPUT:
+the five modules and their source files, then each of the source files
+PROGRAMS as a module named after the file, as compile-file-to-kir names
+it. Run in OUTPUT's directory, the build program compiles them in that
+order, in one session, to NAME.kir."
+  (with-open-file (out output :direction :output :if-exists :supersede)
+    (with-standard-io-syntax
+      (let ((*print-readably* nil))
+        (format out "~S~%"
+                (append (mapcar (lambda (name) (cons name (module-file-names name)))
+                                '("kernel" "clos" "frontend" "eval" "compiler"))
+                        (mapcar (lambda (program)
+                                  (list (pathname-name program) (namestring program)))
+                                programs))))))
+  output)

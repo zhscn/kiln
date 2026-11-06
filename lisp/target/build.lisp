@@ -6,7 +6,8 @@
 ;;;; Run in a directory holding modules.lisp-expr, which stage 0 writes: a
 ;;;; list of (NAME FILE...), the modules in order with their source files,
 ;;;; as KILN.COMPILER:FRONT-END takes them. Each module is written to
-;;;; NAME.kir in that directory.
+;;;; NAME.kir in that directory. Programs (tests, the build program itself)
+;;;; are modules too, after the five (kiln:write-manifest).
 
 (let ((manifest (with-open-file (in "modules.lisp-expr") (read in)))
       (session (kiln.compiler:make-session :client-class 'kiln.compiler::cross-client))
@@ -19,7 +20,18 @@
       (when (string= name "kernel")
         (do-external-symbols (s '#:common-lisp) (push s extra-symbols)))
       (when (string= name "compiler")
-        (kiln.compiler::prepare-compiler-session session))
+        (kiln.compiler::prepare-compiler-session session)
+        ;; As kiln:compile-compiler: (KILN.COMPILER::MODULE-FILES NAME),
+        ;; for programs that compile modules (tests/m5/co-clos.lisp), is
+        ;; the source files of the module NAME, here from the manifest.
+        (let* ((client (kiln.compiler::session-client session))
+               (genv (trucler:global-environment
+                      client (kiln.compiler::session-environment session))))
+          (kiln.compiler::host-macro
+           client genv 'kiln.compiler::module-files
+           (lambda (form env)
+             (declare (ignore env))
+             `',(rest (assoc (second form) manifest :test #'string=))))))
       (let ((module
               ;; Undefined functions (accessors of DEFCLASS) are reported
               ;; as warnings, on *STANDARD-OUTPUT*.

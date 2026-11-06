@@ -5,7 +5,7 @@
 - M5.2 完成（2026-11，§7）：Common-boot 和它的依赖编成 compiler 模块，kiln 上 `cst-to-ast` 的结果和 SBCL 逐字相同。
 - M5.3 完成（2026-11，§8）：kiln 自己的前端和 `lower.lisp` 也编进 compiler 模块，kiln 上编出的 KIR 和 SBCL 的逐字相同。
 - M5.4 完成（2026-11，§9、§10）：kiln 交叉编译自己的五个模块（kernel、CLOS、frontend、eval、compiler），KIR 和 SBCL 的逐字相同（`tests/m5/co-kernel`，17 秒；`co-clos`、`co-frontend`、`co-eval`、`co-compiler`，各约 7–15 分钟，慢测试）。
-  自举闭合（§10）：kiln0（SBCL 编出的 KIR 链接成的 AOT 可执行文件）编出的 stage1 和 SBCL 的 stage0 逐字节相同，kiln1 编出的 stage2 和 stage1 相同，kiln0 和 kiln1 两个可执行文件也逐字节相同（`tools/bootstrap.sh`，约 35 分钟）。
+  自举闭合（§10）：kiln0（SBCL 编出的 KIR 链接成的 AOT 可执行文件）编出的 stage1 和 SBCL 的 stage0 逐字节相同，kiln1 编出的 stage2 和 stage1 相同，kiln0 和 kiln1 两个可执行文件也逐字节相同（`tools/bootstrap.sh`，约 30 分钟）；测试程序改由 kiln1 编译，`tools/test.sh` 全部通过（§10.1）。
 
 ## 1. 目标和验证
 
@@ -467,8 +467,13 @@ frontend 模块不需要改动。其余的不一致和错误，大多是“在 S
 
 修正：kiln-cg 原来对同样的 KIR 生成的机器码不完全相同。函数里 landing block（`try_call` 的异常入口）按哈希表的遍历顺序填充，SSA 值的编号和寄存器分配因此每次不同。现在按创建顺序填充，kiln-cg 的输出只取决于 KIR。
 
-### 10.1 接下来
+### 10.1 测试程序由 kiln 编译
 
-- `tools/test.sh` 在 kiln1 上通过（M5.4 计划表里的最后一项验证）：测试程序由 kiln1 而不是 SBCL 编译。需要一个读源文件、写 KIR 的入口，和构建程序共用代码。
+`KILN_COMPILER=build/boot/kiln1 tools/test.sh` 让 kiln 编译测试：SBCL 只写清单（`kiln:write-manifest`：五个模块，测试文件作为程序模块排在后面），kiln 运行构建程序，在一个会话里编完五个模块再编各个测试。会话的顺序和 SBCL 模式一样。之后照常走 JIT、GC 压力、AOT 三遍。快速测试全部通过（约 25 分钟，其中约 15 分钟是编五个模块）。这样 M5.4 计划表里的验证就都完成了。
+
+`tests/m5/co-*` 用到的 `kiln.compiler::module-files` 在 SBCL 里是 `compile-compiler` 注册的宿主宏。构建程序在编 compiler 模块之前也注册同名的宿主宏，展开成清单里的文件列表。
+
+### 10.2 接下来
+
 - 自举时间：每个阶段约 15 分钟，主要是 CLOS 分派和 GC（§9.3）。分代 GC 或 Immix 的大堆配置，以及 docs/13 的堆快照（省掉每次启动的初始化）和机器码缓存。
-- 模块之间可以先存快照（docs/13 §1），后面的阶段从快照开始。
+- 模块之间可以先存快照（docs/13 §1），后面的阶段从快照开始。kiln 模式的测试也能从“五个模块编完”的快照开始，不必每次重编模块。
