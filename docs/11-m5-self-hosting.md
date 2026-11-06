@@ -4,7 +4,7 @@
 - M5.1 完成（2026-11，§5）：目标端有了运行期的标准宏、`eval`、`compile`、`load` 和 REPL。
 - M5.2 完成（2026-11，§7）：Common-boot 和它的依赖编成 compiler 模块，kiln 上 `cst-to-ast` 的结果和 SBCL 逐字相同。
 - M5.3 完成（2026-11，§8）：kiln 自己的前端和 `lower.lisp` 也编进 compiler 模块，kiln 上编出的 KIR 和 SBCL 的逐字相同。
-- M5.4 进行中（§9）：kiln 交叉编译自己的 kernel 和 CLOS 模块，KIR 和 SBCL 的逐字相同（`tests/m5/co-kernel`，17 秒；`tests/m5/co-clos`，约 8 分钟）。
+- M5.4 完成（2026-11，§9）：kiln 交叉编译自己的五个模块（kernel、CLOS、frontend、eval、compiler），KIR 和 SBCL 的逐字相同（`tests/m5/co-kernel`，17 秒；`co-clos`、`co-frontend`、`co-eval`、`co-compiler`，各约 7–15 分钟，慢测试）。
 
 ## 1. 目标和验证
 
@@ -422,10 +422,29 @@ kernel 的交叉编译一开始跑了一个多小时也没结束。测量工具�
 - **GC**：MMTk 的 debug assertions 检查每次 side metadata 访问，GC 占了约三分之一的时间，dev 构建里对 mmtk 关掉；默认堆从 256 MiB 改为 1 GiB。
 - 结果：kernel 交叉编译 35 → 17 秒（AOT，SBCL 1.8 秒）；kernel 加 CLOS 约 16 → 7.7 分钟（JIT，SBCL 约 27 秒）。
 
-### 9.5 接下来
+### 9.5 kiln 编 frontend、eval、compiler 模块
 
-- frontend、eval、compiler 模块在 kiln 上交叉编译，逐个和 SBCL 比对。
-  - compiler 模块要用宿主库的 compiler macro（parser.packrat 的 `parse`），kiln 上还没有 compiler macro；
-  - 还有 `use-host-macros` 的那些宿主宏。
-- 之后用 kiln0 编出的 KIR 链接 kiln1，再比较 kiln1 和 kiln2。
+测试：`tests/m5/co-frontend`、`co-eval`、`co-compiler`（都是慢测试，按 SBCL 的顺序在同一个会话里先编前面的模块，只打印最后一个）。compiler 模块编译前的准备（宿主宏、`defrule` 和 `define-syntax` 只在加载时定义、`host-inline-functions`）是 `cross.lisp` 的 `prepare-compiler-session`，SBCL 和 kiln 共用。
 
+frontend 模块不需要改动。其余的不一致和错误，大多是“在 SBCL 上碰巧没事”：
+
+- **包局部昵称**：模块的 symbol 表原来不记局部昵称，kiln 上 `KILN.CMD` 没有 `ECC`，读不了 Common-macros 的源码。现在表里记下指向运行期存在的包的局部昵称，加载时登记（docs/10 §12）。
+- **import 的 symbol**：parser.packrat 从 trivial-with-current-source-form import 的宏，SBCL 编译时已经展开掉，模块里不再引用，于是 kiln 上的包没有这个 import，读源码时另建了一个同名 symbol。现在模块的包从运行期存在的包 import 的 symbol 也记在表里。
+- **`string=` 等**：kernel 的字符串比较不接受 `:start1` 等关键字（`check-host-expansion` 用了 `:end2`），`string>`、`string<=` 返回的下标也不对。补全了整组，包括不区分大小写的函数和 `char-lessp` 等。
+- **parser.packrat 的自举解析器**：它的 ASDF 定义在加载完之后把 `*bootstrapping*` 设为 NIL，之后表达式由元语法解析；compiler 模块只编了源文件，kiln 上一直用自举解析器（`(? x)` 成了 `(* x nil 1)`，`(<- (a b) ...)` 不解构）。现在 compiler 模块在 parser.packrat 之后做同样的设置（`lisp/target/compiler/parser-packrat.lisp`）。
+- **共享结构**：KIR 的常量反映宿主里哪些 cons 是同一个，而这在两边不同：
+  - 宿主宏的展开在 SBCL 上经 `translate-host-backquote` 复制，在 kiln 上原来不复制，展开函数的字面量在不同展开之间共享。现在两边都复制。
+  - SBCL 的反引号把模板里没有 unquote 的子表和尾部当作字面量，Eclector 的逐个重建。现在 Eclector 也这样做（vendor/README.md）。
+  - SBCL 的 `compile-file` 合并相似的常量（`(value object)` 的尾部和 `(object)` 是同一个 cons）。现在 KIR 的 cons 常量按 car 和 cdr 合并（`constant-word`），宿主碰巧共享了哪些 cons 不再影响 KIR。
+- **`%uses?`**：parser.packrat 生成规则时用 `macroexpand-all` 判断代码是否用到 `:fail`、`:fatal`、`position`；kiln 上原来的近似（名字出现就算）多生成了函数。现在 kiln 上用 `compile`（Maclina）展开，结果和 SBCL 相同。
+- **Maclina**：vendor 进来并修了两处（vendor/README.md）：VM 的 `throw` 不带值，被原生代码的 `catch` 接住时得到 NIL；字节码函数被非局部退出跳出时不拆帧，VM 的寄存器停在被调函数的帧里。
+
+速度和内存：
+- compiler 模块在 2 GiB 堆（SemiSpace，可用一半）下跑了 51 分钟后内存不足：存活数据接近半堆时几乎一直在 GC。`co-compiler` 用 8 GiB 堆。GC 线程从 2 个改为 CPU 核数（最多 8 个）后，五个模块在 kiln 上一共约 40 分钟（co-clos 约 7 分钟、co-compiler 约 15 分钟）。
+- 分配快路径原来假定 bump 分配器（SemiSpace），换成 Immix 会崩溃；现在按 plan 取默认分配器的 bump pointer（docs/07 §2）。
+
+### 9.6 接下来
+
+- kiln 上的构建程序：不依赖 SBCL 编译的测试程序，依次编五个模块，把 KIR 写到文件。文件列表和编译前的设置（`module-files`、`prepare-compiler-session`）要能在 kiln 上取得。
+- kiln1：kiln0 编出的 KIR 链接成 AOT 可执行文件（它和 SBCL 编出的 kiln0 的 KIR 相同）；kiln2：kiln1 再编一遍，比较 KIR。
+- GC：分代（写屏障）或 Immix 的大堆配置，缩短每次自举的时间。

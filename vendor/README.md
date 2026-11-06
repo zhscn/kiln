@@ -290,9 +290,12 @@ Under `#+kiln` (docs/10 §18 of kiln):
 ## parser.packrat patches
 
 - `%uses?` and `%uses-position?` (`src/grammar/base/compiler.lisp`) use
-  `sb-cltl2:macroexpand-all`; on kiln (`#+kiln`) a name that occurs
-  anywhere in the expression counts as used (docs/11 §2.1). The generated
-  parser may do more work than needed, but is correct.
+  `sb-cltl2:macroexpand-all`; on kiln (`#+kiln`) they compile the form
+  with `compile` (Maclina's), which expands its macros as
+  `macroexpand-all` does, and so decide as SBCL does (the generated parser,
+  and so the KIR of the compiler module compiled on kiln, are SBCL's). A
+  form that does not compile counts as using a name that occurs anywhere
+  in it (docs/11 §2.1).
 
 ## s-expression-syntax patches
 
@@ -301,3 +304,17 @@ Under `#+kiln` (docs/10 §18 of kiln):
 - `pprint-logical-block`'s syntax (`code/definitions/io-macros.lisp`) spelled
   `suffix` with the ligature ﬃ (U+FB03) where it binds the variable, so
   the node referred to an unbound `suffix` (SBCL only warns).
+
+## Maclina patches
+
+- The VM's `throw` throws the values in its register (`vm-native.lisp`), not
+  no values: a `catch` in native code (not the VM's) received `nil`
+  (`%uses?` of parser.packrat on kiln throws from a macro function compiled
+  by Maclina to a `catch` in native code).
+- `bytecode-call` tears down its frame in an `unwind-protect`: a non-local
+  exit from the VM to native code (a `throw` or `return-from`) left the
+  VM's stack, frame pointer and pc in the callee's frame, and later calls
+  read garbage.
+  For that, an exit to a block or tag of the VM (`exit-8`...) passes its
+  target to the entry's function, which sets the pc (and the stack and
+  frame pointers) once the `go` has unwound, after those cleanups.

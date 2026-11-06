@@ -380,9 +380,10 @@
           ,expression)))
     nil))
 
-;;; kiln: no MACROEXPAND-ALL. A name that occurs anywhere in EXPRESSION
-;;; counts as used: the generated code may do more than it needs to, but
-;;; it is correct.
+;;; kiln: no MACROEXPAND-ALL. COMPILE (Maclina's) expands every macro of
+;;; the form, as MACROEXPAND-ALL does in SBCL; a form it cannot compile
+;;; counts as using NAME if NAME occurs anywhere in it (the generated
+;;; parser may then do more than it needs to, but is correct).
 #+kiln
 (defun %occurs? (name expression)
   (let ((seen (make-hash-table :test 'eq)))
@@ -396,13 +397,34 @@
       nil)))
 
 #+kiln
+(defun %expansion-uses? (form)
+  ;; Quietly: COMPILE reports the warnings it muffles at the end of its
+  ;; compilation unit.
+  (let ((*standard-output* (make-broadcast-stream))
+        (*error-output* (make-broadcast-stream)))
+    (catch 'used
+      (handler-bind ((warning #'muffle-warning))
+        (compile nil `(lambda () ,form)))
+      nil)))
+
+#+kiln
 (defun %uses? (name parameters expression)
-  (declare (ignore parameters))
-  (%occurs? name expression))
+  (handler-case
+      (%expansion-uses?
+       `(macrolet ((,name (,@parameters)
+                     (declare (ignore ,@parameters))
+                     (throw 'used t)))
+          ,expression))
+    (error () (%occurs? name expression))))
 
 #+kiln
 (defun %uses-position? (expression)
-  (%occurs? 'cl-user::position expression))
+  (handler-case
+      (%expansion-uses?
+       `(macrolet ((%used () (throw 'used t)))
+          (symbol-macrolet ((cl-user::position (%used)))
+            ,expression)))
+    (error () (%occurs? 'cl-user::position expression))))
 
 ;; TODO syntactically, EXPRESSION contains a sub-expression. However,
 ;; we do not use the value produced by that sub-expression.

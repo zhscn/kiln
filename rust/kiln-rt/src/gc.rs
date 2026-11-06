@@ -54,10 +54,15 @@ fn mmtk() -> &'static MMTK<Kiln> {
     MMTK_INSTANCE.get_or_init(|| {
         let mut builder = MMTKBuilder::new();
         // Defaults; MMTK_* environment variables override them.
+        // GC threads: one per core, at most 8 (kiln compiling its modules
+        // keeps hundreds of MiB live, docs/11 §9).
+        let threads = std::thread::available_parallelism()
+            .map_or(2, |n| n.get().min(8))
+            .to_string();
         let defaults = [
             ("plan", "SemiSpace"),
             ("gc_trigger", "FixedHeapSize:1073741824"),
-            ("threads", "2"),
+            ("threads", threads.as_str()),
         ];
         for (k, v) in defaults {
             if std::env::var(format!("MMTK_{}", k.to_uppercase())).is_err() {

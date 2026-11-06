@@ -226,6 +226,8 @@ name of its package as a string."
   #+kiln (kiln.sys:%primop :double-float-low-bits x))
 
 (defvar *constants*)                    ; host object -> data word
+(defvar *cons-words*)                   ; (car word, cdr word) -> data word of a cons
+(defvar *pending-conses*)               ; conses being emitted -> their word if a cycle needs it
 
 (defun constant-word (x)
   (typecase x
@@ -274,14 +276,32 @@ name of its package as a string."
                                        ,@(map 'list #'constant-word x)))
            `(:data ,label ,+tag-general+))))
     (cons
+     ;; Static conses: the GC neither moves nor scans them, and they only
+     ;; point to static data. Conses with the same car and cdr words are
+     ;; one (similar constants coalesced, CLHS 3.2.4.4, as SBCL's
+     ;; COMPILE-FILE does): the KIR does not depend on which conses the
+     ;; host happened to share (docs/11 §9). The label is made after the
+     ;; car and cdr, unless the cons is part of a cycle.
      (or (gethash x *constants*)
-         (let ((label (fresh-label "kiln_const_")))
-           ;; Static conses: the GC neither moves nor scans them, and
-           ;; they only point to static data.
-           (setf (gethash x *constants*) `(:data ,label ,+tag-cons+))
-           (module-data label `(:words ,+kind-cons+ ,(constant-word (car x))
-                                       ,(constant-word (cdr x))))
-           `(:data ,label ,+tag-cons+))))
+         (multiple-value-bind (word pending) (gethash x *pending-conses*)
+           (when pending
+             (return-from constant-word
+               (or word
+                   (setf (gethash x *pending-conses*)
+                         `(:data ,(fresh-label "kiln_const_") ,+tag-cons+)))))
+           (setf (gethash x *pending-conses*) nil)
+           (let* ((car-word (constant-word (car x)))
+                  (cdr-word (constant-word (cdr x)))
+                  (cyclic (gethash x *pending-conses*))
+                  (key (list car-word cdr-word)))
+             (remhash x *pending-conses*)
+             (setf (gethash x *constants*)
+                   (or (and (not cyclic) (gethash key *cons-words*))
+                       (let ((word (or cyclic `(:data ,(fresh-label "kiln_const_") ,+tag-cons+))))
+                         (module-data (second word) `(:words ,+kind-cons+ ,car-word ,cdr-word))
+                         (unless cyclic
+                           (setf (gethash key *cons-words*) word))
+                         word)))))))
     (t (fail "constants of type ~S are not supported yet" (type-of x)))))
 
 (defun signed-word (u)
@@ -1637,6 +1657,8 @@ package system (docs/10 §12)."
         (*vars* (make-hash-table :test 'eq))
         (*exits* (make-hash-table :test 'eq))
         (*constants* (make-hash-table :test 'eql))
+        (*cons-words* (make-hash-table :test 'equal))
+        (*pending-conses* (make-hash-table :test 'eq))
         (*constant-vars* (make-hash-table :test 'eq))
         (*module-symbols* '())
         (*uninterned-symbols* (make-hash-table :test 'eq))

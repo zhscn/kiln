@@ -32,7 +32,8 @@
     (declare (type (unsigned-byte 16) frame-size))
     ;; Set up the stack, then call VM.
     (let* ((vm *vm*)
-           (stack (vm-stack vm)))
+           (stack (vm-stack vm))
+           (old-sp (vm-stack-top vm)))
       (setf (vm-args vm) (vm-stack-top vm))
       ;; Pass the argments on the stack.
       (dolist (arg args)
@@ -46,11 +47,15 @@
         (setf (vm-pc vm) entry-pc)
         (setf (vm-stack-top vm) (+ (vm-frame-pointer vm) frame-size))
         ;; set up the stack, then call vm
-        (vm bytecode env literals frame-size)
-        ;; tear down the frame.
-        (setf (vm-stack-top vm) (- (vm-frame-pointer vm) (length args)))
-        (setf (vm-frame-pointer vm) old-fp)
-        (setf (vm-pc vm) old-pc))
+        ;; kiln: the frame is torn down on a non-local exit too (a THROW
+        ;; or RETURN-FROM to native code), which left the VM's registers
+        ;; in the callee's frame.
+        (unwind-protect
+             (vm bytecode env literals frame-size)
+          ;; tear down the frame.
+          (setf (vm-stack-top vm) old-sp)
+          (setf (vm-frame-pointer vm) old-fp)
+          (setf (vm-pc vm) old-pc)))
       (values-list (vm-values vm)))))
 
 (defun initialize-vm (stack-size)
@@ -274,21 +279,31 @@
                     (setf sp (local (next-code)))
                     (incf ip))
                    ((#.m:entry)
+                    ;; kiln: the exit's target is set once the GO has
+                    ;; unwound, as are the stack and frame pointers:
+                    ;; BYTECODE-CALL's cleanup on the way restores the
+                    ;; registers of the frames it leaves.
+                    (let ((old-sp sp)
+                          (old-bp bp)
+                          (target 0))
+                      (declare (type (and unsigned-byte fixnum) old-sp old-bp target))
                       (tagbody
                          (setf (local (next-code))
                                (make-entry-dynenv
-                                (let ((old-sp sp)
-                                      (old-bp bp))
-                                  (lambda ()
-                                    ;; We know that this GO is never out of
-                                    ;; extent, but that is hard to express.
-                                    (declare (optimize (safety 0)))
-                                    (setf sp old-sp
-                                          bp old-bp)
-                                    (go loop)))))
+                                (lambda (exit-target)
+                                  ;; We know that this GO is never out of
+                                  ;; extent, but that is hard to express.
+                                  (declare (optimize (safety 0)))
+                                  (setf target exit-target)
+                                  (go loop))))
                          (incf ip)
+                         (go run)
                        loop
-                         (vm bytecode closure constants frame-size)))
+                         (setf sp old-sp
+                               bp old-bp
+                               ip target)
+                       run
+                         (vm bytecode closure constants frame-size))))
                    ((#.m:catch-8)
                     (let ((target (+ ip (next-code-signed)))
                           (tag (spop))
@@ -317,19 +332,18 @@
                       (setf ip target)
                       (setf sp old-sp)
                       (setf bp old-bp)))
-                   ((#.m:throw) (throw (spop) (values)))
+                   ;; kiln: the values (in the VM's register) are thrown too, for a
+                   ;; CATCH that is not the VM's (one in native code).
+                   ((#.m:throw) (throw (spop) (values-list (vm-values vm))))
                    ((#.m:catch-close)
                     (incf ip)
                     (return))
                    ((#.m:exit-8)
-                    (incf ip (next-code-signed))
-                    (funcall (entry-dynenv-fun (spop))))
+                    (funcall (entry-dynenv-fun (spop)) (+ ip (next-code-signed))))
                    ((#.m:exit-16)
-                    (incf ip (next-code-signed-16))
-                    (funcall (entry-dynenv-fun (spop))))
+                    (funcall (entry-dynenv-fun (spop)) (+ ip (next-code-signed-16))))
                    ((#.m:exit-24)
-                    (incf ip (next-code-signed-24))
-                    (funcall (entry-dynenv-fun (spop))))
+                    (funcall (entry-dynenv-fun (spop)) (+ ip (next-code-signed-24))))
                    ((#.m:entry-close)
                     (incf ip)
                     (return))
