@@ -28,6 +28,7 @@ shows exactly what kiln changed. Changes are not sent upstream for now.
 | Inravina | https://github.com/s-expressionists/Inravina | e28b107b025b2efdd4f16ed71fbdc0e1af62e478 (2026-07-11) | MIT (`Inravina/LICENSE.md`) |
 | parser.packrat | https://github.com/scymtym/parser.packrat (branch `future`) | 835090176480e68a8af87ba550b6c9639f94f542 (2023-04-04) | MIT (`parser.packrat/COPYING`) |
 | s-expression-syntax | https://github.com/scymtym/s-expression-syntax (branch `beach`) | 1ecd399a671eeb34a50e573a38d74c4dab3663b1 (2024-04-10) | MIT (`s-expression-syntax/COPYING`) |
+| Maclina | https://github.com/s-expressionists/Maclina | a46ba99620ceb51f05f14e31d34fe77e1cfa96c1 (2026-09-15) | BSD (`Maclina/LICENSE`) |
 
 ## Clostrophilia patches
 
