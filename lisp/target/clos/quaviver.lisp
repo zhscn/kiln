@@ -15,12 +15,16 @@
 (in-package #:quaviver)
 
 (defun float-triple (client base value)
-  "Three values: the significand, the exponent and the sign of the
-shortest decimal representation of VALUE (significand * BASE^exponent,
-BASE being 10), or :INFINITY or :QUIET-NAN as the exponent."
+  "Three values: the significand, the exponent and the sign of VALUE
+(significand * BASE^exponent): for BASE 10 its shortest decimal
+representation, or :INFINITY or :QUIET-NAN as the exponent; for BASE 2
+the exact one, INTEGER-DECODE-FLOAT's (Invistra's ~F rounds a tie with
+it)."
   (declare (ignore client))
+  (when (eql base 2)
+    (return-from float-triple (integer-decode-float value)))
   (unless (eql base 10)
-    (error "Only base 10 is supported: ~s" base))
+    (error "Only bases 2 and 10 are supported: ~s" base))
   (let ((significand (kiln.sys:%primop :float-decimal value 0))
         (exponent (kiln.sys:%primop :float-decimal value 1))
         (sign (kiln.sys:%primop :float-decimal value 2)))

@@ -17,10 +17,11 @@ kiln 是一个现代 Common Lisp 实现：开发时是完整的活 image，交�
 | [11-m5-self-hosting.md](11-m5-self-hosting.md) | M5：编译器在 kiln 上运行和自举的分步计划，目标端 `eval`/`compile`（Maclina），调试基础设施的数据格式（定义记录、调用点源码位置、宏展开追踪） |
 | [12-abi-policy.md](12-abi-policy.md) | ABI 的稳定性方针：同一构建内部的契约、不承诺跨版本兼容、ABI 指纹、内联依赖，和 Swift ABI 稳定化的对照 |
 | [13-modern-practices.md](13-modern-practices.md) | 可借鉴的现代编译器实践：构建期初始化和堆快照、依赖追踪和增量重编译、PGO 和内联缓存、逃逸分析和拆箱、并行编译和缓存、诊断和工具协议、测试方法；暂不采用的做法；内存模型；优先级 |
+| [14-performance.md](14-performance.md) | 和 SBCL 的性能差距：对比基准（`bench/compare.lisp`）、差距集中在库和 CLOS 运行时而不是代码生成、需要的 Lisp 语义层优化 |
 
 ## 状态
 
-M0、M1 已完成：SBCL → KIR → Cranelift（JIT 和 AOT），MMTk 移动式 GC 和精确栈图，多栈段和跨栈展开。M2 基本完成（[08](08-m2-front-end.md)）。M3 完成（[09](09-m3-kernel.md)）：用 Lisp 写的 kernel 单独作为一个模块，数值塔（bignum、ratio、单双精度浮点）、Unicode 字符和字符串、`typep` 和序列函数都已可用；包、数组、哈希表、condition 移到 M4。M4（CLOS 引导）完成（[10](10-m4-clos.md)）。M5 的计划见 [11](11-m5-self-hosting.md)，M5.1 到 M5.4 已完成：运行期的标准宏、`eval`、`compile`、`load` 和 REPL（`tools/repl.sh`）；编译器在 kiln 上运行，交叉编译 kiln 自己的五个模块，KIR 和 SBCL 编出的逐字节相同；自举闭合：kiln0 → kiln1 → kiln2 的 KIR 逐字节相同，kiln0 和 kiln1 的可执行文件也相同（`tools/bootstrap.sh`），测试程序由 kiln1 编译时 `tools/test.sh` 全部通过。各文档的“待定问题”一节列出尚未决定的事项。
+M0、M1 已完成：SBCL → KIR → Cranelift（JIT 和 AOT），MMTk 移动式 GC 和精确栈图，多栈段和跨栈展开。M2 基本完成（[08](08-m2-front-end.md)）。M3 完成（[09](09-m3-kernel.md)）：用 Lisp 写的 kernel 单独作为一个模块，数值塔（bignum、ratio、单双精度浮点）、Unicode 字符和字符串、`typep` 和序列函数都已可用；包、数组、哈希表、condition 移到 M4。M4（CLOS 引导）完成（[10](10-m4-clos.md)）。M5 完成（[11](11-m5-self-hosting.md)）：运行期的标准宏、`eval`、`compile`、`load` 和 REPL（`tools/repl.sh`）；编译器在 kiln 上运行，交叉编译 kiln 自己的五个模块，KIR 和 SBCL 编出的逐字节相同；自举闭合：kiln0 → kiln1 → kiln2 的 KIR 逐字节相同，kiln0 和 kiln1 的可执行文件也相同（`tools/bootstrap.sh`），测试程序由 kiln1 编译时 `tools/test.sh` 全部通过；M5.5 起 `compile` 产出原生代码，装进运行中的 image。和 SBCL 的性能对比见 [14](14-performance.md)。各文档的“待定问题”一节列出尚未决定的事项。
 
 ## 约定
 

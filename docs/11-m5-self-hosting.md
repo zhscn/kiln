@@ -516,6 +516,8 @@ frontend 模块不需要改动。其余的不一致和错误，大多是“在 S
 
 ### 10.3 接下来
 
+和 SBCL 的逐项对比，以及差距的原因，见 [14](14-performance.md)。
+
 - 剩下的热点（CLOS 阶段）：GC 约 13%；kernel 的函数约 21%，比较分散；Salmagundi 哈希表约 5%；`append` 方法组合（Iconoclast 的 `slot-designators`，walker 每访问一个节点调用一次）约 5%；`&rest` 泛函每次调用分配参数列表。
 - 分代 GC 或 Immix 的大堆配置。
 - 模块之间可以先存快照（docs/13 §1），后面的阶段从快照开始。kiln 模式的测试也能从“五个模块编完”的快照开始，不必每次重编模块。

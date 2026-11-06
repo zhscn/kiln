@@ -218,6 +218,11 @@ part of Quaviver that Incless uses.
 
 ## Invistra patches
 
+Known upstream bug, not patched: `~F` rounds `(format nil "~,1f" 0.05f0)`
+(and `0.05d0`) to `"0.0"`; it should be `"0.1"`, since both are slightly
+greater than 0.05. Invistra with Quaviver does the same in SBCL
+(docs/14 §4).
+
 Under `#+kiln` (docs/10 §18 of kiln):
 
 - `formatter` expands into a function that interprets the control string
