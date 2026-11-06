@@ -50,8 +50,26 @@
   octet)
 
 (defmethod stream-write-octets ((stream kiln-file-stream) octets &optional (start 0) end)
-  (loop for i from start below (or end (length octets))
-        do (stream-write-octet stream (aref octets i)))
+  ;; Copied into the buffer a chunk at a time: one generic function call
+  ;; per octet (STREAM-WRITE-OCTET and its accessors) was most of the time
+  ;; of writing KIR on kiln (docs/11 §10.2).
+  (let ((end (or end (length octets)))
+        (buffer (file-buffer stream))
+        (i start))
+    (when (< (in-start stream) (in-end stream))
+      (discard-file-input stream))
+    (loop while (< i end)
+          do (when (= (out-end stream) +file-buffer-size+)
+               (flush-file-buffer stream))
+             (let* ((fill (out-end stream))
+                    (n (min (- end i) (- +file-buffer-size+ fill))))
+               (if (simple-vector-p octets)
+                   (dotimes (k n)
+                     (setf (svref buffer (+ fill k)) (svref octets (+ i k))))
+                   (dotimes (k n)
+                     (setf (svref buffer (+ fill k)) (aref octets (+ i k)))))
+               (setf (out-end stream) (+ fill n))
+               (setf i (+ i n)))))
   octets)
 
 (defmethod stream-read-octet ((stream kiln-file-stream))

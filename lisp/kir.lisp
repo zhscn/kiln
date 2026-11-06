@@ -77,8 +77,37 @@ keeps one definition."
 
 (defvar *func*)
 
+(defun decimal-string (n)
+  "The decimal digits of the integer N."
+  (if (minusp n)
+      (kir-name "-" (- n))
+      (let ((digits '()))
+        (loop do (multiple-value-bind (q r) (floor n 10)
+                   (push (code-char (+ (char-code #\0) r)) digits)
+                   (setf n q))
+              while (plusp n))
+        (coerce digits 'string))))
+
+(defun kir-name (&rest parts)
+  "The concatenation of PARTS: strings, symbols (their names) and integers
+(in decimal), as (FORMAT NIL \"~A~A...\" ...) makes it, without FORMAT,
+which is slow on kiln (docs/11 §10.2): names of variables, blocks and
+labels are made for every one of them."
+  (let* ((strings (mapcar (lambda (x)
+                            (etypecase x
+                              (string x)
+                              (symbol (symbol-name x))
+                              (integer (decimal-string x))))
+                          parts))
+         (result (make-string (reduce #'+ strings :key #'length)))
+         (i 0))
+    (dolist (string strings result)
+      (dotimes (j (length string))
+        (setf (char result i) (char string j))
+        (incf i)))))
+
 (defun fresh-name (prefix)
-  (intern (format nil "~A~D" prefix (incf (kfunc-counter *func*))) :keyword))
+  (intern (kir-name prefix (incf (kfunc-counter *func*))) :keyword))
 
 (defun new-var (&optional (kind :obj))
   (let ((v (fresh-name "V")))

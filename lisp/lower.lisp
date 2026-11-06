@@ -44,7 +44,7 @@ shift the counter, so the numbers differ between hosts (docs/11 §9)."
               (cons index
                     (if (and (plusp (length name))
                              (digit-char-p (char name (1- (length name)))))
-                        (format nil "~A~D" (subseq name 0 (if end (1+ end) 0)) index)
+                        (kiln.kir::kir-name (subseq name 0 (if end (1+ end) 0)) index)
                         name))))))
 
 (defun module-symbol-name (sym)
@@ -55,12 +55,12 @@ shift the counter, so the numbers differ between hosts (docs/11 §9)."
 
 (defun symbol-label (sym)
   (mangle (cond ((symbol-package sym)
-                 (format nil "~A:~A" (target-package-name (symbol-package sym)) (symbol-name sym)))
+                 (kiln.kir::kir-name (target-package-name (symbol-package sym)) ":" (symbol-name sym)))
                 (*uninterned-symbols*
                  (let ((entry (uninterned-entry sym)))
-                   (format nil "#~A:~D:~A" (kiln.kir::kmodule-name *module*)
-                           (car entry) (cdr entry))))
-                (t (format nil "#:~A" (symbol-name sym))))))
+                   (kiln.kir::kir-name "#" (kiln.kir::kmodule-name *module*) ":"
+                                      (car entry) ":" (cdr entry))))
+                (t (kiln.kir::kir-name "#:" (symbol-name sym))))))
 
 (defvar *counter*)
 
@@ -79,7 +79,7 @@ shift the counter, so the numbers differ between hosts (docs/11 §9)."
 (defun fresh-label (prefix)
   "A name local to the current module. Modules are combined by kiln-cg,
 so local names carry the module's name; shared ones (symbols) do not."
-  (format nil "~A~A_~D" prefix *module-label* (incf *counter*)))
+  (kiln.kir::kir-name prefix *module-label* "_" (incf *counter*)))
 
 ;;; Runtime functions
 
@@ -169,11 +169,11 @@ name of its package as a string."
 (defun symbol-data (sym)
   "Name of the static data object of the symbol SYM (not NIL or T)."
   (let* ((label (symbol-label sym))
-         (obj (format nil "kiln_sym_~A" label)))
+         (obj (kiln.kir::kir-name "kiln_sym_" label)))
     (unless (gethash obj (kiln.kir::kmodule-defined *module*))
-      (let ((name (string-data (format nil "kiln_name_~A" label) (module-symbol-name sym)))
-            (undef (format nil "kiln_undef_~A" label))
-            (undef-setf (format nil "kiln_undef_setf_~A" label)))
+      (let ((name (string-data (kiln.kir::kir-name "kiln_name_" label) (module-symbol-name sym)))
+            (undef (kiln.kir::kir-name "kiln_undef_" label))
+            (undef-setf (kiln.kir::kir-name "kiln_undef_setf_" label)))
         (module-data undef `(:words ,(logior +kind-function+ (ash 1 +length-shift+))
                                     (:func ,(undefined-function-entry))
                                     (:data ,obj ,+tag-general+)))
@@ -1222,9 +1222,9 @@ host or kiln, docs/11 §8)."
           (loop for lf in (ico:binding-asts ast)
                 for def = (ico:name-ast lf)
                 for hint = (or (function-name-hint (ico:form-asts lf)) *name-hint*)
-                for label = (fresh-label (format nil "kiln_f_~A_~@[~A_~]"
-                                                 (local-function-label-name (ico:name def))
-                                                 hint))
+                for label = (fresh-label (kiln.kir::kir-name
+                                     "kiln_f_" (local-function-label-name (ico:name def)) "_"
+                                     (if hint (kiln.kir::kir-name hint "_") "")))
                 do (let ((*name-hint* hint))
                      (compile-function label
                                        (parse-lambda-list (ico:lambda-list-ast lf))
@@ -1232,7 +1232,7 @@ host or kiln, docs/11 §8)."
                 collect (list def label (static-env-size def (ico:form-asts ast))))))
     (loop for (def label n) in functions
           do (if (zerop n)
-                 (let ((data (format nil "~A_fobj" label)))
+                 (let ((data (kiln.kir::kir-name label "_fobj")))
                    (module-data data `(:words ,+kind-function+ (:func ,label)))
                    (bind-var def `(:addr ,data ,+tag-general+)))
                  (let ((p (emit-alloc (+ 16 (* 8 n))
@@ -1739,7 +1739,7 @@ returns the operand of its (static) function object."
           (emit-load-time-values ast)
           (lower ast))
         (emit `(:return ,(nil-value) 1)))))
-  (let ((fobj (format nil "~A_fobj" name)))
+  (let ((fobj (kiln.kir::kir-name name "_fobj")))
     (module-data fobj `(:words ,+kind-function+ (:func ,name)))
     `(:data ,fobj ,+tag-general+)))
 
