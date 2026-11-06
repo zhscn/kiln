@@ -130,7 +130,7 @@ kernel 原语和 primop（cons/symbol/vector/funcall/闭包/GC）
 | M2 ✅ | 前端接入：Eclector、CST、Trucler、Common-boot/Iconoclast 和 Clostrum 目标环境（见 [08](08-m2-front-end.md)，遗留事项见 08 §7） | 所有特殊形式都能降级，宏在宿主中执行 |
 | M3 ✅ | ANSI 核心库中不依赖 CLOS 的部分（见 [09](09-m3-kernel.md)，包和数组移到 M4，见 09 §11） | 数值塔、符号、Unicode 字符、字符串、pathname 都要自己写，工作量比原先估计的大 |
 | M4（M4.1–M4.4 ✅） | CLOS 引导，接入打印器、FORMAT、LOOP（见 [10](10-m4-clos.md)；目标端 MOP 已经自洽，分派解释执行；M4.5 已接入 condition 系统、哈希表、包、ctype、数组、`defstruct`、流、打印器和 FORMAT；M4.6 补了 M5 的前提：目标端 LOOP、运行期宏环境、pathname 和文件流、reader、运行期的包操作，以及前端的性能实验（10 §24：CST 读取约是 SBCL 的 100 倍，M5 前要有编译出来的判别函数等）；还没有美化打印） | 目标端 MOP 能自洽，重定义屏障（C4），自举完成前的运行期 `compile` 方案 |
-| M5（M5.1–M5.3 ✅） | 编译器自身交叉编译，kiln0 → kiln1 → kiln2（计划见 [11](11-m5-self-hosting.md)：目标端 `eval`/`compile` 先用 Maclina，同时定下调试信息的格式；M5.1 已有运行期标准宏、`eval`、`compile`、`load` 和 REPL；M5.2 把 Common-boot 和它的依赖编成 compiler 模块，kiln 上 `cst-to-ast` 的结果和 SBCL 一致；M5.3 把 kiln 的前端和 `lower.lisp` 也编了进去，kiln 上编出的 KIR 和 SBCL 逐字一致） | 两代产物一致 |
+| M5 ✅ | 编译器自身交叉编译，kiln0 → kiln1 → kiln2（计划见 [11](11-m5-self-hosting.md)：目标端 `eval`/`compile` 先用 Maclina，同时定下调试信息的格式；M5.1 已有运行期标准宏、`eval`、`compile`、`load` 和 REPL；M5.2 把 Common-boot 和它的依赖编成 compiler 模块，kiln 上 `cst-to-ast` 的结果和 SBCL 一致；M5.3 把 kiln 的前端和 `lower.lisp` 也编了进去，kiln 上编出的 KIR 和 SBCL 逐字一致；M5.4 自举闭合，kiln0 和 kiln1 逐字节相同；M5.5 `compile` 产出原生代码） | 两代产物一致 |
 | M6 | SLYNK/Swank 接入 | 完整的 image 开发体验，REPL 中断 |
 
 之后依次是：seal、WPO 和 AOT 交付；异步（[03-async.md](03-async.md)）。
