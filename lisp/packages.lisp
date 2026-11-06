@@ -68,7 +68,7 @@
   (:use #:cl)
   (:export #:compile-file-to-kir #:compile-kernel #:compile-clos #:compile-frontend
            #:compile-compiler
-           #:compile-eval))
+           #:compile-eval #:bootstrap-stage0))
 
 (defpackage #:kiln.structures
   (:use)

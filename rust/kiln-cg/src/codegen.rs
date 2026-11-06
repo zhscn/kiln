@@ -534,8 +534,12 @@ impl<M: Module> FuncLowering<'_, M> {
             }
         }
         // Landing blocks: bind the exception payload, then enter the handler.
-        let landings: Vec<(String, ir::Block)> =
+        // In the order they were made: the order in which blocks are filled
+        // decides the SSA values and so the machine code, which must not
+        // depend on the hash map's order (the same KIR, the same object).
+        let mut landings: Vec<(String, ir::Block)> =
             self.landings.iter().map(|(h, l)| (h.clone(), *l)).collect();
+        landings.sort_by_key(|&(_, l)| l);
         for (h, l) in landings {
             b.switch_to_block(l);
             let p = b.block_params(l).to_vec();

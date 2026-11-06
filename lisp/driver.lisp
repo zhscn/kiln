@@ -562,14 +562,46 @@ and eval."
      client genv 'kiln.compiler::module-files
      (lambda (form env)
        (declare (ignore env))
-       (let ((files (cdr (assoc (second form)
-                                `(("kernel" . ,*kernel-files*) ("clos" . ,*clos-files*)
-                                  ("frontend" . ,*frontend-files*) ("eval" . ,*eval-files*)
-                                  ("compiler" . ,*compiler-files*))
-                                :test #'string=))))
-         `',(mapcar (lambda (file)
-                      (if (consp file)
-                          (append (butlast file) (list (namestring (car (last file)))))
-                          (namestring file)))
-                    files)))))
+       `',(module-file-names (second form)))))
   (write-module (compile-files *compiler-files* session "compiler") output))
+
+(defun module-file-names (name)
+  "The source files of the module NAME, as front-end takes them, with
+namestrings for pathnames."
+  (let ((files (cdr (assoc name
+                           `(("kernel" . ,*kernel-files*) ("clos" . ,*clos-files*)
+                             ("frontend" . ,*frontend-files*) ("eval" . ,*eval-files*)
+                             ("compiler" . ,*compiler-files*))
+                           :test #'string=))))
+    (mapcar (lambda (file)
+              (if (consp file)
+                  (append (butlast file) (list (namestring (car (last file)))))
+                  (namestring file)))
+            files)))
+
+(defun bootstrap-stage0 (directory)
+  "Stage 0 of the bootstrap (docs/11 §10): compiles the five modules and the
+build program (lisp/target/build.lisp) to NAME.kir in DIRECTORY, in one
+session, and writes the build program's manifest there, modules.lisp-expr:
+for each module, its name and source files. kiln0, linked from these
+modules, runs the build program, which compiles the same modules and
+itself as here."
+  (let* ((dir (uiop:ensure-directory-pathname directory))
+         (session (kiln.compiler:make-session))
+         (build (asdf:system-relative-pathname "kiln" "lisp/target/build.lisp")))
+    (flet ((out (name) (merge-pathnames (format nil "~A.kir" name) dir)))
+      (compile-kernel (out "kernel") :session session)
+      (compile-clos (out "clos") :session session)
+      (compile-frontend (out "frontend") :session session)
+      (compile-eval (out "eval") :session session)
+      (compile-compiler (out "compiler") :session session)
+      (compile-file-to-kir build (out "build") :session session))
+    (with-open-file (out (merge-pathnames "modules.lisp-expr" dir)
+                         :direction :output :if-exists :supersede)
+      (with-standard-io-syntax
+        (let ((*print-readably* nil))
+          (format out "~S~%"
+                  (append (mapcar (lambda (name) (cons name (module-file-names name)))
+                                  '("kernel" "clos" "frontend" "eval" "compiler"))
+                          (list (list "build" (namestring build))))))))
+    dir))

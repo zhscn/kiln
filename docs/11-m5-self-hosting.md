@@ -4,7 +4,8 @@
 - M5.1 完成（2026-11，§5）：目标端有了运行期的标准宏、`eval`、`compile`、`load` 和 REPL。
 - M5.2 完成（2026-11，§7）：Common-boot 和它的依赖编成 compiler 模块，kiln 上 `cst-to-ast` 的结果和 SBCL 逐字相同。
 - M5.3 完成（2026-11，§8）：kiln 自己的前端和 `lower.lisp` 也编进 compiler 模块，kiln 上编出的 KIR 和 SBCL 的逐字相同。
-- M5.4 完成（2026-11，§9）：kiln 交叉编译自己的五个模块（kernel、CLOS、frontend、eval、compiler），KIR 和 SBCL 的逐字相同（`tests/m5/co-kernel`，17 秒；`co-clos`、`co-frontend`、`co-eval`、`co-compiler`，各约 7–15 分钟，慢测试）。
+- M5.4 完成（2026-11，§9、§10）：kiln 交叉编译自己的五个模块（kernel、CLOS、frontend、eval、compiler），KIR 和 SBCL 的逐字相同（`tests/m5/co-kernel`，17 秒；`co-clos`、`co-frontend`、`co-eval`、`co-compiler`，各约 7–15 分钟，慢测试）。
+  自举闭合（§10）：kiln0（SBCL 编出的 KIR 链接成的 AOT 可执行文件）编出的 stage1 和 SBCL 的 stage0 逐字节相同，kiln1 编出的 stage2 和 stage1 相同，kiln0 和 kiln1 两个可执行文件也逐字节相同（`tools/bootstrap.sh`，约 35 分钟）。
 
 ## 1. 目标和验证
 
@@ -52,7 +53,7 @@
 | M5.1 ✅ | 目标端 Maclina：Ecclesia、Common-macros、Trucler 和 Maclina 编成 `eval` 模块（§5）；`eval`、`compile`（字节码）、`load` 源文件；最简 REPL | 测试里对字节码函数 `funcall`、和原生函数互相调用、`load` 一个源文件；不读文件时 REPL 能读入并求值 |
 | M5.2 ✅ | 前端的其余依赖编成目标端的 compiler 模块（§7）：let-plus、anaphora、more-conditions、print-items、builder-protocol、parser.packrat、s-expression-syntax、Iconoclast、Trucler reference、Clostrum、Common-macros（AST 展开器）、Common-boot | 在 kiln 上 `cst-to-ast` 一组形式，打印 AST 的类和结构，和 SBCL 比对（`tests/m5/co-ast`） |
 | M5.3 ✅ | kiln 的 `lisp/*.lisp` 编进目标端（§8）；在 kiln 上把一个测试文件编成 KIR | 和 SBCL 产出的 KIR 逐字一致（`tests/m5/co-compile`）；KIR 不依赖 gensym 计数器（§8.2） |
-| M5.4 | kiln0 编译全部 kiln 源码（kernel、CLOS、前端、编译器各模块），kiln-cg AOT 链接成 kiln1；kiln1 再编出 kiln2 | kiln0 和 kiln1 产出的 KIR 一致；kiln1 和 kiln2 的一致；`tools/test.sh` 在 kiln1 上通过 |
+| M5.4 ✅ | kiln0 编译全部 kiln 源码（kernel、CLOS、前端、编译器各模块），kiln-cg AOT 链接成 kiln1；kiln1 再编出 kiln2 | kiln0 和 kiln1 产出的 KIR 一致；kiln1 和 kiln2 的一致；`tools/test.sh` 在 kiln1 上通过 |
 | M5.5 | 原生 `compile`：kiln-cg 作为库链进 kiln-rt，`compile` → KIR → 进程内 JIT，代码登记进运行中的 image；s-expression-syntax 等的 `compile` 改走这条路径 | `compile` 出的函数和 AOT 的结果一致；编译时间 |
 
 M5.4 每次编译都要跑完整的前端，速度取决于 CLOS 分派和 GC（10 §24、§26）。要是太慢，把 M5.5 提前：宏展开函数和 packrat 的解析器在字节码里执行，可能是主要开销。
@@ -445,6 +446,29 @@ frontend 模块不需要改动。其余的不一致和错误，大多是“在 S
 
 ### 9.6 接下来
 
-- kiln 上的构建程序：不依赖 SBCL 编译的测试程序，依次编五个模块，把 KIR 写到文件。文件列表和编译前的设置（`module-files`、`prepare-compiler-session`）要能在 kiln 上取得。
-- kiln1：kiln0 编出的 KIR 链接成 AOT 可执行文件（它和 SBCL 编出的 kiln0 的 KIR 相同）；kiln2：kiln1 再编一遍，比较 KIR。
-- GC：分代（写屏障）或 Immix 的大堆配置，缩短每次自举的时间。
+见 §10。
+
+## 10. 自举：kiln0 → kiln1 → kiln2
+
+`tools/bootstrap.sh` 做完整的自举，结果在 `build/boot/`：
+
+| 阶段 | 做什么 | 结果 |
+|---|---|---|
+| stage0 | SBCL 在一个会话里编五个模块和构建程序（`kiln:bootstrap-stage0`），写出 `NAME.kir` 和清单 `modules.lisp-expr` | 约 70 秒 |
+| kiln0 | stage0 的六个 KIR 用 `kiln-cg obj` 编成一个目标文件，和 launcher 链接成 AOT 可执行文件 | `kiln-cg` 约 15 秒，峰值内存约 9.5 GB；可执行文件约 120 MB；启动（各模块的顶层初始化）约 0.65 秒 |
+| stage1 | 在一个目录里运行 kiln0：读清单，依次编五个模块和构建程序自己 | 约 14.5 分钟，峰值 RSS 约 9 GB（8 GiB 堆）；六个 KIR 和 stage0 逐字节相同 |
+| kiln1 | stage1 的 KIR 链接成可执行文件 | 和 kiln0 逐字节相同 |
+| stage2 | 运行 kiln1 | 和 stage1 逐字节相同 |
+
+构建程序 `lisp/target/build.lisp` 是一个普通的程序模块（名字是 `build`），在 kiln 上的做法和 `tests/m5/co-compiler` 一样：一个交叉编译会话，kernel 带上 CL 的全部外部符号，编 compiler 模块之前调用 `prepare-compiler-session`，按 `muffle-warning` 处理警告。它不依赖 SBCL 才有的东西：
+- **文件列表**：放在清单里，而不是 `module-files` 宏（那是 SBCL 会话里的宿主宏，展开时要用 ASDF）。清单由 stage0 写出：每个模块的名字和源文件，格式就是 `front-end` 接受的格式（路径是 namestring，`:renames`、`:compile-time-too` 原样保留）。作用类似 SBCL 的 `build-order.lisp-expr`。
+- **输出**：写到当前目录的 `NAME.kir`。
+- 构建程序自己也在 stage0 里由 SBCL 编译（模块名 `build`，在 compiler 模块之后，用同一个会话），所以 stage1 也包含它；kiln1 完全由 kiln 编出。
+
+修正：kiln-cg 原来对同样的 KIR 生成的机器码不完全相同。函数里 landing block（`try_call` 的异常入口）按哈希表的遍历顺序填充，SSA 值的编号和寄存器分配因此每次不同。现在按创建顺序填充，kiln-cg 的输出只取决于 KIR。
+
+### 10.1 接下来
+
+- `tools/test.sh` 在 kiln1 上通过（M5.4 计划表里的最后一项验证）：测试程序由 kiln1 而不是 SBCL 编译。需要一个读源文件、写 KIR 的入口，和构建程序共用代码。
+- 自举时间：每个阶段约 15 分钟，主要是 CLOS 分派和 GC（§9.3）。分代 GC 或 Immix 的大堆配置，以及 docs/13 的堆快照（省掉每次启动的初始化）和机器码缓存。
+- 模块之间可以先存快照（docs/13 §1），后面的阶段从快照开始。
