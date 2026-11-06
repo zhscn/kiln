@@ -103,6 +103,20 @@ name and initfunction; and the slots."
     (setf (slot-value-using-location+1 instance -1) slots))
   instance)
 
+;;; SLOT-VALUE and (SETF SLOT-VALUE) of an instance of a class whose
+;;; metaclass is STANDARD-CLASS (docs/10 §27): the slot's location from
+;;; the cache of %SLOT-LOCATION, without finding the slot definition by
+;;; name (FIND with SLOT-DEFINITION-NAME, a generic function, as the key)
+;;; and calling SLOT-VALUE-USING-CLASS, as for accessor methods.
+(defun fast-slot-location (object name)
+  "The location of the slot NAME of OBJECT if OBJECT is a standard
+instance of a class whose metaclass is STANDARD-CLASS and has the slot,
+else NIL."
+  (and *standard-class*
+       (kiln.sys:%primop :standard-instance-p object)
+       (eq (class-of (class-of object)) *standard-class*)
+       (%find-slot-location object name)))
+
 (defun shared-initialize-aux-1 (instance class slot-names &rest initargs)
   (when (and *switched-p* (null *standard-class*))
     (setf *standard-class* (find-class 'standard-class)))

@@ -98,6 +98,11 @@ list, slots), the slots unbound."
 (defvar *slot-location-cache* (kiln.kernel::make-simple-vector (* 3 256) nil))
 
 (defun %slot-location (object name)
+  (or (%find-slot-location object name)
+      (error "no slot named" name object)))
+
+(defun %find-slot-location (object name)
+  "The location of the slot NAME of OBJECT, or NIL if it has none."
   (let* ((slots (standard-instance-access object -1))
          (cache *slot-location-cache*)
          (index (* 3 (kiln.sys:%primop :fixnum-logand
@@ -110,11 +115,11 @@ list, slots), the slots unbound."
         (let ((location
                 (loop for slot in slots
                       when (eq (standard-instance-access slot *slot-name-location*) name)
-                        return (standard-instance-access slot *slot-location-location*)
-                      finally (error "no slot named" name object))))
-          (setf (svref cache index) slots
-                (svref cache (+ index 1)) name
-                (svref cache (+ index 2)) location)
+                        return (standard-instance-access slot *slot-location-location*))))
+          (when location
+            (setf (svref cache index) slots
+                  (svref cache (+ index 1)) name
+                  (svref cache (+ index 2)) location))
           location))))
 
 (defun %slot (object name)

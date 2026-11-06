@@ -23,7 +23,11 @@
 ;;; LOWER-CACHED-TYPEP): when TYPE names a class (and is not a DEFTYPE),
 ;;; the result depends only on the object's class, so the car of CACHE
 ;;; keeps the stamp of the last object's class, doubled, plus 1 if the
-;;; result was true. One word, written at once.
+;;; result was true. One word, written at once. A call site that sees
+;;; objects of many classes (an AST walker) misses that cache: behind it
+;;; is a direct-mapped cache of (key type) pairs for all call sites.
+(defvar *typep-cache* (kiln.kernel::make-simple-vector (* 2 4096) nil))
+
 (defun kiln.kernel::%typep-cached (object type cache)
   (let* ((stamp (stamp object))
          (key (+ stamp stamp))
@@ -31,11 +35,28 @@
     (cond ((eq entry key) nil)
           ((eq entry (+ key 1)) t)
           (t
-           (let ((result (if (typep object type) t nil)))
-             (when (and (null (get type 'kiln.kernel::type-expander))
-                        (find-class type nil))
-               (setf (car cache) (if result (+ key 1) key)))
-             result)))))
+           (let* ((global *typep-cache*)
+                  (index (* 2 (kiln.sys:%primop
+                               :fixnum-logand
+                               (kiln.sys:%primop :fixnum-logxor stamp
+                                                 (kiln.sys:%primop :identity-hash type))
+                               4095)))
+                  (global-entry (svref global index)))
+             (if (and (eq (svref global (+ index 1)) type)
+                      (or (eq global-entry key) (eq global-entry (+ key 1))))
+                 (progn (setf (car cache) global-entry)
+                        (eq global-entry (+ key 1)))
+                 (let ((result (if (typep object type) t nil)))
+                   (when (and (null (get type 'kiln.kernel::type-expander))
+                              (find-class type nil))
+                     (let ((new (if result (+ key 1) key)))
+                       (setf (car cache) new)
+                       ;; The type first: a reader that sees the new key
+                       ;; with the old type misses.
+                       (setf (svref global (+ index 1)) nil
+                             (svref global index) new
+                             (svref global (+ index 1)) type)))
+                   result)))))))
 
 ;;; Condition classes are standard classes of their own metaclass, so
 ;;; that conditions can be told apart by their class's class.

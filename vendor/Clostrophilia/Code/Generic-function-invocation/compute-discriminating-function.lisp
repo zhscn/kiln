@@ -878,23 +878,48 @@
 
 ;;; kiln: a generic function that dispatches on one of its (spread)
 ;;; parameters, without EQL specializers, has a discriminating closure
-;;; with a one-entry cache: the stamp of the last call's argument and its
-;;; effective method. Most generic functions (accessors, AST walkers) are
-;;; called with instances of one class many times in a row.
-(defun make-single-dispatch-closure (generic-function arity position profile initial)
-  (let ((cached-stamp -1)
-        (cached-function nil))
+;;; with a direct-mapped cache: a simple vector of (stamp function) pairs,
+;;; indexed by the low bits of the argument's stamp, as many pairs as the
+;;; power of two at least the size of the call history (4 to 256). Stamps
+;;; are consecutive class numbers. A miss takes the automaton. (A
+;;; one-entry cache missed at every call of an AST walker's generic
+;;; functions, which see nodes of many classes.)
+(defun dispatch-cache-size (history-length)
+  (let ((size 4))
+    (loop while (and (< size history-length) (< size 256))
+          do (setf size (+ size size)))
+    size))
+
+(defun single-dispatch-miss (cache index stamp initial)
+  "The effective method function for STAMP from the automaton INITIAL,
+entered in CACHE at INDEX; or NIL. Out of line, so that the
+discriminating closure's hit path needs no frame for it."
+  (let ((state (automaton-transition initial stamp)))
+    (if (consp state)
+        (progn
+          ;; The stamp last: a reader never sees it with another function.
+          (setf (svref cache index) nil
+                (svref cache (+ index 1)) (cdr state)
+                (svref cache index) stamp)
+          (cdr state))
+        nil)))
+
+(defun make-single-dispatch-closure
+    (generic-function arity position profile initial history-length)
+  (let* ((size (dispatch-cache-size history-length))
+         (mask (- size 1))
+         (cache (kiln.kernel::make-simple-vector (+ size size) nil)))
     (macrolet ((dispatcher (n k)
                  (let ((parameters (spread-parameters n)))
                    `(lambda ,parameters
-                      (let ((stamp (argument-stamp ,(nth k parameters))))
-                        (if (eq stamp cached-stamp)
-                            (funcall cached-function ,@parameters)
-                            (let ((state (automaton-transition initial stamp)))
-                              (if (consp state)
-                                  (progn (setf cached-stamp stamp
-                                               cached-function (cdr state))
-                                         (funcall (cdr state) ,@parameters))
+                      (let* ((stamp (argument-stamp ,(nth k parameters)))
+                             (index (let ((i (kiln.sys:%primop :fixnum-logand stamp mask)))
+                                      (+ i i))))
+                        (if (eq (svref cache index) stamp)
+                            (funcall (svref cache (+ index 1)) ,@parameters)
+                            (let ((function (single-dispatch-miss cache index stamp initial)))
+                              (if function
+                                  (funcall function ,@parameters)
                                   (default-discriminating-function
                                    generic-function (list ,@parameters) profile))))))))
                (dispatchers ()
@@ -905,27 +930,43 @@
                                                    collect `(,k (dispatcher ,n ,k)))))))))
       (dispatchers))))
 
-(defun make-double-dispatch-closure (generic-function arity first second profile initial)
+(defun double-dispatch-miss (cache index s1 s2 initial)
+  "As SINGLE-DISPATCH-MISS, for two stamps: entries are (S1 S2 function)."
+  (let ((state (automaton-transition initial s1)))
+    (when state
+      (setf state (automaton-transition state s2)))
+    (if (consp state)
+        (progn
+          ;; The first stamp last: a reader never sees a mixed entry.
+          (setf (svref cache index) nil
+                (svref cache (+ index 1)) s2
+                (svref cache (+ index 2)) (cdr state)
+                (svref cache index) s1)
+          (cdr state))
+        nil)))
+
+(defun make-double-dispatch-closure
+    (generic-function arity first second profile initial history-length)
   ;; As MAKE-SINGLE-DISPATCH-CLOSURE, for two specialized parameters,
-  ;; FIRST < SECOND (SLOT-VALUE-USING-CLASS and the like).
-  (let ((cached-first -1)
-        (cached-second -1)
-        (cached-function nil))
+  ;; FIRST < SECOND (SLOT-VALUE-USING-CLASS, AST walkers with a client).
+  (let* ((size (dispatch-cache-size history-length))
+         (mask (- size 1))
+         (cache (kiln.kernel::make-simple-vector (* 3 size) nil)))
     (macrolet ((dispatcher (n j k)
                  (let ((parameters (spread-parameters n)))
                    `(lambda ,parameters
-                      (let ((s1 (argument-stamp ,(nth j parameters)))
-                            (s2 (argument-stamp ,(nth k parameters))))
-                        (if (and (eq s1 cached-first) (eq s2 cached-second))
-                            (funcall cached-function ,@parameters)
-                            (let ((state (automaton-transition initial s1)))
-                              (when state
-                                (setf state (automaton-transition state s2)))
-                              (if (consp state)
-                                  (progn (setf cached-first s1
-                                               cached-second s2
-                                               cached-function (cdr state))
-                                         (funcall (cdr state) ,@parameters))
+                      (let* ((s1 (argument-stamp ,(nth j parameters)))
+                             (s2 (argument-stamp ,(nth k parameters)))
+                             (index (* 3 (kiln.sys:%primop
+                                          :fixnum-logand
+                                          (kiln.sys:%primop :fixnum-logxor (+ s1 s1 s1) s2)
+                                          mask))))
+                        (if (and (eq (svref cache index) s1)
+                                 (eq (svref cache (+ index 1)) s2))
+                            (funcall (svref cache (+ index 2)) ,@parameters)
+                            (let ((function (double-dispatch-miss cache index s1 s2 initial)))
+                              (if function
+                                  (funcall function ,@parameters)
                                   (default-discriminating-function
                                    generic-function (list ,@parameters) profile))))))))
                (dispatchers ()
@@ -969,13 +1010,14 @@
           (cond ((and initial (null eql-cache) (small-integer= active-arg-count 1))
                  (make-single-dispatch-closure generic-function arity
                                                (position-if #'identity specializer-profile)
-                                               specializer-profile initial))
+                                               specializer-profile initial
+                                               (length call-history)))
                 ((and initial (null eql-cache) (small-integer= active-arg-count 2))
                  (let ((first (position-if #'identity specializer-profile)))
                    (make-double-dispatch-closure
                     generic-function arity first
                     (position-if #'identity specializer-profile :start (1+ first))
-                    specializer-profile initial)))
+                    specializer-profile initial (length call-history))))
                 (t
                  (make-spread-discriminating-closure
                   generic-function arity specializer-profile initial eql-cache)))

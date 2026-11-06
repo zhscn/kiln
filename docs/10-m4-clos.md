@@ -773,3 +773,11 @@ kiln 编译自己时（docs/11 §10.2），CLOS 的通用机制占了大部分�
 - 现在编译器把类型是常量符号、又不在 CL 和 KEYWORD 包里的 `typep`，改成调用 `kiln.kernel::%typep-cached`（`lower.lisp`，`lower-cached-typep`）。每个调用点带一个缓存：数据段里的一个静态 cons。
 - kernel 里的 `%typep-cached` 就是 `typep`。CLOS 模块（`conditions.lisp`）把它换成带缓存的版本：类型名是类、又不是 deftype 时，结果只取决于对象的类。所以缓存的 car 存“上一个对象的 stamp 乘 2，结果为真再加 1”，是一个 fixnum，一次写入。
 - 缓存里不存指针，GC 不需要扫描它。
+
+**`slot-value`**：对象是元类为 `standard-class` 的标准实例时，按 `%slot-location` 的缓存（键是槽列表和槽名）直接读写槽位置。原来要在 `class-slots` 里用 `find` 按名字找槽定义（键函数 `slot-definition-name` 是泛函），再调用 `slot-value-using-class`。
+
+**类名 `typep` 的全局缓存**：多态的调用点（AST walker 里的 `(typep node 'some-ast)`）总是不命中只有一项的调用点缓存。所以在它后面再加一个所有调用点共用的直接映射缓存，每项是 `(键 类型)`，下标由 stamp 和类型符号的 identity hash 异或得到。
+
+**判别闭包的缓存表**：只按一个或两个参数分派的泛函，原来的判别闭包只缓存上一次的 stamp 和函数。AST walker 的泛函面对几十个类，几乎每次都不命中，然后在自动机里二分查找。现在每个判别闭包带一张直接映射表，以 stamp 的低位（两个 stamp 时是 `3·s1 xor s2`）为下标，大小是不小于调用历史长度的 2 的幂（4 到 256）。stamp 是连续分配的类编号，低位分布均匀。未命中的路径（查自动机、填表）放在单独的函数里：放在闭包里时，命中路径也要为它保存 callee-saved 寄存器、开一个大栈帧。
+
+kiln 编 CLOS 模块：148 秒 → 129 秒。

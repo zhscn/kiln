@@ -88,6 +88,17 @@ Each patched place is marked with a `kiln:` comment.
 
 - Clients can interpret more operators in effective method forms
   (`*effective-method-operators*`; kiln's ctype client adds `surely`).
+- The discriminating closures of generic functions that dispatch on one or
+  two (spread) parameters have a direct-mapped cache of (stamps function)
+  entries, indexed by the low bits of the stamps and sized from the call
+  history (4 to 256 entries), instead of a one-entry cache; a miss takes
+  the automaton in a separate function (`single-dispatch-miss`,
+  `double-dispatch-miss`), so that the hit path needs no large frame
+  (docs/10 §27).
+- `slot-value` and `(setf slot-value)` of a standard instance of a class
+  whose metaclass is `standard-class` read and write the slot's location
+  from the cache of `%slot-location` (`fast-slot-location`, kiln's
+  `support.lisp`), as accessor methods do.
 
 ## Predicament patches
 
