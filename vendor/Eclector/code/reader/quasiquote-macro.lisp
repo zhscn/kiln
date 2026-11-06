@@ -29,9 +29,26 @@
       (t
        (maybe-wrap (transform-quasiquote-argument form))))))
 
+(defun constant-template-p (object)
+  ;; kiln: OBJECT contains no UNQUOTE or UNQUOTE-SPLICING (nested
+  ;; quasiquotes are expanded already, EXPAND).
+  (let ((seen '()))
+    (labels ((walk (x)
+               (cond ((not (consp x)) t)
+                     ((member x seen :test #'eq) t)
+                     ((member (car x) '(unquote unquote-splicing)) nil)
+                     (t (push x seen)
+                        (and (walk (car x)) (walk (cdr x)))))))
+      (walk object))))
+
 (defun transform-compound (compound)
   (labels ((rec (object)
              (typecase object
+               ;; kiln: a tail without unquotes is quoted, and shared, as
+               ;; SBCL's backquote makes it: `(a ,x b c) is
+               ;; (APPEND (LIST 'A) (LIST X) '(B C)).
+               ((satisfies constant-template-p)
+                (list `(quote ,object)))
                ;; kiln: a final ,@X is the tail of the list, as SBCL's
                ;; backquote makes it (CLHS 2.4.6 allows sharing it):
                ;; (APPEND ... X), not (APPEND ... X 'NIL), which copies X.
@@ -52,6 +69,11 @@
      (second argument))
     ((cons (eql unquote-splicing))
      (error 'unquote-splicing-at-top :argument (second argument)))
+    ;; kiln: a list without unquotes is quoted, as SBCL's backquote
+    ;; quotes it: `(if (null x) ,y) is (APPEND (LIST 'IF) (LIST '(NULL X))
+    ;; (LIST Y)), and each expansion has the same (NULL X).
+    ((and cons (satisfies constant-template-p))
+     `(quote ,argument))
     (cons
      `(append ,@(transform-compound argument)))
     ((and vector (not string))

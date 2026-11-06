@@ -274,6 +274,11 @@ Under `#+kiln` (docs/10 §18 of kiln):
   copies `x`. Macro expanders compiled by SBCL (in the host) and by kiln
   from Eclector's expansion (on kiln) then make expansions with the same
   shared structure, and so the same constants in the KIR (docs/11 §9).
+- For the same reason, the parts of a backquoted template without unquotes
+  are quoted, as SBCL quotes them: a sublist (`` `(if (null x) ,y) `` is
+  `(append (list 'if) (list '(null x)) (list y))`) and a tail
+  (`` `(a ,x b c) `` ends in `'(b c)`, shared). Each expansion has the
+  same constant parts.
 
 ## Inravina patches
 

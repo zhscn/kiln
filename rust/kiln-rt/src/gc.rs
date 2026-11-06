@@ -18,7 +18,8 @@ use crate::object::{
     KIND_RACK, KIND_RATIO, KIND_MASK, KIND_SIMPLE_VECTOR, KIND_STRING, KIND_SYMBOL,
     header_length,
 };
-use mmtk::util::alloc::BumpAllocator;
+use mmtk::util::alloc::{BumpAllocator, BumpPointer, ImmixAllocator};
+use mmtk::util::options::PlanSelector;
 use mmtk::util::copy::{CopySemantics, GCWorkerCopyContext};
 use mmtk::util::opaque_pointer::{OpaquePointer, VMMutatorThread, VMThread, VMWorkerThread};
 use mmtk::util::{Address, ObjectReference};
@@ -507,10 +508,10 @@ pub unsafe fn alloc(ctx: *mut Context, bytes: u64, header: u64) -> u64 {
         // space; its post_alloc does nothing without the vo_bit feature).
         if bytes <= max_non_los_bytes() {
             let bump = bump_allocator(mutator);
-            let start = (*bump).bump_pointer.cursor.align_up(8);
+            let start = (*bump).cursor.align_up(8);
             let end = start + bytes;
-            if end <= (*bump).bump_pointer.limit {
-                (*bump).bump_pointer.cursor = end;
+            if end <= (*bump).limit {
+                (*bump).cursor = end;
                 std::ptr::write_bytes(start.to_mut_ptr::<u8>(), 0, bytes);
                 start.store::<u64>(header);
                 return start.as_usize() as u64;
@@ -543,8 +544,8 @@ pub unsafe fn bump_pointer_fields(mutator: *mut KilnMutator) -> (*mut usize, *mu
     unsafe {
         let bump = bump_allocator(&mut *mutator);
         (
-            &mut (*bump).bump_pointer.cursor as *mut Address as *mut usize,
-            &mut (*bump).bump_pointer.limit as *mut Address as *mut usize,
+            &mut (*bump).cursor as *mut Address as *mut usize,
+            &mut (*bump).limit as *mut Address as *mut usize,
         )
     }
 }
@@ -555,14 +556,21 @@ fn max_non_los_bytes() -> usize {
 }
 
 thread_local! {
-    /// The default bump allocator of this thread's mutator, and the mutator.
-    static BUMP: Cell<(usize, *mut BumpAllocator<Kiln>)> =
+    /// The bump pointer of this thread's mutator's default allocator, and
+    /// the mutator.
+    static BUMP: Cell<(usize, *mut BumpPointer)> =
         const { Cell::new((0, std::ptr::null_mut())) };
+    /// For plans whose default allocator has no bump pointer (MarkSweep):
+    /// an empty buffer, so that the fast paths always fail.
+    static NO_BUMP: std::cell::UnsafeCell<BumpPointer> =
+        std::cell::UnsafeCell::new(BumpPointer { cursor: Address::ZERO, limit: Address::ZERO });
 }
 
-/// The default allocator of MUTATOR (a bump allocator: the plan is
-/// SemiSpace), cached per thread.
-unsafe fn bump_allocator(mutator: &mut KilnMutator) -> *mut BumpAllocator<Kiln> {
+/// The bump pointer of MUTATOR's default allocator (SemiSpace's bump
+/// allocator, Immix's), cached per thread. The fast paths (here and in
+/// generated code, through the context's alloc_cursor and alloc_limit)
+/// allocate from it; the allocator's slow path refills it.
+unsafe fn bump_allocator(mutator: &mut KilnMutator) -> *mut BumpPointer {
     let key = mutator as *mut KilnMutator as usize;
     BUMP.with(|b| {
         let (m, p) = b.get();
@@ -570,10 +578,27 @@ unsafe fn bump_allocator(mutator: &mut KilnMutator) -> *mut BumpAllocator<Kiln> 
             p
         } else {
             let p = unsafe {
-                mutator.allocator_impl_mut_for_semantic::<BumpAllocator<Kiln>>(
-                    AllocationSemantics::Default,
-                )
-            } as *mut BumpAllocator<Kiln>;
+                match *mmtk().get_options().plan {
+                    PlanSelector::Immix | PlanSelector::StickyImmix => {
+                        &mut mutator
+                            .allocator_impl_mut_for_semantic::<ImmixAllocator<Kiln>>(
+                                AllocationSemantics::Default,
+                            )
+                            .bump_pointer as *mut BumpPointer
+                    }
+                    PlanSelector::NoGC
+                    | PlanSelector::SemiSpace
+                    | PlanSelector::GenCopy
+                    | PlanSelector::GenImmix => {
+                        &mut mutator
+                            .allocator_impl_mut_for_semantic::<BumpAllocator<Kiln>>(
+                                AllocationSemantics::Default,
+                            )
+                            .bump_pointer as *mut BumpPointer
+                    }
+                    _ => NO_BUMP.with(|n| n.get()),
+                }
+            };
             b.set((key, p));
             p
         }

@@ -316,23 +316,28 @@ at compile time (USE-HOST-MACROS).")
 ;;; with Eclector's QUASIQUOTE, UNQUOTE and UNQUOTE-SPLICING, which are
 ;;; macros at compile time (MAKE-COMPILE-ENVIRONMENT) and run time.
 (defun translate-host-backquote (form)
-  #-sbcl form
-  #+sbcl
+  ;; A copy of FORM (structure shared within FORM stays shared): an
+  ;; expander's literal constants are not shared between expansions, on
+  ;; the host and on kiln alike (they would be one constant in the KIR).
   (let ((done (make-hash-table :test 'eq)))
     (labels ((walk (x)
-               (cond ((typep x 'sb-impl::comma)
+               (cond #+sbcl
+                     ((typep x 'sb-impl::comma)
                       (list (if (zerop (sb-impl::comma-kind x))
                                 'eclector.reader:unquote
                                 'eclector.reader:unquote-splicing)
                             (walk (sb-impl::comma-expr x))))
                      ((gethash x done))
                      ((consp x)
-                      (setf (gethash x done)
-                            (cons (if (eq (car x) 'sb-int:quasiquote)
-                                      'eclector.reader:quasiquote
-                                      (walk (car x)))
-                                  (walk (cdr x)))))
-                     ((and (simple-vector-p x) (some (lambda (e) (or (consp e) (typep e 'sb-impl::comma))) x))
+                      (let ((new (cons nil nil)))
+                        (setf (gethash x done) new)
+                        (setf (car new) (if (and #+sbcl (eq (car x) 'sb-int:quasiquote) #-sbcl nil)
+                                            'eclector.reader:quasiquote
+                                            (walk (car x)))
+                              (cdr new) (walk (cdr x)))
+                        new))
+                     ((and (simple-vector-p x)
+                           (some (lambda (e) (or (consp e) #+sbcl (typep e 'sb-impl::comma))) x))
                       (setf (gethash x done) (map 'vector #'walk x)))
                      (t x))))
       (walk form))))
