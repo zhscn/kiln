@@ -91,11 +91,21 @@
         (unless (fboundp (maclina.compile:name condition))
           (warn condition))))))
 
+(defvar *compile-function* nil
+  "The function COMPILE compiles a lambda expression with: the compiler
+module sets it to its native compiler (docs/11 §11); NIL, Maclina's
+bytecode compiler.")
+
+(defun compile-lambda (definition)
+  (if *compile-function*
+      (funcall *compile-function* definition)
+      (maclina.compile:compile definition nil)))
+
 (defun compile (name &optional definition)
   (let ((function (cond ((functionp definition) definition)
-                        (definition (maclina.compile:compile definition nil))
+                        (definition (compile-lambda definition))
                         (t (let ((f (fdefinition name)))
-                             (if (functionp f) f (maclina.compile:compile f nil)))))))
+                             (if (functionp f) f (compile-lambda f)))))))
     (when name
       (if (and (symbolp name) (macro-function name) (null definition))
           (setf (macro-function name) function)

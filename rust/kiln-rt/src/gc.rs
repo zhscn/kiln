@@ -117,15 +117,24 @@ struct StackMap {
 static STACK_MAPS: RwLock<Vec<StackMap>> = RwLock::new(Vec::new());
 
 pub fn register_stack_maps(records: &[StackMapRecord]) {
-    let mut maps = STACK_MAPS.write().unwrap();
-    for r in records {
-        let offsets = unsafe { std::slice::from_raw_parts(r.offsets, r.count as usize) }.to_vec();
-        maps.push(StackMap {
+    let mut new: Vec<StackMap> = records
+        .iter()
+        .map(|r| StackMap {
             ret_addr: r.func + r.ret_off as usize,
-            offsets,
-        });
+            offsets: unsafe { std::slice::from_raw_parts(r.offsets, r.count as usize) }.to_vec(),
+        })
+        .collect();
+    new.sort_by_key(|m| m.ret_addr);
+    let mut maps = STACK_MAPS.write().unwrap();
+    // As unwind::register_callsites: code loaded later usually lies above.
+    let append = match (maps.last(), new.first()) {
+        (Some(last), Some(first)) => last.ret_addr < first.ret_addr,
+        _ => true,
+    };
+    maps.extend(new);
+    if !append {
+        maps.sort_by_key(|m| m.ret_addr);
     }
-    maps.sort_by_key(|m| m.ret_addr);
 }
 
 /// Slots holding Lisp objects in the Lisp frames of `ctx`'s stack, from the
@@ -184,11 +193,20 @@ unsafe fn segment_slots(maps: &[StackMap], top: usize, base: usize, out: &mut Ve
 static STATIC_ROOTS: std::sync::RwLock<Vec<usize>> = std::sync::RwLock::new(Vec::new());
 
 pub fn register_static_roots(addrs: &[usize]) {
+    let mut new = addrs.to_vec();
+    new.sort_unstable();
+    new.dedup();
     let mut roots = STATIC_ROOTS.write().unwrap();
-    roots.extend_from_slice(addrs);
-    // Modules may share symbols: scan each word once.
-    roots.sort_unstable();
-    roots.dedup();
+    let append = match (roots.last(), new.first()) {
+        (Some(last), Some(first)) => last < first,
+        _ => true,
+    };
+    roots.extend(new);
+    if !append {
+        // Modules may share symbols: scan each word once.
+        roots.sort_unstable();
+        roots.dedup();
+    }
 }
 
 // ---------------------------------------------------------------------------

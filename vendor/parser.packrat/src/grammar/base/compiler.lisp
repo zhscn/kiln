@@ -399,9 +399,12 @@
 #+kiln
 (defun %expansion-uses? (form)
   ;; Quietly: COMPILE reports the warnings it muffles at the end of its
-  ;; compilation unit.
+  ;; compilation unit. With Maclina, not the native compiler (docs/11
+  ;; §11): only the expansion matters, and Maclina compiles MACROLET
+  ;; anywhere and much faster.
   (let ((*standard-output* (make-broadcast-stream))
-        (*error-output* (make-broadcast-stream)))
+        (*error-output* (make-broadcast-stream))
+        (kiln.kernel::*compile-function* nil))
     (catch 'used
       (handler-bind ((warning #'muffle-warning))
         (compile nil `(lambda () ,form)))

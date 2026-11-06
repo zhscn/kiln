@@ -40,15 +40,26 @@ pub struct CallSiteRecord {
 static CALLSITES: RwLock<Vec<CallSite>> = RwLock::new(Vec::new());
 
 pub fn register_callsites(records: &[CallSiteRecord]) {
-    let mut table = CALLSITES.write().unwrap();
-    for r in records {
-        table.push(CallSite {
+    let mut new: Vec<CallSite> = records
+        .iter()
+        .map(|r| CallSite {
             ret_addr: r.func + r.ret_off as usize,
             handler: r.func + r.handler_off as usize,
             frame_offset: r.frame_offset,
-        });
+        })
+        .collect();
+    new.sort_by_key(|c| c.ret_addr);
+    let mut table = CALLSITES.write().unwrap();
+    // Code loaded later (compiled at run time) usually lies above: then
+    // the table stays sorted without sorting it again.
+    let append = match (table.last(), new.first()) {
+        (Some(last), Some(first)) => last.ret_addr < first.ret_addr,
+        _ => true,
+    };
+    table.extend(new);
+    if !append {
+        table.sort_by_key(|c| c.ret_addr);
     }
-    table.sort_by_key(|c| c.ret_addr);
 }
 
 fn lookup_callsite(ret_addr: usize) -> Option<CallSite> {

@@ -96,7 +96,8 @@
              `(lambda ,host-lambda-list
                 (list ,@(mapcar #'car pairs))))
            (argument-parser
-             (compile nil argument-parser-expression)))
+             (let (#+kiln (kiln.kernel::*compile-function* nil))
+               (compile nil argument-parser-expression))))
       (lambda (&rest arguments)
         (let ((*unwind-tag* (list nil))
               (lexical-locations

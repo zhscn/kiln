@@ -40,6 +40,52 @@ pub struct ModuleInfo {
     /// Addresses of static words that are GC roots.
     pub roots: *const usize,
     pub nroots: u64,
+    /// Shared functions and data that code compiled at run time refers to
+    /// by name (`EXPORTED_NAMES`).
+    pub exports: *const Export,
+    pub nexports: u64,
+}
+
+/// An entry of a module's export table: a NUL-terminated name and an
+/// address.
+#[repr(C)]
+pub struct Export {
+    pub name: *const u8,
+    pub addr: usize,
+}
+
+/// The shared definitions a module exports, if it defines them: code
+/// compiled into the running image (`kiln_rt_jit` in kiln-cg) imports them
+/// instead of defining its own, since it compares function entries with
+/// the undefined-function entry (docs/11 §11).
+pub const EXPORTED_NAMES: &[&str] = &[
+    "kiln_undefined_function",
+    "kiln_undefined_setf_function",
+    "kiln_funcallable_trampoline",
+    "kiln_funcallable_unset",
+    "kiln_funcallable_unset_fobj",
+];
+
+static EXPORTS: std::sync::RwLock<Vec<(String, usize)>> = std::sync::RwLock::new(Vec::new());
+
+pub fn register_export(name: &str, addr: usize) {
+    let mut exports = EXPORTS.write().unwrap();
+    if !exports.iter().any(|(n, _)| n == name) {
+        exports.push((name.to_string(), addr));
+    }
+}
+
+/// The address a loaded module exported under `name`.
+pub fn exported(name: &str) -> Option<usize> {
+    EXPORTS.read().unwrap().iter().find(|(n, _)| n == name).map(|&(_, a)| a)
+}
+
+/// Registers the call sites, stack maps and static roots of code loaded
+/// into the running image.
+pub fn register_code(callsites: &[CallSiteRecord], maps: &[gc::StackMapRecord], roots: &[usize]) {
+    unwind::register_callsites(callsites);
+    gc::register_stack_maps(maps);
+    gc::register_static_roots(roots);
 }
 
 /// # Safety
@@ -83,11 +129,15 @@ pub unsafe fn run_module(info: &ModuleInfo) -> i32 {
 unsafe fn run_module_here(info: &ModuleInfo) -> i32 {
     object::init_statics();
     unsafe {
-        let records = std::slice::from_raw_parts(info.callsites, info.ncallsites as usize);
-        unwind::register_callsites(records);
-        let maps = std::slice::from_raw_parts(info.stackmaps, info.nstackmaps as usize);
-        gc::register_stack_maps(maps);
-        gc::register_static_roots(std::slice::from_raw_parts(info.roots, info.nroots as usize));
+        register_code(
+            std::slice::from_raw_parts(info.callsites, info.ncallsites as usize),
+            std::slice::from_raw_parts(info.stackmaps, info.nstackmaps as usize),
+            std::slice::from_raw_parts(info.roots, info.nroots as usize),
+        );
+        for e in std::slice::from_raw_parts(info.exports, info.nexports as usize) {
+            let name = std::ffi::CStr::from_ptr(e.name as *const std::ffi::c_char);
+            register_export(&name.to_string_lossy(), e.addr);
+        }
         let _ = ENTER.set(info.enter);
         let mut ctx = Context::new();
         for &init in std::slice::from_raw_parts(info.inits, info.ninits as usize) {

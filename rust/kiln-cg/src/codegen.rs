@@ -42,10 +42,15 @@ pub struct Output {
     pub stackmaps: Vec<StackMapInfo>,
     /// Static GC roots: (data object, byte offset).
     pub roots: Vec<(DataId, u32)>,
+    /// The definitions named in `kiln_rt::EXPORTED_NAMES` that the module
+    /// defines.
+    pub exports: Vec<(String, Ref)>,
+    /// All data objects the module defines, by name.
+    pub data: HashMap<String, DataId>,
 }
 
 #[derive(Clone, Copy)]
-enum Ref {
+pub enum Ref {
     Func(FuncId),
     Data(DataId),
 }
@@ -311,12 +316,27 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
         };
         roots.push((id, index * 8));
     }
+    let exports = kiln_rt::EXPORTED_NAMES
+        .iter()
+        .filter(|n| !kir.import_data.iter().any(|d| d == *n))
+        .filter_map(|n| names.get(*n).map(|r| (n.to_string(), *r)))
+        .collect();
+    let data = kir
+        .data
+        .iter()
+        .filter_map(|d| match names.get(&d.name) {
+            Some(Ref::Data(id)) => Some((d.name.clone(), *id)),
+            _ => None,
+        })
+        .collect();
     Ok(Output {
         enter,
         inits,
         callsites,
         stackmaps,
         roots,
+        exports,
+        data,
     })
 }
 
@@ -438,13 +458,47 @@ pub fn emit_module_info<M: Module>(module: &mut M, out: &Output) -> R<()> {
     idesc.define(vec![0u8; out.inits.len() * 8 + 8].into_boxed_slice());
     module.define_data(inits, &idesc).map_err(err)?;
 
+    // Exports: [name, address] pairs; the names are C strings.
+    let exports = module
+        .declare_data("kiln_exports", Linkage::Local, false, false)
+        .map_err(err)?;
+    let mut edesc = DataDescription::new();
+    edesc.set_align(8);
+    for (i, (name, r)) in out.exports.iter().enumerate() {
+        let sid = module
+            .declare_data(&format!("kiln_export_name_{i}"), Linkage::Local, false, false)
+            .map_err(err)?;
+        let mut sdesc = DataDescription::new();
+        let mut bytes = name.as_bytes().to_vec();
+        bytes.push(0);
+        sdesc.define(bytes.into_boxed_slice());
+        module.define_data(sid, &sdesc).map_err(err)?;
+        let gv = module.declare_data_in_data(sid, &mut edesc);
+        edesc.write_data_addr((i * 16) as u32, gv, 0);
+        match r {
+            Ref::Func(id) => {
+                let fr = module.declare_func_in_data(*id, &mut edesc);
+                edesc.write_function_addr((i * 16 + 8) as u32, fr);
+            }
+            Ref::Data(id) => {
+                let gv = module.declare_data_in_data(*id, &mut edesc);
+                edesc.write_data_addr((i * 16 + 8) as u32, gv, 0);
+            }
+        }
+    }
+    edesc.define(vec![0u8; out.exports.len() * 16 + 8].into_boxed_slice());
+    module.define_data(exports, &edesc).map_err(err)?;
+
     // Layout: kiln_rt::ModuleInfo.
     let info = module
         .declare_data(MODULE_INFO_NAME, Linkage::Export, false, false)
         .map_err(err)?;
     let mut desc = DataDescription::new();
     desc.set_align(8);
-    let mut bytes = vec![0u8; 72];
+    let mut bytes = vec![0u8; 88];
+    bytes[80..88].copy_from_slice(&(out.exports.len() as u64).to_le_bytes());
+    let gv = module.declare_data_in_data(exports, &mut desc);
+    desc.write_data_addr(72, gv, 0);
     bytes[64..72].copy_from_slice(&(out.roots.len() as u64).to_le_bytes());
     let gv = module.declare_data_in_data(roots, &mut desc);
     desc.write_data_addr(56, gv, 0);
@@ -865,7 +919,20 @@ fn compile_parallel(
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or_else(|| std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1))
-        .clamp(1, n.max(1));
+        .clamp(1, n.div_ceil(16).max(1));
+    if threads == 1 {
+        // Small modules (code compiled into a running image): no threads.
+        return funcs
+            .into_iter()
+            .zip(kfuncs)
+            .map(|(f, kf)| {
+                let mut ctx = Context::for_function(f);
+                ctx.compile(isa, &mut Default::default())
+                    .map_err(|e| format!("func {}: {e:?}", kf.name))?;
+                Ok(ctx)
+            })
+            .collect();
+    }
     let queue: std::sync::Mutex<Vec<Option<Context>>> =
         std::sync::Mutex::new(funcs.into_iter().map(|f| Some(Context::for_function(f))).collect());
     let next = std::sync::atomic::AtomicUsize::new(0);

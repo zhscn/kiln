@@ -100,9 +100,47 @@ so local names carry the module's name; shared ones (symbols) do not."
 ;;;
 ;;; Operands are KIR expressions; data words are KIR data words. A constant
 ;;; is built as a data word, then turned into an operand.
+;;;
+;;; Code compiled into the running image (COMPILE, docs/11 §11) refers to
+;;; the image's objects: a literal that is not an immediate is a word of
+;;; the module's literal words ("kiln_literals", static roots), which the
+;;; loader fills in from a vector (kiln_rt_jit), and its data word is
+;;; (:LITERAL index). The shared functions are the image's (imported).
+
+(defvar *image-literals* nil
+  "When compiling into the running image: a hash table from literal objects
+to their indices in the literal words; else NIL.")
+
+(defvar *image-literal-objects*)        ; the literals, newest first
+
+(defparameter +literals-label+ "kiln_literals")
+
+(defun literal-word (x)
+  `(:literal ,(or (gethash x *image-literals*)
+                  (progn (push x *image-literal-objects*)
+                         (setf (gethash x *image-literals*)
+                               (1- (length *image-literal-objects*)))))))
 
 (defun word-operand (word)
-  (if (integerp word) word `(:addr ,@(rest word))))
+  (cond ((integerp word) word)
+        ((eq (first word) :literal)
+         `(:load (:addr ,+literals-label+) ,(* 8 (second word))))
+        (t `(:addr ,@(rest word)))))
+
+(defun emit-literal-words ()
+  "Defines the literal words of a module compiled into the running image;
+returns the literals, a vector."
+  (let ((n (length *image-literal-objects*)))
+    (module-data +literals-label+ `(:words ,@(make-list (max n 1) :initial-element 0)))
+    (dotimes (i n)
+      (module-root +literals-label+ i))
+    (coerce (reverse *image-literal-objects*) 'simple-vector)))
+
+(defun shared-entry (name)
+  "When compiling into the running image, imports the shared definition
+NAME, and returns NAME; else NIL (the caller defines it)."
+  (when *image-literals*
+    (module-import-data name)))
 
 (defun nil-word () `(:data ,(module-import-data "kiln_nil") ,+tag-general+))
 (defun t-word () `(:data ,(module-import-data "kiln_t") ,+tag-general+))
@@ -113,7 +151,7 @@ so local names carry the module's name; shared ones (symbols) do not."
   "A function that signals an undefined-function error for the symbol in
 its first env word. Every function cell starts out holding one."
   (let ((name "kiln_undefined_function"))
-    (unless (gethash name (kiln.kir::kmodule-defined *module*))
+    (unless (or (shared-entry name) (gethash name (kiln.kir::kmodule-defined *module*)))
       (setf (gethash name (kiln.kir::kmodule-defined *module*)) t)
       (module-shared name)
       (let ((*regions* '()))
@@ -124,7 +162,7 @@ its first env word. Every function cell starts out holding one."
 (defun undefined-setf-function-entry ()
   "As UNDEFINED-FUNCTION-ENTRY, for the function (SETF symbol)."
   (let ((name "kiln_undefined_setf_function"))
-    (unless (gethash name (kiln.kir::kmodule-defined *module*))
+    (unless (or (shared-entry name) (gethash name (kiln.kir::kmodule-defined *module*)))
       (setf (gethash name (kiln.kir::kmodule-defined *module*)) t)
       (module-shared name)
       (let ((*regions* '()))
@@ -132,15 +170,18 @@ its first env word. Every function cell starts out holding one."
           (emit-error +err-undefined-setf-function+ `(:load :self ,+fobj-env+)))))
     name))
 
-(defun function-cell-data (name)
-  "Data object and word index of the global function cell of NAME."
-  (cond ((symbolp name)
-         (values (symbol-data name) 3))
-        ((and (consp name) (eq (first name) 'setf) (symbolp (second name))
-              (second name) (not (eq (second name) t)))
-         ;; (SETF symbol): the symbol's setf function word.
-         (values (symbol-data (second name)) 7))
-        (t (fail "invalid function name ~S" name))))
+(defun function-cell-place (name)
+  "The address operand and offset of the global function cell of NAME."
+  (multiple-value-bind (symbol index)
+      (cond ((symbolp name) (values name 3))
+            ((and (consp name) (eq (first name) 'setf) (symbolp (second name))
+                  (second name) (not (eq (second name) t)))
+             ;; (SETF symbol): the symbol's setf function word.
+             (values (second name) 7))
+            (t (fail "invalid function name ~S" name)))
+    (if *image-literals*
+        (values (constant-object symbol) (- (* 8 index) +tag-general+))
+        (values `(:addr ,(symbol-data symbol)) (* 8 index)))))
 
 (defun string-words (string)
   "Data words of a string object: header, then UTF-32 code points packed
@@ -206,6 +247,7 @@ name of its package as a string."
 (defun symbol-word (sym)
   (cond ((null sym) (nil-word))
         ((eq sym t) (t-word))
+        (*image-literals* (literal-word sym))
         (t `(:data ,(symbol-data sym) ,+tag-general+))))
 
 (defconstant +most-positive-fixnum+ (1- (ash 1 62)))
@@ -230,6 +272,10 @@ name of its package as a string."
 (defvar *pending-conses*)               ; conses being emitted -> their word if a cycle needs it
 
 (defun constant-word (x)
+  (when (and *image-literals*
+             (not (or (typep x '(or character single-float symbol))
+                      (and (integerp x) (<= +most-negative-fixnum+ x +most-positive-fixnum+)))))
+    (return-from constant-word (literal-word x)))
   (typecase x
     (integer
      (if (<= +most-negative-fixnum+ x +most-positive-fixnum+)
@@ -778,6 +824,7 @@ known to hold one), and true; else NIL and NIL."
 (defun rt-fd-read () (module-import-func "kiln_rt_fd_read" 5 1))
 (defun rt-float-decimal () (module-import-func "kiln_rt_float_decimal" 3 1))
 (defun rt-sys () (module-import-func "kiln_rt_sys" 5 1))
+(defun rt-jit () (module-import-func "kiln_rt_jit" 3 1))
 
 (defun emit-tls-slot (sym)
   "Raw address of the TLS slot of the symbol operand SYM (index 0 if it
@@ -1315,8 +1362,8 @@ safepoint (docs/08 §4)."
     (values v0 nv)))
 
 (defun function-cell-value (name)
-  (multiple-value-bind (data index) (function-cell-data name)
-    (copy-to-var `(:load (:addr ,data) ,(* 8 index)))))
+  (multiple-value-bind (base offset) (function-cell-place name)
+    (copy-to-var `(:load ,base ,offset))))
 
 (defun lower-args (asts)
   (mapcar (lambda (a) (copy-to-var (lower a))) asts))
@@ -1450,8 +1497,8 @@ no pointer, the cons need not be scanned by the GC."
                                        (eq (first constant-name) 'setf))))
            (let ((f (copy-to-var (lower (first arg-asts)))))
              (emit-check-function f)
-             (multiple-value-bind (data index) (function-cell-data constant-name)
-               (emit `(:store (:addr ,data) ,(* 8 index) ,f)))
+             (multiple-value-bind (base offset) (function-cell-place constant-name)
+               (emit `(:store ,base ,offset ,f)))
              f))
           (primop
            (funcall primop (lower-args (rest arg-asts))))
@@ -1755,7 +1802,8 @@ the top-level forms in order, in chunks."
       (with-function ((format nil "kiln_toplevel_~A" *module-label*))
         (let ((*self* (copy-to-var :self)))
           (emit-poll)
-          (emit-note-symbol-table)
+          (unless *image-literals*
+            (emit-note-symbol-table))
           (dolist (fobj chunks)
             (emit-lisp-call (copy-to-var (word-operand fobj)) '()))
           (emit `(:return ,(nil-value) 1)))))))
@@ -1825,12 +1873,17 @@ use list only names packages that exist at run time."
                                     (target-package-local-nicknames p known)))
               'simple-vector))))
 
-(defun compile-module (asts module-name &key session defined-packages extra-symbols)
+(defun compile-module (asts module-name &key session defined-packages extra-symbols image)
   "Compiles the simplified top-level ASTS into a KIR module. The module's
 symbol table describes its symbols, the EXTRA-SYMBOLS and the symbols of
 the DEFINED-PACKAGES (host packages its DEFPACKAGE forms created) for the
-package system (docs/10 §12)."
+package system (docs/10 §12).
+IMAGE true: the module is to be loaded into the running image (docs/11
+§11); its literals are the image's objects, and it has no symbol table.
+Returns the module and the vector of its literals."
   (let ((*module* (make-kmodule module-name))
+        (*image-literals* (and image (make-hash-table :test 'eq)))
+        (*image-literal-objects* '())
         (*module-label* (mangle module-name))
         (*counter* 0)
         (*vars* (make-hash-table :test 'eq))
@@ -1844,6 +1897,12 @@ package system (docs/10 §12)."
         (*uninterned-count* 0))
     (let ((*load-time-values* (make-hash-table :test 'eq)))
       (compile-toplevel-function asts))
+    (when image
+      (let ((literals (emit-literal-words))
+            (init (kiln.kir::kir-name "kiln_toplevel_" *module-label*)))
+        (module-data (kiln.kir::kir-name init "_fobj") `(:words ,+kind-function+ (:func ,init)))
+        (module-init (kiln.kir::kir-name init "_fobj"))
+        (return-from compile-module (values *module* literals))))
     ;; Sorted by name: the order of a package's symbols differs between
     ;; images (docs/11 §9).
     (dolist (sym (sort (copy-list extra-symbols) #'string< :key #'symbol-name))

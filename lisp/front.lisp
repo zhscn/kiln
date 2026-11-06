@@ -592,6 +592,61 @@ to *ERROR-OUTPUT*, for finding the form that an error comes from.")
 as one compilation unit, in SESSION. Returns the simplified ASTs of the
 forms to compile, in order, and the host packages that DEFPACKAGE forms
 created."
+  (call-with-front-end
+   session
+   (lambda ()
+     ;; A path (:COMPILE-TIME-TOO path) is processed as if its forms
+     ;; were in (EVAL-WHEN (:COMPILE-TOPLEVEL :LOAD-TOPLEVEL :EXECUTE)):
+     ;; for the functions that macro expanders call.
+     ;; (:RENAMES alist path) reads the file with *PACKAGE-RENAMES*.
+     (dolist (path paths)
+       (let ((compile-time-too (and (consp path) (eq (first path) :compile-time-too)))
+             (*package-renames* (if (and (consp path) (eq (first path) :renames))
+                                    (second path)
+                                    '()))
+             (*file-sets-package* nil))
+         (when *trace-toplevel*
+           (format *error-output* "~&~A~%" (if (consp path) (car (last path)) path)))
+         (map-file-csts (lambda (cst) (process-toplevel-cst cst compile-time-too))
+                        (if (consp path) (car (last path)) path))
+         (when *file-sets-package*
+           (compile-toplevel-form
+            (cst:cst-from-expression
+             `(setq *package* (,(find-package-function) "COMMON-LISP-USER")))
+            nil)))))))
+
+(defun front-end-forms (forms &optional (session (make-session)))
+  "As FRONT-END, for the top-level FORMS (for COMPILE, docs/11 §11)."
+  (call-with-front-end
+   session
+   (lambda ()
+     (let ((*package-renames* '())
+           (*file-sets-package* nil))
+       (dolist (form forms)
+         (process-toplevel-cst (cst:cst-from-expression form) nil))))))
+
+(defun process-toplevel-cst (cst compile-time-too)
+  (forget-global-descriptions *environment*)
+  (when *trace-toplevel*
+    (let ((raw (cst:raw cst)))
+      (format *error-output* "~&  ~S~@[ ~S~]~%"
+              (if (consp raw) (first raw) raw)
+              (and (consp raw) (consp (rest raw))
+                   (atom (second raw)) (second raw)))))
+  (let* ((raw (cst:raw cst))
+         (simplified (simplify-declarations raw 10000)))
+    (unless (eq simplified raw)
+      (setf cst (cst:reconstruct *client* simplified cst))))
+  ;; As SBCL's COMPILE-FILE: gensyms are numbered from 0 in each
+  ;; top-level form. COMPILE-MODULE names those in constants by their
+  ;; order in the module (MODULE-SYMBOL-NAME).
+  (let ((*gensym-counter* 0))
+    (process-toplevel cst compile-time-too)))
+
+(defun call-with-front-end (session thunk)
+  "Calls THUNK, which processes top-level forms, with the front end's state
+bound for SESSION. Returns the simplified ASTs of the forms to compile, in
+order, and the host packages that DEFPACKAGE forms created."
   (let* ((*client* (session-client session))
          (#-kiln cmd:*client* #+kiln kiln.cmd:*client* *client*)
          (*environment* (session-environment session))
@@ -608,42 +663,7 @@ created."
                      (lambda (w)
                        (setf (gethash (cb::name w) *referenced-functions*) t)
                        (muffle-warning w))))
-      ;; A path (:COMPILE-TIME-TOO path) is processed as if its forms
-      ;; were in (EVAL-WHEN (:COMPILE-TOPLEVEL :LOAD-TOPLEVEL :EXECUTE)):
-      ;; for the functions that macro expanders call.
-      ;; (:RENAMES alist path) reads the file with *PACKAGE-RENAMES*.
-      (dolist (path paths)
-        (let ((compile-time-too (and (consp path) (eq (first path) :compile-time-too)))
-              (*package-renames* (if (and (consp path) (eq (first path) :renames))
-                                     (second path)
-                                     '()))
-              (*file-sets-package* nil))
-          (when *trace-toplevel*
-            (format *error-output* "~&~A~%" (if (consp path) (car (last path)) path)))
-          (map-file-csts (lambda (cst)
-                           (forget-global-descriptions *environment*)
-                           (when *trace-toplevel*
-                             (let ((raw (cst:raw cst)))
-                               (format *error-output* "~&  ~S~@[ ~S~]~%"
-                                       (if (consp raw) (first raw) raw)
-                                       (and (consp raw) (consp (rest raw))
-                                            (atom (second raw)) (second raw)))))
-                           (let* ((raw (cst:raw cst))
-                                  (simplified (simplify-declarations raw 10000)))
-                             (unless (eq simplified raw)
-                               (setf cst (cst:reconstruct *client* simplified cst))))
-                           ;; As SBCL's COMPILE-FILE: gensyms are numbered
-                           ;; from 0 in each top-level form.
-                           ;; COMPILE-MODULE names those in constants by
-                           ;; their order in the module (MODULE-SYMBOL-NAME).
-                           (let ((*gensym-counter* 0))
-                             (process-toplevel cst compile-time-too)))
-                         (if (consp path) (car (last path)) path))
-          (when *file-sets-package*
-            (compile-toplevel-form
-             (cst:cst-from-expression
-              `(setq *package* (,(find-package-function) "COMMON-LISP-USER")))
-             nil)))))
+      (funcall thunk))
     (let ((undefined (loop for name being the hash-keys of *referenced-functions*
                            unless (or (gethash name *defined-functions*)
                                       (gethash name *primitives*)

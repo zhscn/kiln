@@ -566,6 +566,7 @@ dependencies = [
 name = "kiln-launcher"
 version = "0.0.0"
 dependencies = [
+ "kiln-cg",
  "kiln-rt",
 ]
 

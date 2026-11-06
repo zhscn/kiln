@@ -6,6 +6,7 @@
 - M5.3 完成（2026-11，§8）：kiln 自己的前端和 `lower.lisp` 也编进 compiler 模块，kiln 上编出的 KIR 和 SBCL 的逐字相同。
 - M5.4 完成（2026-11，§9、§10）：kiln 交叉编译自己的五个模块（kernel、CLOS、frontend、eval、compiler），KIR 和 SBCL 的逐字相同（`tests/m5/co-kernel`，17 秒；`co-clos`、`co-frontend`、`co-eval`、`co-compiler`，各约 7–15 分钟，慢测试）。
   自举闭合（§10）：kiln0（SBCL 编出的 KIR 链接成的 AOT 可执行文件）编出的 stage1 和 SBCL 的 stage0 逐字节相同，kiln1 编出的 stage2 和 stage1 相同，kiln0 和 kiln1 两个可执行文件也逐字节相同（`tools/bootstrap.sh`，约 30 分钟）；测试程序改由 kiln1 编译，`tools/test.sh` 全部通过（§10.1）。
+- M5.5 完成（2026-11，§11）：`compile` 把 lambda 表达式编成原生代码，装进运行中的 image（`tests/m5/co-native`）。
 
 ## 1. 目标和验证
 
@@ -14,7 +15,7 @@
   1. kiln0 上编译出的 KIR 和 SBCL 上编译出的 KIR 逐字一致（kiln0 → kiln1）；
   2. kiln1 编出的 kiln2，其 KIR 和 kiln1 的一致。
 - 两步都要求 KIR 输出是**确定的**：不依赖哈希表的遍历顺序，也不依赖 gensym 计数器在编译之外的状态。现在 SBCL 上是否已经确定，要在 M5.3 之前检查一遍：同一份源码编两遍，比较输出。
-- KIR 到机器码这一步仍由 Rust 的 kiln-cg 完成（AOT 或 JIT）。M5 不要求 kiln-cg 进 image，那是 M5.5。
+- KIR 到机器码这一步仍由 Rust 的 kiln-cg 完成（AOT 或 JIT）。M5 不要求 kiln-cg 进 image，那是 M5.5（§11）。
 
 ## 2. 要编进目标端的代码
 
@@ -54,7 +55,7 @@
 | M5.2 ✅ | 前端的其余依赖编成目标端的 compiler 模块（§7）：let-plus、anaphora、more-conditions、print-items、builder-protocol、parser.packrat、s-expression-syntax、Iconoclast、Trucler reference、Clostrum、Common-macros（AST 展开器）、Common-boot | 在 kiln 上 `cst-to-ast` 一组形式，打印 AST 的类和结构，和 SBCL 比对（`tests/m5/co-ast`） |
 | M5.3 ✅ | kiln 的 `lisp/*.lisp` 编进目标端（§8）；在 kiln 上把一个测试文件编成 KIR | 和 SBCL 产出的 KIR 逐字一致（`tests/m5/co-compile`）；KIR 不依赖 gensym 计数器（§8.2） |
 | M5.4 ✅ | kiln0 编译全部 kiln 源码（kernel、CLOS、前端、编译器各模块），kiln-cg AOT 链接成 kiln1；kiln1 再编出 kiln2 | kiln0 和 kiln1 产出的 KIR 一致；kiln1 和 kiln2 的一致；`tools/test.sh` 在 kiln1 上通过 |
-| M5.5 | 原生 `compile`：kiln-cg 作为库链进 kiln-rt，`compile` → KIR → 进程内 JIT，代码登记进运行中的 image；s-expression-syntax 等的 `compile` 改走这条路径 | `compile` 出的函数和 AOT 的结果一致；编译时间 |
+| M5.5 ✅ | 原生 `compile`（§11）：kiln-cg 作为库链进 kiln-rt，`compile` → KIR → 进程内 JIT，代码登记进运行中的 image；s-expression-syntax 等的 `compile` 改走这条路径 | `compile` 出的函数和 AOT 的结果一致；编译时间 |
 
 M5.4 每次编译都要跑完整的前端，速度取决于 CLOS 分派和 GC（10 §24、§26）。要是太慢，把 M5.5 提前：宏展开函数和 packrat 的解析器在字节码里执行，可能是主要开销。
 
@@ -518,3 +519,68 @@ frontend 模块不需要改动。其余的不一致和错误，大多是“在 S
 - 剩下的热点（CLOS 阶段）：GC 约 13%；kernel 的函数约 21%，比较分散；Salmagundi 哈希表约 5%；`append` 方法组合（Iconoclast 的 `slot-designators`，walker 每访问一个节点调用一次）约 5%；`&rest` 泛函每次调用分配参数列表。
 - 分代 GC 或 Immix 的大堆配置。
 - 模块之间可以先存快照（docs/13 §1），后面的阶段从快照开始。kiln 模式的测试也能从“五个模块编完”的快照开始，不必每次重编模块。
+
+## 11. M5.5：原生 `compile`
+
+`compile` 给 lambda 表达式生成机器码，直接装进正在运行的 image。kiln-cg 作为库进入 `libkiln_launcher.a`，运行期的入口是 `kiln_rt_jit`。只有引用了它的程序，也就是含 compiler 模块的程序，链接时才带进 Cranelift，其他程序的大小不变。
+
+### 11.1 路径
+
+1. kernel 的 `compile`（eval 模块，`lisp/target/eval/evaluator.lisp`）通过 `kiln.kernel::*compile-function*` 编译 lambda 表达式。这个变量为 NIL 时用 Maclina 的字节码。compiler 模块的最后一个文件 `lisp/target/compiler/native.lisp` 把它设成 `native-compile`，所以从那以后的 `compile` 都编成原生代码。compiler 模块自己载入时（s-expression-syntax 的解析器）仍是字节码。
+2. `native-compile` 新建一个 session（`image-client`），然后：
+   - 用 `front-end-forms` 处理 `(setq *compiled-function* (function LAMBDA))`。`front-end-forms` 和 `front-end` 一样，只是直接处理形式，不读文件。
+   - 用 `compile-module :image t` 降级。
+   - 用 `module-string` 把 KIR 写成一个字符串。
+   - 把字符串和字面量向量交给 `(%primop :jit text literals)`。
+3. `kiln_rt_jit`（`rust/kiln-cg/src/jit.rs`）依次：
+   - 解析 KIR，用 Cranelift 编进内存；
+   - 登记调用点、栈图、static root；
+   - 把字面量向量的元素写进模块的字面量字；
+   - 返回 init 函数对象，此时还没调用。
+
+   KIR 编不过时，它打印原因并返回 NIL，`native-compile` 据此报错。
+4. `native-compile` 先动态绑定 `*compiled-function*`，再调用 init 函数，取出编好的函数。
+
+### 11.2 image 模式的 KIR
+
+编进运行中 image 的代码，引用的是 image 里已有的对象。和编译文件（`compile-file`，以及交叉编译的模块）相比，有三点不同：
+
+- **字面量**：
+  - 除立即数（fixnum、字符、单精度浮点、NIL、T）以外，字面量一律占用模块数据 `kiln_literals` 的一个字。每个字都是 static root，数据字写成 `(:literal i)`，操作数是 `(load (addr "kiln_literals") 8i)`。
+  - 字面量保持同一性：`compile` 不复制字面量（CLHS 3.2.4），未 intern 的符号、列表都还是原来那个对象。
+  - 符号也走这条路：运行期 intern 的符号在堆里，GC 会移动它们，不能把地址编进代码。代价是全局函数调用和特殊变量的访问各多一次 load。
+- **没有符号表**：符号都已经在 image 里，init 函数不调用 `%register-module-symbols`。
+- **共享的定义用 image 的**：
+  - 未定义函数的入口（`kiln_undefined_function` 等）和 funcallable instance 的 trampoline 要和函数槽里的值比较（`fboundp`、`emit-error`），所以必须是 image 里的那一份。
+  - image 模式把它们写成 `import-data`。kiln-cg 链接时按名字解析：每个模块导出 `kiln_rt::EXPORTED_NAMES` 中它定义的那些名字，kiln-rt 记下地址。
+  - `kiln_module_info` 因此改为 88 字节，最后两个字段是 `exports`（`[C 字符串名字, 地址]` 对的数组）和 `nexports`。
+
+### 11.3 内存和登记
+
+- 运行期编出的模块共用一块预留的 16 GiB 地址空间：只预留，用到时才提交，从低往高分配，从不释放。代码目前不回收。
+- 调用点表、栈图表、static root 表都按地址排序。新模块的地址在已有模块之上时，登记只需追加。原来每次都把整张表（image 的几十万项）重排一遍，一次登记要 1.2 ms。
+- kiln-cg 处理小模块时不再开线程，ISA 也只建一次。
+
+### 11.4 速度
+
+在 AOT 可执行文件里测量，单位是每次的毫秒数：
+
+| | 原生 | Maclina |
+|---|---|---|
+| 编译 `(lambda (x) (* x x))` | 3.4 | 0.12 |
+| 编译一个带 `loop` 的 lambda | 约 20 | 1.2 |
+| 运行一百万次迭代的 `dotimes` | 2.2 | 1250 |
+
+编译 `(lambda (x) (* x x))` 的 3.4 ms 中，前端 1.9 ms，降级 0.4 ms，打印 KIR 0.2 ms，kiln-cg 0.7 ms，新建 session 0.2 ms。原来 KIR 用字符串输出流逐字符写，光打印就要 15 ms；现在整个模块写进一个缓冲区（`module-string`）。
+
+所以 `eval` 仍用 Maclina：对只运行一次的代码，编译时间占主导。由于同样的原因，有两处只为展开宏或只运行几次而调用 `compile` 的地方，固定用 Maclina（把 `*compile-function*` 绑成 NIL，vendor/README.md）：
+- Common-boot 的 HIR 求值器：交叉编译时，每个宏的展开函数都要求值，求值器为每个函数编一个参数解析器。编 kernel 和 CLOS 时要编约 800 个，改成原生编译后，一个自举阶段从 321 秒变成 357 秒。
+- parser.packrat 的 `%uses?`：借编译来展开宏。原生编译器还不支持不在顶层的 `macrolet`，编译出错后退回保守的判断，结果和 SBCL 不同，自举因此不闭合。
+
+改了这两处后，自举的速度和以前相同，仍然闭合。
+
+### 11.5 还没做
+
+- 代码回收：函数对象不再被引用后，代码和它的表也不会释放。
+- `compile` 的前端开销：每次都新建 session，复制宿主 inline 表。
+- `compile-file` 和 FASL：现在只有 `compile`。

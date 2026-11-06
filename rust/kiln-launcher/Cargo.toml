@@ -12,3 +12,4 @@ doctest = false
 
 [dependencies]
 kiln-rt.workspace = true
+kiln-cg.workspace = true

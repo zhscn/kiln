@@ -546,7 +546,8 @@ those whose names are in EXCLUDE."
      ;; kiln's compiler (M5.3, docs/11 §8): its packages are the host's.
      (mapcar (lambda (name) (asdf:system-relative-pathname "kiln" (format nil "lisp/~A.lisp" name)))
              '("abi" "kir" "lower" "values" "primitives" "structures" "front" "cross"
-               "target/compiler/client" "target/compiler/session")))))
+               "target/compiler/client" "target/compiler/session"
+               "target/compiler/native")))))
 
 (defun compile-compiler (output &key (session (kiln.compiler:make-session)))
   "Compiles the compiler module to OUTPUT, loaded after the front-end and

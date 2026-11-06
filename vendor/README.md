@@ -233,6 +233,12 @@ Under `#+kiln` (docs/10 §18 of kiln):
 
 ## Common-boot patches
 
+- The HIR evaluator compiles the argument parser of each function it
+  evaluates (`HIR-evaluator/parse-arguments-instruction.lisp`) with
+  Maclina on kiln, not the native `compile` (`kiln.kernel::*compile-function*`
+  bound to `nil`, docs/11 §11): cross compilation evaluates a function for
+  every macro, about 800 of them for the kernel and CLOS, and the native
+  compiler took longer for each than the parser ever runs.
 - The form of `load-time-value` is converted in a lexical environment
   with only the global environment (upstream: the global environment
   itself, in which a `lambda` form cannot add its local functions and
@@ -310,7 +316,11 @@ Under `#+kiln` (docs/10 §18 of kiln):
   `macroexpand-all` does, and so decide as SBCL does (the generated parser,
   and so the KIR of the compiler module compiled on kiln, are SBCL's). A
   form that does not compile counts as using a name that occurs anywhere
-  in it (docs/11 §2.1).
+  in it (docs/11 §2.1). They compile with Maclina even after the
+  compiler module makes `compile` native (`kiln.kernel::*compile-function*`
+  bound to `nil`, docs/11 §11): the native compiler does not compile
+  `macrolet` that is not at top level, and the fallback decided
+  differently from SBCL.
 
 ## s-expression-syntax patches
 

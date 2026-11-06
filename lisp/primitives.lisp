@@ -757,7 +757,7 @@ cells (both by default)."
 the same arguments. No safepoint before the call, so arguments in the
 transfer area are passed on intact."
   (let ((name "kiln_funcallable_trampoline"))
-    (unless (gethash name (kiln.kir::kmodule-defined *module*))
+    (unless (or (shared-entry name) (gethash name (kiln.kir::kmodule-defined *module*)))
       (setf (gethash name (kiln.kir::kmodule-defined *module*)) t)
       (module-shared name)
       (let ((*regions* '()))
@@ -772,7 +772,8 @@ transfer area are passed on intact."
   "Function object installed in a new funcallable instance: signals an
 error when called."
   (let ((name "kiln_funcallable_unset"))
-    (unless (gethash name (kiln.kir::kmodule-defined *module*))
+    (unless (or (shared-entry "kiln_funcallable_unset_fobj")
+                (gethash name (kiln.kir::kmodule-defined *module*)))
       (setf (gethash name (kiln.kir::kmodule-defined *module*)) t)
       (module-shared name)
       (let ((*regions* '()))
@@ -852,6 +853,14 @@ and slots), zero-filled."
 (define-primop :sys (op a b c)
   (let ((r (new-var)))
     (emit `(:call-rt ,(rt-sys) (,r) (:ctx ,op ,a ,b ,c) :nil))
+    r))
+;;; Compiles the KIR module in the string TEXT into the running image, its
+;;; literal words filled from the simple vector LITERALS; the module's init
+;;; function object, not yet called, or NIL if kiln-cg failed (kiln_rt_jit,
+;;; docs/11 §11).
+(define-primop :jit (text literals)
+  (let ((r (new-var)))
+    (emit `(:call-rt ,(rt-jit) (,r) (:ctx ,text ,literals) :nil))
     r))
 ;;; The shortest decimal representation of a float: WHICH selects the
 ;;; significand (0), exponent (1) or sign (2) (rtfun.rs, docs/10 §17).

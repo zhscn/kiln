@@ -5,40 +5,16 @@
 //!
 //! Object files are linked with libkiln_launcher.a to make an executable.
 
-mod codegen;
-mod kir;
-mod sexp;
-
-use codegen::Options;
-use cranelift_codegen::isa::OwnedTargetIsa;
-use cranelift_codegen::settings::{self, Configurable};
-use cranelift_jit::{JITBuilder, JITModule};
+use kiln_cg::codegen::{self, Options};
+use kiln_cg::jit::{self, isa};
+use kiln_cg::kir;
 use cranelift_module::default_libcall_names;
 use cranelift_object::{ObjectBuilder, ObjectModule};
-use kiln_rt::unwind::CallSiteRecord;
 use std::process::ExitCode;
-
-fn isa(pic: bool) -> Result<OwnedTargetIsa, String> {
-    let mut flags = settings::builder();
-    let set = |f: &mut settings::Builder, k: &str, v: &str| f.set(k, v).map_err(|e| e.to_string());
-    // KILN_CG_OPT: Cranelift's opt_level (default "speed"). KILN_VERIFY=1
-    // runs Cranelift's IR verifier on every function (slow on the large
-    // modules).
-    let opt = std::env::var("KILN_CG_OPT").unwrap_or_else(|_| "speed".to_string());
-    let verify = std::env::var("KILN_VERIFY").is_ok_and(|v| v == "1");
-    set(&mut flags, "opt_level", &opt)?;
-    set(&mut flags, "preserve_frame_pointers", "true")?;
-    set(&mut flags, "is_pic", if pic { "true" } else { "false" })?;
-    set(&mut flags, "enable_verifier", if verify { "true" } else { "false" })?;
-    let isa_builder = cranelift_native::builder()?;
-    isa_builder
-        .finish(settings::Flags::new(flags))
-        .map_err(|e| e.to_string())
-}
 
 fn load(path: &str) -> Result<kir::Module, String> {
     let src = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
-    let s = sexp::parse_one(&src).map_err(|e| format!("{path}: {e}"))?;
+    let s = kiln_cg::sexp::parse_one(&src).map_err(|e| format!("{path}: {e}"))?;
     kir::parse_module(&s).map_err(|e| format!("{path}: {e}"))
 }
 
@@ -50,92 +26,37 @@ fn load_all(files: &[&String]) -> Result<kir::Module, String> {
 }
 
 fn run_jit(kir: &kir::Module, opts: &Options) -> Result<i32, String> {
-    let mut builder = JITBuilder::with_isa(isa(false)?, default_libcall_names());
-    // All code and data in one reserved region: PC-relative references
-    // between them are 32 bits, which blobs malloc'ed far apart (the brk
-    // heap and mmap'ed memory) can exceed. Pages are committed as used.
-    builder.memory_provider(Box::new(
-        cranelift_jit::ArenaMemoryProvider::new_with_size(1 << 31)
-            .map_err(|e| format!("cannot reserve the JIT's memory: {e}"))?,
-    ));
-    for (name, ptr) in kiln_rt::symbols() {
-        builder.symbol(name, ptr);
-    }
-    let mut module = JITModule::new(builder);
     let t = std::time::Instant::now();
-    let out = codegen::compile(&mut module, kir, opts)?;
-    module.finalize_definitions().map_err(|e| e.to_string())?;
+    // 2 GiB: the kernel and CLOS modules together are large.
+    let loaded = jit::load(kir, opts, jit::Memory::Own(1 << 31))?;
     if std::env::var("KILN_TIME").is_ok() {
         eprintln!("kiln-cg: compiled in {:?}", t.elapsed());
     }
     if std::env::var("KILN_PERF_MAP").is_ok() {
-        write_perf_map(&module)?;
+        let path = format!("/tmp/perf-{}.map", std::process::id());
+        std::fs::write(&path, jit::perf_map_lines(&loaded.module)).map_err(|e| format!("{path}: {e}"))?;
     }
-    let records: Vec<CallSiteRecord> = out
-        .callsites
-        .iter()
-        .map(|cs| CallSiteRecord {
-            func: module.get_finalized_function(cs.func) as usize,
-            ret_off: cs.ret_off,
-            handler_off: cs.handler_off,
-            frame_offset: cs.frame_offset,
-            _pad: 0,
-        })
-        .collect();
-    let maps: Vec<kiln_rt::gc::StackMapRecord> = out
-        .stackmaps
-        .iter()
-        .map(|sm| kiln_rt::gc::StackMapRecord {
-            func: module.get_finalized_function(sm.func) as usize,
-            ret_off: sm.ret_off,
-            count: sm.offsets.len() as u32,
-            offsets: sm.offsets.as_ptr(),
-        })
-        .collect();
-    let enter = module.get_finalized_function(out.enter);
-    let inits: Vec<u64> = out
-        .inits
-        .iter()
-        .map(|id| module.get_finalized_data(*id).0 as u64 + kiln_rt::object::TAG_GENERAL)
-        .collect();
-    let roots: Vec<usize> = out
-        .roots
-        .iter()
-        .map(|(id, off)| module.get_finalized_data(*id).0 as usize + *off as usize)
-        .collect();
+    let inits = loaded.inits();
+    let enter = loaded.module.get_finalized_function(loaded.out.enter);
+    // The tables are registered already (jit::load); the others are
+    // empty (slices made from them need non-null pointers).
+    let none = std::ptr::NonNull::dangling().as_ptr();
     let info = kiln_rt::ModuleInfo {
         enter: unsafe { std::mem::transmute::<*const u8, kiln_rt::EnterFn>(enter) },
         inits: inits.as_ptr(),
         ninits: inits.len() as u64,
-        callsites: records.as_ptr(),
-        ncallsites: records.len() as u64,
-        stackmaps: maps.as_ptr(),
-        nstackmaps: maps.len() as u64,
-        roots: roots.as_ptr(),
-        nroots: roots.len() as u64,
+        callsites: none as *const _,
+        ncallsites: 0,
+        stackmaps: none as *const _,
+        nstackmaps: 0,
+        roots: none as *const _,
+        nroots: 0,
+        exports: none as *const _,
+        nexports: 0,
     };
-    Ok(unsafe { kiln_rt::run_module(&info) })
-}
-
-/// With KILN_PERF_MAP set, the JIT writes /tmp/perf-PID.map (perf's format,
-/// "START SIZE NAME" in hex), for profilers and for mapping addresses
-/// sampled with gdb to functions. A function's size is up to the next one.
-fn write_perf_map(module: &JITModule) -> Result<(), String> {
-    use cranelift_module::Module;
-    let mut funcs: Vec<(usize, String)> = module
-        .declarations()
-        .get_functions()
-        .filter(|(_, d)| d.linkage.is_definable())
-        .map(|(id, d)| (module.get_finalized_function(id) as usize, d.linkage_name(id).into_owned()))
-        .collect();
-    funcs.sort();
-    let mut text = String::new();
-    for (i, (start, name)) in funcs.iter().enumerate() {
-        let size = funcs.get(i + 1).map_or(4096, |(next, _)| next - start);
-        text.push_str(&format!("{start:x} {size:x} {name}\n"));
-    }
-    let path = format!("/tmp/perf-{}.map", std::process::id());
-    std::fs::write(&path, text).map_err(|e| format!("{path}: {e}"))
+    let code = unsafe { kiln_rt::run_module(&info) };
+    std::mem::forget(loaded);
+    Ok(code)
 }
 
 fn write_obj(kir: &kir::Module, opts: &Options, out_path: &str) -> Result<(), String> {
