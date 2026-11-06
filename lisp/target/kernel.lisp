@@ -258,6 +258,28 @@
   ;; and value (floats by their bits).
   (%primop :number-eql a b))
 
+;;; MEMBER and ASSOC with EQL or EQ as the test and no key: the compiler
+;;; calls these instead (lower.lisp, LOWER-GLOBAL-CALL), without parsing
+;;; keyword arguments.
+(defun %member-eql (item list)
+  (do ((l list (cdr l)))
+      ((null l) nil)
+    (when (eql item (car l)) (return l))))
+(defun %member-eq (item list)
+  (do ((l list (cdr l)))
+      ((null l) nil)
+    (when (eq item (car l)) (return l))))
+(defun %assoc-eql (item alist)
+  (do ((l alist (cdr l)))
+      ((null l) nil)
+    (let ((pair (car l)))
+      (when (and pair (eql item (car pair))) (return pair)))))
+(defun %assoc-eq (item alist)
+  (do ((l alist (cdr l)))
+      ((null l) nil)
+    (let ((pair (car l)))
+      (when (and pair (eq item (car pair))) (return pair)))))
+
 (defun check-divisor (n d)
   ;; Division by zero is signaled here, so that it can be a condition
   ;; (the runtime would end the program); 17 is the error code.

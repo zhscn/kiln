@@ -162,6 +162,15 @@
 ;;; ctype is loaded).
 (defvar *ctype-typep* nil)
 
+;;; (TYPEP OBJECT 'TYPE) for a symbol TYPE that is not a standard type
+;;; name: the compiler calls this with a cache of the call site, a cons
+;;; (lower.lisp, LOWER-CACHED-TYPEP). Here plain TYPEP; CLOS replaces it
+;;; with a version that remembers the result for the class of the last
+;;; object (clos/conditions.lisp).
+(defun %typep-cached (object type cache)
+  (declare (ignore cache))
+  (typep object type))
+
 (defun other-typep (object type)
   (multiple-value-bind (expansion expandedp) (typexpand-1 type)
     (cond (expandedp (typep object expansion))

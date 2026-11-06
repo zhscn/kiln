@@ -1,7 +1,7 @@
 (cl:in-package #:asdf-user)
 
 (defsystem "iconoclast-ast-walker"
-  :depends-on ("iconoclast")
+  :depends-on ("iconoclast" "closer-mop")
   :serial t
   :components
   ((:file "packages")

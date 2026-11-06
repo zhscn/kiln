@@ -473,7 +473,35 @@ frontend 模块不需要改动。其余的不一致和错误，大多是“在 S
 
 `tests/m5/co-*` 用到的 `kiln.compiler::module-files` 在 SBCL 里是 `compile-compiler` 注册的宿主宏。构建程序在编 compiler 模块之前也注册同名的宿主宏，展开成清单里的文件列表。
 
-### 10.2 接下来
+### 10.2 自举的速度
 
-- 自举时间：每个阶段约 15 分钟，主要是 CLOS 分派和 GC（§9.3）。分代 GC 或 Immix 的大堆配置，以及 docs/13 的堆快照（省掉每次启动的初始化）和机器码缓存。
+用 `perf` 剖析了一次完整的阶段（kiln1 编五个模块，845 秒）。按模块统计自身时间：
+
+| 部分 | 占比 |
+|---|---|
+| clos 模块（分派、slot 访问、实例初始化、哈希表） | 约 45% |
+| kernel 模块（`member`、`typep`、`logand` 等） | 约 27% |
+| GC（MMTk 工作线程） | 约 17% |
+| compiler 模块自己的代码 | 约 3% |
+| Maclina 的字节码 VM | 约 1%（包含时间 14%，几乎都是它调用的原生函数：parser.packrat 的规则） |
+
+所以换成原生 `compile`（M5.5）几乎不会让自举变快：字节码只是一层很薄的胶水。
+
+改动（`tools/stage0-kiln.sh` 只做 stage0 和 kiln0，用来试改动）：
+
+| 改动 | 说明 |
+|---|---|
+| `if` 的测试直接分支 | 谓词原语的 `(:select c T NIL)` 不再先物化、再和 NIL 比较，而是直接按 `c` 分支；`and`、`or`（`(let ((g x)) (if g g y))`）、`not`、嵌套的 `if`、常量在测试位置也都展开成分支（`lower-branch`） |
+| 闭包变量用到时再读 | Common-boot 的闭包转换在函数入口读出全部捕获变量，它们跨调用存活，都被溢出到栈上。闭包环境不可变（被赋值的变量在 cell 里），现在每次引用时从函数对象读 |
+| Iconoclast 的 `set-slot` | AST walker 对每个节点的每个槽，都 `intern` 一次关键字，再调用 `reinitialize-instance`（两个 `&rest` 泛函，加上 `shared-initialize`）。这占了全部时间的三分之一。现在按（类，reader）缓存槽名，直接 `(setf slot-value)`（vendor/README.md） |
+| `shared-initialize` 的计划、类名 `typep` 的调用点缓存 | docs/10 §27 |
+| `member`、`assoc` | 不带关键字，或 `:test` 是 `#'eq`、`#'eql` 时，调用两个参数的 `%member-eql` 等，不再解析关键字参数 |
+| `logand`、`logior`、`logxor` | 原来不是原语，每次调用都是 `&rest` 函数；现在 fixnum 内联，其他走 `two-arg-*` |
+
+结果：一个阶段从 845 秒降到 525 秒（−38%），其中 CLOS 模块从约 268 秒降到约 148 秒。完整自举从约 30 分钟降到约 19 分钟。
+
+### 10.3 接下来
+
+- 剩下的热点：泛函分派闭包（特别是 `&rest`、`&key` 泛函的通用路径，每次调用都分配参数列表）；`%slot-location` 缓存；GC。
+- 分代 GC 或 Immix 的大堆配置。
 - 模块之间可以先存快照（docs/13 §1），后面的阶段从快照开始。kiln 模式的测试也能从“五个模块编完”的快照开始，不必每次重编模块。

@@ -19,6 +19,24 @@
 
 (setf kiln.kernel::*class-typep* #'class-typep)
 
+;;; (TYPEP OBJECT 'TYPE) at a call site with its CACHE (lower.lisp,
+;;; LOWER-CACHED-TYPEP): when TYPE names a class (and is not a DEFTYPE),
+;;; the result depends only on the object's class, so the car of CACHE
+;;; keeps the stamp of the last object's class, doubled, plus 1 if the
+;;; result was true. One word, written at once.
+(defun kiln.kernel::%typep-cached (object type cache)
+  (let* ((stamp (stamp object))
+         (key (+ stamp stamp))
+         (entry (car cache)))
+    (cond ((eq entry key) nil)
+          ((eq entry (+ key 1)) t)
+          (t
+           (let ((result (if (typep object type) t nil)))
+             (when (and (null (get type 'kiln.kernel::type-expander))
+                        (find-class type nil))
+               (setf (car cache) (if result (+ key 1) key)))
+             result)))))
+
 ;;; Condition classes are standard classes of their own metaclass, so
 ;;; that conditions can be told apart by their class's class.
 (defclass condition-class (standard-class)

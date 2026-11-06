@@ -322,7 +322,12 @@ Under `#+kiln` (docs/10 §18 of kiln):
 
 ## Iconoclast patches
 
-- The AST walker's `set-slot` (`Code/AST-walker/ast-walker.lisp`) caches
-  the keyword of each reader name instead of interning it on every call
-  (a third of the time of `set-slot` on kiln, which runs it for every slot
-  of every node in each pass of the AST transformations).
+- The AST walker's `set-slot` (`Code/AST-walker/ast-walker.lisp`) sets the
+  slot whose initarg is the reader's keyword with `slot-value`, the slot's
+  name found once for each class and reader (closer-mop, now a dependency
+  of the system), instead of interning the keyword and calling
+  `reinitialize-instance` on every call. That is what
+  `reinitialize-instance` does, no AST class having methods on it or on
+  `shared-initialize`; on kiln, which runs `set-slot` for every slot of
+  every node in each pass of the AST transformations, it took a third of
+  the time of compiling.

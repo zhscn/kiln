@@ -1370,6 +1370,33 @@ a heap object (bignum, ratio, double float)."
                    (not (<= +most-negative-fixnum+ value +most-positive-fixnum+))))
          (not (typep value '(or ratio double-float))))))
 
+(defun simple-sequence-test (keyword-asts)
+  "EQL or EQ if the keyword arguments KEYWORD-ASTS (of MEMBER or ASSOC)
+make that the test, with no key: none, or :TEST #'EQL, #'EQ, 'EQL or
+'EQ. Else NIL."
+  (cond ((null keyword-asts) 'eql)
+        ((and (= (length keyword-asts) 2)
+              (eq (constant-value (first keyword-asts)) :test))
+         (let* ((test (second keyword-asts))
+                (name (if (typep test 'ico:global-function-name-reference-ast)
+                          (ico:name test)
+                          (multiple-value-bind (value constantp) (constant-value test)
+                            (and constantp value)))))
+           (and (member name '(eq eql)) name)))
+        (t nil)))
+
+(defun lower-cached-typep (object-ast type)
+  "(TYPEP OBJECT 'TYPE), TYPE a symbol that is not a standard type name
+(a class name, mostly): a call to KILN.KERNEL::%TYPEP-CACHED with a cache
+of this call: a cons of static data whose car is NIL or a fixnum, the
+stamp of the last object's class and the result (docs/10 §27). Holding
+no pointer, the cons need not be scanned by the GC."
+  (let ((object (copy-to-var (lower object-ast)))
+        (label (fresh-label "kiln_typep_cache_")))
+    (module-data label `(:words ,+kind-cons+ ,(nil-word) ,(nil-word)))
+    (emit-lisp-call (function-cell-value 'kiln.kernel::%typep-cached)
+                    (list object (constant-object type) `(:addr ,label ,+tag-cons+)))))
+
 (defun lower-global-call (name arg-asts)
   ;; (EQL x constant), as CASE expands into, is EQ for most constants.
   (when (and (eq name 'eql) (= (length arg-asts) 2)
@@ -1386,7 +1413,25 @@ a heap object (bignum, ratio, double float)."
       (let ((predicate (and constantp (cdr (assoc type *type-predicates*)))))
         (when predicate
           (return-from lower-global-call
-            (lower-global-call predicate (list (first arg-asts))))))))
+            (lower-global-call predicate (list (first arg-asts)))))
+        (when (and constantp type (symbolp type)
+                   (not (member (symbol-package type)
+                                (list (find-package '#:common-lisp) (find-package '#:keyword)))))
+          (return-from lower-global-call
+            (lower-cached-typep (first arg-asts) type))))))
+  ;; MEMBER and ASSOC with EQL or EQ as the test and no key: functions of
+  ;; two arguments, without parsing keywords.
+  (when (member name '(member assoc))
+    (let ((test (simple-sequence-test (rest (rest arg-asts)))))
+      (when test
+        (return-from lower-global-call
+          (lower-global-call (cdr (assoc (list name test)
+                                         '(((member eql) . kiln.kernel::%member-eql)
+                                           ((member eq) . kiln.kernel::%member-eq)
+                                           ((assoc eql) . kiln.kernel::%assoc-eql)
+                                           ((assoc eq) . kiln.kernel::%assoc-eq))
+                                         :test #'equal))
+                             (subseq arg-asts 0 2))))))
   (if (and (eq name 'funcall)
            arg-asts
            (typep (first arg-asts) 'ico:global-function-name-reference-ast))

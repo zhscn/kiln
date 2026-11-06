@@ -47,4 +47,5 @@
   (timed "&optional" n (gb-opt a 1))
   (timed "&key" n (gb-key a :k 1))
   (timed "eql specializer" n (gb-eql :x))
-  (timed "make-instance" 20000 (make-instance 'gb-a :x 1)))
+  (timed "make-instance" 20000 (make-instance 'gb-a :x 1))
+  (timed "reinitialize-instance" 20000 (reinitialize-instance a :x 5)))

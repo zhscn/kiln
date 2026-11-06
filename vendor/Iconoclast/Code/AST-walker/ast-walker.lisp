@@ -44,15 +44,33 @@
 (defmethod walk-ast-node (client node)
   node)
 
-;;; kiln: the keyword of each reader name is cached. Interning it on every
-;;; call took a third of the time of SET-SLOT on kiln.
-(defvar *initarg-keywords* (make-hash-table :test #'eq))
+;;; kiln: SET-SLOT sets the slot whose initarg is the keyword of READER-NAME
+;;; with SLOT-VALUE, which is what REINITIALIZE-INSTANCE does (no AST class
+;;; has methods on REINITIALIZE-INSTANCE or SHARED-INITIALIZE); the slot's
+;;; name is cached for each class and reader. Interning the keyword and
+;;; calling REINITIALIZE-INSTANCE, two generic functions with &REST
+;;; parameters, for every slot of every node in each pass of the AST
+;;; transformations took a third of the time of kiln compiling itself.
+(defvar *slot-names* (make-hash-table :test #'eq)) ; class -> ((reader . slot name))
 
 (defun set-slot (ast reader-name value)
-  (let ((initarg (or (gethash reader-name *initarg-keywords*)
-                     (setf (gethash reader-name *initarg-keywords*)
-                           (intern (symbol-name reader-name) (find-package "KEYWORD"))))))
-    (reinitialize-instance ast initarg value)))
+  (let* ((class (class-of ast))
+         (entry (assoc reader-name (gethash class *slot-names*) :test #'eq))
+         (slot-name
+           (if entry
+               (cdr entry)
+               (let* ((initarg (intern (symbol-name reader-name) (find-package "KEYWORD")))
+                      (slot (find-if (lambda (slot)
+                                       (member initarg (closer-mop:slot-definition-initargs slot)))
+                                     (closer-mop:class-slots class)))
+                      (name (if slot (closer-mop:slot-definition-name slot) nil)))
+                 (push (cons reader-name name) (gethash class *slot-names*))
+                 name))))
+    (if slot-name
+        (setf (slot-value ast slot-name) value)
+        (reinitialize-instance ast (intern (symbol-name reader-name) (find-package "KEYWORD"))
+                               value))
+    ast))
 
 (defmethod walk-ast-node (client (ast iconoclast:ast))
   (loop for (cardinality slot-reader) in (iconoclast:slot-designators ast)

@@ -756,3 +756,20 @@ Inravina vendor 在 `vendor/Inravina`，用的是 intrinsic 接口。CL 的美�
 - 判别闭包本身约占 17%。主要开销是 kiln 生成的代码溢出到栈上，以及类型检查。
 - 方法组合（`call-next-method`、`:before`、`:around`）的有效方法仍要构造参数列表，用到 `call-next-method` 的方法每次调用仍要分配两个局部函数闭包。
 - 真正编译出来的判别函数要等运行期编译器（M5）。
+
+## 27. 实例初始化和类名的 TYPEP（M5 自举的性能）
+
+kiln 编译自己时（docs/11 §10.2），CLOS 的通用机制占了大部分时间。这一节是其中 CLOS 这边的两处修改。
+
+**`shared-initialize` 的计划**（`support.lisp`，`shared-initialize-aux-1`）：
+- 元类是 `standard-class` 的类，在切换到 MOP 之后不再调用 Clostrophilia 的 `shared-initialize-aux`。那里对每个槽调用 `slot-definition-initargs` 和 `(setf slot-value-using-class)`，两个都是泛函。
+- 现在按类的槽列表做一个计划：每个槽四项，initargs、位置、名字、initfunction，存在 simple vector 里。初始化时按计划直接读写槽位置。
+- 计划放在直接映射的缓存里，以槽列表为键，按它的 identity hash 取下标，冲突时覆盖。类变化时槽列表会被整个换掉，所以缓存不会过时。不用哈希表，因为切换到 MOP 时 Salmagundi 还没有加载。
+- 和访问器方法一样，假定没有对 `standard-class` 适用的 `slot-value-using-class` 方法（AMOP 不允许可移植程序定义这样的方法）。
+- `bench/gf.lisp`：`make-instance` 1.06 → 1.01 µs，`reinitialize-instance` 0.48 → 0.43 µs（一个槽的类）。
+
+**类名的 `typep`**：
+- 原来 `(typep x 'name)` 的类型如果不是标准类型名，就要经过 `typep` 的整个 `case` → `other-typep` → `typexpand-1`（用 `get` 查 deftype）→ `class-typep`（`find-class`，再在优先级列表里找）。Regalia 自己的 `vector`、`array` 类，以及 `typecase`、`check-type` 用到的类名，都走这条路径。
+- 现在编译器把类型是常量符号、又不在 CL 和 KEYWORD 包里的 `typep`，改成调用 `kiln.kernel::%typep-cached`（`lower.lisp`，`lower-cached-typep`）。每个调用点带一个缓存：数据段里的一个静态 cons。
+- kernel 里的 `%typep-cached` 就是 `typep`。CLOS 模块（`conditions.lisp`）把它换成带缓存的版本：类型名是类、又不是 deftype 时，结果只取决于对象的类。所以缓存的 car 存“上一个对象的 stamp 乘 2，结果为真再加 1”，是一个 fixnum，一次写入。
+- 缓存里不存指针，GC 不需要扫描它。

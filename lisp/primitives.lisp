@@ -92,6 +92,34 @@
   (cond ((null vals) (fail "- needs at least one argument"))
         ((null (rest vals)) (emit-arith '- 0 (first vals)))
         (t (reduce (lambda (a b) (emit-arith '- a b)) vals))))
+;;; LOGAND, LOGIOR, LOGXOR: fixnums open-coded (tagged fixnums combine
+;;; bitwise as they are); other integers, and errors, by the kernel's
+;;; two-argument functions. Fewer than two arguments: the function.
+(defun emit-logop (op a b)
+  (let ((r (new-var)) (fast (new-block)) (slow (new-block)) (done (new-block)))
+    (br `(:and (:or ,a ,b) 1) slow fast)
+    (start-block fast)
+    (emit `(:set ,r (,op ,a ,b)))
+    (jump done)
+    (start-block slow)
+    (emit `(:set ,r ,(emit-slow-call (ecase op
+                                        (:and 'kiln.kernel::two-arg-logand)
+                                        (:or 'kiln.kernel::two-arg-logior)
+                                        (:xor 'kiln.kernel::two-arg-logxor))
+                                      a b)))
+    (jump done)
+    (start-block done)
+    r))
+
+(macrolet ((define-logop (name op)
+             `(define-nary-primitive ,name (vals)
+                (if (rest vals)
+                    (reduce (lambda (a b) (emit-logop ,op a b)) vals)
+                    (apply #'emit-slow-call ',name vals)))))
+  (define-logop logand :and)
+  (define-logop logior :or)
+  (define-logop logxor :xor))
+
 (define-primitive 1+ (a) (emit-arith '+ a (ash 1 +fixnum-shift+)))
 (define-primitive 1- (a) (emit-arith '- a (ash 1 +fixnum-shift+)))
 
