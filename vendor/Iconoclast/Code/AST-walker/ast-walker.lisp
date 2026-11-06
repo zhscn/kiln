@@ -44,9 +44,14 @@
 (defmethod walk-ast-node (client node)
   node)
 
+;;; kiln: the keyword of each reader name is cached. Interning it on every
+;;; call took a third of the time of SET-SLOT on kiln.
+(defvar *initarg-keywords* (make-hash-table :test #'eq))
+
 (defun set-slot (ast reader-name value)
-  (let* ((symbol-name (symbol-name reader-name))
-         (initarg (intern symbol-name (find-package "KEYWORD"))))
+  (let ((initarg (or (gethash reader-name *initarg-keywords*)
+                     (setf (gethash reader-name *initarg-keywords*)
+                           (intern (symbol-name reader-name) (find-package "KEYWORD"))))))
     (reinitialize-instance ast initarg value)))
 
 (defmethod walk-ast-node (client (ast iconoclast:ast))

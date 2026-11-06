@@ -441,7 +441,7 @@ word is a list of them and the flag is 1."
 ;;; Variables. Closure conversion guarantees that a variable is only
 ;;; referenced in the function that defines it.
 
-(defvar *vars*)                         ; definition AST -> (kfunc . var)
+(defvar *vars*)                         ; definition AST -> (kfunc . var or operand)
 (defvar *self*)                         ; variable holding the function object
 
 (defun bind-var (definition operand)
@@ -574,16 +574,48 @@ visited once."
 (defvar *constant-vars*)                ; variable definition -> constant
 
 (define-mv-lowering ico:let-temporary-ast (ast)
+  (bind-temporary ast)
+  (lower-progn-mv (ico:form-asts ast)))
+
+(defun bind-temporary (ast)
+  "Binds the variable of the LET-TEMPORARY-AST AST. A variable bound to an
+entry of the function's static environment (a closed-over variable,
+never assigned: assigned ones live in cells) is not loaded here: each
+reference loads the entry from the function object, which stays live
+anyway. Loading every entry at the entry of the function kept them all
+live across calls, and they were spilled."
+  (note-constant-temporary ast)
   (let* ((binding (ico:binding-ast ast))
          (def (ico:variable-name-ast binding))
          (form (ico:form-ast binding)))
-    ;; Remember temporaries bound to constants and never assigned, so that
-    ;; (FUNCALL #'(SETF FDEFINITION) F NAME) from DEFUN sees the name.
-    (multiple-value-bind (constant constantp) (constant-value form)
+    (cond ((and (typep form 'ico:static-environment-ast)
+                (not (assigned-in-p def (ico:form-asts ast))))
+           ;; The static environment is the function object itself.
+           (setf (gethash def *vars*) (cons *func* *self*)))
+          ((and (typep form 'ico:read-static-environment-ast)
+                (self-reference-p (ico:static-environment-ast form))
+                (not (assigned-in-p def (ico:form-asts ast))))
+           (setf (gethash def *vars*)
+                 (cons *func* `(:load ,*self* ,(+ +fobj-env+
+                                                  (* 8 (ico:literal (ico:index-ast form))))))))
+          (t
+           (bind-var def (lower form))))))
+
+(defun self-reference-p (ast)
+  "Is AST the function's own static environment?"
+  (or (typep ast 'ico:static-environment-ast)
+      (and (typep ast 'ico:variable-reference-ast)
+           (eq (var-of (ico:definition-ast ast)) *self*))))
+
+(defun note-constant-temporary (ast)
+  "Remembers the temporary of the LET-TEMPORARY-AST AST if it is bound to
+a constant and never assigned, so that (FUNCALL #'(SETF FDEFINITION) F
+NAME) from DEFUN sees the name."
+  (let* ((binding (ico:binding-ast ast))
+         (def (ico:variable-name-ast binding)))
+    (multiple-value-bind (constant constantp) (constant-value (ico:form-ast binding))
       (when (and constantp (not (assigned-in-p def (ico:form-asts ast))))
-        (setf (gethash def *constant-vars*) constant)))
-    (bind-var def (lower form))
-    (lower-progn-mv (ico:form-asts ast))))
+        (setf (gethash def *constant-vars*) constant)))))
 
 (defun assigned-in-p (definition asts)
   "Is the variable DEFINITION the target of a SETQ in ASTS?"
@@ -618,10 +650,9 @@ known to hold one), and true; else NIL and NIL."
     (copy-to-var var)))
 
 (define-mv-lowering ico:if-ast (ast)
-  (let ((tv (lower (ico:test-ast ast)))
-        (r (new-var)) (n (new-var :raw))
+  (let ((r (new-var)) (n (new-var :raw))
         (then-b (new-block)) (else-b (new-block)) (join (new-block)))
-    (br `(:ne ,tv ,(nil-value)) then-b else-b)
+    (lower-branch (ico:test-ast ast) then-b else-b)
     (start-block then-b)
     (multiple-value-call #'set-mv r n (lower-mv (ico:then-ast ast)))
     (jump join)
@@ -630,6 +661,109 @@ known to hold one), and true; else NIL and NIL."
     (jump join)
     (start-block join)
     (values r n)))
+
+;;; Tests (the test of an IF): LOWER-BRANCH jumps to THEN if AST's value
+;;; is true, else to ELSE, without making the value when it need not. A
+;;; predicate's (:SELECT condition T NIL) becomes a branch on the
+;;; condition; IFs in the test (AND, WHEN, COND), OR's expansion, NOT and
+;;; constants become branches. The unused SELECT is left to kiln-cg's dead
+;;; code elimination.
+
+(defgeneric lower-branch (ast then else))
+
+(defun boolean-condition (v)
+  "The condition C if the last statement of the current block is
+(:SET V (:SELECT C T NIL)): the value V was just made from it."
+  (let ((stmt (first (kiln.kir::kblock-stmts (kiln.kir::kfunc-current *func*)))))
+    (and (symbolp v)
+         (consp stmt)
+         (eq (first stmt) :set)
+         (eq (second stmt) v)
+         (let ((x (third stmt)))
+           (and (consp x)
+                (eq (first x) :select)
+                (equal (third x) (t-value))
+                (equal (fourth x) (nil-value))
+                (second x))))))
+
+(defun branch-on-value (v then else)
+  (br (or (boolean-condition v) `(:ne ,v ,(nil-value))) then else))
+
+(defmethod lower-branch ((ast t) then else)
+  (branch-on-value (lower ast) then else))
+
+(defmethod lower-branch ((ast ico:if-ast) then else)
+  (let ((then1 (new-block)) (else1 (new-block)))
+    (lower-branch (ico:test-ast ast) then1 else1)
+    (start-block then1)
+    (lower-branch (ico:then-ast ast) then else)
+    (start-block else1)
+    (if (ico:else-ast ast)
+        (lower-branch (ico:else-ast ast) then else)
+        (jump else))))
+
+(defun lower-progn-branch (asts then else)
+  (if (null asts)
+      (jump else)
+      (progn
+        (dolist (a (butlast asts))
+          (lower a))
+        (lower-branch (car (last asts)) then else))))
+
+(defmethod lower-branch ((ast ico:progn-ast) then else)
+  (lower-progn-branch (ico:form-asts ast) then else))
+
+(defmethod lower-branch ((ast ico:the-ast) then else)
+  (lower-branch (ico:form-ast ast) then else))
+
+(defun variable-reference-to-p (ast definition)
+  (and (typep ast 'ico:variable-reference-ast)
+       (eq (ico:definition-ast ast) definition)))
+
+(defmethod lower-branch ((ast ico:let-temporary-ast) then else)
+  (let* ((binding (ico:binding-ast ast))
+         (def (ico:variable-name-ast binding))
+         (form (ico:form-ast binding))
+         (body (ico:form-asts ast))
+         (if-ast (and (= (length body) 1) (first body))))
+    (if (and (typep if-ast 'ico:if-ast)
+             (variable-reference-to-p (ico:test-ast if-ast) def)
+             (variable-reference-to-p (ico:then-ast if-ast) def)
+             (not (variable-occurs-p def (ico:else-ast if-ast))))
+        ;; (OR X Y): (LET ((G X)) (IF G G Y)), where only the truth of G
+        ;; matters.
+        (let ((else1 (new-block)))
+          (lower-branch form then else1)
+          (start-block else1)
+          (if (ico:else-ast if-ast)
+              (lower-branch (ico:else-ast if-ast) then else)
+              (jump else)))
+        (progn
+          (bind-temporary ast)
+          (lower-progn-branch body then else)))))
+
+(defun variable-occurs-p (definition ast)
+  (and ast
+       (walk (lambda (node inside)
+               (declare (ignore inside))
+               (when (variable-reference-to-p node definition)
+                 (return-from variable-occurs-p t)))
+             ast)))
+
+(defmethod lower-branch ((ast ico:application-ast) then else)
+  (let ((fn (ico:function-name-ast ast))
+        (args (ico:argument-asts ast)))
+    (if (and (typep fn 'ico:global-function-name-reference-ast)
+             (member (ico:name fn) '(not null))
+             (= (length args) 1))
+        (lower-branch (first args) else then)
+        (branch-on-value (lower ast) then else))))
+
+(defmethod lower-branch ((ast ico:literal-ast) then else)
+  (jump (if (ico:literal ast) then else)))
+
+(defmethod lower-branch ((ast ico:quote-ast) then else)
+  (jump (if (quoted-object ast) then else)))
 
 ;;; Special variables: TLS-index scheme (C1, rust/kiln-rt/src/special.rs).
 ;;; Symbols store their TLS index as a fixnum (index << 1), so the address

@@ -319,3 +319,10 @@ Under `#+kiln` (docs/10 §18 of kiln):
   For that, an exit to a block or tag of the VM (`exit-8`...) passes its
   target to the entry's function, which sets the pc (and the stack and
   frame pointers) once the `go` has unwound, after those cleanups.
+
+## Iconoclast patches
+
+- The AST walker's `set-slot` (`Code/AST-walker/ast-walker.lisp`) caches
+  the keyword of each reader name instead of interning it on every call
+  (a third of the time of `set-slot` on kiln, which runs it for every slot
+  of every node in each pass of the AST transformations).
