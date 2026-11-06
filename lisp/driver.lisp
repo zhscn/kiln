@@ -509,6 +509,7 @@ those whose names are in EXCLUDE."
             "src/interface/macros" "src/interface/inline-cache"
             "src/interface/compilation" "src/grammar/base/concrete-syntax"
             "src/grammar/sequence/concrete-syntax" "src/grammar/sexp/concrete-syntax")
+     (list (asdf:system-relative-pathname "kiln" "lisp/target/compiler/parser-packrat.lisp"))
      (files "s-expression-syntax" "code/expression-grammar/package"
             "code/expression-grammar/protocol" "code/expression-grammar/stubs"
             "code/expression-grammar/meta-grammar" "code/expression-grammar/grammar"
