@@ -1,0 +1,13 @@
+(cl:in-package #:iconoclast-visualizer)
+
+(defmethod display-ast ((ast ico:local-function-ast))
+  (let* ((name "local-function"))
+    (draw-ast ast name)
+    (with-indentation (40)
+      (display-ast (ico:name-ast ast))
+      (display-ast (ico:lambda-list-ast ast)))
+    (with-indentation (30)
+      (display-asts (ico:declaration-asts ast))
+      (display-ast (ico:documentation-ast ast)))
+    (with-indentation (20)
+      (display-asts (ico:form-asts ast)))))

@@ -24,5 +24,6 @@
      (:tree ,(merge-pathnames "vendor/parser.packrat/" (truename root)))
      (:tree ,(merge-pathnames "vendor/s-expression-syntax/" (truename root)))
      (:tree ,(merge-pathnames "vendor/Maclina/" (truename root)))
+     (:tree ,(merge-pathnames "vendor/Iconoclast/" (truename root)))
      (:tree ,deps)
      :inherit-configuration)))

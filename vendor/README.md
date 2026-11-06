@@ -3,8 +3,8 @@
 Copies of SICL-ecosystem modules that kiln patches. Most are target code,
 compiled into kiln's modules; Common-boot and Common-macros are host
 libraries (kiln's front end) and Khazern and Eclector are both (the
-host's LOOP and reader, and the image's), as are parser.packrat and
-s-expression-syntax (the front end's, in the host and in the compiler
+host's LOOP and reader, and the image's), as are parser.packrat,
+s-expression-syntax and Iconoclast (the front end's, in the host and in the compiler
 module, docs/11 §3). Host libraries are found by ASDF before `deps/` (`tools/env.lisp`). Each is imported
 unmodified in its own commit (the upstream commit is recorded below), and
 kiln's changes follow in separate commits, so `git log -- vendor/NAME`
@@ -29,6 +29,7 @@ shows exactly what kiln changed. Changes are not sent upstream for now.
 | parser.packrat | https://github.com/scymtym/parser.packrat (branch `future`) | 835090176480e68a8af87ba550b6c9639f94f542 (2023-04-04) | MIT (`parser.packrat/COPYING`) |
 | s-expression-syntax | https://github.com/scymtym/s-expression-syntax (branch `beach`) | 1ecd399a671eeb34a50e573a38d74c4dab3663b1 (2024-04-10) | MIT (`s-expression-syntax/COPYING`) |
 | Maclina | https://github.com/s-expressionists/Maclina | a46ba99620ceb51f05f14e31d34fe77e1cfa96c1 (2026-09-15) | BSD (`Maclina/LICENSE`) |
+| Iconoclast | https://github.com/robert-strandh/Iconoclast | 1ec145e113c3f0342823816b5fd8644ae9c23222 (2025-07-20) | no license file |
 
 ## Clostrophilia patches
 
