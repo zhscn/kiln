@@ -635,27 +635,96 @@ true if the variable holds the cell of the variable NAME."
                            ((typep v 'ico:ast) (list v)))))))
 
 (defun walk (function ast)
-  "Calls FUNCTION on AST and its descendants, with a flag telling whether
-the node is inside a LOCAL-FUNCTION-AST below the starting point. Some
-slots link back to ancestors (a segment to its tagbody), so each node is
-visited once."
+  "Calls FUNCTION on AST and its descendants, in preorder, with the
+innermost LOCAL-FUNCTION-AST containing the node below the starting point
+(the starting point included), or NIL if there is none. Some slots link
+back to ancestors (a segment to its tagbody), so each node is visited
+once."
   (let ((seen (make-hash-table :test 'eq)))
-    (labels ((visit (ast inside)
+    (labels ((visit (ast owner)
                (unless (gethash ast seen)
                  (setf (gethash ast seen) t)
-                 (funcall function ast inside)
-                 (let ((inside (or inside (typep ast 'ico:local-function-ast))))
+                 (funcall function ast owner)
+                 (let ((owner (if (typep ast 'ico:local-function-ast) ast owner)))
                    (dolist (child (ast-children ast))
-                     (visit child inside))))))
+                     (visit child owner))))))
       (visit ast nil))))
 
-(defun exits-from-closure-p (asts predicate)
-  "Does a node satisfying PREDICATE occur inside a nested function in ASTS?"
-  (dolist (ast asts nil)
-    (walk (lambda (node inside)
-            (when (and inside (funcall predicate node))
-              (return-from exits-from-closure-p t)))
-          ast)))
+;;; What lowering asks about a top-level form, found in one walk of the
+;;; form before it is lowered (lowering does not change the AST; the ASTs
+;;; it makes, calls of global functions, are lowered at once and asked
+;;; nothing). Each answer rests on lexical scope: a variable is assigned
+;;; only in the body of its binding, a RETURN-FROM is inside its BLOCK, a
+;;; GO inside its TAGBODY, and the SET-STATIC-ENVIRONMENT-AST of a local
+;;; function is in the body of its LABELS; asking the whole form is asking
+;;; that part of it.
+
+(defstruct (ast-facts (:conc-name facts-) (:constructor make-ast-facts ()))
+  ;; Variable definitions that a SIMPLE-SETQ-AST assigns.
+  (assigned (make-hash-table :test 'eq))
+  ;; Block name definitions and TAGBODY-WITH-VARIABLE-ASTs that a function
+  ;; nested in them exits to.
+  (nonlocal (make-hash-table :test 'eq))
+  ;; Local function definition -> number of words of its static
+  ;; environment, from the first SET-STATIC-ENVIRONMENT-AST for it.
+  (env-sizes (make-hash-table :test 'eq))
+  ;; LOAD-TIME-VALUE-ASTs, in preorder.
+  (load-time-values '()))
+
+(defvar *facts*)                        ; AST-FACTS of the top-level form
+
+(defun ast-facts (toplevel-ast)
+  (let ((facts (make-ast-facts))
+        ;; Block name or tag definition -> (owner . key in NONLOCAL): the
+        ;; innermost local function containing the BLOCK or TAGBODY. An
+        ;; exit from a node with another owner is from a nested function.
+        (targets (make-hash-table :test 'eq)))
+    (flet ((note-exit (def owner)
+             (let ((target (gethash def targets)))
+               (when (and target (not (eq (car target) owner)))
+                 (setf (gethash (cdr target) (facts-nonlocal facts)) t)))))
+      (walk (lambda (node owner)
+              (typecase node
+                (ico:simple-setq-ast
+                 (setf (gethash (ico:definition-ast (ico:variable-name-ast node))
+                                (facts-assigned facts))
+                       t))
+                (ico:block-with-variable-ast
+                 (let ((def (ico:name-ast node)))
+                   (setf (gethash def targets) (cons owner def))))
+                (ico:tagbody-with-variable-ast
+                 (dolist (segment (ico:segment-asts node))
+                   (let ((tag (ico:tag-ast segment)))
+                     (when tag
+                       (setf (gethash tag targets) (cons owner node))))))
+                (ico:return-from-with-variable-ast
+                 (note-exit (ico:block-name-definition-ast (ico:name-ast node)) owner))
+                (ico:go-with-variable-ast
+                 (note-exit (ico:tag-definition-ast (ico:tag-ast node)) owner))
+                (ico:set-static-environment-ast
+                 (let ((def (ico:definition-ast (ico:function-reference-ast node)))
+                       (sizes (facts-env-sizes facts)))
+                   (unless (nth-value 1 (gethash def sizes))
+                     (setf (gethash def sizes) (length (ico:form-asts node))))))
+                (ico:load-time-value-ast
+                 (push node (facts-load-time-values facts)))))
+            toplevel-ast))
+    (setf (facts-load-time-values facts) (nreverse (facts-load-time-values facts)))
+    facts))
+
+(defun assigned-p (definition)
+  "Is the variable DEFINITION the target of a SETQ?"
+  (values (gethash definition (facts-assigned *facts*))))
+
+(defun static-env-size (definition)
+  "Number of env words of the local function named by DEFINITION (0 if it
+has no static environment)."
+  (values (gethash definition (facts-env-sizes *facts*) 0)))
+
+(defun exited-from-closure-p (key)
+  "Does a function nested in the BLOCK (KEY its name definition) or the
+TAGBODY-WITH-VARIABLE-AST KEY exit to it?"
+  (values (gethash key (facts-nonlocal *facts*))))
 
 ;;; Lowering
 
@@ -752,12 +821,12 @@ live across calls, and they were spilled."
          (def (ico:variable-name-ast binding))
          (form (ico:form-ast binding)))
     (cond ((and (typep form 'ico:static-environment-ast)
-                (not (assigned-in-p def (ico:form-asts ast))))
+                (not (assigned-p def)))
            ;; The static environment is the function object itself.
            (setf (gethash def *vars*) (cons *func* *self*)))
           ((and (typep form 'ico:read-static-environment-ast)
                 (self-reference-p (ico:static-environment-ast form))
-                (not (assigned-in-p def (ico:form-asts ast))))
+                (not (assigned-p def)))
            (setf (gethash def *vars*)
                  (cons *func* `(:load ,*self* ,(+ +fobj-env+
                                                   (* 8 (ico:literal (ico:index-ast form))))))))
@@ -784,18 +853,8 @@ NAME) from DEFUN sees the name."
   (let* ((binding (ico:binding-ast ast))
          (def (ico:variable-name-ast binding)))
     (multiple-value-bind (constant constantp) (constant-value (ico:form-ast binding))
-      (when (and constantp (not (assigned-in-p def (ico:form-asts ast))))
+      (when (and constantp (not (assigned-p def)))
         (setf (gethash def *constant-vars*) constant)))))
-
-(defun assigned-in-p (definition asts)
-  "Is the variable DEFINITION the target of a SETQ in ASTS?"
-  (dolist (ast asts nil)
-    (walk (lambda (node inside)
-            (declare (ignore inside))
-            (when (and (typep node 'ico:simple-setq-ast)
-                       (eq (ico:definition-ast (ico:variable-name-ast node)) definition))
-              (return-from assigned-in-p t)))
-          ast)))
 
 (defun constant-value (ast)
   "The value of AST if it is a constant (QUOTE, a literal, or a variable
@@ -1112,19 +1171,14 @@ if needed (not a safepoint)."
 
 (defvar *load-time-values*)             ; load-time-value AST -> cell data name
 
-(defun emit-load-time-values (toplevel-ast)
-  (let ((ltvs '()))
-    (walk (lambda (node inside)
-            (declare (ignore inside))
-            (when (typep node 'ico:load-time-value-ast)
-              (push node ltvs)))
-          toplevel-ast)
-    (dolist (ltv (nreverse ltvs))
-      (let ((cell (fresh-label "kiln_ltv_")))
-        (module-data cell `(:words 0))
-        (module-root cell 0)
-        (emit `(:store (:addr ,cell) 0 ,(lower (ico:form-ast ltv))))
-        (setf (gethash ltv *load-time-values*) cell)))))
+(defun emit-load-time-values ()
+  "Evaluates the LOAD-TIME-VALUE forms of the top-level form."
+  (dolist (ltv (facts-load-time-values *facts*))
+    (let ((cell (fresh-label "kiln_ltv_")))
+      (module-data cell `(:words 0))
+      (module-root cell 0)
+      (emit `(:store (:addr ,cell) 0 ,(lower (ico:form-ast ltv))))
+      (setf (gethash ltv *load-time-values*) cell))))
 
 (defmethod lower ((ast ico:load-time-value-ast))
   (let ((cell (or (gethash ast *load-time-values*)
@@ -1355,18 +1409,6 @@ DEBUG-NAME and SOURCE (a source range) go into its debug info."
           (emit `(:return ,v ,n))))
       (set-function-debug debug-name source))))
 
-(defun static-env-size (name-definition asts)
-  "Number of env words of the function named by NAME-DEFINITION, from
-the SET-STATIC-ENVIRONMENT-AST for it in ASTS (0 if there is none)."
-  (dolist (ast asts 0)
-    (walk (lambda (node inside)
-            (declare (ignore inside))
-            (when (and (typep node 'ico:set-static-environment-ast)
-                       (eq (ico:definition-ast (ico:function-reference-ast node))
-                           name-definition))
-              (return-from static-env-size (length (ico:form-asts node)))))
-          ast)))
-
 (defvar *name-hint* nil
   "The name hint of the function being compiled: local functions without
 a name of their own (closures) show it in their labels.")
@@ -1410,7 +1452,7 @@ host or kiln)."
                                        (ico:form-asts lf)
                                        :debug-name debug-name
                                        :source nil))
-                collect (list def label (static-env-size def (ico:form-asts ast))))))
+                collect (list def label (static-env-size def)))))
     (loop for (def label n) in functions
           do (if (zerop n)
                  (let ((data (kiln.kir::kir-name label "_fobj")))
@@ -1708,11 +1750,7 @@ be confused with a later activation at the same address."
 (define-mv-lowering ico:block-with-variable-ast (ast)
   (let* ((def (ico:name-ast ast))
          (body (ico:form-asts ast))
-         (nonlocal (exits-from-closure-p
-                    body
-                    (lambda (node)
-                      (and (typep node 'ico:return-from-with-variable-ast)
-                           (eq (ico:block-name-definition-ast (ico:name-ast node)) def)))))
+         (nonlocal (exited-from-closure-p def))
          (exit (new-block)) (r (new-var)) (n (new-var :raw)))
     (setf (gethash def *exits*)
           (make-exit-info :func *func* :regions *regions* :exit exit :result r :count n))
@@ -1766,11 +1804,7 @@ be confused with a later activation at the same address."
 (defmethod lower ((ast ico:tagbody-with-variable-ast))
   (let* ((segments (ico:segment-asts ast))
          (defs (mapcar #'ico:tag-ast segments)) ; NIL for an untagged first segment
-         (nonlocal (exits-from-closure-p
-                    segments
-                    (lambda (node)
-                      (and (typep node 'ico:go-with-variable-ast)
-                           (member (ico:tag-definition-ast (ico:tag-ast node)) defs)))))
+         (nonlocal (exited-from-closure-p ast))
          (blocks (mapcar (lambda (s) (declare (ignore s)) (new-block)) segments))
          (exit (new-block))
          (token (and nonlocal (emit-exit-token)))
@@ -1928,8 +1962,9 @@ returns the operand of its (static) function object."
       (let ((*self* (copy-to-var :self)))
         (emit-poll)
         (dolist (form asts)
-          (let ((*toplevel* form))
-            (emit-load-time-values (toplevel-form-ast form))
+          (let ((*toplevel* form)
+                (*facts* (ast-facts (toplevel-form-ast form))))
+            (emit-load-time-values)
             (lower (toplevel-form-ast form))))
         (emit `(:return ,(nil-value) 1)))
       (let ((*toplevel* (and (= (length files) 1) (first files)
