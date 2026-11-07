@@ -391,3 +391,12 @@ Under `#+kiln`:
   cardinality, reader and slot name of each slot designator.
   `slot-designators` has the `append` method combination, so every call
   made a new list; a slot is now written only when its child changed.
+- `compute-ast-info` (`Code/AST-transformations/compute-ast-info.lisp`)
+  finds the parents, owners and function tree in one walk, which also
+  lists the local functions in the order the walk finishes them, then
+  computes the escaped functions and the call graph from that list,
+  instead of five walks (one each in `compute-parent-asts`,
+  `compute-owner-asts`, `compute-function-tree`,
+  `compute-escaped-functions` and `compute-call-graph`, which are still
+  defined). The result is the same, entry for entry and in the same
+  order. It runs three times for each top-level form.
