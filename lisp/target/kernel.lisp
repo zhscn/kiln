@@ -1,8 +1,8 @@
 ;;;; kiln kernel: the first target code.
 ;;;;
 ;;;; Written with %PRIMOP, compiler primitives (whose calls are inlined) and
-;;;; Common-macros. Macro expanders run in the compile-time environment
-;;;;: portable CL, and no LOOP until Khazern is loaded.
+;;;; Common-macros. Macro expanders run in the compile-time environment:
+;;;; portable CL, and no LOOP until Khazern is loaded.
 ;;;;
 ;;;; Character case and classification cover Latin-1 only; Unicode tables
 ;;;; come later.

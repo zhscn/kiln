@@ -1,5 +1,5 @@
-;;;; The part of Quaviver's interface that the printer modules use
-;;;;: FLOAT-TRIPLE, WRITE-DIGITS and COUNT-DIGITS. The
+;;;; The part of Quaviver's interface that the printer modules use:
+;;;; FLOAT-TRIPLE, WRITE-DIGITS and COUNT-DIGITS. The
 ;;;; shortest decimal representation of a float comes from the runtime
 ;;;; (kiln_rt_float_decimal); Quaviver itself (Schubfach etc.) can replace
 ;;;; this file later.

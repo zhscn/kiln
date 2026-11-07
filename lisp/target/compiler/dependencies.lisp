@@ -7,8 +7,8 @@
 ;;;; definition; those that cannot be (a DEFVAR, a DEFCLASS: evaluating
 ;;;; them again has other effects) are reported.
 ;;;;
-;;;; An update is ordered and cut off as Zig's incremental compilation
-;;;;: the definitions that depend on a changed one are
+;;;; An update is ordered and cut off as in Zig's incremental
+;;;; compilation: the definitions that depend on a changed one are
 ;;;; outdated, those that depend on what these define are potentially
 ;;;; outdated, with a count of the definitions they wait for; a definition
 ;;;; is evaluated again once that count is 0, and if what it defines comes
