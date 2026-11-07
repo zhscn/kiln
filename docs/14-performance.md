@@ -95,11 +95,29 @@
 - **数值是最大的差距**：浮点每次运算都装箱，再进 Rust（§2.2）；bignum 慢到两三千倍，乘除法的算法和实现要整个重看；多维数组走 Regalia 的通用路径。
 - **打印、读行、字符串流**慢一到两个数量级，原因同 §2.2。
 
-**没有运行起来的项目**（ANSI 的缺口，不是性能问题）：
-- `random`、`gentemp`、`complex`、`bit-xor` 没有定义：mrg32k3a、全部 hash 组、browse、mandelbrot/complex、bitvectors。
-- `search` 不接受 `:end2`：search-sequence。
-- 不支持重定义类（`redefining a class is not supported yet`）：CLOS/defclass，以及因此失败的 defmethod、instantiate、methodcalls、method+after、complex-methods。
-- 递归很深的 walk-list/mess 要 1 GiB 的栈，栈溢出时 kiln 直接段错误，没有发出 `storage-condition`。SBCL 跳过这一项。
+**补上 ANSI 缺口之后**（2026-11：`random`、`gentemp`、complex、位数组运算、`search` 的全部关键字、类的重定义、栈耗尽的 `storage-condition`）新跑起来的项目：
+
+| 组 | 项目 | kiln | SBCL | 倍数 |
+|---|---|---|---|---|
+| gabriel | browse | 23 | 4.9 | 4.7× |
+| 数值 | mandelbrot/complex | 21 | 0.89 | 23× |
+| | mrg32k3a（double 运算） | 1462 | 5.2 | 281× |
+| 哈希表 | htable-mixbag / fixnum / equalp-numbers / sparse | 52 / 691 / 27 / 4.1 | 32 / 89 / 3.5 / 0.75 | 1.6–7.7× |
+| | htable-string-small / large / set+remove | 52 / 40 / 35 | 4.3 / 1.3 / 1.5 | 12–32× |
+| | htable-string-fair | 超时 | 149 | — |
+| | sxhash-string-small / sxhash-fixnum | 152 / 455 | 2.3 / 4.8 | 67× / 96× |
+| | sxhash-string-large | 7.4 | 59 | 0.1×（kiln 只哈希前 64 个字符） |
+| 序列 | bitvectors（位数组运算逐位 `row-major-aref`） | 超时 | 40 | — |
+| | search-sequence（`search` 逐个 `elt`） | 106914 | 62 | 1724× |
+| CLOS | defclass / defmethod（运行期 `compile`） | 872 / 1733 | 98 / 183 | 9× |
+| | instantiate / method+after | 2009 / 755 | 51 / 83 | 39× / 9× |
+| | methodcalls / complex-methods | 211 / 18 | 205 / 20 | 1.0× / 0.9× |
+
+- CLOS 的泛函调用（methodcalls、complex-methods）已经和 SBCL 持平，判别闭包的缓存表起了作用（10 §27）；`make-instance`（instantiate、simple-instantiate 30–40×）和定义类、方法（运行期编译）是差距所在，对应 §3 第 3 项。
+- `sxhash` 和字符串键的哈希表慢在哈希函数本身：`sxhash` 走 Salmagundi 的累加闭包，没有 `equal-hash` 那样的快路径。
+- bitvectors、search-sequence 是新补的函数用了最朴素的实现，属于 §3 第 2、4 项的快速路径。
+- CLOS 组的后几项依赖前面几项定义的类和方法（cl-bench 在同一个 image 里按顺序运行），`tools/bench.sh` 让它们在同一个进程里先运行前面的项目。
+- 递归很深的 walk-list/mess 仍要 1 GiB 的栈；栈不够时现在发出 `kiln.sys:stack-exhausted`。SBCL 跳过这一项。
 - compiler、load-fasl 需要 `compile-file`，harness 不运行。
 
 ## 3. 需要的优化
