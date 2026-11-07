@@ -1,6 +1,6 @@
 # 17 调试信息和后端协议（M6.2、M6.3）
 
-**状态**：M6.2 帧的调试信息已完成（2026-11）。M6.3 后端协议（批处理 REPL 和嵌套式 debugger）还没做。
+**状态**：M6.2 帧的调试信息、M6.3 后端协议（批处理 REPL 和嵌套式 debugger）已完成（2026-11）。
 
 这是 [11](11-m5-self-hosting.md) §4.2 计划的实现：§4.2 定的是调用点描述符加源码位置，变量位置留到 M6。两者在这里一起做了。
 
@@ -60,9 +60,9 @@
 ```
 
 - 源码范围取自调用形式（`application-ast`）的 CST。宏展开生成的调用没有自己的范围，就用外层调用的范围。
-- 只有绑定源码变量的 KIR 变量才带下标。源码变量指变量定义的源码范围恰好是名字本身，即范围的长度等于符号名的长度。不带下标的有：
+- 只有绑定源码变量的 KIR 变量才带下标。源码变量指名字出现在顶层形式（宏展开之前、按原样写出的形式）中的变量。不带下标的有：
   - 编译器的临时变量；
-  - 宏引入的变量：`cst:reconstruct` 新造的 CST 用宏调用形式的范围。这些变量对调试没有用；而且 Common-macros 这类宏库的包在宿主和 kiln 上名字不同（[11](11-m5-self-hosting.md) §3），把它们写进 KIR，两边就不一致了；
+  - 宏引入的变量：名字不出现在形式中。这些变量对调试没有用；而且 Common-macros 这类宏库的包在宿主和 kiln 上名字不同（[11](11-m5-self-hosting.md) §3），把它们写进 KIR，两边就不一致了；
   - 局部函数对象；
   - 退出用的 token。
 - 文件名和位置都写进了 KIR，所以 SBCL 和 kiln 读同一个文件时，必须得到相同的名字和偏移：
@@ -175,6 +175,89 @@ JIT、GC 压力和 AOT 三遍输出相同。
 - 单步、断点、在帧中求值、从帧返回、重新执行帧：在 [11](11-m5-self-hosting.md) §4.4 的方案上做，需要后端协议。
 - 定义表（dspec 和位置）、who-calls：[11](11-m5-self-hosting.md) §4.1。
 
-## 4. 后端协议（M6.3，待定）
+## 4. 后端协议（M6.3）
 
-见下一步。
+`kiln.sys:serve`（`lisp/target/eval/server.lisp`）：给程序用的 REPL，使用者是工具、编辑器和 agent。不是 MCP，也不是 Swank；以后可以在它上面接这些。
+
+### 4.1 模型
+
+- 每个请求作为一个任务求值。任务未处理的错误不会结束任务：
+  1. 服务端发出 condition、restart 和帧；
+  2. 在 debugger 里接着处理新的请求。这一层 debugger 与出错的计算在同一个栈上，嵌套在它上面，称为一个 debug 层。
+- 新请求在当前层里求值，可以再出错，于是又嵌套一层。
+- 用 restart 离开一层。离开的方式取决于 restart：
+  - 继续出错的计算：任务最终正常完成，或者再次出错；
+  - 中止任务：每个任务都有自己的 ABORT restart；
+  - 跳到外层任务的 restart：经过的任务都算中止。
+- 这就是 SLIME 的 sldb 加上 `eval-in-frame` 的模型，不需要 fiber。fiber（[03](03-async.md)）以后用来同时挂起多个出错的任务，协议不变。
+
+### 4.2 消息
+
+请求和回复都是 S 表达式。
+
+- 回复只用到列表、关键字、整数、`nil` 和字符串。
+- 字符串里的反斜杠、双引号、换行（`\n`）、回车（`\r`）、制表符（`\t`）都转义，所以每条回复正好占一行。
+- Emacs Lisp 可以直接 `read` 回复；CL 的读取器会把 `\n` 读成 `n`。
+- 服务端每次读请求之前发出 `(:waiting 层)`。客户端发出一个请求之后，读回复直到这一行为止。一个请求可能引出多条回复，例如一个 restart 中止了几个任务。
+
+| 请求 | 回复 |
+|---|---|
+| `(:eval ID "文本")` | 依次求值文本中的形式：`(:ok ID ("值"...) "输出")`；出错时 `(:debug ID 层 "类型" "报告" ((序号 "名字" "说明")...) (帧...) "输出")` |
+| `(:frame ID 序号)` | `(:frame ID 帧)`；帧是 `(序号 "名字" "文件" 行 列 (("变量" "值")...))` |
+| `(:eval-in-frame ID 序号 "文本")` | 把该帧已知的变量绑定为词法变量，在这个环境里求值文本（值是拷贝，赋值不会写回帧）；回复同 `:eval` |
+| `(:restart ID 序号 ["文本"])` | 调用当前层第 N 个 restart，文本中形式的值作为参数；回复是被它继续或中止的任务的结果：`:ok`、`:debug` 或 `(:aborted ID "输出")` |
+| `(:package ID "名字")` | 设置 `*package*` |
+| `(:quit ID)` | `(:bye ID)`，中止所有任务，`serve` 返回 |
+
+- 任务期间，`*standard-output*`、`*error-output*` 和 `*trace-output*` 的输出都收集起来，放进任务的结果里。
+- 值用 `prin1` 打印。打印帧中的变量时，`*print-length*` 为 20，`*print-level*` 为 4。
+- 返回的帧最多 30 个，去掉了两部分：
+  - 发出 condition 的部分：`error`、`signal`、`%runtime-error` 等函数，以及 Clostrophilia 的分派（`debugger-frames`）；
+  - 服务端求值的部分（`task-frames`）。
+
+### 4.3 从 shell 驱动
+
+- 设了 `KILN_SERVE` 时，构建程序（kiln1）不做构建，在标准输入输出上运行 `serve`。kiln1 链接了全部五个模块，所以 `eval` 产出原生代码。
+- `tools/kiln-server.sh`：
+  - `start [EXE]`：用一个 FIFO 作输入，回复追加到文件里；
+  - `eval`、`frame`、`eval-in-frame`、`restart`、`package`、`send`：发出请求，打印回复直到 `(:waiting ...)`；
+  - `stop`。
+  
+  agent 用它就够了，不需要 MCP。
+
+```
+$ tools/kiln-server.sh start
+$ tools/kiln-server.sh eval '(defun h (x) (let ((y (+ x 1))) (check y) (list x y)))'
+$ tools/kiln-server.sh eval '(h 9)'
+(:debug 3 1 "SIMPLE-ERROR" "check 10" ((0 "ABORT" "Abort task 3.")) ((0 "CHECK" ...) (1 "H" nil nil nil (("X" "9") ("Y" "10"))) ...) "")
+(:waiting 1)
+$ tools/kiln-server.sh eval-in-frame 1 '(* x y)'
+(:ok 4 ("90") "")
+(:waiting 1)
+$ tools/kiln-server.sh restart 0
+(:aborted 3 "")
+(:waiting 0)
+```
+
+### 4.4 为此做的修改
+
+- `eval` 的定义名：原生 `eval` 先展开宏再编译，所以 `defun` 的名字在展开之后就丢了。现在的做法：
+  - `native-eval` 在展开定义宏之前记下 `definition-name`，交给前端（`*eval-definition*`）；
+  - 不由 `eval` 直接处理的形式，作为顶层形式编译，不再包进 `(lambda () ...)`。这样定义出的函数位于第一层，名字就是 `srv-f`，而不是 `(lambda :in srv-f)`。
+- 变量名的规则（§2.2）：只要名字在顶层形式中出现过就记下来，不要求有源码位置。这样 `eval` 编出的代码虽然没有源码位置，也有变量名。宏引入的变量仍然排除在外，因为它们的名字不出现在形式中。
+- 单参数的 `print` 原本是编译器原语，直接调用 runtime 的打印函数。这是给没有流的早期测试用的。装进运行中 image 的代码不再使用这个原语，所以输出会走 `*standard-output*`。
+
+### 4.5 测试
+
+`tests/m6/co-server.lisp`：
+
+- 用字符串流运行 `serve`，覆盖：定义、输出、出错、嵌套任务、帧、在帧中求值、带参数和不带参数的 restart、未知请求；
+- 帧只比较函数名，因为帧中有文件名和地址。
+
+### 4.6 还没做
+
+- 出错那一帧的变量往往看不到：错误之后不再用到的变量已经死亡。这需要一个调试优化级别：在 `(optimize (debug 2))` 下，让所有变量活过出错路径上的调用（SBCL 的做法）。默认级别下不这样做，因为它会改变生成的代码。
+- 打断正在运行的任务（poll 点，[06](06-m0-abi.md) §7），以及任务运行期间的流式输出。
+- 定义表、跳转到定义、who-calls：[11](11-m5-self-hosting.md) §4.1。
+- `load` 的文件位置；`compile` 编出的函数名。
+- 单步、从帧返回、重新执行帧。

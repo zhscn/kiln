@@ -34,6 +34,11 @@ running image, in the null lexical environment."
 ;;; macro forms after their expansion; any other form is compiled as the
 ;;; body of a function of no arguments, which is called.
 (defun native-eval (form)
+  (let ((*eval-definition* nil)
+        (*eval-form* form))
+    (native-eval-1 form)))
+
+(defun native-eval-1 (form)
   (loop
     (cond ((symbolp form)
            (return (kiln.kernel::maclina-eval form)))
@@ -50,16 +55,43 @@ running image, in the null lexical environment."
                              (member 'eval (second form)))
                      (native-eval-body (cddr form)))))
           ((and (symbolp (first form)) (macro-function (first form)))
+           ;; The functions a definition defines are named after it
+           ;; (docs/17 §2.1), although its expansion is compiled.
+           (multiple-value-bind (name function-p) (definition-name form)
+             (when name
+               (setf *eval-definition* (cons name function-p))))
            (setf form (macroexpand-1 form)))
           (t
-           (return (funcall (native-compile `(lambda () ,form))))))))
+           (return (native-eval-toplevel form))))))
+
+(defvar *eval-values*)
+
+(defun native-eval-toplevel (form)
+  "Compiles FORM as a top-level form (so that the function a definition
+defines is not inside another, for its name, docs/17 §2.1) and runs it;
+returns its values."
+  (let* ((session (make-session))
+         (name (kiln.kir::kir-name "eval-" (incf *native-compile-count*))))
+    (multiple-value-bind (module literals)
+        (handler-bind ((undefined-function-warning #'muffle-warning))
+          (compile-module (front-end-forms `((setq *eval-values* (multiple-value-list ,form)))
+                                           session)
+                          name :session session :image t))
+      (let ((init (kiln.sys:%primop :jit (kiln.kir::module-string module) literals)))
+        (unless init
+          (error "kiln-cg could not compile ~S." form))
+        (let ((*eval-values* nil))
+          (funcall init)
+          (values-list *eval-values*))))))
 
 (defun native-eval-body (forms)
   (if (null forms)
       nil
       (loop for (form . more) on forms
-            if more do (native-eval form)
-            else return (native-eval form))))
+            ;; Within a definition (the PROGN of a DEFUN's expansion),
+            ;; its name stays.
+            if more do (let ((*eval-definition* *eval-definition*)) (native-eval-1 form))
+            else return (let ((*eval-definition* *eval-definition*)) (native-eval-1 form)))))
 
 (setf kiln.kernel::*compile-function* 'native-compile)
 (setf kiln.kernel::*eval-function* 'native-eval)

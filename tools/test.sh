@@ -13,7 +13,7 @@ cargo build -q
 cg=$root/target/debug/kiln-cg
 launcher=$root/target/debug/libkiln_launcher.a
 
-sources=("${@:-$root/tests/*/*.lisp}")
+if [ $# -gt 0 ]; then sources=("$@"); else sources=("$root"/tests/*/*.lisp); fi
 # Absolute names: they are in the debug info of the KIR (docs/17), which
 # same-kir tests compare.
 for i in "${!sources[@]}"; do sources[i]=$(realpath "${sources[i]}"); done

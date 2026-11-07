@@ -3,8 +3,8 @@
 (5 5)
 42
 2
-:CLEANUP
-:THROWN
+
+:CLEANUP :THROWN
 (:TYPE-ERROR 5)
 "bad 3"
 (2 (:K 3) 3)

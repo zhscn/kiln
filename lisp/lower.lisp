@@ -503,11 +503,27 @@ word is a list of them and the flag is 1."
 ;;; index of the name, and calls carry the source range of the call
 ;;; form: kiln-cg records where the variables are during each call.
 
-(defstruct (toplevel-form (:constructor make-toplevel-form (ast file source definition)))
+(defstruct (toplevel-form (:constructor make-toplevel-form (ast file source definition form)))
   "A top-level form to compile (front.lisp): its simplified AST, the name
-of its file, its source range (START . END) and the definition it belongs
-to, (NAME . FUNCTION-P) as DEFINITION-NAME returns them, or NIL."
-  ast file source definition)
+of its file, its source range (START . END), the definition it belongs
+to, (NAME . FUNCTION-P) as DEFINITION-NAME returns them, or NIL, and the
+outermost form as written (before macro expansion)."
+  ast file source definition form (symbols nil))
+
+(defun toplevel-symbols (toplevel)
+  "The symbols that occur in TOPLEVEL's form, a hash table."
+  (or (toplevel-form-symbols toplevel)
+      (setf (toplevel-form-symbols toplevel)
+            (let ((table (make-hash-table :test 'eq))
+                  (seen (make-hash-table :test 'eq)))
+              (labels ((walk (x depth)
+                         (cond ((symbolp x) (setf (gethash x table) t))
+                               ((or (not (consp x)) (zerop depth) (gethash x seen)))
+                               (t (setf (gethash x seen) t)
+                                  (walk (car x) (1- depth))
+                                  (walk (cdr x) (1- depth))))))
+                (walk (toplevel-form-form toplevel) 100000))
+              table))))
 
 (defvar *toplevel* nil)                 ; the TOPLEVEL-FORM being compiled
 (defvar *function-name* nil)            ; name of the function being compiled; NIL at top level
@@ -561,14 +577,12 @@ in the function being compiled."
 
 (defun source-variable-name (definition)
   "The name of the variable DEFINITION for the debug info if it is written
-in the source: its source range is the name. Variables that macros
-introduce have the range of the macro form (CST:RECONSTRUCT); their names
-are of no use, and differ between the host and kiln, where some macro
-packages have other names (docs/11 §3)."
-  (let ((source (and definition (ast-source definition)))
-        (name (and definition (ico:name definition))))
-    (and source (symbolp name)
-         (= (- (cdr source) (car source)) (length (symbol-name name)))
+in the source: it occurs in the top-level form. Variables that macros
+introduce do not; their names are of no use, and differ between the host
+and kiln, where some macro packages have other names (docs/11 §3)."
+  (let ((name (and definition (ico:name definition))))
+    (and name (symbolp name) (symbol-package name) *toplevel*
+         (gethash name (toplevel-symbols *toplevel*))
          name)))
 
 (defun bind-var (definition operand &key (name (source-variable-name definition)) cell)
@@ -1614,8 +1628,12 @@ no pointer, the cons need not be scanned by the GC."
            (when (> (length arg-asts) (+ +reg-args+ +values-max+))
              (fail "the call to ~S has ~D arguments; at most ~D are supported"
                    name (length arg-asts) (+ +reg-args+ +values-max+)))
-           (let ((primitive (gethash name *primitives*))
+           (let ((primitive (and (not (and *image-literals* (eq name 'print)))
+                                 (gethash name *primitives*)))
                  (vals (lower-args arg-asts)))
+             ;; The PRINT primitive is the runtime's printer, for programs
+             ;; without streams; code compiled into a running image has
+             ;; them, and its output goes where *STANDARD-OUTPUT* says.
              (if primitive
                  (funcall primitive vals)
                  (emit-lisp-call (function-cell-value name) vals))))))))
@@ -1895,7 +1913,7 @@ returns the operand of its (static) function object."
             (lower (toplevel-form-ast form))))
         (emit `(:return ,(nil-value) 1)))
       (let ((*toplevel* (and (= (length files) 1) (first files)
-                             (make-toplevel-form nil (first files) nil nil))))
+                             (make-toplevel-form nil (first files) nil nil nil))))
         (set-function-debug '(:top-level-form) nil))))
   (let ((fobj (kiln.kir::kir-name name "_fobj")))
     (module-data fobj `(:words ,+kind-function+ (:func ,name)))

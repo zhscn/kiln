@@ -454,7 +454,8 @@ SESSION must have compiled the kernel and CLOS."
                  "compile/compilation-unit" "compile/environment" "compile/compile"
                  "vm-shared" "vm-native"))
        (list (eval-file "evaluator")
-             (eval-file "repl"))))))
+             (eval-file "repl")
+             (eval-file "server"))))))
 
 (defun compile-eval (output &key (session (kiln.compiler:make-session)))
   "Compiles the eval module to OUTPUT, loaded after the CLOS module.

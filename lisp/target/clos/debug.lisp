@@ -94,12 +94,38 @@ at most COUNT of them, with their variables if VARIABLES is true."
            (kiln.sys:print-frame frame stream :variables variables)
            (terpri stream)))
 
+(defun frame-name-base (name)
+  "The global function a frame name belongs to: FOO for FOO, (METHOD FOO
+...), (FLET G :IN FOO), (LAMBDA :IN FOO)."
+  (cond ((symbolp name) name)
+        ((not (consp name)) nil)
+        ((eq (first name) 'method) (second name))
+        ((member :in name) (frame-name-base (second (member :in name))))
+        (t nil)))
+
+(defparameter *signaling-functions*
+  '(error cerror signal warn break invoke-debugger %runtime-error)
+  "Functions whose frames are the machinery of signaling a condition.")
+
+(defun signaling-frame-p (frame)
+  "Is FRAME part of signaling a condition: a signaling function, or the
+dispatch of a generic function such as ERROR (Clostrophilia's)?"
+  (let ((base (frame-name-base (kiln.sys:frame-name frame))))
+    (and base (symbolp base)
+         (or (member base *signaling-functions*)
+             (eq (symbol-package base) (find-package "CLOSTROPHILIA"))))))
+
 (defun debugger-frames ()
   "The frames of the computation that invoked the debugger: those older
-than INVOKE-DEBUGGER's."
+than the innermost frames of signaling the condition."
   (let* ((frames (kiln.sys:frame-list))
-         (tail (member 'invoke-debugger frames :key #'kiln.sys:frame-name)))
-    (if tail (rest tail) frames)))
+         (start (position-if (lambda (f)
+                               (member (frame-name-base (kiln.sys:frame-name f))
+                                       *signaling-functions*))
+                             frames :end (min 80 (length frames)))))
+    (if start
+        (member-if-not #'signaling-frame-p (nthcdr start frames))
+        frames)))
 
 (defun kiln.sys:exit (&optional (code 0))
   "Ends the process with the exit status CODE, after FINISH-OUTPUT on the

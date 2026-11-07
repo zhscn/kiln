@@ -49,7 +49,9 @@
            #:save-image #:*save-hooks* #:*init-hooks*
            ;; Frames and backtraces (lisp/target/clos/debug.lisp, docs/17).
            #:frame-list #:frame-name #:frame-source #:frame-variables #:frame-pc
-           #:source-line #:print-frame #:print-backtrace #:exit))
+           #:source-line #:print-frame #:print-backtrace #:exit
+           ;; The back-end protocol (lisp/target/eval/server.lisp, docs/17 §4).
+           #:serve))
 
 (defpackage #:kiln.macros
   (:use #:cl)

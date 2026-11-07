@@ -361,6 +361,9 @@ the file. Reading starts in KILN-USER, with the target's features."
 (defvar *source-file* nil)              ; the file's name (one string per file), or NIL
 (defvar *toplevel-source* nil)          ; (START . END) of the outermost form, or NIL
 (defvar *definition-name* nil)          ; DEFINITION-NAME of the innermost definition form
+(defvar *eval-definition* nil)          ; the definition EVAL (native.lisp) is evaluating
+(defvar *eval-form* nil)                ; the form EVAL was given, before expansion
+(defvar *toplevel-raw* nil)             ; the outermost top-level form, as written
 
 (defun cst-source-range (cst)
   "The source range (START . END) of CST if it has one."
@@ -411,7 +414,8 @@ the second value."
     (compile-time-eval cst))
   (push (make-toplevel-form (simplify (let ((*inline-enabled* t))
                                         (cb:cst-to-ast *client* cst *environment*)))
-                            *source-file* *toplevel-source* *definition-name*)
+                            *source-file* *toplevel-source* *definition-name*
+                            *toplevel-raw*)
         *toplevel-asts*))
 
 (defun macroexpand-toplevel (form)
@@ -685,7 +689,8 @@ created."
   ;; order in the module (MODULE-SYMBOL-NAME).
   (let ((*gensym-counter* 0)
         (*toplevel-source* (cst-source-range cst))
-        (*definition-name* nil))
+        (*definition-name* *eval-definition*)
+        (*toplevel-raw* (or *eval-form* (cst:raw cst))))
     (process-toplevel cst compile-time-too)))
 
 (defun call-with-front-end (session thunk)
