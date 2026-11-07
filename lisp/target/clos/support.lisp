@@ -13,11 +13,21 @@
   (apply #'make-instance class initargs))
 
 ;;; Clostrophilia's ALLOCATE-INSTANCE: instances of funcallable classes
-;;; are funcallable instances.
+;;; are funcallable instances. After the switchover, whether a class is
+;;; one is cached as (TYPEP instance 'FUNCALLABLE-STANDARD-OBJECT) would be
+;;; (conditions.lisp).
+(defvar *funcallable-standard-object* nil)
+
 (defun allocate-general-instance (class size)
   (%allocate class size
-             (member (find-class 'funcallable-standard-object)
-                     (%slot class '%precedence-list))))
+             (if *switched-p*
+                 (subclass-cached-p
+                  class
+                  (or *funcallable-standard-object*
+                      (setf *funcallable-standard-object*
+                            (find-class 'funcallable-standard-object))))
+                 (member (find-class 'funcallable-standard-object)
+                         (%slot class '%precedence-list)))))
 
 ;;; Method combination templates, by name.
 

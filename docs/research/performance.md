@@ -147,6 +147,7 @@ kiln 编译自己的五个模块（一个阶段，见 [bootstrap.md](../design/b
 | 性能第一批：静态对象的身份哈希写进 header（`%slot` 缓存给槽名做哈希，原来每次进 runtime）、EQL 分派命中移到表头、Iconoclast 的 walker 按类的计划遍历且只在子节点变了时写槽、Salmagundi 的桶数取 2 的幂 | 314 秒 | 定位用的是 `KILN_FUNCTION_MAP` 加 perf |
 | 性能第二批：`make-instance` 的快路径 | 306 秒 | |
 | 性能第三批：`call-next-method` 按缓存的槽位置读方法函数、单参数泛函的缓存项直接读槽、哈希表改成开放寻址、`replace` 直接复制向量 | 293 秒 | SBCL 编同样的五个模块约 50 秒 |
+| `typep` 按 stamp 缓存只取决于类的答案（`or`、`and`、`not` 和非常量的类名，不只是常量类名的调用点） | 改动前后背靠背 367 → 341 秒（约 −7%） | 机器上同时有别的任务（负载 4–7），绝对值比上一行慢，只能看前后之比（同一次完整自举里 stage1 406 秒、stage2 312 秒，做的是同样的事，可见噪声之大）。profile 里 `typep` 一族（包含时间）从约 14% 降到约 3%，原来 11% 来自 Iconoclast walker 的 `(typep ast '(or ...))`；一次命中的 `typep` 约 18–26 ns，原来 `or` 约 90 ns |
 
 845 秒那次的 profile（按模块统计自身时间）：
 

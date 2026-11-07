@@ -77,7 +77,7 @@ AMOP 的方法函数接收参数列表和后续方法，有效方法接收一个
 - **调用历史**：从所有泛函（`*early-generic-functions*`，switchover 之后新建的也加进去）的调用历史里删掉提到这些类的项，并让判别函数失效。这些项的可用方法可能已经变了（优先级列表变了），而且按旧 stamp 建的自动机只会匹配过时的实例。
 - **过时实例的更新**：判别函数的未命中路径发现过时实例时调用 `update-obsolete-instance`。实例的 rack 里还留着它创建时的槽列表，所以旧槽可以按旧位置读出。新建一个当前类的实例，同名的局部槽照搬，新类没有的局部槽把名字放进 discarded、值放进属性表，新增的局部槽放进 added；实例接管新实例的 rack（和 `change-class` 一样），然后调用 `update-instance-for-redefined-class`，默认方法用 added 调用 `shared-initialize`。
 - 还有 `find-method`、`make-instances-obsolete`、`slot-exists-p`。
-- **限制**：只在泛函分派时检查过时实例。`slot-value` 直接按实例自己的槽列表找位置，所以过时实例在下次分派之前，用 `slot-value` 读到的仍是旧布局（值是对的，只是还没有更新）。类名 `typep` 的缓存以 stamp 为键，过时实例在更新之前得到的是旧类的结果。泛函的重定义（`defgeneric` 改 lambda list 等）还没有做。重定义结构走同一条路，但结构的访问器是 inline 函数，已编译的调用者不会跟着变。
+- **限制**：只在泛函分派时检查过时实例。`slot-value` 直接按实例自己的槽列表找位置，所以过时实例在下次分派之前，用 `slot-value` 读到的仍是旧布局（值是对的，只是还没有更新）。类名 `typep` 的调用点缓存以 stamp 为键，过时实例在更新之前，在已经见过它的调用点上得到的是旧类的结果（全局缓存在重定义时清空，没有这个问题）。泛函的重定义（`defgeneric` 改 lambda list 等）还没有做。重定义结构走同一条路，但结构的访问器是 inline 函数，已编译的调用者不会跟着变。
 
 ## 实例
 
@@ -97,7 +97,13 @@ AMOP 的方法函数接收参数列表和后续方法，有效方法接收一个
 
 - 编译器把类型是常量符号、又不在 CL 和 KEYWORD 包里的 `typep` 改成调用 `%typep-cached`，每个调用点带一个缓存（[lowering.md](lowering.md)）。CLOS 模块（`conditions.lisp`）的版本：类型名是类、又不是 deftype 时，结果只取决于对象的类，所以缓存的 car 存“上一个对象的 stamp 乘 2，结果为真再加 1”，是一个 fixnum，一次写入，GC 不需要扫描。
 - 多态的调用点（AST walker 里的 `(typep node 'some-ast)`）总是不命中只有一项的调用点缓存，所以后面再加一个所有调用点共用的直接映射缓存，每项是 `(键 类型)`，下标由 stamp 和类型符号的 identity hash 异或得到。
-- 其他情况下，类名作为类型时经 kernel 的 `*class-typep*` 按类查优先级列表。`typecase`、`handler-case` 和 `check-type` 都依赖它。
+- **全局缓存**（`*typep-cache*`，`%cached-typep`）：类型只取决于对象的类时，答案按 stamp 缓存，下标和调用点缓存的全局部分相同，两者共用一张表。kernel 的 `typep` 遇到 `or`、`and`、`not` 和不是标准类型名的 symbol 都先查它；类型不是常量、或者是复合类型（Iconoclast 的 walker 里 `(typep ast '(or ico:function-name-ast ...))`）时，调用点缓存帮不上忙，原来每次都要展开 `deftype`、`find-class`、再沿优先级列表找，这一处曾占自举时间的约 11%。
+  - 哪些类型只取决于类（`class-determined-type-p`）：`typep` 用谓词判断、而谓词对一个内建类的对象全真或全假的 symbol（`null`、`cons`、`integer`、`character`、`function` 等）；其余命名了类又不是 deftype 的 symbol（`typep` 就是查优先级列表）；以及它们的 `or`、`and`、`not`。`keyword`、`bit` 这类不是类，字符串和向量类型只覆盖原生对象，都不缓存；`(integer 0 10)`、`satisfies`、`member` 也不缓存。判断过不能缓存的类型记在一张按 identity hash 直接映射的小表里，下次不再判断。
+  - 以类型说明符本身（`eq`）为键，常量说明符因此每个调用点一项；运行期新构造的说明符只会不命中，结果仍然对。程序修改已经用过的类型说明符时缓存会过时（和修改常量一样不被允许）。
+  - **失效**：`deftype`、`(setf find-class)` 和类的重定义（`refinalize`）都调用 `invalidate-type-caches`，清空这张表、不能缓存的记录和 ctype 的缓存。重定义要清空，是因为过时实例的 stamp 仍是旧的 unique number，清空之后它们按 `class-of` 得到新类的答案。新类第一次终结时拿到新的 unique number，不会碰上旧项。`change-class` 换掉实例的 rack，stamp 随之变成新类的。
+  - `allocate-general-instance` 判断类是不是 funcallable 时也查这张表（`subclass-cached-p`，键是类的 unique number，类型是类对象），不再每次分配都沿优先级列表找。
+  - 命中时一次 `typep` 约 18–26 ns（原来 `or` 约 90 ns，非常量的类名约 80 ns）。SBCL 用每个 layout 的 `inherits` 向量按继承深度 O(1) 判断子类；这里没有这样做，因为缓存命中后不再看优先级列表，剩下的未命中在自举里可以忽略。
+- 不命中时，类名作为类型经 kernel 的 `*class-typep*` 按类查优先级列表。`typecase`、`handler-case` 和 `check-type` 都依赖它。
 
 ## 已知限制
 

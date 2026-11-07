@@ -26,7 +26,11 @@
 (defun typep (object type &optional environment)
   (declare (ignore environment))
   (if (consp type)
-      (compound-typep object (car type) (cdr type))
+      (let ((head (car type)))
+        (if (or (eq head 'or) (eq head 'and) (eq head 'not))
+            ;; These can depend on the class alone: CLOS caches them.
+            (%cached-typep object type)
+            (compound-typep object head (cdr type))))
       (case type
         ((t) t)
         ((nil) nil)
@@ -147,7 +151,24 @@
 ;;; class empties them.
 (defvar *type-caches-valid* nil)
 (defvar *type-cache-epoch* 0)
+
+;;; The results of TYPEP that depend only on the object's class, which
+;;; CLOS keeps (clos/conditions.lisp, %CACHED-TYPEP): pairs of a key (the
+;;; stamp of the object's class, doubled, plus 1 if the result is true)
+;;; and the type specifier, direct mapped by the stamp and the
+;;; specifier's identity hash. *UNCACHEABLE-TYPES* holds specifiers known
+;;; not to depend on the class alone, by their identity hash.
+(defvar *typep-cache* (make-simple-vector (* 2 4096) nil))
+(defvar *uncacheable-types* (make-simple-vector 512 nil))
+
+(defun clear-simple-vector (vector)
+  (dotimes (i (length vector) vector)
+    (setf (svref vector i) nil)))
+
 (defun invalidate-type-caches ()
+  "A type, class or class precedence list changed."
+  (clear-simple-vector *typep-cache*)
+  (clear-simple-vector *uncacheable-types*)
   (setf *type-caches-valid* nil
         *type-cache-epoch* (+ *type-cache-epoch* 1)))
 
@@ -185,6 +206,22 @@
   (typep object type))
 
 (defun other-typep (object type)
+  (if (symbolp type)
+      (%cached-typep object type)
+      (uncached-other-typep object type)))
+
+;;; (TYPEP OBJECT TYPE) for a symbol TYPE that is not a standard type name
+;;; and for (OR ...), (AND ...) and (NOT ...): CLOS replaces this with a
+;;; version that caches the results that depend only on the class.
+(defun %cached-typep (object type)
+  (uncached-typep object type))
+
+(defun uncached-typep (object type)
+  (if (consp type)
+      (compound-typep object (car type) (cdr type))
+      (uncached-other-typep object type)))
+
+(defun uncached-other-typep (object type)
   (multiple-value-bind (expansion expandedp) (typexpand-1 type)
     (cond (expandedp (typep object expansion))
           ((symbolp type) (class-typep object type))
