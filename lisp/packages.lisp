@@ -44,7 +44,9 @@
            #:%defclass #:%defgeneric #:%defmethod #:%method-function
            #:%method-fast-function
            ;; The read-eval-print loop (lisp/target/eval/repl.lisp).
-           #:repl))
+           #:repl
+           ;; Heap images (lisp/target/clos/image.lisp, docs/15).
+           #:save-image #:*save-hooks* #:*init-hooks*))
 
 (defpackage #:kiln.macros
   (:use #:cl)

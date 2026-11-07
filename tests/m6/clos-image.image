@@ -1,0 +1,16 @@
+init hook
+restored
+counter 2
+closure 2 3
+eq table GENSYM STATIC LIST POINT 4
+equal table STRING LIST
+list (1 2 3) string aaa big T
+symbol SAVED-SYMBOL NIL
+methods point 1 2 / integer 42
+new method string abc
+struct 2
+new instance point 3 4
+dynamic GLOBAL BOUND
+after gc (zz) 5
+error: boom
+read (A B . "c")

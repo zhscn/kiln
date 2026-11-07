@@ -862,6 +862,14 @@ and slots), zero-filled."
   (let ((r (new-var)))
     (emit `(:call-rt ,(rt-jit) (,r) (:ctx ,text ,literals) :nil))
     r))
+;;; Writes a heap image (kiln_rt_save_image, docs/15): PATH is a simple
+;;; vector of octets, TOPLEVEL the function an executable started from
+;;; the image calls, EXECUTABLE true to write a copy of the executable
+;;; with the image appended. 0, or 1 if it failed.
+(define-primop :save-image (path toplevel executable)
+  (let ((r (new-var)))
+    (emit `(:call-rt ,(rt-save-image) (,r) (:ctx ,path ,toplevel ,executable) :nil))
+    r))
 ;;; The shortest decimal representation of a float: WHICH selects the
 ;;; significand (0), exponent (1) or sign (2) (rtfun.rs, docs/10 §17).
 (define-primop :float-decimal (x which)

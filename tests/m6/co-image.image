@@ -1,0 +1,6 @@
+native T
+sum 499500
+later 42
+eval 6
+kiln: cannot save an image: only an AOT executable without code compiled at run time can save an image
+after compile: REFUSED

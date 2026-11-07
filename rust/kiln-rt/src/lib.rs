@@ -3,6 +3,7 @@
 pub mod bignum;
 pub mod context;
 pub mod gc;
+pub mod image;
 pub mod number;
 pub mod object;
 pub mod rtfun;
@@ -82,7 +83,13 @@ pub fn exported(name: &str) -> Option<usize> {
 
 /// Registers the call sites, stack maps and static roots of code loaded
 /// into the running image.
+/// Code registered here is not an AOT executable's own (image.rs).
 pub fn register_code(callsites: &[CallSiteRecord], maps: &[gc::StackMapRecord], roots: &[usize]) {
+    image::note_runtime_code();
+    register_code_tables(callsites, maps, roots);
+}
+
+fn register_code_tables(callsites: &[CallSiteRecord], maps: &[gc::StackMapRecord], roots: &[usize]) {
     unwind::register_callsites(callsites);
     gc::register_stack_maps(maps);
     gc::register_static_roots(roots);
@@ -128,8 +135,9 @@ pub unsafe fn run_module(info: &ModuleInfo) -> i32 {
 
 unsafe fn run_module_here(info: &ModuleInfo) -> i32 {
     object::init_statics();
+    image::note_module_info(info as *const ModuleInfo as usize);
     unsafe {
-        register_code(
+        register_code_tables(
             std::slice::from_raw_parts(info.callsites, info.ncallsites as usize),
             std::slice::from_raw_parts(info.stackmaps, info.nstackmaps as usize),
             std::slice::from_raw_parts(info.roots, info.nroots as usize),
@@ -139,9 +147,25 @@ unsafe fn run_module_here(info: &ModuleInfo) -> i32 {
             register_export(&name.to_string_lossy(), e.addr);
         }
         let _ = ENTER.set(info.enter);
+        // Started from an image: call its toplevel function instead of
+        // the init functions. Mapped before MMTk reserves its memory.
+        let toplevel = match image::load() {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("kiln: {e}");
+                return 1;
+            }
+        };
         let mut ctx = Context::new();
-        for &init in std::slice::from_raw_parts(info.inits, info.ninits as usize) {
-            (info.enter)(&mut *ctx, init, function_entry(init), 0, 0);
+        match toplevel {
+            Some(f) => {
+                (info.enter)(&mut *ctx, f, function_entry(f), 0, 0);
+            }
+            None => {
+                for &init in std::slice::from_raw_parts(info.inits, info.ninits as usize) {
+                    (info.enter)(&mut *ctx, init, function_entry(init), 0, 0);
+                }
+            }
         }
         use std::io::Write;
         let _ = std::io::stdout().flush();
@@ -165,6 +189,7 @@ pub fn symbols() -> Vec<(&'static str, *const u8)> {
         ("kiln_rt_alloc", gc::kiln_rt_alloc as *const u8),
         ("kiln_rt_gc", gc::kiln_rt_gc as *const u8),
         ("kiln_rt_gc_count", gc::kiln_rt_gc_count as *const u8),
+        ("kiln_rt_save_image", image::kiln_rt_save_image as *const u8),
         (
             "kiln_rt_call_on_new_stack",
             stack::kiln_rt_call_on_new_stack as *const u8,

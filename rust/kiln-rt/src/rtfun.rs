@@ -107,6 +107,15 @@ pub unsafe extern "C" fn kiln_rt_poll(ctx: *mut Context, _fp: usize) {
 
 static NEXT_IDENTITY_HASH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
+/// The identity hash counter, which an image saves (image.rs).
+pub(crate) fn next_identity_hash() -> u64 {
+    NEXT_IDENTITY_HASH.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub(crate) fn set_next_identity_hash(n: u64) {
+    NEXT_IDENTITY_HASH.store(n, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// The identity hash of `obj` as a fixnum: stable across moving
 /// collections. Heap objects get one on first request, stored in header
 /// bits 40..64; static objects (which never move) and immediates hash by
@@ -117,7 +126,11 @@ static NEXT_IDENTITY_HASH: std::sync::atomic::AtomicU64 = std::sync::atomic::Ato
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn kiln_rt_identity_hash(_ctx: *mut Context, obj: u64) -> u64 {
     use crate::object::{HASH_SHIFT, is_cons, is_general, untag};
-    let hash = if (is_cons(obj) || is_general(obj)) && crate::gc::in_mmtk_space(obj) {
+    // Objects of an image keep theirs in the header too: they were heap
+    // objects when it was saved.
+    let hash = if (is_cons(obj) || is_general(obj))
+        && (crate::gc::in_mmtk_space(obj) || crate::image::contains(untag(obj)))
+    {
         let header = untag(obj) as *mut u64;
         let h = unsafe { *header };
         let existing = h >> HASH_SHIFT;
@@ -225,7 +238,7 @@ pub unsafe extern "C" fn kiln_rt_fd_read(
 ///
 /// # Safety
 /// `vec` must be a simple vector of fixnums.
-unsafe fn vector_octets(vec: u64) -> Vec<u8> {
+pub(crate) unsafe fn vector_octets(vec: u64) -> Vec<u8> {
     use crate::object::{fixnum_value, header, header_length, untag};
     let n = header_length(unsafe { header(vec) });
     let elements = (untag(vec) + 8) as *const u64;

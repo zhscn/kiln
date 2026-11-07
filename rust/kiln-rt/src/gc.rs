@@ -13,11 +13,7 @@
 //!   safepoint when MMTk stops it.
 
 use crate::context::Context;
-use crate::object::{
-    self, KIND_BIGNUM, KIND_CONS, KIND_DOUBLE, KIND_FUNCALLABLE_INSTANCE, KIND_FUNCTION, KIND_INSTANCE,
-    KIND_RACK, KIND_RATIO, KIND_MASK, KIND_SIMPLE_VECTOR, KIND_STRING, KIND_SYMBOL,
-    header_length,
-};
+use crate::object;
 use mmtk::util::alloc::{BumpAllocator, BumpPointer, ImmixAllocator};
 use mmtk::util::options::PlanSelector;
 use mmtk::util::copy::{CopySemantics, GCWorkerCopyContext};
@@ -345,28 +341,18 @@ impl Scanning<Kiln> for KilnScanning {
         if !slots.is_empty() {
             factory.create_process_roots_work(slots);
         }
+        // Slots of the image's objects that point into the heap.
+        crate::image::heap_slots(|batch| {
+            factory.create_process_roots_work(
+                batch.into_iter().map(|a| KilnSlot(unsafe { Address::from_usize(a) })).collect(),
+            )
+        });
     }
 
     fn scan_object<SV: SlotVisitor<KilnSlot>>(_tls: VMWorkerThread, object: ObjectReference, visitor: &mut SV) {
         let base = object.to_raw_address();
         let h = header_of(object);
-        // (offset of the first Lisp field, number of fields)
-        let (first, fields) = match h & KIND_MASK {
-            KIND_CONS => (8, 2),
-            KIND_SIMPLE_VECTOR => (8, header_length(h)),
-            // Skip the entry address; the env words are Lisp values.
-            KIND_FUNCTION => (16, header_length(h)),
-            // name, package, function, value, TLS index (a fixnum), plist,
-            // setf function
-            KIND_SYMBOL => (8, 7),
-            KIND_STRING | KIND_BIGNUM | KIND_DOUBLE => (8, 0),
-            KIND_RATIO => (8, 2),
-            KIND_INSTANCE => (8, 1),
-            // Skip the entry address: rack and installed function.
-            KIND_FUNCALLABLE_INSTANCE => (16, 2),
-            KIND_RACK => (8, header_length(h)),
-            k => panic!("scan_object: unexpected kind {k} in the heap"),
-        };
+        let (first, fields) = crate::image::lisp_fields(h);
         for i in 0..fields {
             visitor.visit_slot(KilnSlot(base + (first + 8 * i)));
         }
@@ -652,6 +638,16 @@ pub extern "C" fn kiln_rt_gc_count(_ctx: *mut Context) -> u64 {
 /// to static data, which never moves)?
 pub fn in_mmtk_space(v: u64) -> bool {
     in_heap_range(object::untag(v))
+}
+
+/// The addresses of the static roots, sorted.
+pub fn static_roots() -> Vec<usize> {
+    STATIC_ROOTS.read().unwrap().clone()
+}
+
+/// Is ADDR in the address range of MMTk's spaces?
+pub fn in_heap(addr: usize) -> bool {
+    in_heap_range(addr)
 }
 
 /// Is ADDR in the address range of MMTk's spaces? All objects that MMTk

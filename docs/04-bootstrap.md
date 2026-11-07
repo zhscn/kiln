@@ -84,7 +84,7 @@ kiln0  ──编译自己──▶ kiln1 ──编译自己──▶ kiln2   （
 2. **交换格式是 KIR（M0 修订）。**
    原计划用 CLIF 文本，M0 改成了 KIR：一种 s-expression 形式的低级 IR，由 kiln-cg 通过 cranelift-frontend 构建 Cranelift IR，这样能直接用上 SSA 构建和栈图溢出。原因和语法见 [06-m0-abi.md](06-m0-abi.md)。需要看 CLIF 时用 `--dump-clif`。
 
-3. **初始堆由启动时的 init 函数构建，不做堆快照。**
+3. **初始堆由启动时的 init 函数构建，不做堆快照。**（M6.1 起可以保存堆快照，从快照启动时跳过 init 函数，见 [15](15-heap-image.md)。）
    符号、包、初始 metaobject 都按顶层形式的顺序，在 kiln0 启动时创建，类似按顺序执行 fasl。这样和 MMTk 配合最简单。以后想加快启动，再把常量数据放进 `.rodata`。
 
 4. **CLOS 在目标端 bootstrap，不在宿主端做。**
@@ -131,7 +131,7 @@ kernel 原语和 primop（cons/symbol/vector/funcall/闭包/GC）
 | M3 ✅ | ANSI 核心库中不依赖 CLOS 的部分（见 [09](09-m3-kernel.md)，包和数组移到 M4，见 09 §11） | 数值塔、符号、Unicode 字符、字符串、pathname 都要自己写，工作量比原先估计的大 |
 | M4（M4.1–M4.4 ✅） | CLOS 引导，接入打印器、FORMAT、LOOP（见 [10](10-m4-clos.md)；目标端 MOP 已经自洽，分派解释执行；M4.5 已接入 condition 系统、哈希表、包、ctype、数组、`defstruct`、流、打印器和 FORMAT；M4.6 补了 M5 的前提：目标端 LOOP、运行期宏环境、pathname 和文件流、reader、运行期的包操作，以及前端的性能实验（10 §24：CST 读取约是 SBCL 的 100 倍，M5 前要有编译出来的判别函数等）；还没有美化打印） | 目标端 MOP 能自洽，重定义屏障（C4），自举完成前的运行期 `compile` 方案 |
 | M5 ✅ | 编译器自身交叉编译，kiln0 → kiln1 → kiln2（计划见 [11](11-m5-self-hosting.md)：目标端 `eval`/`compile` 先用 Maclina，同时定下调试信息的格式；M5.1 已有运行期标准宏、`eval`、`compile`、`load` 和 REPL；M5.2 把 Common-boot 和它的依赖编成 compiler 模块，kiln 上 `cst-to-ast` 的结果和 SBCL 一致；M5.3 把 kiln 的前端和 `lower.lisp` 也编了进去，kiln 上编出的 KIR 和 SBCL 逐字一致；M5.4 自举闭合，kiln0 和 kiln1 逐字节相同；M5.5 `compile` 产出原生代码） | 两代产物一致 |
-| M6 | SLYNK/Swank 接入 | 完整的 image 开发体验，REPL 中断 |
+| M6（M6.1 ✅） | image 开发体验：M6.1 堆快照（[15](15-heap-image.md)）；之后是原生 `eval`/`load`、REPL 的批处理模式（agent 也能驱动）、依赖追踪和增量重编译（[13](13-modern-practices.md) §2）、SLYNK/Swank 接入 | 完整的 image 开发体验，REPL 中断 |
 
 之后依次是：seal、WPO 和 AOT 交付；异步（[03-async.md](03-async.md)）。
 

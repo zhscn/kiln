@@ -32,6 +32,11 @@ pub fn tls_used() -> usize {
     *NEXT_INDEX.lock().unwrap() as usize
 }
 
+/// Restores the TLS index counter from an image (image.rs).
+pub(crate) fn set_tls_used(n: u64) {
+    *NEXT_INDEX.lock().unwrap() = n;
+}
+
 /// Returns the TLS index of the symbol `sym` as a fixnum (index << 1),
 /// assigning one if needed. The symbol stores it in that form too, so the
 /// GC can scan symbols uniformly. Not a safepoint.

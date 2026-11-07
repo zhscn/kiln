@@ -131,6 +131,49 @@ for src in "${sources[@]}"; do
     fi
     continue
   fi
+  # A test NAME.lisp with a file NAME.image saves a heap image (docs/15)
+  # as NAME.img and an executable with it appended as NAME.exe, running in
+  # the build directory: only an AOT executable can. NAME.image is the
+  # expected output of the runs from the image, with the usual heap,
+  # under GC stress, and of the executable if the program wrote one. The expected output of the
+  # program run from NAME-2.img, if the run from the image saves one, is
+  # NAME.image2.
+  if [ -f "${src%.lisp}.image" ]; then
+    if "$cg" obj "${modules[@]}" "$kir" -o "$build/$name.o" \
+       && cc "$build/$name.o" "$launcher" -o "$build/$name" -lpthread -ldl -lm \
+       && rm -f "$build/$name.img" "$build/$name.exe" "$build/$name-2.img" \
+       && (cd "$build" && "./$name") >"$build/$name.aot.out" 2>&1 \
+       && diff -u "$expected" "$build/$name.aot.out"; then
+      echo "PASS aot $name"
+    else
+      echo "FAIL aot $name"; fail=1
+    fi
+    for mode in image stress exe; do
+      case $mode in
+        image) run=(env KILN_IMAGE="$build/$name.img" "$build/$name") ;;
+        stress) run=(env KILN_IMAGE="$build/$name.img" MMTK_GC_TRIGGER=FixedHeapSize:$heap "$build/$name") ;;
+        exe) [ -f "$build/$name.exe" ] || continue
+             run=("$build/$name.exe") ;;
+      esac
+      if (cd "$build" && "${run[@]}") >"$build/$name.$mode.out" 2>&1 \
+         && diff -u "${src%.lisp}.image" "$build/$name.$mode.out"; then
+        echo "PASS $mode $name"
+      else
+        echo "FAIL $mode $name"; fail=1
+      fi
+    done
+    # The run from the image saves NAME-2.img (NAME.image2: its output).
+    if [ -f "${src%.lisp}.image2" ]; then
+      if (cd "$build" && KILN_IMAGE="$build/$name-2.img" MMTK_GC_TRIGGER=FixedHeapSize:$heap "$build/$name") \
+           >"$build/$name.image2.out" 2>&1 \
+         && diff -u "${src%.lisp}.image2" "$build/$name.image2.out"; then
+        echo "PASS image2 $name"
+      else
+        echo "FAIL image2 $name"; fail=1
+      fi
+    fi
+    continue
+  fi
   if "$cg" jit "${modules[@]}" "$kir" >"$build/$name.jit.out" 2>&1 && diff -u "$expected" "$build/$name.jit.out"; then
     echo "PASS jit $name"
   else

@@ -237,9 +237,13 @@ name of its package as a string."
         (module-shared obj)
         (push sym *module-symbols*)
         ;; The package slot holds the package object once packages exist.
+        ;; The TLS index (a fixnum) is not a GC root, but it changes as
+        ;; the other words do: a heap image saves the static roots
+        ;; (docs/15).
         (module-root obj 2)
         (module-root obj 3)
         (module-root obj 4)
+        (module-root obj 5)
         (module-root obj 6)
         (module-root obj 7)))
     obj))
@@ -825,6 +829,7 @@ known to hold one), and true; else NIL and NIL."
 (defun rt-float-decimal () (module-import-func "kiln_rt_float_decimal" 3 1))
 (defun rt-sys () (module-import-func "kiln_rt_sys" 5 1))
 (defun rt-jit () (module-import-func "kiln_rt_jit" 3 1))
+(defun rt-save-image () (module-import-func "kiln_rt_save_image" 4 1))
 
 (defun emit-tls-slot (sym)
   "Raw address of the TLS slot of the symbol operand SYM (index 0 if it
