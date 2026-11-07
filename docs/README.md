@@ -16,7 +16,7 @@ kiln 是一个现代 Common Lisp 实现：开发时是完整的活 image，交�
 | [10-m4-clos.md](10-m4-clos.md) | M4：CLOS 引导，复用 Clostrophilia 的方式、分派的解释执行、实例表示、分步计划 |
 | [11-m5-self-hosting.md](11-m5-self-hosting.md) | M5：编译器在 kiln 上运行和自举的分步计划，目标端 `eval`/`compile`（Maclina），调试基础设施的数据格式（定义记录、调用点源码位置、宏展开追踪） |
 | [12-abi-policy.md](12-abi-policy.md) | ABI 的稳定性方针：同一构建内部的契约、不承诺跨版本兼容、ABI 指纹、内联依赖，和 Swift ABI 稳定化的对照 |
-| [13-modern-practices.md](13-modern-practices.md) | 可借鉴的现代编译器实践：构建期初始化和堆快照、依赖追踪和增量重编译、PGO 和内联缓存、逃逸分析和拆箱、并行编译和缓存、诊断和工具协议、测试方法；暂不采用的做法；内存模型；优先级 |
+| [13-modern-practices.md](13-modern-practices.md) | 可借鉴的现代编译器实践：构建期初始化和堆快照、依赖追踪和增量重编译、PGO 和内联缓存、逃逸分析和拆箱、并行编译和缓存、诊断和工具协议、测试方法、内建的性能分析器、image 和源码的同步、记录与回放、项目工具、格式化器和 linter、内容寻址的定义、扩展的能力沙箱；暂不采用的做法；内存模型；优先级 |
 | [14-performance.md](14-performance.md) | 和 SBCL 的性能差距：对比基准（`bench/compare.lisp`）、差距集中在库和 CLOS 运行时而不是代码生成、需要的 Lisp 语义层优化 |
 | [15-heap-image.md](15-heap-image.md) | M6.1 堆快照：`kiln.sys:save-image`、固定地址映射、静态根、GC 扫描快照区、测试方式 |
 | [16-editor.md](16-editor.md) | 编辑器和 IDE（暂名 KilnWorks）设计草案：细腰、命令循环、按键、输入框、分派点；显示管线（重显示前钩子、装饰提供者、Lisp 写的布局、显示列表）和 GUI 的分层（Rust 的平台层、文字服务和渲染器，声明式动画）；对 kiln 运行时的需求（依赖追踪、按上下文局部的变量、fiber、debugger 和后端协议、系统接口）；扩展模型和部分 seal |
