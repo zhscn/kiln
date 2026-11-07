@@ -101,7 +101,7 @@
 ### CLOS
 
 - 泛函的重定义（`defgeneric` 改 lambda list 等）。
-- 过时实例只在分派时更新：`slot-value` 在更新之前读的是旧布局，类名 `typep` 的缓存给出旧类的结果。
+- 过时实例只在分派时更新：`slot-value` 在更新之前读的是旧布局，类名 `typep` 的调用点缓存给出旧类的结果。
 - 重定义结构后，inline 的访问器在已编译的调用者里不变（依赖追踪不覆盖 AOT 模块）。
 - `make-instance` 改成泛函；快路径之外的构造器。
 - `change-class` 调用 `update-instance-for-different-class`。

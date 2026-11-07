@@ -89,6 +89,10 @@ CLASS and its subclasses."
                    (finalize-inheritance class))
                  (mapc #'walk (class-direct-subclasses class)))))
       (walk class))
+    ;; The class precedence lists changed; TYPEP and SUBTYPEP answers
+    ;; cached for the classes' stamps (also the old ones, still the stamps
+    ;; of obsolete instances) no longer hold.
+    (kiln.kernel::invalidate-type-caches)
     classes))
 
 (defun forget-call-caches (classes)
