@@ -33,7 +33,7 @@ handler 和 restart 是 Predicament 的 special 变量，所以也自然挂在 c
 - 栈溢出检查读 context 里的 limit。
 - 栈溢出要 signal `storage-condition`，能进 debugger，不能直接 segfault。
 
-现在的状态：栈对象和栈段已经有了（[gc.md](gc.md) 的“栈和栈段”），GC 和 unwinder 都遍历段列表。栈溢出还没有转成 `storage-condition`，context 里也还没有 stack limit。
+现在的状态：栈对象和栈段已经有了（[gc.md](gc.md) 的“栈和栈段”），GC 和 unwinder 都遍历段列表。函数入口比较帧指针和 `ctx.stack_limit`，栈耗尽时发出 `kiln.sys:stack-exhausted`（`storage-condition`），每个栈有自己的软硬界限（[abi.md](abi.md) 的“Poll 点”）。
 
 **依赖它的功能**：fiber、续延、拷栈。
 
@@ -70,7 +70,7 @@ handler 和 restart 是 Predicament 的 special 变量，所以也自然挂在 c
 | 重定义屏障 | 类或方法表更新时 stop-the-world |
 | 抢占 | fiber 时间片用完时让出 |
 
-同一套机制承担四件事。栈图也只需要在调用点和 poll 点生成。现在 poll 点已经插入，慢路径只是把标志清零，四种用途都还没有接上。
+同一套机制承担四件事。栈图也只需要在调用点和 poll 点生成。现在慢路径用于采样分析器（定时器设置标志，下一个 poll 点记录栈）和栈耗尽检查（函数入口顺带比较 `stack_limit`）；上表四种用途都还没有接上。
 
 **配套约束**：提供 `without-interrupts` 和（以后的）`without-preemption`。持锁或修改 runtime 内部结构的代码在这些区域里只延迟处理标志，不响应。
 

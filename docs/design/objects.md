@@ -47,6 +47,7 @@
 | 9 | standard-instance | `[header, rack]` | — | rack |
 | 10 | funcallable-instance | `[header, 入口, rack, 安装的函数]` | — | rack、安装的函数 |
 | 11 | rack | `[header, class, stamp, 有效槽列表, 槽...]` | 字数 | 全部 |
+| 12 | complex | `[header, 实部, 虚部]` | — | 实部、虚部 |
 
 超过当前 plan 普通分配上限的对象，`kiln_rt_alloc` 改用 MMTk 的 large object space。
 
@@ -77,7 +78,7 @@
 - fixnum 范围（63 位）之外的整数是 bignum，长度最短。fixnum 范围内的整数永远是 fixnum，所以整数的 `eql` 就是 fixnum 的 `eq` 或 bignum 的值相等。
 - ratio 总是约分过，分母大于 1；分母为 1 时就是整数。分子、分母可能是 bignum。
 - single-float 是立即数，`eql` 对它就是 `eq`（`0.0` 和 `-0.0` 位模式不同，因此不 `eql`，符合 CLHS）。double-float 装箱。默认浮点格式是 single-float。
-- 还没有 complex，`complexp` 总是 NIL。
+- complex 只由 kernel 的 `complex` 构造，所以总是规范的（CLHS 12.1.5）：两部分都是有理数且虚部不为 0，或者是同一格式的两个浮点数。`class-of` 是内建类 `complex`，编译期常量编译成静态对象。
 
 ### 字符串和数组
 
@@ -90,14 +91,15 @@ NIL、T，以及编译器输出到数据段里的 symbol、函数对象和常量
 
 - 判断一个指针是不是静态对象，看地址是否落在 MMTk 的堆地址范围内（`vm_layout` 的 `heap_start`..`heap_end`）。MMTk 分配的对象都在这个范围里，静态数据（模块数据、JIT 内存、AOT 的数据段、malloc 出来的内存、堆快照区）都不在。
 - 静态对象里会变的字（symbol 的包、函数、值、TLS 下标、plist、setf 函数，`load-time-value` 的格子）登记为**静态 root**，GC 每次扫描并更新它们（[gc.md](gc.md) 的“root”）。
-- 编译器输出的常量（字符串、cons、向量、bignum、ratio、double）是不可变的，只指向静态数据，不用扫描。
+- 编译器输出的常量（字符串、cons、向量、bignum、ratio、double、complex）是不可变的，只指向静态数据，不用扫描。它们的 header 仍然可写（身份哈希，见下文）。
 
 ## 身份哈希
 
 header 的第 40–63 位。`%primop :identity-hash` 在 header 里已有哈希时内联读出，否则调用 `kiln_rt_identity_hash`：
 
 - MMTk 堆里的对象第一次用到时分配一个哈希（计数器经 Fibonacci 散列得到的 24 位数，写进 header）。GC 复制对象时连同 header 一起复制，所以对象移动后哈希不变。
-- 静态对象不会移动，立即数没有 header，这两类都按位模式计算哈希，不改写 header。
+- 静态对象（模块数据、NIL、T）不会移动，哈希按地址算出，但同样写进 header。这样编译出的代码下次在 header 里就能读到，不必调用 runtime：槽名等常量符号经常被哈希（`%slot` 的位置缓存），原来每次都进 runtime。地址每次运行都一样，所以哈希也一样；从快照启动时 header 是可执行文件里的原值，重新算出的也相同。
+- 立即数没有 header，按位模式计算哈希。
 - 堆快照保存计数器和已分配的哈希，`eq` 哈希表在恢复后仍然有效（[heap-image.md](heap-image.md)）。
 
 长度字段因此限制为 32 位，Rust 和编译器里从 header 读长度都只取 32 位（`header_length`）。

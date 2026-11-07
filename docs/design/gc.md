@@ -69,7 +69,7 @@ MMTk 收到请求后立刻开始回收，而发起请求的 mutator 这时还在
   4. 返回时切回旧栈，弹出边界条目和段，释放新栈。
 - **跨栈展开**：见 [abi.md](abi.md) 的展开算法。每个栈各自用自己的 FP 链寻找目标帧，展开停在帧标记上（C3）。
 - fiber 和 runtime 回调 Lisp 都会用同一套栈段机制：回调时压入一个段即可，但还没有实际的回调路径。
-- 栈溢出：有 guard page，但还没有把 SIGSEGV 转成 `storage-condition`，context 里也还没有 stack limit。
+- 栈耗尽：函数入口按 `ctx.stack_limit` 检查，发出 `kiln.sys:stack-exhausted`（`storage-condition`），见 [abi.md](abi.md) 的“Poll 点”。guard page 只兜住检查不到的 Rust 递归。
 
 ## 测试
 

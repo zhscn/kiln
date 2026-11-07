@@ -98,6 +98,8 @@ Common-boot 本身的顶层处理不完整（`*compile-time-too*` 从来不会�
 - **对 symbol macro 做 `setq`**：Common-boot 不接受，CLHS 3.1.2.1.1 要求按对展开式的 `setf` 处理。转换之前把这样的 `setq` 改写成 `(setf 展开式 值)`。`with-slots`、`with-accessors` 依赖这一点。
 - **声明和 `the` 里的复合类型**：Iconoclast 没有 `(function ...)`、`(values ...)` 这类类型的 AST，转换之前降级为 `function` 或 `t`，并去掉 `ftype` 声明。它们目前只是提示。
 - **`(load-time-value form read-only-p)`**：转换前去掉 read-only-p。
+- **`let` 绑定特殊变量要并行**：Iconoclast 的 `split-let-or-let*` 把绑定嵌套起来，排在一个特殊变量后面的初始化形式会看到它已经被绑定。所以几个变量的 `let` 里有特殊变量时，前端先把所有初始化形式求值到临时变量里，再绑定。
+- **`(setf (the 类型 place) 值)`**（CLHS 5.1.2.6）：交叉编译和运行期都按 `(setf place (the 类型 值))` 处理。
 - **Trucler 的缓存**：reference 环境会把查到的全局描述缓存在环境对象里，而会话的环境在多个文件之间是同一个，后来重新定义的宏会被缓存挡住，所以每个顶层形式之前都清空缓存。
 - vendor 补丁修的上游问题：全局 special 变量的绑定之后环境变成 NIL；`load-time-value` 的子形式没有词法环境；lambda list 所在函数体里声明中的名字没有解析。
 

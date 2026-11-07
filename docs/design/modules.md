@@ -20,7 +20,7 @@
 | 类型 | ctype（vendor） | kiln 自己的 client，否则会默认使用 SBCL 的 fixnum 范围和 UAET |
 | 数组 | Regalia（vendor） | 只用于非 simple、多维、特化的数组；simple-vector 和 simple-string 是原生对象 |
 | 结构 | Anatomicl | 宿主库，宏展开时运行 |
-| 哈希表 | Salmagundi（vendor） | 补了基于 header 的身份哈希 |
+| 哈希表 | Salmagundi（vendor） | 补了基于 header 的身份哈希，表改成开放寻址 |
 | 流 | Cyclosis（vendor） | 补了 fd 系统调用和缓冲 |
 | 包 | Parcl（vendor） | intrinsic 方式加载 |
 | LOOP | Khazern（vendor） | 宿主展开交叉编译的 LOOP；目标端编进 CLOS 模块 |

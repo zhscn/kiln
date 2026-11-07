@@ -2,7 +2,7 @@
 
 **日期**：2026-11。数字是当时的测量，不随代码更新；同一张表里的前后对比是在同一台机器上测的。要做的优化见 [roadmap.md](../roadmap.md) 的“性能”。
 
-结论：kiln 生成的基础代码（调用、闭包、fixnum 算术、控制流）已经和 SBCL 相当，差距在 Lisp 语义层：库的通用实现、CLOS 的运行时（解释执行的判别函数和有效方法、完整的初始化协议）、`&rest`/`&key` 的分配、浮点装箱。SBCL 快在它的前端（Lisp 语义层的变换和类型推导），而不是通用中端。
+结论：kiln 生成的基础代码（调用、闭包、fixnum 算术、控制流）已经和 SBCL 相当，差距在 Lisp 语义层：库的通用实现、CLOS 的运行时（解释执行的有效方法、完整的初始化协议、运行期定义类和方法）、`&rest`/`&key` 的分配、浮点装箱和 bignum、多维数组。SBCL 快在它的前端（Lisp 语义层的变换和类型推导），而不是通用中端。
 
 ## 测量方法
 
@@ -13,6 +13,7 @@
 几纳秒的项目只能看数量级，SBCL 那边的计时器分辨率是微秒。
 
 剖析的工具：
+- kiln 自己的采样分析器和分配分析器（`KILN_PROFILE`，[debugging.md](../design/debugging.md) 的“性能分析器”）；`KILN_FUNCTION_MAP` 给 perf 报告的 AOT 函数换上 Lisp 的名字。
 - perf：`kernel.perf_event_paranoid` 为 2 时，只有软件事件（`-e cpu-clock`）能用；设为 1 后，硬件事件和 `-g` 都能用。kiln 的 AOT 代码有帧指针，`perf report --children` 能给出包含时间。
 - kiln-cg 的 JIT 设了 `KILN_PERF_MAP=1` 时写出 perf map，perf 能显示 JIT 函数的名字。
 - AOT 程序有帧指针，gdb 能回溯。每次 attach 一次 gdb 抽一个调用栈；在同一次 gdb 会话里连续抽样时，进程一直停着，得到的其实是同一个瞬间。
@@ -63,6 +64,71 @@
 
 自举时编译器主要在做上表后半部分的事：泛函分派、槽访问、`make-instance`、哈希表、`&rest`、`&key`（见下文自举的 profile）。kiln 编译自己比 SBCL 慢 6 倍左右，原因就在这里。GC 占的约 13%，也主要来自这些地方的分配：`&rest` 列表、浮点装箱、初始化时的 initarg 列表、堆上的 handler。所以只换 GC 解决不了根本问题。
 
+## cl-bench
+
+`tools/bench.sh` 在 kiln（AOT，五个模块，release 版的 runtime）和 SBCL（`sbcl --script`，默认优化级别）上运行 cl-bench（`bench/README.md`），每项至多运行 2 秒；kiln 上每项单独一个进程，超时 120 秒。毫秒每次：
+
+| 组 | 项目 | kiln | SBCL | 倍数 |
+|---|---|---|---|---|
+| 调用和控制流 | tak / trtak / takl | 0.15 / 0.15 / 1.14 | 0.11 / 0.12 / 0.79 | 1.3–1.4× |
+| | fib | 0.60 | 0.76 | 0.8× |
+| | ackermann | 769 | 649 | 1.2× |
+| | richards | 52 | 38 | 1.4× |
+| | stak（特殊变量） | 0.69 | 0.38 | 1.8× |
+| | ctak（`catch`/`throw`） | 0.48 | 0.08 | 5.7× |
+| cons 和符号 | boyer / deriv / dderiv | 5.6 / 3.0 / 3.3 | 3.9 / 1.8 / 1.9 | 1.5–1.7× |
+| | destructive / div2 | 1.5 / 1.3–1.5 | 0.6 / 0.9–1.1 | 1.3–2.7× |
+| | traverse / triangle | 37 / 52 | 13 / 23 | 2.2–2.9× |
+| | sum-permutations | 267 | 31 | 8.7× |
+| 浮点 | fft | 110 | 0.13 | 826× |
+| | mandelbrot/dfloat | 6.9 | 0.010 | 691× |
+| | frpoly/float | 10.8 | 0.93 | 12× |
+| 数组 | puzzle | 120 | 0.71 | 168× |
+| | 1d / 2d / 3d-arrays | 556 / 21143 / 61517 | 7.5 / 92 / 256 | 74–240× |
+| bignum 和有理数 | bignum/elem-100-1000 / 1000-100 | 4325 / 66578 | 20 / 21 | 222× / 3216× |
+| | bignum/elem-10000-1 | 超时 | 12 | — |
+| | pari / pi-decimal / pi-atan | 95–2581 | 0.6–25 | 32–103× |
+| | fib-ratio / pi-ratios | 0.39 / 407 | 0.006 / 190 | 65× / 2.1× |
+| | crc40（40 位整数） | 191 | 78 | 2.5× |
+| 打印和流 | fprint/ugly / pretty | 50 / 107 | 0.38 / 1.7 | 133× / 62× |
+| | slurp-lines（`read-line`） | 5177 | 17 | 303× |
+| | deflate-file | 16 | 0.18 | 90× |
+| 字符串 | bench-strings / fill-strings/adjustable | 5532 / 17472 | 340 / 483 | 16× / 36× |
+| | string-concat（`with-output-to-string`） | 超时 | 4594 | — |
+| GC | boehm-gc | 3980 | 256 | 16× |
+| CLOS | simple-instantiate | 8.1 | 0.22 | 37× |
+| | eql-specialized-fib | 114 | 16 | 7× |
+
+结论：
+- **调用、控制流、cons、符号**和 SBCL 在同一个量级（1.3–2.9×），和上面的对比一致。例外是 `catch`/`throw`（5.7×，和上表的 4.9× 相符）。
+- **数值是最大的差距**：浮点每次运算都装箱，再进 Rust；bignum 慢到两三千倍，乘除法的算法和实现要整个重看；多维数组走 Regalia 的通用路径。
+- **打印、读行、字符串流**慢一到两个数量级，原因同上表。
+
+**补上 ANSI 缺口之后**（2026-11：`random`、`gentemp`、complex、位数组运算、`search` 的全部关键字、类的重定义、栈耗尽的 `storage-condition`）新跑起来的项目：
+
+| 组 | 项目 | kiln | SBCL | 倍数 |
+|---|---|---|---|---|
+| gabriel | browse | 23 | 4.9 | 4.7× |
+| 数值 | mandelbrot/complex | 21 | 0.89 | 23× |
+| | mrg32k3a（double 运算） | 1462 | 5.2 | 281× |
+| 哈希表 | htable-mixbag / fixnum / equalp-numbers / sparse | 52 / 691 / 27 / 4.1 | 32 / 89 / 3.5 / 0.75 | 1.6–7.7× |
+| | htable-string-small / large / set+remove | 52 / 40 / 35 | 4.3 / 1.3 / 1.5 | 12–32× |
+| | htable-string-fair | 超时 | 149 | — |
+| | sxhash-string-small / sxhash-fixnum | 152 / 455 | 2.3 / 4.8 | 67× / 96× |
+| | sxhash-string-large | 7.4 | 59 | 0.1×（kiln 只哈希前 64 个字符） |
+| 序列 | bitvectors（位数组运算逐位 `row-major-aref`） | 超时 | 40 | — |
+| | search-sequence（`search` 逐个 `elt`） | 106914 | 62 | 1724× |
+| CLOS | defclass / defmethod（运行期 `compile`） | 872 / 1733 | 98 / 183 | 9× |
+| | instantiate / method+after | 2009 / 755 | 51 / 83 | 39× / 9× |
+| | methodcalls / complex-methods | 211 / 18 | 205 / 20 | 1.0× / 0.9× |
+
+- CLOS 的泛函调用（methodcalls、complex-methods）已经和 SBCL 持平，判别闭包的缓存表起了作用（[clos.md](../design/clos.md)）；`make-instance`（instantiate、simple-instantiate 30–40×）和定义类、方法（运行期编译）是差距所在，对应 [roadmap.md](../roadmap.md) 性能计划的第 3 项。
+- `sxhash` 和字符串键的哈希表慢在哈希函数本身：`sxhash` 走 Salmagundi 的累加闭包（这之后哈希表本身改成了开放寻址，见下文“自举的速度”），没有 `equal-hash` 那样的快路径。
+- bitvectors、search-sequence 是新补的函数用了最朴素的实现，属于性能计划里调用点变换和库快速路径的工作。
+- CLOS 组的后几项依赖前面几项定义的类和方法（cl-bench 在同一个 image 里按顺序运行），`tools/bench.sh` 让它们在同一个进程里先运行前面的项目。
+- 递归很深的 walk-list/mess 仍要 1 GiB 的栈；栈不够时现在发出 `kiln.sys:stack-exhausted`。SBCL 跳过这一项。
+- compiler、load-fasl 需要 `compile-file`，harness 不运行。
+
 ## 自举的速度
 
 kiln 编译自己的五个模块（一个阶段，见 [bootstrap.md](../design/bootstrap.md)）：
@@ -77,6 +143,10 @@ kiln 编译自己的五个模块（一个阶段，见 [bootstrap.md](../design/b
 | 第一轮优化（`if` 直接分支、闭包变量用到时再读、Iconoclast 的 `set-slot`、初始化计划、类名 `typep` 缓存、`member`/`assoc`、`logand` 等） | 525 秒 | CLOS 模块约 268 → 148 秒；完整自举约 30 → 19 分钟 |
 | 第二轮（判别闭包的缓存表、`slot-value` 和类名 `typep` 的全局缓存、名字不用 `format` 生成、文件流批量写入） | 321 秒 | kernel 7 秒、CLOS 88 秒、frontend 3 秒、eval 28 秒、compiler 193 秒；完整自举约 12 分钟。SBCL 编同样的五个模块约 50 秒，kiln 慢 6 倍左右（最初是 11 倍） |
 | 加上调试信息 | 339 秒 | 生成的代码不变，没有变慢 |
+| cl-bench 那一批 ANSI 补全之后 | 365 秒 | |
+| 性能第一批：静态对象的身份哈希写进 header（`%slot` 缓存给槽名做哈希，原来每次进 runtime）、EQL 分派命中移到表头、Iconoclast 的 walker 按类的计划遍历且只在子节点变了时写槽、Salmagundi 的桶数取 2 的幂 | 314 秒 | 定位用的是 `KILN_FUNCTION_MAP` 加 perf |
+| 性能第二批：`make-instance` 的快路径 | 306 秒 | |
+| 性能第三批：`call-next-method` 按缓存的槽位置读方法函数、单参数泛函的缓存项直接读槽、哈希表改成开放寻址、`replace` 直接复制向量 | 293 秒 | SBCL 编同样的五个模块约 50 秒 |
 
 845 秒那次的 profile（按模块统计自身时间）：
 

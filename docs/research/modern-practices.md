@@ -87,6 +87,8 @@ CL 代码的性能损失有很大一部分来自堆分配：`&rest` 列表、闭
 
 ## 8. 内建的性能分析器
 
+已实现，见 [debugging.md](../design/debugging.md) 的“性能分析器”。下面是当时的设想。
+
 现在定位热点要靠 perf map 加帧指针手工走栈，AOT 程序要用 gdb 一次次 attach（[performance.md](performance.md) 的“测量方法”）。kiln 已经有两样现成的零件：每个函数都有的 poll 点（[abi.md](../design/abi.md)），和每一帧的调试信息（[debugging.md](../design/debugging.md)）。
 - **采样分析器**：定时器只设置 ctx 上的一个标志，下一个 poll 点记录当前的 `frame-list`。不需要信号处理里走栈，结果直接带 Lisp 函数名和源码位置。
 - **分配分析器**：每分配 N 字节采样一次调用栈。[performance.md](performance.md) 指出 GC 压力来自 `&rest` 列表、浮点装箱、initarg 列表、堆上的 handler，要回答的正是“谁在分配”。
@@ -114,14 +116,16 @@ kiln 的非确定性来源都有集中的入口：系统调用都经过 `kiln_rt
 
 工作量不小，而且要求系统接口和调度器的设计留出记录点。等 fiber 和系统接口（[editor.md](../design/editor.md) 的“系统接口”）定下来再考虑；那时要确保所有的非确定性都经过可以记录的入口。
 
-## 11. 统一的项目工具
+## 11. 统一的项目工具和包管理
 
-CL 现在的组合是 ASDF、Quicklisp 加各种脚本：没有锁文件，没有统一的新建、构建、测试、运行命令。现代语言的普及，工具的体验和语言本身一样重要（Cargo、Go 的 `go` 命令）。kiln 可以提供一个统一的工具：
-- 清单和锁文件（kiln 自己的 `deps.lock` 已经有了雏形），工作区；
-- 构建缓存，以 KIR 的哈希为键（“并行编译和内容寻址缓存”）；
-- `new`、`build`、`test`、`bench`、`run`、`seal`、`repl` 这些子命令；
-- 按定义表比较两个版本导出的定义，判断语义化版本号该怎么升，提示不兼容的修改；
-- 兼容 ASDF 的系统定义，现有的库不用改写就能用。
+CL 现在的组合是 ASDF、Quicklisp 加各种脚本，问题在于：
+- **系统定义是要执行的代码**：`.asd` 是 Lisp 程序，要知道依赖就得先运行它，工具没法只“读”一个项目。
+- **构建就是往当前 image 里载入**：编译顺序就是载入顺序，副作用互相渗透；增量编译只看 fasl 的时间戳，宏改了，用它的文件不会重编。
+- **没有版本和锁文件**：Quicklisp 是每月一次的整体快照，没有版本约束，也没有按项目隔离的依赖。Qlot、CLPM、ocicl 都是社区补这个缺口的尝试。
+
+现代语言的普及，工具的体验和语言本身一样重要（Cargo、Go 的 `go` 命令）。kiln 的编译单元也和 ASDF 的模型不一样：KIR 模块、按定义的依赖追踪（[dependencies.md](../design/dependencies.md)）、seal 和 WPO 的交付。ASDF 只懂“文件到 fasl 再载入”，用不上这些。kiln 自己的 `deps.lock` 和 `tools/*.sh` 已经是一个雏形。
+
+计划（先让 ASDF 和 UIOP 在 kiln 上运行，再做 Cargo 式的工具；一个 image 一个版本、最小版本选择）见 [roadmap.md](../roadmap.md) 的“项目工具和包管理”。
 
 ## 12. 统一的格式化器和带修复建议的 linter
 

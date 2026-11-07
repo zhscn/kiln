@@ -50,7 +50,7 @@
 - `svref`、`length` 对 simple vector（`length` 也对字符串）内联，其他情况调用 kernel 的函数。
 - `eql`：两个不同的一般对象，只在第一个是 bignum、ratio、double-float 时才调用 kernel 的 `eql-slow`，其他直接返回 NIL。
 - 原语被当作函数对象使用时（`#'car`），读 symbol 的函数 cell：kernel 用 `(defun car (x) (car x))` 这种写法给每个原语一个真正的全局函数。
-- 单参数的 `print` 是给没有流的早期测试用的原语，直接调用 runtime 的打印函数（先打印对象再换行，不经过 `*standard-output*` 和 `print-object`）。编进运行中 image 的代码不用它。
+- 单参数的 `print` 是给没有流的早期测试用的原语（带流参数的 `print` 调用打印器的 `print`），直接调用 runtime 的打印函数（先打印对象再换行，不经过 `*standard-output*` 和 `print-object`）。编进运行中 image 的代码不用它。
 
 **`%primop`**：`(kiln.sys:%primop :名字 参数...)` 是 kernel 代码访问底层操作的唯一入口（单一入口加关键字操作码，和 SICL 的做法一样）。它对前端来说是普通的函数调用，降级时按第一个参数（必须是 keyword 字面量）查 primop 表（`*primops*`），展开成内联代码，所以前端不需要改。例如分配和读写实例、`:identity-hash`、`:hash-mix`、`:fd-read`、`:sys`、`:jit`、浮点的位模式。
 

@@ -53,7 +53,7 @@ Eclector 同时是宿主前端的 reader 和目标端的 reader。CLOS 模块里
 
 Incless 定义 `write`、`prin1`、`princ`、`print`、`print-object`、`print-unreadable-object`、`write-to-string` 等，源码没有改动。kiln 的 client 在 `printer.lisp`：`class-slot-names` 用 Clostrophilia 的 `class-slots`，`write-identity` 打印身份哈希。
 
-`printer-support.lisp` 补充：打印和读入的变量、`with-standard-io-syntax`、`readtable-case`、标准语法中的宏字符（判断 symbol 名字要不要转义）、实例的 `type-of`（类名）、`char-name`、`name-char`、`standard-char-p`；`complex`、`random-state` 等作为暂时没有实例的内建类，因为 Incless 在它们上面特化了方法。
+`printer-support.lisp` 补充：打印和读入的变量、`with-standard-io-syntax`、`readtable-case`、标准语法中的宏字符（判断 symbol 名字要不要转义）、实例的 `type-of`（类名）、`char-name`、`name-char`、`standard-char-p`；`readtable` 等作为内建类，因为 Incless 在它们上面特化了方法。
 
 **Quaviver 的替身**（`quaviver.lisp`）：Incless 和 Invistra 只用到 Quaviver 的三个函数，kiln 自己实现：
 

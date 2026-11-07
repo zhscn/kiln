@@ -16,11 +16,14 @@ Predicament 按 `predicament-common.asd` 的顺序加载。实现方要提供的
 
 ## 哈希表（Salmagundi）
 
-用 Salmagundi 的 bucket 哈希表，接口层由 kiln 自己写（`hash-tables.lisp`），不用 Trinsic：`cl:make-hash-table`、`cl:sxhash`、`cl:with-hash-table-iterator` 由 kiln 定义，`gethash` 等直接就是 CL 的符号。
+用 Salmagundi 的 `bucket-hash-table` 类（名字没改），但表本身已经改成开放寻址（补丁）。接口层由 kiln 自己写（`hash-tables.lisp`），不用 Trinsic：`cl:make-hash-table`、`cl:sxhash`、`cl:with-hash-table-iterator` 由 kiln 定义，`gethash` 等直接就是 CL 的符号。
 
 - EQ、EQL、EQUAL、EQUALP 的默认哈希函数是 `default-hash-function` 上的 EQL 方法。EQ 哈希用身份哈希（[objects.md](objects.md)），所以对象移动后表仍然有效，不需要 rehash。
 - `eq`、`eql`、`equal` 表的散列函数直接处理 fixnum、字符、符号、字符串和 cons，不走 Salmagundi 逐步累加、为每次散列生成闭包的路径。混合一步用 `%primop :hash-mix`：在 fixnum 上做一步按 64 位截断的 FNV-1a，大整数按 62 位一段依次混入（Salmagundi 的 FNV 每一步都会产生 bignum）。
-- 分桶表把查找要用的数据放在一个 simple vector 里，按固定位置从实例读出，eq、eql、equal 内联比较；`gethash`、`(setf gethash)`、`remhash` 遇到分桶表时直接调用它的函数，不经过泛函。
+- **开放寻址**，和 CPython 的 dict 一样：条目按插入顺序放在三个向量里（键、值、哈希）；一个索引向量，长度是 2 的幂、至多用一半，按哈希线性探测映射到条目，探测时先比较存下的哈希。每个条目不分配任何对象；向量满了就加倍（`make-hash-table` 的 rehash size 和 threshold 只是提示，CLHS 允许）。
+- **迭代顺序**按插入顺序，和 SBCL 一样。宏展开函数会遍历哈希表（Khazern 的解构临时变量），kiln 编译 kiln 必须得到 SBCL 的 KIR；按哈希顺序遍历的话，身份哈希每次运行都不同。`tests/m4/clos-hash-model.lisp` 用一个模型和 SBCL 的迭代顺序检查表。
+- 查找要用的数据放在一个 simple vector 里，按固定位置从实例读出，eq、eql、equal 内联比较；`gethash`、`(setf gethash)`、`remhash` 遇到这种表时直接调用它的函数，不经过泛函。
+- `sxhash` 仍走 Salmagundi 的累加闭包，没有 `equal` 表散列函数那样的快路径，很慢。
 - 还没有弱表。
 
 ## 包（Parcl）
@@ -41,7 +44,7 @@ Parcl 以 intrinsic 方式加载：`parcl-low`（泛函协议和默认方法）�
 - client 的取值：浮点只有 single-float 和 double-float（short-float 归入 single，long-float 归入 double）；正负零是不同的值；数组的 UAET 按 Regalia 的类划分；base-char 是 0–127，与 kernel 的 `typep` 一致。
 - ctype 的泛函用长形式方法组合 `basic`，它生成 `(surely (call-method ...) ...)` 这样的有效方法；ctype 的 client 经 `*effective-method-operators*` 登记 `surely` 的解释（依次调用各个方法，直到第二个值为真），所以不需要运行期编译器。
 - **缓存**：类型说明符的解析结果和 `subtypep` 的答案缓存在 `equal` 哈希表里；两个符号的 `subtypep` 缓存在第一个符号的 plist 上，带缓存代号（`*type-cache-epoch*`）。`deftype` 或定义类时清空（`invalidate-type-caches`）。写每个字符的流操作都要调用 `subtypep`，所以缓存是必要的。
-- 没有 complex：ctype 里特化在 `complex` 上的方法用 `#-kiln` 去掉了，`(typep x '(complex ...))` 总是 NIL。
+- ctype 里特化在 `complex` 上的部分（`ccomplex.lisp`）仍用 `#-kiln` 去掉（接入时 kiln 还没有 complex）：`subtypep` 不懂 complex 类型；`typep` 对 complex 类型由 kernel 回答。
 
 ## 数组（Regalia）
 
@@ -64,7 +67,7 @@ Parcl 以 intrinsic 方式加载：`parcl-low`（泛函协议和默认方法）�
 - 复制函数调用 `cl:copy-structure`；typed 结构（`:type list`/`vector`）的描述也记在会话里，只生成访问器。
 - 构造函数、谓词、BOA lambda list 用 Anatomicl 的原样代码：构造函数调用 `allocate-instance` 和 `(setf slot-value)`。
 - **目标端**（`lisp/target/clos/structures.lisp`）：`structure-class` 是 `standard-class` 的子类，`structure-object` 是 `standard-object` 的子类；`copy-structure` 逐个复制已绑定的槽；`structure-class` 上的 `allocate-instance :before` 方法负责 finalize 类（Anatomicl 的构造函数直接调用 `allocate-instance`）。
-- 限制：构造函数走 CLOS 实例的路径，很慢；`equalp` 不比较结构的槽；重定义结构不支持；运行期（`eval` 里）的 `defstruct` 不支持：会话里的结构布局没有传给 image 里的编译器。
+- 限制：构造函数走 CLOS 实例的路径，很慢；`equalp` 不比较结构的槽；重定义结构走类的重定义（[clos.md](clos.md)），但 inline 的访问器在已编译的调用者里不会跟着变；运行期（`eval` 里）的 `defstruct` 不支持：会话里的结构布局没有传给 image 里的编译器。
 
 ## LOOP（Khazern）
 

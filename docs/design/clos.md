@@ -7,7 +7,7 @@ CLOS 是 CLOS 模块的前半部分（`lisp/target/clos/`，加上 vendor 的 Cl
 1. **vendor 一份 Clostrophilia，打针对性的补丁，再加上 kiln 自己写的引导代码。** 不原样使用，也不自己从头写 CLOS。
    - 原样保留的部分（约 3500 行）：类层次，类、槽定义、方法、泛函的初始化，类终结，方法组合，`compute-applicable-methods-using-classes`，自动机的构造和最小化，增删方法，dependent 维护。这些代码忠于 AMOP，没有 SICL 特有的东西。
    - 打补丁的部分：运行期 `compile` 的调用点、funcallable instance 的 SICL 特有槽、过时实例的处理、分派的性能（见下文）。补丁列在 `vendor/README.md`。
-   - kiln 自己写的部分：braid 和 early 函数、`make-instance`、`ensure-class`/`ensure-generic-function`/`ensure-method`、EQL specializer 的登记、方法组合模板的登记、`class-of`、Common-macros 的 client 方法、`+1` 别名、`change-class`。
+   - kiln 自己写的部分：braid 和 early 函数、`make-instance` 和它的快路径、`ensure-class`/`ensure-generic-function`/`ensure-method`、EQL specializer 的登记、方法组合模板的登记、`class-of`、Common-macros 的 client 方法、`+1` 别名、`change-class`、类的重定义。
 2. **单一环境、目标端引导。** SICL 在宿主里构造多层环境（E1 到 E4），让宿主运行未修改的 MOP 代码生成目标 metaobject。kiln 从第一天起就有自己的 runtime，所以用 PCL 式的 early 函数：先用非泛函的引导函数建出核心类和泛函，再切换到完整的 MOP。SICL 拒绝这条路是出于追求优雅，不是因为不可行。SICL 的 `+1` 名字在 tie the knot 之后都是同名函数的别名，所以在单一环境里直接把它们绑定到不带 `+1` 的函数上。
 3. **判别函数和有效方法是闭包，不在运行期编译。** Clostrophilia 在运行期调用 `compile nil` 生成判别函数、有效方法和访问器方法函数；kiln 的 CLOS 先于编译器存在，所以改为：
    - 判别函数：遍历最小化后的自动机的闭包；
@@ -56,21 +56,37 @@ AMOP 的方法函数接收参数列表和后续方法，有效方法接收一个
 - **展开调用**：泛函的 lambda list 只有必需参数、至多 6 个时（`spread-arity`），判别函数就是 `(lambda (a0 a1) ...)` 这样的闭包，调用历史里的有效方法函数也直接接收参数。有效方法是单个方法时：访问器方法直接读写槽（读到未绑定的槽时调用 `slot-unbound`）；有快速函数的方法直接调用快速函数；其他有效方法（`:before`、`:around` 等组合）仍通过列表调用解释出来的闭包。
 - **快速方法函数**（`lisp/front.lisp` 的 `method-lambda-forms`）：lambda list 只有必需参数（至多 6 个）的方法另有一个 `(lambda (next-methods a1 ... an) ...)`。它的 `call-next-method` 不带参数时，若下一个方法也有快速函数就直接调用，否则才构造列表。快速函数存在 `method` 的槽 `%fast-function` 里（Clostrophilia 补丁）。
 - 方法体没有出现 `call-next-method`、`next-method-p` 时，不生成这两个局部函数（它们是闭包，每次调用都要分配）。
+- `call-next-method` 每次都要读下一个方法的 `%function` 和 `%fast-function` 槽：两个槽的位置按最近见到的槽列表缓存（方法几乎都是 `standard-method`），不走 `%slot` 的查找。
 
 ### 缓存
 
 - **判别闭包的缓存表**：只按一个或两个参数分派的泛函，判别闭包带一张直接映射表，以 stamp 的低位（两个 stamp 时是 `3·s1 xor s2`）为下标，大小是不小于调用历史长度的 2 的幂（4 到 256）。stamp 是连续分配的类编号，低位分布均匀。lambda list 里有 `&optional`、`&rest`、`&key` 的泛函，只按一个参数分派时也用同样的表（`make-single-dispatch-list-closure`），有效方法仍然接收参数列表。未命中的路径（查自动机、填表）放在单独的函数里：放在闭包里时，命中路径也要为它保存 callee-saved 寄存器、开一个大栈帧。
-- **EQL 特化**：参数的类不能确定适用方法时，Clostrophilia 每次调用都重新计算适用方法和有效方法。kiln 的缓存条目是 `#(有效方法 spec0 spec1 ...)`，每个参数的 spec 是 NIL（不特化）、`(对象)`（等于某个 EQL 对象）或类的 stamp（参数不是任何 EQL 对象）。判别函数在自动机未命中时先逐条比较，比较时不分配内存。缓存跟着泛函走（`*eql-dispatch-caches*`），判别函数重算时保留，方法改变时清空；每个泛函至多 256 条。
+- **EQL 特化**：参数的类不能确定适用方法时，Clostrophilia 每次调用都重新计算适用方法和有效方法。kiln 的缓存条目是 `#(有效方法 spec0 spec1 ...)`，每个参数的 spec 是 NIL（不特化）、`(对象)`（等于某个 EQL 对象）或类的 stamp（参数不是任何 EQL 对象）。判别函数在自动机未命中时先逐条比较，比较时不分配内存；命中的条目移到表头（`eql-dispatch-lookup`：builder protocol 的 `relate` 在几十种关系上有 EQL 特化，原来每次都扫完整个表）。缓存跟着泛函走（`*eql-dispatch-caches*`），判别函数重算时保留，方法改变时清空；每个泛函至多 256 条。
+- **读取器融进缓存**：`spread-method-call` 把读局部槽的闭包和槽的位置记在一张直接映射表里。只有一个参数的泛函，判别闭包的缓存项存的是槽的位置而不是闭包，命中时自己读槽；槽未绑定时仍经闭包，由它调用 `slot-unbound`。
 
 ### 过时实例
 
-类重定义后，旧实例 rack 里的 stamp 和类当前的 unique number 不一致。Clostrophilia 的 `default-discriminating-function` 没有检查这一点（注释说要检查，代码没有），stamp 过时的实例会让分派死循环。kiln 的补丁在慢路径里先检查特化参数里有没有过时的实例，有就先更新（换 rack）再重新分派，这是重定义屏障（C4）在 CLOS 上的落实。类的重定义还不支持，所以目前的“更新”是报错。
+类重定义后，旧实例 rack 里的 stamp 和类当前的 unique number 不一致。Clostrophilia 的 `default-discriminating-function` 没有检查这一点（注释说要检查，代码没有），stamp 过时的实例会让分派死循环。kiln 的补丁在慢路径里先检查特化参数里有没有过时的实例，有就先更新再重新分派，这是重定义屏障（C4）在 CLOS 上的落实。
+
+## 类的重定义
+
+`redefinition.lisp`，按 CLHS 4.3.6：
+
+- `mop-ensure-class` 遇到已有的类（不是前向引用）时调用 `redefine-class`：元类必须相同；先删掉旧的直接槽的读写方法，再用新的 initargs `reinitialize-instance` 这个类。`defclass` 没写的选项（`:direct-default-initargs`、`:documentation`、`:direct-slots`）取默认值，而不是沿用旧值。
+- 然后重新终结这个类和它所有已终结的子类（`refinalize`）。Clostrophilia 的 `finalize-inheritance` 每次都给类一个新的 unique number，所以之前创建的实例 stamp 都过时了。
+- **调用历史**：从所有泛函（`*early-generic-functions*`，switchover 之后新建的也加进去）的调用历史里删掉提到这些类的项，并让判别函数失效。这些项的可用方法可能已经变了（优先级列表变了），而且按旧 stamp 建的自动机只会匹配过时的实例。
+- **过时实例的更新**：判别函数的未命中路径发现过时实例时调用 `update-obsolete-instance`。实例的 rack 里还留着它创建时的槽列表，所以旧槽可以按旧位置读出。新建一个当前类的实例，同名的局部槽照搬，新类没有的局部槽把名字放进 discarded、值放进属性表，新增的局部槽放进 added；实例接管新实例的 rack（和 `change-class` 一样），然后调用 `update-instance-for-redefined-class`，默认方法用 added 调用 `shared-initialize`。
+- 还有 `find-method`、`make-instances-obsolete`、`slot-exists-p`。
+- **限制**：只在泛函分派时检查过时实例。`slot-value` 直接按实例自己的槽列表找位置，所以过时实例在下次分派之前，用 `slot-value` 读到的仍是旧布局（值是对的，只是还没有更新）。类名 `typep` 的缓存以 stamp 为键，过时实例在更新之前得到的是旧类的结果。泛函的重定义（`defgeneric` 改 lambda list 等）还没有做。重定义结构走同一条路，但结构的访问器是 inline 函数，已编译的调用者不会跟着变。
 
 ## 实例
 
 - **`shared-initialize` 的计划**（`support.lisp`，`shared-initialize-aux-1`）：元类是 `standard-class` 的类，切换之后不再调用 Clostrophilia 的 `shared-initialize-aux`（那里对每个槽调用 `slot-definition-initargs` 和 `(setf slot-value-using-class)`，两个都是泛函）。现在按类的槽列表做一个计划：每个槽四项（initargs、位置、名字、initfunction），存在 simple vector 里，初始化时按计划直接读写槽位置。计划放在直接映射的缓存里，以槽列表为键、按它的 identity hash 取下标，冲突时覆盖。类变化时槽列表会被整个换掉，所以缓存不会过时。不用哈希表，因为切换时 Salmagundi 还没有加载。
 - **`slot-value`**：对象是元类为 `standard-class` 的标准实例时，按 `%slot-location` 的缓存（键是槽列表和槽名）直接读写槽位置。
-- 上面两处和访问器方法一样，假定没有对 `standard-class` 适用的 `slot-value-using-class` 方法（AMOP 不允许可移植程序定义这样的方法）。
+- **`make-instance` 的快路径**（`constructors.lisp`）：元类是 `standard-class`、实例适用的 `allocate-instance`、`initialize-instance`、`shared-initialize` 方法和一个普通标准对象的完全相同时，`make-instance` 直接分配 rack，补上 default initargs，再按初始化计划（`planned-shared-initialize`）填槽。这正是那三个方法做的事，省掉的是三次带 `&rest` 参数的泛函调用，以及 `allocate-instance-using-class` 里 initargs 的处理。
+  - 判断结果按类缓存：直接映射的表，键是类的 unique number（重定义会改变它）和一个计数；往这三个泛函增删方法时计数加一（`add-method`、`remove-method` 的 `:after` 方法），所有类重新判断。
+  - 判断时要调用 `compute-applicable-methods`，它可能又创建实例；判断期间的 `make-instance` 一律走通用路径，避免递归。
+- 上面几处和访问器方法一样，假定没有对 `standard-class` 适用的 `slot-value-using-class` 方法（AMOP 不允许可移植程序定义这样的方法）。
 - **`change-class`**（`change-class.lisp`）：实例的类、stamp 和槽都在 rack 里，所以先建一个新类的实例，复制同名的槽，原实例接管新实例的 rack，再用 initarg 初始化新增的槽。funcallable instance 也可以。不调用 `update-instance-for-different-class`。
 - **前向引用的超类**：先是 `forward-referenced-class`；定义时，这个对象本身经 `change-class` 和 `initialize-instance` 成为真正的类，子类的 CPL 和特化在它上面的方法看到的是同一个对象。
 - `:allocation :class` 的槽一开始是未绑定的，initform 才起作用（上游一开始就绑定为 NIL，已打补丁）。
@@ -85,8 +101,8 @@ AMOP 的方法函数接收参数列表和后续方法，有效方法接收一个
 
 ## 已知限制
 
-- 类、泛函和结构的重定义不支持；过时实例的更新是报错。
-- `make-instance` 是普通函数，不是泛函；没有预编译的构造器。
+- 泛函的重定义不支持；过时实例只在分派时更新（见“类的重定义”）。
+- `make-instance` 是普通函数，不是泛函；快路径之外没有预编译的构造器，也不把构造编成机器码。
 - `change-class` 不调用 `update-instance-for-different-class`。
 - 用户写的长形式 `define-method-combination`，产生的代码里有解释器不认识的运算符时不能用。
 - 方法组合（`call-next-method`、`:before`、`:around`）的有效方法仍要构造参数列表，用到 `call-next-method` 的方法每次调用仍要分配两个局部函数闭包。

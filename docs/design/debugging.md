@@ -112,6 +112,17 @@
 
 **默认的 debugger**：打印 condition 的报告，以及 `invoke-debugger` 之外的帧（最多 30 帧，带变量），然后以状态 1 退出。环境变量 `KILN_BACKTRACE=0` 时不打印 backtrace。打印本身出错时，退回只打印 condition 的类和槽。
 
+## 性能分析器
+
+`rust/kiln-rt/src/profile.rs`、`lisp/target/clos/profile.lisp`。用的是已有的两样零件：poll 点和函数的调试信息，不需要在信号处理里走栈。
+
+- **CPU 模式**：一个定时器线程按间隔（默认 1 ms，实际时间）累加 tick，并设置被分析的 context 的 `poll_flag`。下一个 poll 点（函数入口、循环头）进入 `kiln_rt_poll`，沿帧指针链记下栈上各帧所在的函数（最多 256 帧，跨过栈段），权重是上次采样以来的 tick 数。所以一次很长的 runtime 调用（bignum 运算等）按它的时长计在调用它的 Lisp 帧上，不会因为中间没有 poll 点而少算。偏差是 safepoint 偏差：样本落在 poll 点，而不是精确的指令上。
+- **分配模式**：分配的慢路径（bump 分配器的缓冲用完，或者大对象）记录栈，权重是上次采样以来分配的字节数。编译出的代码内联分配，只在缓冲用完时进入 runtime，所以这是按缓冲大小（几十 KB）的采样。
+- 样本按栈聚合，记的是各帧函数的起始地址；Lisp 经 `kiln_rt_frame` 的 PROFILE 操作读出，按调试信息对象取名字，不分配。
+- **Lisp 接口**（`kiln.sys`）：`start-profiler`（`:mode :cpu`/`:alloc`，`:interval` 微秒）、`stop-profiler`、`profile-samples`（`(权重 . 函数名列表)`，最内层在前）、`profile-report`（按自身权重和按在栈上的总权重各列一张表）、`write-folded-stacks`（火焰图工具的 folded 格式）、`with-profiling`。
+- **整个程序**：`KILN_PROFILE=cpu[:微秒]` 或 `alloc` 在启动时开始采样，程序结束（正常结束或 `exit`）时把 folded 栈写到 `KILN_PROFILE_OUT`（默认 `kiln-profile.folded`），并在标准错误上打印摘要。不用改程序就能分析编译器自己。程序自己调用 `start-profiler` 时，之前的样本被丢弃。
+- **外部 profiler**：`KILN_FUNCTION_MAP=路径` 在启动时写出每个函数的起始地址（十六进制）和名字，一行一个，用来给 perf 等报告的 AOT 函数（它们只看到 KIR 标签）换上 Lisp 的名字。JIT 用 `KILN_PERF_MAP=1`（[codegen.md](codegen.md)）。
+
 ## 限制
 
 - 闭包从静态环境读取的变量不显示：每次使用时才从函数对象里读，不在帧里。可以在调试信息中记下环境下标和变量名，再从帧的 `self` 读出来，但 `self` 也不一定活着。

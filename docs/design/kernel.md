@@ -36,8 +36,12 @@ kernel 先给出简单的版本，后面的模块替换或扩充。钩子是 `ki
 - **数值错误是 condition**：runtime 的数值运算（Rust）发现的错误没法变成 condition，所以 kernel 在调用 runtime 之前先在 Lisp 里检查：`two-arg-*` 系列检查参数是不是实数，除法检查除数是不是零。
 - **类型传染**按 CLHS 12.1.4：double > single > 有理数；有理数的初等函数结果是 single-float。比较是精确的：浮点数按它表示的有理数和有理数比较。
 - **浮点的分解**（CLHS 12.2）：`integer-decode-float`、`decode-float`、`scale-float`、`float-sign`、`float-digits`、`float-precision`、`float-radix` 按位实现在 kernel 里。
-- 常量：超出 fixnum 范围的字面量编译成静态 bignum，double-float 和 ratio 编译成静态对象，single-float 是立即数。
-- 还没有：complex、浮点的 trap、NaN 和无穷的读写。
+- **complex**：运算在 kernel 里按两部分做（`two-arg-+` 等先判断有没有 complex 参数），部分之间的类型传染由实数的传染得到。`eql` 的慢路径、`=`、`zerop`、`abs`（浮点按比例缩放）、`phase`、`signum`、`conjugate`、`cis`，以及 `sqrt`/`exp`/`log`/`expt` 和三角、双曲函数及其反函数的 complex 版本；负数的 `sqrt`/`log` 和负底数的非整数次幂得到 complex。分支切割按 CLHS 12.1.5.3，在实轴上的取值和 SBCL 一致。双曲函数和反函数对实数也有。
+- `float` 带 single-float 原型时把 double 转成 single；`ffloor`、`fceiling`、`ftruncate`、`fround`。
+- 位运算：`logeqv`、`lognand`、`lognor`、`logandc1/2`、`logorc1/2`、`logcount`、`boole`。
+- `random`、`*random-state*`、`make-random-state`：随机状态是一个结构，存一个 32 位的 xorshift128 生成器（`lisp/target/clos/random.lisp`）。
+- 常量：超出 fixnum 范围的字面量编译成静态 bignum，double-float、ratio 和 complex 编译成静态对象，single-float 是立即数。
+- 还没有：浮点的 trap、NaN 和无穷的读写。
 
 ## 字符和字符串
 
@@ -49,13 +53,16 @@ kernel 先给出简单的版本，后面的模块替换或扩充。钩子是 `ki
 
 - **`typep`**（`types.lisp`）认识内建的原子类型和常用的复合类型（`or`、`and`、`not`、`member`、`eql`、`satisfies`、带范围的 `integer`/`rational`/`real`/`float`、`mod`、`unsigned-byte`、`signed-byte`、`cons`、带长度的字符串和向量、数组类型的维度）。其余的先用 `typexpand-1` 展开 `deftype` 定义的名字（展开函数在 plist 上）；展开不了的，symbol 交给 `*class-typep*`，复合类型交给 `*ctype-typep*`。
 - 编译期把常量原子类型的 `typep` 换成谓词调用，把类名的 `typep` 换成 `%typep-cached`（[lowering.md](lowering.md)）。
-- `type-of`、`coerce`、`equalp` 覆盖已有的类型。`deftype` 和 `subtypep` 由 ctype 提供（[stdlib.md](stdlib.md)）。
+- `type-of`、`coerce`、`equalp` 覆盖已有的类型。`typep` 也认识 `complex`、`(complex 类型)` 和 `simple-bit-vector`。`deftype` 和 `subtypep` 由 ctype 提供（[stdlib.md](stdlib.md)）。
 
 ## 序列和列表
 
 - `sequences.lisp` 是 bootstrap 用的简单实现：`find`、`position`、`count`、`remove`、`remove-duplicates`、`substitute`、`some`/`every`、`map`、`map-into`、`reduce`、`sort`/`stable-sort`（稳定的归并排序）、`fill`、`replace`、`search`、`mismatch`，以及 `member`/`assoc`/`adjoin`/`union` 等带 `:test`/`:test-not`/`:key` 的列表函数。很多函数先把序列转成列表再处理；对非 simple 向量返回 simple 向量。Consecution 还没有接入。
 - 快路径：`member`、`assoc`、`find`、`position` 在 test 是 `eq`/`eql`、又没有 key 时直接循环比较；不带关键字或 `:test` 是 `#'eq`、`#'eql` 时调用两个参数的 `%member-eql` 等，不解析关键字参数；列表上的 `find`/`position` 不复制列表。
 - `map`、`map-into` 不复制列表参数，在最短的序列处停止（builder-protocol 会传入循环列表）。
+- `search`、`mismatch` 接受全部关键字（`:from-end`、`:start1`、`:end1`、`:end2`），但实现很朴素（`search` 逐个 `elt`）。
+- `replace` 对两个向量直接逐个复制，不经过列表；对列表也不用 `(setf nth)`。
+- 特化向量的复制（`subseq`、`copy-seq`、`reverse`、`remove`）保留元素类型。
 
 ## 运行期的宏环境
 
