@@ -932,7 +932,7 @@ known to hold one), and true; else NIL and NIL."
   "The condition C if the last statement of the current block is
 (:SET V (:SELECT C T NIL)): the value V was just made from it."
   (let ((stmt (first (kiln.kir::kblock-stmts (kiln.kir::kfunc-current *func*)))))
-    (and (symbolp v)
+    (and (kiln.kir::kvar-p v)
          (consp stmt)
          (eq (first stmt) :set)
          (eq (second stmt) v)

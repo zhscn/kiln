@@ -3,9 +3,10 @@
 ;;;; KIR construction and printing; the grammar is the reader's in
 ;;;; rust/kiln-cg/src/kir.rs.
 ;;;;
-;;;; KIR is represented as lists. Operators, variables, blocks and slots are
-;;;; keywords (printed in lower case); names of module-level symbols are
-;;;; strings. The empty list prints as (), the keyword :NIL as nil.
+;;;; KIR is represented as lists. Operators are keywords (printed in lower
+;;;; case); variables, blocks and slots are simple vectors (printed as v12,
+;;;; b3, s4); names of module-level symbols are strings. The empty list prints
+;;;; as (), the keyword :NIL as nil.
 
 ;;; Module
 
@@ -108,27 +109,43 @@ labels are made for every one of them."
         (setf (char result i) (char string j))
         (incf i)))))
 
-(defun fresh-name (prefix)
-  (intern (kir-name prefix (incf (kfunc-counter *func*))) :keyword))
+;;; The name of a variable, block or slot of the function: a simple vector
+;;; #(LETTER NUMBER), unique in the function and printed as the letter
+;;; and the number (v12, b3, s4); a variable's has two more elements, its
+;;; kind (:OBJ or :RAW) and the index of the source variable it holds in
+;;; the debug info, or NIL. Nothing else in KIR is a vector but a string.
+;;; Interning a keyword for each name was a few percent of the time of
+;;; kiln compiling itself, and making a structure costs about as much.
+
+(defun fresh-number ()
+  (incf (kfunc-counter *func*)))
+
+(defun kvar-p (x)
+  "Is X a variable?"
+  (and (simple-vector-p x) (= (length x) 4)))
 
 (defun new-var (&optional (kind :obj))
-  (let ((v (fresh-name "V")))
-    (push (list v kind) (kfunc-vars *func*))
+  (let ((v (vector #\v (fresh-number) kind nil)))
+    (push v (kfunc-vars *func*))
     v))
 
 (defun label-var (var index)
   "Marks the variable VAR as holding the source variable whose name has
 INDEX in the function's debug info (lower.lisp)."
-  (let ((entry (find var (kfunc-vars *func*) :key #'first)))
-    (setf (cddr entry) (list index))))
+  (setf (svref var 3) index))
+
+(defun var-declaration (var)
+  (if (svref var 3)
+      (list var (svref var 2) (svref var 3))
+      (list var (svref var 2))))
 
 (defun new-slot (size)
-  (let ((s (fresh-name "S")))
+  (let ((s (vector #\s (fresh-number))))
     (push (list s size) (kfunc-slots *func*))
     s))
 
 (defun new-block ()
-  (let ((b (make-kblock :name (fresh-name "B"))))
+  (let ((b (make-kblock :name (vector #\b (fresh-number)))))
     (push b (kfunc-blocks *func*))
     b))
 
@@ -167,7 +184,7 @@ entry block current. Unterminated blocks end with a trap."
         (start-block b)
         (emit '(:trap))))
     (push `(:func ,(kfunc-name *func*)
-                  (:vars ,@(reverse (kfunc-vars *func*)))
+                  (:vars ,@(mapcar #'var-declaration (reverse (kfunc-vars *func*))))
                   (:slots ,@(reverse (kfunc-slots *func*)))
                   ,@(and (kfunc-debug *func*) (list (kfunc-debug *func*)))
                   ,@(mapcar (lambda (b)
@@ -203,6 +220,7 @@ entry block current. Unterminated blocks end with a trap."
   (etypecase x
     (null (out-string "()"))
     (keyword (loop for c across (symbol-name x) do (out-char (char-downcase c))))
+    (simple-vector (out-char (svref x 0)) (out-integer (svref x 1)))
     (string
      (out-char #\")
      (loop for c across x
