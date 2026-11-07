@@ -70,7 +70,7 @@ condition 本身不需要特殊处理：`signal` 在 Lisp 侧查找 handler（C7
 
 ## 7. 构建、开发期和交付
 
-- **静态链接**：宿主 crate 和 launcher 一起编译，链进可执行文件，启动时调用它的入口登记（§2）。快照（[15](15-heap-image.md)）里保存的函数对象在启动后重新连到桥接函数。
+- **静态链接**：宿主 crate 和 launcher 一起编译，链进可执行文件，启动时调用它的入口登记（§2）。快照（[15](15-heap-image.md)）里保存的函数对象在启动后重新连到桥接函数。具体做法见 §7.1。
 - **seal**：优先静态链接，宿主模块和 Lisp 一起参与 WPO，没有用到的导出函数被裁掉。
 - **动态载入**：单独编译成动态库，在活 image 里 `dlopen`（例如 `(kiln.sys:load-host-module "libfoo.so")`），调用同一个入口登记。适合开发期和插件。
   - **不卸载**：已有的外部对象的 `Drop` 和方法、已登记的函数都指向库里的代码，和 Python 扩展一样从不 `dlclose`。
@@ -78,6 +78,20 @@ condition 本身不需要特殊处理：`signal` 在 Lisp 侧查找 handler（C7
   - **内存分配器**：每个库用自己的全局分配器，所以 Rust 分配的内存只由同一个库释放。外部对象的 `Drop` 由登记它的库提供。
   - **帧**：release 构建的 Rust 代码通常省略帧指针。边界在 ctx 上留下记录，`frame-list` 和 unwinder 直接跳过外部帧段；非局部退出本来就在边界上转换（§4）。
 - **异步**（以后）：Rust 的 future 完成时唤醒 kiln 的 fiber，fiber 也可以等待 Rust 的 future。Rustler 处理 BEAM 调度器的方式可以参考。
+
+### 7.1 静态链接的构建
+
+有源码的 Rust 代码（项目自己的宿主 crate，以及经它们用到的整个 crates.io 生态）在交付时静态链进可执行文件。由项目工具（[13](13-modern-practices.md) §11）完成：
+
+- **只生成一个 staticlib**：每个 Rust staticlib 都自带一份 std 和它依赖的 crate；分别编译再链接，会有重复的符号，或者两份 kiln-rt 的全局状态。所以项目工具按项目生成一个胶水 crate：它依赖 kiln-launcher 和项目的所有宿主 crate，`cargo build` 出唯一的 staticlib，再和 kiln-cg 产出的目标文件链接。现在的 `libkiln_launcher.a` 就是这个位置，以后变成按项目生成的 launcher。
+- **显式登记**：不依赖 `inventory` 一类借链接器收集的静态构造（静态库里没被引用的目标文件会被链接器丢掉）。胶水 crate 按顺序显式调用每个宿主模块的 `kiln_module_init`，和动态载入走同一个入口（§1）。
+- **签名先于 Lisp 编译**：过程宏编译 Rust 时同时产出一份声明：函数名、lambda list、参数和结果的类型、桥接函数的符号名。项目工具先编 Rust，再把声明交给 Lisp 编译器，kiln-cg 在调用点直接 `call` 桥接函数的符号（§2），静态链接时是一次直接调用，不经过函数格。这也定了 §9 的一个待定问题：声明由构建产出。
+- **静态时绕过服务表**：静态链接时同一个 crate 图里只有一份 kiln-rt，包装 crate 打开一个 feature 后直接调用 kiln-rt 的函数，Rust 侧的 LTO 能把分配、根的登记、类型检查内联进桥接函数。动态库仍走服务表，源码不变，只是编译选项不同。Cranelift 不产出 LLVM IR，Lisp 和 Rust 之间没有跨语言 LTO，边界上的代价是一次 C ABI 调用。
+- **裁剪**：seal 知道 Lisp 侧引用了哪些导出函数，生成的胶水只登记它们；没有登记的桥接函数不再被引用，由 Rust 的 LTO 和链接器的 `--gc-sections` 删掉。
+- **开发期和交付期同一份源码**：开发时同一个 crate 编成 cdylib，在活 image 里载入、热重载（上面的“动态载入”）；`build --release` 和 seal 时静态链接。项目清单只声明“这是宿主 crate”，链接方式由构建模式决定。
+- **依赖和锁文件**：Rust 的依赖仍由 Cargo（`Cargo.toml`、`Cargo.lock`）管理，kiln 的锁文件只记下 Cargo 工作区和 `Cargo.lock` 的哈希，不重复做 Rust 的版本解析。构建缓存的键包括 rustc 版本和 `Cargo.lock` 的哈希。
+
+这样 Rust 生态里的库（解析器、压缩、加密、网络、GUI 的 winit/wgpu）经一层宿主模块就能给 kiln 用，交付时仍是一个静态链接的可执行文件。
 
 ## 8. 和 C FFI 的关系
 
@@ -92,6 +106,7 @@ C FFI 的需求来自调用现有的 C 库，排在后面。Rust 宿主模块的
 
 - 根的形式：作用域式句柄、显式的 `Root`，还是两者都要？和 MMTk 的根扫描怎么接？
 - 外部对象的终结：MMTk 的终结机制的代价和时机，要不要单独的不移动空间？
-- 宿主模块的 Lisp 侧声明：由过程宏生成一份 Lisp 源码随构建产出，还是初始化时从登记信息动态建立？前者让 Lisp 编译器在编译期看到签名（§2）。
+- ~~宿主模块的 Lisp 侧声明：由过程宏生成一份 Lisp 源码随构建产出，还是初始化时从登记信息动态建立？~~ 由构建产出（§7.1）；动态载入的模块在初始化时按登记信息建立。
+- 胶水 crate 的生成和 cargo 的调用方式：项目工具直接生成一个 Cargo 工作区成员，还是借 `build.rs`？
 - 服务表的版本策略：只增不改、按版本号协商，还是每次 ABI 指纹变化都要求重新编译宿主模块？
 - launcher 交出主线程的接口，以及没有 GUI 时的行为。
