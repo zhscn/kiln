@@ -102,6 +102,10 @@ Each patched place is marked with a `kiln:` comment.
   whose metaclass is `standard-class` read and write the slot's location
   from the cache of `%slot-location` (`fast-slot-location`, kiln's
   `support.lisp`), as accessor methods do.
+- `eql-dispatch-lookup` moves the entry it finds to the front of the EQL
+  dispatch cache's list: the builder protocol's `relate`, with EQL
+  specializers on dozens of relation kinds, scanned the whole list at
+  every call (3.5% of kiln compiling itself).
 
 ## Predicament patches
 
@@ -149,6 +153,9 @@ Under `#+kiln` (kiln reads target sources with its own features):
   in the order of the keys' hashes (identity hashes: different in every
   run). Macro expanders iterate over hash tables (Khazern's destructuring
   temporaries), and kiln compiling kiln must make SBCL's KIR (docs/11 §9).
+- The number of buckets is a power of two: a fixnum hash's bucket is its
+  low bits (`logand`), not its remainder, and a table that grows doubles
+  (the rehash size is a hint, CLHS `make-hash-table`).
 
 ## Parcl patches
 
@@ -360,3 +367,7 @@ Under `#+kiln` (docs/10 §18 of kiln):
   `shared-initialize`; on kiln, which runs `set-slot` for every slot of
   every node in each pass of the AST transformations, it took a third of
   the time of compiling.
+- The walk of a node follows a plan made once per class (`walk-plan`): the
+  cardinality, reader and slot name of each slot designator.
+  `slot-designators` has the `append` method combination, so every call
+  made a new list; a slot is now written only when its child changed.

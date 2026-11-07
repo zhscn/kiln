@@ -737,13 +737,22 @@
                      (not (member ,argument ,eql-objects))))))))
 
 (defun eql-dispatch-lookup (cache arguments)
-  (loop for entry in (cdr cache)
+  ;; kiln: the entry found moves to the front of the list (a generic
+  ;; function such as the builder protocol's RELATE, with EQL specializers
+  ;; on dozens of relation kinds, scanned the whole list at each call).
+  (loop for previous = nil then tail
+        for tail on (cdr cache)
+        for entry = (car tail)
         when (loop for argument in arguments
                    for eql-objects in (car cache)
                    for i from 1 below (length entry)
                    always (eql-dispatch-match (svref entry i) argument
                                               (argument-stamp argument) eql-objects))
-          return (svref entry 0)))
+          do (when previous
+               (setf (cdr previous) (cdr tail)
+                     (cdr tail) (cdr cache)
+                     (cdr cache) tail))
+             (return (svref entry 0))))
 
 ;;; kiln: generic functions whose lambda lists have only required
 ;;; parameters, at most six, are called without making a list of the

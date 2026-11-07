@@ -121,8 +121,8 @@ pub(crate) fn set_next_identity_hash(n: u64) {
 
 /// The identity hash of `obj` as a fixnum: stable across moving
 /// collections. Heap objects get one on first request, stored in header
-/// bits 40..64; static objects (which never move) and immediates hash by
-/// their bits. Not a safepoint.
+/// bits 40..64, as are static objects' (computed from their address);
+/// immediates hash by their bits. Not a safepoint.
 ///
 /// # Safety
 /// `obj` must be a valid Lisp value.
@@ -149,8 +149,27 @@ pub unsafe extern "C" fn kiln_rt_identity_hash(_ctx: *mut Context, obj: u64) -> 
             unsafe { *header = (h & ((1u64 << HASH_SHIFT) - 1)) | (new << HASH_SHIFT) };
             new
         }
+    } else if is_cons(obj) || is_general(obj) {
+        // Static objects (module data, NIL and T, which are writable and
+        // never move): a hash from the address, kept in the header like a
+        // heap object's, so that the inline path of compiled code finds it
+        // next time (slot names and other constant symbols are hashed
+        // often).
+        let header = untag(obj) as *mut u64;
+        let h = unsafe { *header };
+        let existing = h >> HASH_SHIFT;
+        if existing != 0 {
+            existing
+        } else {
+            let mut new = (obj.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 40) & 0xff_ffff;
+            if new == 0 {
+                new = 1;
+            }
+            unsafe { *header = (h & ((1u64 << HASH_SHIFT) - 1)) | (new << HASH_SHIFT) };
+            new
+        }
     } else {
-        // Static objects and immediates: mix the bits.
+        // Immediates: mix the bits.
         (obj.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 24) & ((1u64 << 40) - 1)
     };
     hash << 1

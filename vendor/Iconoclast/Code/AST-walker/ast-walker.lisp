@@ -44,55 +44,62 @@
 (defmethod walk-ast-node (client node)
   node)
 
-;;; kiln: SET-SLOT sets the slot whose initarg is the keyword of READER-NAME
-;;; with SLOT-VALUE, which is what REINITIALIZE-INSTANCE does (no AST class
-;;; has methods on REINITIALIZE-INSTANCE or SHARED-INITIALIZE); the slot's
-;;; name is cached for each class and reader. Interning the keyword and
-;;; calling REINITIALIZE-INSTANCE, two generic functions with &REST
-;;; parameters, for every slot of every node in each pass of the AST
-;;; transformations took a third of the time of kiln compiling itself.
-(defvar *slot-names* (make-hash-table :test #'eq)) ; class -> ((reader . slot name))
+;;; kiln: the walk of a node follows a plan made once for its class: for
+;;; each slot designator, its cardinality, reader and slot name (the slot
+;;; whose initarg is the keyword of the reader's name, which is what
+;;; REINITIALIZE-INSTANCE would set: no AST class has methods on
+;;; REINITIALIZE-INSTANCE or SHARED-INITIALIZE; NIL if there is none).
+;;; SLOT-DESIGNATORS has the APPEND method combination, so each call made
+;;; a new list; interning the keyword and calling REINITIALIZE-INSTANCE,
+;;; two generic functions with &REST parameters, for every slot of every
+;;; node in each pass of the AST transformations took a third of the time
+;;; of kiln compiling itself. A slot is written only when its child
+;;; changed.
+(defvar *walk-plans* (make-hash-table :test #'eq)) ; class -> ((cardinality reader slot) ...)
 
-(defun set-slot (ast reader-name value)
-  (let* ((class (class-of ast))
-         (entry (assoc reader-name (gethash class *slot-names*) :test #'eq))
-         (slot-name
-           (if entry
-               (cdr entry)
-               (let* ((initarg (intern (symbol-name reader-name) (find-package "KEYWORD")))
-                      (slot (find-if (lambda (slot)
-                                       (member initarg (closer-mop:slot-definition-initargs slot)))
-                                     (closer-mop:class-slots class)))
-                      (name (if slot (closer-mop:slot-definition-name slot) nil)))
-                 (push (cons reader-name name) (gethash class *slot-names*))
-                 name))))
-    (if slot-name
-        (setf (slot-value ast slot-name) value)
-        (reinitialize-instance ast (intern (symbol-name reader-name) (find-package "KEYWORD"))
-                               value))
-    ast))
+(defun slot-name-for-reader (class reader-name)
+  (let* ((initarg (intern (symbol-name reader-name) (find-package "KEYWORD")))
+         (slot (find-if (lambda (slot)
+                          (member initarg (closer-mop:slot-definition-initargs slot)))
+                        (closer-mop:class-slots class))))
+    (if slot (closer-mop:slot-definition-name slot) nil)))
+
+(defun walk-plan (ast)
+  (let ((class (class-of ast)))
+    (or (gethash class *walk-plans*)
+        (setf (gethash class *walk-plans*)
+              (loop for (cardinality reader) in (iconoclast:slot-designators ast)
+                    collect (list cardinality reader (slot-name-for-reader class reader)))))))
+
+(defun set-slot (ast reader-name slot-name value)
+  (if slot-name
+      (setf (slot-value ast slot-name) value)
+      (reinitialize-instance ast (intern (symbol-name reader-name) (find-package "KEYWORD"))
+                             value))
+  ast)
 
 (defmethod walk-ast-node (client (ast iconoclast:ast))
-  (loop for (cardinality slot-reader) in (iconoclast:slot-designators ast)
+  (loop for (cardinality slot-reader slot-name) in (walk-plan ast)
         do (ecase cardinality
              (*
-              (set-slot ast slot-reader
-                        (loop for child in (funcall slot-reader ast)
-                              collect (maybe-walk client ast child))))
+              (let* ((children (funcall slot-reader ast))
+                     (results (loop for child in children
+                                    collect (maybe-walk client ast child))))
+                (unless (loop for child in children
+                              for result in results
+                              always (eq child result))
+                  (set-slot ast slot-reader slot-name results))))
              (iconoclast:?
               (let ((possible-child (funcall slot-reader ast)))
-                (if (null possible-child)
-                    nil
-                    (let ((result (maybe-walk client ast possible-child)))
-                      (if (null result)
-                          possible-child
-                          (set-slot ast slot-reader result))))))
+                (unless (null possible-child)
+                  (let ((result (maybe-walk client ast possible-child)))
+                    (unless (or (null result) (eq result possible-child))
+                      (set-slot ast slot-reader slot-name result))))))
              (1
               (let* ((child (funcall slot-reader ast))
                      (result (maybe-walk client ast child)))
-                (if (null result)
-                    child
-                    (set-slot ast slot-reader result))))))
+                (unless (or (null result) (eq result child))
+                  (set-slot ast slot-reader slot-name result))))))
   ast)
 
 (defvar *visited*)

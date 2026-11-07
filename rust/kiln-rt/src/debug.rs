@@ -55,6 +55,24 @@ pub fn register(records: &[FuncDebugRecord]) {
     t.sorted = false;
 }
 
+/// `KILN_FUNCTION_MAP=PATH`: writes each function's start address (hex)
+/// and printed name, one per line, for naming the functions of AOT code in
+/// external profilers (perf reports them by their KIR labels).
+pub fn write_function_map() {
+    let Ok(path) = std::env::var("KILN_FUNCTION_MAP") else { return };
+    let t = TABLE.read().unwrap();
+    let mut out = String::new();
+    for r in &t.records {
+        let info = info_object(r);
+        let mut name = String::new();
+        if info != object::nil() {
+            unsafe { object::write_object(&mut name, *((object::untag(info) + 8) as *const u64)) };
+        }
+        out.push_str(&format!("{:x} {}\n", r.start, name.replace('\n', " ")));
+    }
+    let _ = std::fs::write(path, out);
+}
+
 /// The record of the function whose code holds the return address `ret`.
 pub fn lookup(ret: usize) -> Option<FuncDebugRecord> {
     if !TABLE.read().unwrap().sorted {

@@ -21,7 +21,7 @@
 
 ;;; The core's elements.
 (defconstant +data+ 0)                  ; simple vector of buckets
-(defconstant +size+ 1)                  ; number of buckets
+(defconstant +size+ 1)                  ; number of buckets, a power of two
 (defconstant +count+ 2)
 (defconstant +test-code+ 3)             ; 0 EQ, 1 EQL, 2 EQUAL, 3 other
 (defconstant +test+ 4)                  ; the test function
@@ -48,7 +48,8 @@
   (floor (* size (salmagundi:hash-table-rehash-threshold hash-table))))
 
 (defmethod initialize-instance :after ((hash-table bucket-hash-table) &key)
-  (let* ((size (max 1 (slot-value hash-table 'size)))
+  ;; kiln: a power of two, so that the bucket of a hash is its low bits.
+  (let* ((size (let ((n 1)) (loop while (< n (slot-value hash-table 'size)) do (setf n (* n 2))) n))
          (core (make-array +core-length+))
          (test (salmagundi:hash-table-test hash-table))
          (hash (salmagundi:hash-table-hash-function hash-table)))
@@ -97,8 +98,8 @@
   (let ((hash (funcall (svref core +hash+) key)))
     ;; The standard hash functions return non-negative fixnums; a user's
     ;; may return any integer.
-    (if (and (kiln.sys:%primop :fixnump hash) (>= hash 0))
-        (kiln.sys:%primop :fixnum-remainder hash (svref core +size+))
+    (if (kiln.sys:%primop :fixnump hash)
+        (kiln.sys:%primop :fixnum-logand hash (- (svref core +size+) 1))
         (mod hash (svref core +size+)))))
 
 (defun find-entry (core key bucket)
@@ -114,19 +115,20 @@
              (loop for entry in bucket when (funcall test key (car entry)) return entry))))))
 
 (defun grow-and-rehash (hash-table core)
-  (let* ((rehash-size (salmagundi:hash-table-rehash-size hash-table))
-         (size (svref core +size+))
-         (new-size (max (+ size 1)
-                        (if (integerp rehash-size)
-                            (+ size rehash-size)
-                            (round (* size rehash-size)))))
+  ;; kiln: the size doubles, keeping it a power of two (the rehash size
+  ;; is a hint, CLHS MAKE-HASH-TABLE).
+  (let* ((size (svref core +size+))
+         (new-size (* size 2))
          (new-data (make-array new-size :initial-element '()))
          (order (svref core +order+))
          (hash (svref core +hash+)))
     (dotimes (i (svref core +fill+))
       (let ((entry (svref order i)))
         (when entry
-          (push entry (svref new-data (mod (funcall hash (car entry)) new-size))))))
+          (let ((h (funcall hash (car entry))))
+            (push entry (svref new-data (if (kiln.sys:%primop :fixnump h)
+                                            (kiln.sys:%primop :fixnum-logand h (- new-size 1))
+                                            (mod h new-size))))))))
     (setf (svref core +data+) new-data
           (svref core +size+) new-size
           (svref core +limit+) (growth-limit hash-table new-size))))
