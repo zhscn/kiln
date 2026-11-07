@@ -8,7 +8,12 @@ kiln 的 runtime（kiln-rt）和 launcher 都是 Rust，和用 Rust 写的宿主
 - **机器层面的调用约定**：仍然是 `extern "C"`（SysV 一类）。Rust 自己的 `extern "Rust"` 没有固定的调用约定，Cranelift 没法可靠地调用它。kiln-rt 的 runtime 函数现在就是这样：`extern "C" fn kiln_rt_xxx(ctx: *mut Context, obj: u64, ...)`。这一层只是寄存器怎么放参数，没有额外开销。
 - **类型和语义层面**：不必是 C 的。接口直接用 kiln 的对象模型（带标签的值、ctx、condition、GC 的规则），宿主模块直接使用 kiln-rt 的 Rust 类型。
 
-按 [12](12-abi-policy.md)，同一次构建内部的 ABI 是内部契约，不承诺稳定，所以宿主模块和 kiln-rt 共享 Rust 类型没有问题。ABI 指纹把宿主模块也算进去。
+**跨越边界的只有 C ABI 的东西**：带标签的 64 位字、ctx 指针、函数指针。Rust 没有稳定的 ABI；更要紧的是，宿主模块不能自己链接一份 kiln-rt，否则进程里会有两份 runtime 的全局状态（MMTk 堆、根表、符号表）。所以：
+- kiln-rt 导出一张带版本号的**服务表**（`extern "C"` 的函数指针）：分配、登记和释放根、`funcall`、发出 condition、读写特殊变量、切换 `in-native` 状态、创建外部对象等。
+- 宿主模块导出一个入口 `kiln_module_init(api: &KilnApi, registry: &mut Registry) -> u32`：先核对 API 版本和值表示（ABI 指纹，[12](12-abi-policy.md)），再登记它的函数和类。
+- **包装 crate**（下文的 `kiln::`）编进宿主模块，只经服务表和 runtime 打交道。`Ctx`、`Value<'cx>`、`Handle` 和借用检查器给的 GC 安全（§3）都在宿主模块内部成立。
+
+这是 PyO3、mlua、Rustler 的结构：它们面对的 runtime 对外是 C 接口，Rust 风格的类型和安全保证由编进扩展的包装 crate 提供。静态链接和动态载入（§7）走同一张服务表，只有一套机制；要求只是“同一个 kiln API 版本”，和编译宿主模块的 rustc 版本无关。
 
 参考：PyO3（Python）、mlua（Lua）、Rustler（Erlang NIF）、jlrs（Julia）、napi-rs（Node）、gc-arena（带品牌生命周期的 GC 句柄）。这些是按已有了解列的，具体采用某个做法时再读它们的源码核对。
 
@@ -65,9 +70,13 @@ condition 本身不需要特殊处理：`signal` 在 Lisp 侧查找 handler（C7
 
 ## 7. 构建、开发期和交付
 
-- **静态链接**：宿主 crate 和 launcher 一起编译，链进可执行文件。初始化时登记（§2），快照（[15](15-heap-image.md)）里保存的函数对象在启动后重新连到桥接函数。
-- **seal**：宿主模块和 Lisp 一起参与 WPO，没有用到的导出函数被裁掉。
-- **开发期动态载入**：Rust 的 dylib 没有稳定 ABI，只能载入同一工具链、同一版本 kiln-rt 编出的库，入口是一个带版本号的注册函数。重新载入 Rust 代码很难做对，开发期以静态链接加重启为主，Lisp 那一半仍然可以活着修改。
+- **静态链接**：宿主 crate 和 launcher 一起编译，链进可执行文件，启动时调用它的入口登记（§2）。快照（[15](15-heap-image.md)）里保存的函数对象在启动后重新连到桥接函数。
+- **seal**：优先静态链接，宿主模块和 Lisp 一起参与 WPO，没有用到的导出函数被裁掉。
+- **动态载入**：单独编译成动态库，在活 image 里 `dlopen`（例如 `(kiln.sys:load-host-module "libfoo.so")`），调用同一个入口登记。适合开发期和插件。
+  - **不卸载**：已有的外部对象的 `Drop` 和方法、已登记的函数都指向库里的代码，和 Python 扩展一样从不 `dlclose`。
+  - **有限度的热重载**：改过的 Rust 代码编成新文件名的库再载入一次，重新登记。Lisp 侧经函数格的调用立即生效；按签名直接调用的调用点按 [18](18-dependencies.md) 失效重编。旧库留在内存里，旧版本创建的外部对象 `TypeId` 不同，算作另一个类。
+  - **内存分配器**：每个库用自己的全局分配器，所以 Rust 分配的内存只由同一个库释放。外部对象的 `Drop` 由登记它的库提供。
+  - **帧**：release 构建的 Rust 代码通常省略帧指针。边界在 ctx 上留下记录，`frame-list` 和 unwinder 直接跳过外部帧段；非局部退出本来就在边界上转换（§4）。
 - **异步**（以后）：Rust 的 future 完成时唤醒 kiln 的 fiber，fiber 也可以等待 Rust 的 future。Rustler 处理 BEAM 调度器的方式可以参考。
 
 ## 8. 和 C FFI 的关系
@@ -84,4 +93,5 @@ C FFI 的需求来自调用现有的 C 库，排在后面。Rust 宿主模块的
 - 根的形式：作用域式句柄、显式的 `Root`，还是两者都要？和 MMTk 的根扫描怎么接？
 - 外部对象的终结：MMTk 的终结机制的代价和时机，要不要单独的不移动空间？
 - 宿主模块的 Lisp 侧声明：由过程宏生成一份 Lisp 源码随构建产出，还是初始化时从登记信息动态建立？前者让 Lisp 编译器在编译期看到签名（§2）。
+- 服务表的版本策略：只增不改、按版本号协商，还是每次 ABI 指纹变化都要求重新编译宿主模块？
 - launcher 交出主线程的接口，以及没有 GUI 时的行为。
