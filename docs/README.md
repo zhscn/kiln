@@ -19,6 +19,7 @@ kiln 是一个现代 Common Lisp 实现：开发时是完整的活 image，交�
 | [13-modern-practices.md](13-modern-practices.md) | 可借鉴的现代编译器实践：构建期初始化和堆快照、依赖追踪和增量重编译、PGO 和内联缓存、逃逸分析和拆箱、并行编译和缓存、诊断和工具协议、测试方法；暂不采用的做法；内存模型；优先级 |
 | [14-performance.md](14-performance.md) | 和 SBCL 的性能差距：对比基准（`bench/compare.lisp`）、差距集中在库和 CLOS 运行时而不是代码生成、需要的 Lisp 语义层优化 |
 | [15-heap-image.md](15-heap-image.md) | M6.1 堆快照：`kiln.sys:save-image`、固定地址映射、静态根、GC 扫描快照区、测试方式 |
+| [16-editor.md](16-editor.md) | 编辑器和 IDE（暂名 KilnWorks）设计草案：细腰、命令循环、按键、输入框、显示、分派点；对 kiln 运行时的需求（依赖追踪、按上下文局部的变量、fiber、debugger 和后端协议、系统接口）；扩展模型和部分 seal |
 
 ## 状态
 
