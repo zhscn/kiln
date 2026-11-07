@@ -1,4 +1,4 @@
-;;;; A heap image with the compiler module (docs/15): COMPILE makes native
+;;;; A heap image with the compiler module: COMPILE makes native
 ;;;; code in the process started from the image, and an image saved after
 ;;;; that holds the code (co-image.image2).
 

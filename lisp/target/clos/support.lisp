@@ -1,5 +1,5 @@
 ;;;; Functions Clostrophilia expects from the implementation, in their
-;;;; bootstrap versions (docs/10 §7). The switchover (M4.4) replaces the
+;;;; bootstrap versions. The switchover (M4.4) replaces the
 ;;;; early ones with the full protocol.
 
 (in-package #:clostrophilia)
@@ -41,7 +41,7 @@
   (if (member class-2 (%slot class-1 '%precedence-list)) t nil))
 
 ;;; SHARED-INITIALIZE of an instance of a class whose metaclass is
-;;; STANDARD-CLASS (docs/10 §27): from a plan of the class's slots, made
+;;; STANDARD-CLASS: from a plan of the class's slots, made
 ;;; once, instead of calling SLOT-DEFINITION-INITARGS and
 ;;; (SETF SLOT-VALUE-USING-CLASS), generic functions, for each slot. A
 ;;; portable program may not define methods on them that apply to
@@ -104,7 +104,7 @@ name and initfunction; and the slots."
   instance)
 
 ;;; SLOT-VALUE and (SETF SLOT-VALUE) of an instance of a class whose
-;;; metaclass is STANDARD-CLASS (docs/10 §27): the slot's location from
+;;; metaclass is STANDARD-CLASS: the slot's location from
 ;;; the cache of %SLOT-LOCATION, without finding the slot definition by
 ;;; name (FIND with SLOT-DEFINITION-NAME, a generic function, as the key)
 ;;; and calling SLOT-VALUE-USING-CLASS, as for accessor methods.
@@ -128,7 +128,7 @@ else NIL."
   (declare (ignore name))
   (error "COMPILE is not available" lambda-expression))
 
-;;; Obsolete instances (docs/10 §7, point 8): an instance whose stamp is
+;;; Obsolete instances: an instance whose stamp is
 ;;; not the unique number of its class. The patched
 ;;; DEFAULT-DISCRIMINATING-FUNCTION updates them before dispatching again.
 (defun obsolete-instance-p (object)

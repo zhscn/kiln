@@ -1,4 +1,4 @@
-;;;; A read-eval-print loop (docs/11 §3, M5.1). An error not handled by the
+;;;; A read-eval-print loop. An error not handled by the
 ;;;; form is reported and the loop continues (there is no debugger yet:
 ;;;; the ABORT restart returns to the prompt).
 

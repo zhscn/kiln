@@ -399,8 +399,8 @@
 #+kiln
 (defun %expansion-uses? (form)
   ;; Quietly: COMPILE reports the warnings it muffles at the end of its
-  ;; compilation unit. With Maclina, not the native compiler (docs/11
-  ;; §11): only the expansion matters, and Maclina compiles MACROLET
+  ;; compilation unit. With Maclina, not the native compiler:
+  ;; only the expansion matters, and Maclina compiles MACROLET
   ;; anywhere and much faster.
   (let ((*standard-output* (make-broadcast-stream))
         (*error-output* (make-broadcast-stream))

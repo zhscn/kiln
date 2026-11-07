@@ -1,8 +1,8 @@
-;;;; kiln kernel: the first target code (docs/09-m3-kernel.md §5).
+;;;; kiln kernel: the first target code.
 ;;;;
 ;;;; Written with %PRIMOP, compiler primitives (whose calls are inlined) and
 ;;;; Common-macros. Macro expanders run in the compile-time environment
-;;;; (docs/08 §2): portable CL, and no LOOP until Khazern is loaded.
+;;;;: portable CL, and no LOOP until Khazern is loaded.
 ;;;;
 ;;;; Character case and classification cover Latin-1 only; Unicode tables
 ;;;; come later.
@@ -25,7 +25,7 @@
   nil)
 
 
-;;; Small functions whose calls are open-coded (docs/08 §8). Some are
+;;; Small functions whose calls are open-coded. Some are
 ;;; defined in types.lisp.
 (declaim (inline bignump fixnump single-float-p double-float-p ratiop rationalp floatp realp
                  characterp char-code simple-string-p simple-vector-p native-vector-p
@@ -59,14 +59,14 @@
 ;;; The run-time macro environment: macro functions are kept on the
 ;;; symbol's plist under MACRO-FUNCTION. DEFMACRO calls (SETF
 ;;; MACRO-FUNCTION) at load time too, so this comes first. (At compile
-;;; time the front end's own definitions are used, docs/08 §2.)
+;;; time the front end's own definitions are used)
 (defun (setf macro-function) (function name &optional environment)
   (declare (ignore environment))
   (%put name 'macro-function function)
   (note-redefinition :macro name)
   function)
 
-;;; Dependency tracking (docs/18): code compiled in the image records the
+;;; Dependency tracking: code compiled in the image records the
 ;;; definitions it depends on at compile time (macros, inline functions,
 ;;; setf expanders, constants); when one of them is defined again, the
 ;;; compiler module's hook recompiles the code that depends on it.
@@ -115,7 +115,7 @@
 ;;; DEFCONSTANT: at compile time the name becomes a constant of the
 ;;; compile-time environment, so that references compile to the value; at
 ;;; load time the symbol gets the value. The compile-time environment of
-;;; the compiler on kiln is the run-time one (docs/11 §8): there
+;;; the compiler on kiln is the run-time one: there
 ;;; %DEFINE-CONSTANT is this function (the host's compile-time
 ;;; environment has its own).
 (defun kiln.sys::%define-constant (name value)
@@ -140,7 +140,7 @@
 (defconstant most-negative-fixnum -4611686018427387904)
 
 ;;; Calls pass at most 3 + 64 arguments, and return at most 1 + 64 values
-;;; (docs/08 §4, §5.3).
+;;;.
 (defconstant call-arguments-limit 1024)
 (defconstant lambda-parameters-limit 1024)
 (defconstant multiple-values-limit 1022)
@@ -260,8 +260,8 @@
 
 ;;; Numbers. Calls to + - * and the comparisons are open-coded for
 ;;; fixnums; other numbers and fixnum overflow call the TWO-ARG- functions
-;;; below, which hand them to the runtime's real arithmetic (docs/09 §8,
-;;; §9). Complex numbers are done here, on their parts (see "Complex
+;;; below, which hand them to the runtime's real arithmetic.
+;;; Complex numbers are done here, on their parts (see "Complex
 ;;; numbers" below).
 
 (defun rationalp (x) (or (integerp x) (%primop :ratiop x)))
@@ -832,7 +832,7 @@
 ;;; Sequences: strings, simple vectors and lists
 
 ;;; Simple vectors and strings are native objects. The other arrays are
-;;; standard instances (Regalia, docs/10 §14): once the array layer is
+;;; standard instances (Regalia): once the array layer is
 ;;; loaded, *COMPLEX-ARRAY-KIND* maps such an object to :STRING, :VECTOR
 ;;; (another vector) or :ARRAY (not a vector), and other objects to NIL;
 ;;; *COMPLEX-ARRAY-OP* performs an operation (a symbol) on it.
@@ -933,7 +933,7 @@
 (defun make-string (n &key (initial-element #\Space))
   (%primop :make-string n (check-character initial-element)))
 ;;; The kernel makes its vectors with MAKE-SIMPLE-VECTOR: MAKE-ARRAY is
-;;; redefined by the array layer (docs/10 §14).
+;;; redefined by the array layer.
 (defun make-simple-vector (n &optional initial-element)
   (%primop :make-simple-vector n initial-element))
 (defun make-array (n &key initial-element)
@@ -1219,7 +1219,7 @@ there: -1, 0 or 1."
   (unless (symbolp s) (%primop :type-error-symbol s))
   (%primop :set-symbol-plist s v))
 ;;; Each module's init pushes its symbol table here before anything else
-;;; (lower.lisp); the package system registers the symbols (docs/10 §12).
+;;; (lower.lisp); the package system registers the symbols.
 ;;; No initial value: the kernel's own table is pushed before this runs.
 (defvar *module-symbol-tables*)
 

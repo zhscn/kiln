@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Drives a kiln process that serves the back-end protocol (docs/17 §4)
+# Drives a kiln process that serves the back-end protocol
 # from the shell: for people and agents.
 #
 #   tools/kiln-server.sh start [EXE]     start the server (EXE: build/boot/kiln1)

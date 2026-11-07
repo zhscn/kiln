@@ -1,4 +1,4 @@
-;;; kiln compiles its compiler module (docs/11 §9, M5.4): kernel, CLOS,
+;;; kiln compiles its compiler module: kernel, CLOS,
 ;;; the front end, eval, then the compiler in one cross compilation
 ;;; session, as SBCL compiles them. The KIR printed must be the compiler module that SBCL made
 ;;; (co-compiler.same-kir). Slow: run only when named (co-compiler.slow).

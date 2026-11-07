@@ -5,7 +5,7 @@ compiled into kiln's modules; Common-boot and Common-macros are host
 libraries (kiln's front end) and Khazern and Eclector are both (the
 host's LOOP and reader, and the image's), as are parser.packrat,
 s-expression-syntax and Iconoclast (the front end's, in the host and in the compiler
-module, docs/11 §3). Host libraries are found by ASDF before `deps/` (`tools/env.lisp`). Each is imported
+module). Host libraries are found by ASDF before `deps/` (`tools/env.lisp`). Each is imported
 unmodified in its own commit (the upstream commit is recorded below), and
 kiln's changes follow in separate commits, so `git log -- vendor/NAME`
 shows exactly what kiln changed. Changes are not sent upstream for now.
@@ -93,8 +93,8 @@ Each patched place is marked with a `kiln:` comment.
   entries, indexed by the low bits of the stamps and sized from the call
   history (4 to 256 entries), instead of a one-entry cache; a miss takes
   the automaton in a separate function (`single-dispatch-miss`,
-  `double-dispatch-miss`), so that the hit path needs no large frame
-  (docs/10 §27). Generic functions with `&optional`, `&rest` or `&key`
+  `double-dispatch-miss`), so that the hit path needs no large frame.
+  Generic functions with `&optional`, `&rest` or `&key`
   parameters that dispatch on one parameter have the same cache
   (`make-single-dispatch-list-closure`; they took the automaton at every
   call).
@@ -157,7 +157,7 @@ Under `#+kiln` (kiln reads target sources with its own features):
   and in an insertion-ordered vector. Upstream iterates bucket by bucket,
   in the order of the keys' hashes (identity hashes: different in every
   run). Macro expanders iterate over hash tables (Khazern's destructuring
-  temporaries), and kiln compiling kiln must make SBCL's KIR (docs/11 §9).
+  temporaries), and kiln compiling kiln must make SBCL's KIR.
 - The table is no longer made of buckets (the class keeps its name): it
   is open addressing, as CPython's dict. The entries are in three vectors
   (keys, values, hashes) in iteration order; an index vector, a power of
@@ -194,8 +194,7 @@ functions); under `#+kiln`:
 
 ## Regalia patches
 
-Under `#+kiln` (docs/10 §14 of kiln: simple vectors and strings stay
-native):
+Under `#+kiln` (simple vectors and strings stay native):
 
 - The package shadows the CL array names (`array`, `vector`, `string`,
   `make-array`, `aref`, ...): kiln defines the CL functions.
@@ -209,7 +208,7 @@ native):
 
 ## Cyclosis patches
 
-Under `#+kiln` (docs/10 §16 of kiln):
+Under `#+kiln`:
 
 - The package does not shadow the names whose definitions in Cyclosis are
   the CL ones (`stream`, `close`, `streamp`, the stream classes, ...), and
@@ -236,10 +235,9 @@ part of Quaviver that Incless uses.
 
 Known upstream bug, not patched: `~F` rounds `(format nil "~,1f" 0.05f0)`
 (and `0.05d0`) to `"0.0"`; it should be `"0.1"`, since both are slightly
-greater than 0.05. Invistra with Quaviver does the same in SBCL
-(docs/14 §4).
+greater than 0.05. Invistra with Quaviver does the same in SBCL.
 
-Under `#+kiln` (docs/10 §18 of kiln):
+Under `#+kiln`:
 
 - `formatter` expands into a function that interprets the control string
   (the format compiler is target code, not available when macros are
@@ -257,7 +255,7 @@ Under `#+kiln` (docs/10 §18 of kiln):
 - The HIR evaluator compiles the argument parser of each function it
   evaluates (`HIR-evaluator/parse-arguments-instruction.lisp`) with
   Maclina on kiln, not the native `compile` (`kiln.kernel::*compile-function*`
-  bound to `nil`, docs/11 §11): cross compilation evaluates a function for
+  bound to `nil`): cross compilation evaluates a function for
   every macro, about 800 of them for the kernel and CLOS, and the native
   compiler took longer for each than the parser ever runs.
 - The form of `load-time-value` is converted in a lexical environment
@@ -282,7 +280,7 @@ Under `#+kiln` (docs/10 §18 of kiln):
   also folds calls of pure functions (`(integer-length
   most-positive-fixnum)`), kiln's does not, and LOOP expanded differently
   in the host and on kiln (`for i below FORM` binds FORM to a variable or
-  not; docs/11 §9).
+  not).
 
 ## Common-macros patches
 
@@ -316,7 +314,7 @@ Under `#+kiln` (docs/10 §18 of kiln):
   backquote makes it: `(append ... x)`, not `(append ... x 'nil)`, which
   copies `x`. Macro expanders compiled by SBCL (in the host) and by kiln
   from Eclector's expansion (on kiln) then make expansions with the same
-  shared structure, and so the same constants in the KIR (docs/11 §9).
+  shared structure, and so the same constants in the KIR.
 - For the same reason, the parts of a backquoted template without unquotes
   are quoted, as SBCL quotes them: a sublist (`` `(if (null x) ,y) `` is
   `(append (list 'if) (list '(null x)) (list y))`) and a tail
@@ -337,9 +335,9 @@ Under `#+kiln` (docs/10 §18 of kiln):
   `macroexpand-all` does, and so decide as SBCL does (the generated parser,
   and so the KIR of the compiler module compiled on kiln, are SBCL's). A
   form that does not compile counts as using a name that occurs anywhere
-  in it (docs/11 §2.1). They compile with Maclina even after the
+  in it. They compile with Maclina even after the
   compiler module makes `compile` native (`kiln.kernel::*compile-function*`
-  bound to `nil`, docs/11 §11): the native compiler does not compile
+  bound to `nil`): the native compiler does not compile
   `macrolet` that is not at top level, and the fallback decided
   differently from SBCL.
 

@@ -63,7 +63,7 @@
                (= (sxhash '(1 2)) (sxhash (list 1 2)))
                (integerp (sxhash 'foo)))))
 ;; Iteration order is SBCL's: insertion order, freed places reused last
-;; freed first (docs/11 §9).
+;; freed first.
 (let ((h (make-hash-table)) (keys '()))
   (dolist (k '(a b c d e)) (setf (gethash k h) t))
   (remhash 'b h)

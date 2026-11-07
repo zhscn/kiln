@@ -1,4 +1,4 @@
-;;; EVAL, COMPILE and LOAD at run time (the eval module, docs/11 §3):
+;;; EVAL, COMPILE and LOAD at run time (the eval module):
 ;;; Maclina's bytecode, called from and calling compiled code.
 (eval '(defun fact (n) (if (< n 2) 1 (* n (fact (- n 1))))))
 (print (fact 10))

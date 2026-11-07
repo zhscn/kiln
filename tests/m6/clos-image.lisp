@@ -1,4 +1,4 @@
-;;;; Heap images (docs/15): the program saves an image, and tools/test.sh
+;;;; Heap images: the program saves an image, and tools/test.sh
 ;;;; runs the executable again from it (KILN_IMAGE), and the executable
 ;;;; with the image appended; clos-image.image is the expected output of
 ;;;; those runs.

@@ -1,4 +1,4 @@
-;;;; LOOP (docs/10 §20): Khazern, intrinsic, for the run-time macro
+;;;; LOOP: Khazern, intrinsic, for the run-time macro
 ;;;; environment. Code compiled by the cross compiler gets its LOOP
 ;;;; expansions from the host's Khazern (front.lisp); this module makes
 ;;;; CL:LOOP and CL:LOOP-FINISH macros of the image, for MACROEXPAND now

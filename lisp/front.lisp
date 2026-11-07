@@ -3,10 +3,10 @@
 ;;;; Front end (M2): Eclector reads CSTs; top-level forms are processed
 ;;;; here as in COMPILE-FILE (CLHS 3.2.3.1); Common-boot turns each form to
 ;;;; be compiled into an Iconoclast AST, which SIMPLIFY-AST reduces to the
-;;;; subset that lower.lisp translates to KIR. See docs/08-m2-front-end.md.
+;;;; subset that lower.lisp translates to KIR.
 ;;;;
 ;;;; This file is the compiler's in the host (SBCL) and on kiln (the
-;;;; compiler module, docs/11 §8): what differs is in host.lisp and
+;;;; compiler module): what differs is in host.lisp and
 ;;;; lisp/target/compiler/client.lisp, loaded after it, and in a few #+KILN
 ;;;; branches here. In the host, compile-time evaluation (EVAL-WHEN
 ;;;; :COMPILE-TOPLEVEL, macro definitions, DEFVAR proclamations) runs
@@ -41,7 +41,7 @@ COMPILE-FILE does."))
 (defvar *package-renames* '()
   "Alist (NAME . NEW-NAME) of package names (strings): the file being
 processed names the package NAME, but its forms are read in NEW-NAME (a
-target library whose package has the name of a host one, docs/11 §3).
+target library whose package has the name of a host one).
 Their definitions of macros that exist at compile time take effect at load
 time only.")
 
@@ -76,7 +76,7 @@ time only.")
 (defun global-environment ()
   (trucler:global-environment *client* *environment*))
 
-;;; Dependency tracking (docs/18). While a definition is compiled in the
+;;; Dependency tracking. While a definition is compiled in the
 ;;; image (lisp/target/compiler/dependencies.lisp), *DEPENDENCIES* is a
 ;;; cons whose cdr collects the keys (KIND NAME) of the definitions its
 ;;; code depends on at compile time: (:MACRO name) for a global macro
@@ -106,12 +106,12 @@ compile-time definitions are the image's (IMAGE-CLIENT).")
 
 (defun note-redefined (kind name)
   "The definition (KIND NAME) changed at compile time: the code compiled
-in the image that depends on it is out of date (docs/18)."
+in the image that depends on it is out of date."
   #+kiln (when (compiles-into-image-p *client*)
            (kiln.kernel::note-redefinition kind name))
   #-kiln (declare (ignore kind name)))
 
-;;; Inline functions (docs/08 §8). (DECLAIM (INLINE F)) before
+;;; Inline functions. (DECLAIM (INLINE F)) before
 ;;; (DEFUN F ...) at top level makes calls of F that refer to the global
 ;;; function open-coded: (F A B) is converted as
 ;;; (LET ((X A) (Y B)) (BLOCK F ...)). Only functions whose lambda lists
@@ -354,7 +354,7 @@ true; else NIL and NIL."
 ;;; Compiler macros: kiln has none of its own yet, but the host's of the
 ;;; libraries whose macros are the host's (USE-HOST-MACROS, cross.lisp)
 ;;; apply to the code compiled for the target (parser.packrat's PARSE
-;;; compiles constant grammar expressions when it expands, docs/11 §9).
+;;; compiles constant grammar expressions when it expands).
 (defgeneric client-compiler-macro (client name)
   (:method (client name)
     (declare (ignore client name))
@@ -445,7 +445,7 @@ the file. Reading starts in KILN-USER, with the target's features."
 (defvar *toplevel-asts*)                ; TOPLEVEL-FORMs (lower.lisp), most recent first
 
 ;;; Where the top-level form being processed comes from, for the debug
-;;; information of the functions compiled from it (docs/17).
+;;; information of the functions compiled from it.
 (defvar *source-file* nil)              ; the file's name (one string per file), or NIL
 (defvar *toplevel-source* nil)          ; (START . END) of the outermost form, or NIL
 (defvar *definition-name* nil)          ; DEFINITION-NAME of the innermost definition form
@@ -628,7 +628,7 @@ module).")
           ;; DEFPACKAGE creates the package in the host, so that the rest
           ;; of the sources can be read. Nothing is compiled: the run-time
           ;; package is built from the module's symbol table, which
-          ;; mirrors the host package (docs/10 §12). A package that
+          ;; mirrors the host package. A package that
           ;; exists already (a host system such as Ecclesia) is left
           ;; alone, but it is a package of the module too: its external
           ;; symbols are in the module whichever host compiles it (on
@@ -751,7 +751,7 @@ created."
             nil)))))))
 
 (defun front-end-forms (forms &optional (session (make-session)))
-  "As FRONT-END, for the top-level FORMS (for COMPILE, docs/11 §11)."
+  "As FRONT-END, for the top-level FORMS (for COMPILE)."
   (call-with-front-end
    session
    (lambda ()

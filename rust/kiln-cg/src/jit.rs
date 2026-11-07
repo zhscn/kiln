@@ -1,5 +1,5 @@
 //! In-memory compilation: whole programs (`kiln-cg jit`) and code compiled
-//! into a running image (`kiln_rt_jit`, docs/11 §11).
+//! into a running image (`kiln_rt_jit`).
 
 use crate::codegen::{self, DebugInfo, Options, Output, Ref};
 use crate::kir;
@@ -45,7 +45,7 @@ pub enum Memory {
 
 /// Allocates the code and data of modules compiled into a running image
 /// from the runtime's code region (kiln_rt::code), at a fixed address, so
-/// that heap images can hold them (docs/15 §6). Later modules lie above
+/// that heap images can hold them. Later modules lie above
 /// earlier ones, so the runtime's tables of call sites and stack maps,
 /// sorted by address, grow at the end. Never freed.
 ///

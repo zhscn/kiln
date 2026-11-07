@@ -41,7 +41,7 @@
 
 ;;; Errors are Khazern's conditions; the list of expected clause names
 ;;; comes from the methods of PARSE-CLAUSE (through closer-mop). (Their
-;;; reports need the pretty printer, docs/10 §19.)
+;;; reports need the pretty printer)
 (defun show-loop-error (c)
   (format t "error: ~a ~s~%" (type-of c) (khazern::expected-keywords c)))
 (handler-case (macroexpand-1 '(loop for i from 1 frob 3))

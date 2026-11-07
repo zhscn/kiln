@@ -1,6 +1,6 @@
-;;;; The expansions of Common-macros' macros that kiln customizes (docs/08
-;;;; §2, docs/10 §7, §26). Portable: the host loads this file into the
-;;;; compiler, and the target's eval module (docs/11) compiles it, so that
+;;;; The expansions of Common-macros' macros that kiln customizes.
+;;;; Portable: the host loads this file into the
+;;;; compiler, and the target's eval module compiles it, so that
 ;;;; macros expand alike at compile time and at run time.
 
 (in-package #:kiln.macros)
@@ -14,8 +14,8 @@ compiler's client and the run-time macros."))
 
 ;;; DEFCLASS, DEFGENERIC and DEFMETHOD expand into calls to kiln's
 ;;; functions in lisp/target/clos/early.lisp, which create the metaobjects
-;;; with the early functions during the bootstrap and with the MOP after it
-;;; (docs/10 §7). Specializers are passed as designators (a class name or
+;;; with the early functions during the bootstrap and with the MOP after it.
+;;; Specializers are passed as designators (a class name or
 ;;; (EQL object)) so that a DEFMETHOD can be evaluated before the classes
 ;;; exist.
 
@@ -53,7 +53,7 @@ compiler's client and the run-time macros."))
     ,@(when documentation-option
         `(:documentation ',(second documentation-option)))))
 
-;;; Method functions (docs/10 §26). The method function takes the list of
+;;; Method functions. The method function takes the list of
 ;;; arguments and the next methods (AMOP). A method whose lambda list has
 ;;; only required parameters (at most +MAX-FAST-ARITY+) also gets a fast
 ;;; function, of the next methods and the arguments themselves, which the
@@ -170,7 +170,7 @@ LAMBDA-EXPRESSION."
      (kiln.sys::%define-setf-expander ',name ,function)))
 
 ;;; WITH-OUTPUT-TO-STRING with a string: an output stream that appends to
-;;; it (Cyclosis' string output stream, docs/10 §16).
+;;; it (Cyclosis' string output stream).
 (defmethod cmd::output-stream-from-string-function-name ((client macro-client))
   ;; CYCLOSIS is created when the CLOS module's sources are read.
   `(lambda (string)

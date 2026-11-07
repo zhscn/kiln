@@ -1,4 +1,4 @@
-;;;; The standard functions on types, from ctype (docs/10 §13).
+;;;; The standard functions on types, from ctype.
 
 (in-package #:ctype)
 

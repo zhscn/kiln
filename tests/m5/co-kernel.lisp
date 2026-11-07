@@ -1,4 +1,4 @@
-;;; kiln compiles its kernel (docs/11 §9, M5.4): a cross compilation, in a
+;;; kiln compiles its kernel: a cross compilation, in a
 ;;; compile-time environment of its own, as SBCL's. The KIR printed must be
 ;;; the kernel module that SBCL made in the same session (co-kernel.same-kir).
 

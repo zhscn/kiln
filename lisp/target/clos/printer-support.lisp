@@ -1,4 +1,4 @@
-;;;; What the printer (Incless) needs from the rest of CL (docs/10 §17):
+;;;; What the printer (Incless) needs from the rest of CL:
 ;;;; the printer variables, WITH-STANDARD-IO-SYNTAX, and READTABLE-CASE
 ;;;; and GET-MACRO-CHARACTER until the reader is loaded (reader.lisp
 ;;;; redefines them).

@@ -1,4 +1,4 @@
-;;;; The printer (docs/10 §17): kiln's client of Incless, intrinsic: WRITE,
+;;;; The printer: kiln's client of Incless, intrinsic: WRITE,
 ;;;; PRIN1, PRINC, PRINT-OBJECT, PRINT-UNREADABLE-OBJECT and the
 ;;;; ...-TO-STRING functions are Incless'. (PRINT itself is still compiled
 ;;;; inline to the runtime's printer.)

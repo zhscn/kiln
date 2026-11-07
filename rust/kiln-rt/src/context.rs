@@ -1,6 +1,6 @@
 //! The context object (constraint C1): all dynamic state hangs off it.
 //! Compiled code receives a pointer to it as the first argument.
-//! Field offsets are part of the ABI; see docs/06-m0-abi.md and docs/07-m1-gc.md.
+//! Field offsets are part of the ABI;
 
 use crate::gc::KilnMutator;
 use crate::stack::Segment;
@@ -37,7 +37,7 @@ pub struct Context {
     /// Offset 64. Address of the cursor of this context's bump allocator
     /// (MMTk's default allocator): compiled code allocates small objects
     /// by bumping it, and calls `kiln_rt_alloc` when it would pass the
-    /// limit (docs/07).
+    /// limit.
     pub alloc_cursor: *mut usize,
     /// Offset 72. Address of the limit of the bump allocator.
     pub alloc_limit: *mut usize,

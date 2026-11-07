@@ -1,6 +1,6 @@
 (in-package #:kiln.compiler)
 
-;;;; DEFSTRUCT (docs/10 §15). Anatomicl runs in the host, at macroexpansion
+;;;; DEFSTRUCT. Anatomicl runs in the host, at macroexpansion
 ;;;; time: it parses the DEFSTRUCT form and generates ordinary target code.
 ;;;; Its default methods look at the class of an included structure
 ;;;; (through closer-mop) when expanding; there are no target classes at

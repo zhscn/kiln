@@ -94,7 +94,7 @@
 
 (defparameter *regalia-files*
   ;; The class hierarchy and a few common functions; kiln's arrays.lisp
-  ;; does the rest (docs/10 §14).
+  ;; does the rest.
   (mapcar (lambda (name)
             (asdf:system-relative-pathname
              "kiln" (format nil "vendor/Regalia/Code/~A.lisp" name)))
@@ -330,7 +330,7 @@
    *alexandria-files*
    *eclector-files*
    (list (kiln-clos-file "reader")))
-  "Sources of the CLOS module, in load order (docs/10 §7).")
+  "Sources of the CLOS module, in load order.")
 
 (defun write-module (module output)
   (with-open-file (out output :direction :output :if-exists :supersede)
@@ -366,8 +366,8 @@ kernel."
   (write-module (compile-files *clos-files* session "clos") output))
 
 (defparameter *frontend-files*
-  ;; The parts of the front end compiled for the target so far (docs/10
-  ;; §24): concrete syntax trees and Eclector's CST reader.
+  ;; The parts of the front end compiled for the target so far:
+  ;; concrete syntax trees and Eclector's CST reader.
   (append
    (mapcar (lambda (name)
              (asdf:system-relative-pathname "concrete-syntax-tree" (format nil "~A.lisp" name)))
@@ -393,7 +393,7 @@ SESSION must have compiled the kernel and CLOS."
   (asdf:system-source-directory (asdf:find-system "maclina")))
 
 (defparameter *eval-files*
-  ;; The eval module (docs/11 §3, M5.1).
+  ;; The eval module.
   (let ((cmd-renames '(("COMMON-MACRO-DEFINITIONS" . "KILN.CMD")))
         (cmd-dir "vendor/Common-macros/Common-macro-definitions/"))
     (flet ((ecclesia (name)
@@ -479,7 +479,7 @@ those whose names are in EXCLUDE."
           collect (asdf:component-pathname c)))
 
 (defparameter *compiler-files*
-  ;; The compiler module (docs/11 §3, M5.2): the front end's remaining
+  ;; The compiler module: the front end's remaining
   ;; dependencies, Common-boot, then kiln's compiler (M5.3).
   (flet ((files (system &rest names)
            (mapcar (lambda (name)
@@ -550,7 +550,7 @@ those whose names are in EXCLUDE."
      (system-files "common-boot-hir-evaluator")
      ;; Anatomicl, which expands DEFSTRUCT in cross compilation (lisp/structures.lisp).
      (system-files "anatomicl")
-     ;; kiln's compiler (M5.3, docs/11 §8): its packages are the host's.
+     ;; kiln's compiler (M5.3): its packages are the host's.
      (mapcar (lambda (name) (asdf:system-relative-pathname "kiln" (format nil "lisp/~A.lisp" name)))
              '("abi" "kir" "lower" "values" "primitives" "structures" "front" "cross"
                "target/compiler/client" "target/compiler/session"
@@ -588,7 +588,7 @@ namestrings for pathnames."
             files)))
 
 (defun bootstrap-stage0 (directory)
-  "Stage 0 of the bootstrap (docs/11 §10): compiles the five modules and the
+  "Stage 0 of the bootstrap: compiles the five modules and the
 build program (lisp/target/build.lisp) to NAME.kir in DIRECTORY, in one
 session, and writes the build program's manifest there, modules.lisp-expr:
 for each module, its name and source files. kiln0, linked from these

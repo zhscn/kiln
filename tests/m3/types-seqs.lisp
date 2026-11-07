@@ -40,7 +40,7 @@
 (print (union '(1 2) '(2 3)))
 (print (intersection '(1 2 3) '(2 3 4)))
 (print (set-difference '(1 2 3) '(2)))
-;; In the order SBCL's set functions return (docs/11 §9).
+;; In the order SBCL's set functions return.
 (print (list (set-exclusive-or '(1 2 3) '(2 4 5))
              (intersection '(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22)
                            (loop for i from 30 downto 0 collect i))

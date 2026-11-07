@@ -1,4 +1,4 @@
-;;;; Pathnames (docs/10 §21): physical pathnames with Unix namestrings
+;;;; Pathnames: physical pathnames with Unix namestrings
 ;;;; (parsed like SBCL), logical pathnames, wildcards, and the file system
 ;;;; functions, through the runtime's file system calls (%PRIMOP :SYS,
 ;;;; kiln_rt_sys).

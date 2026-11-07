@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Bootstraps kiln (docs/11 §10).
+# Bootstraps kiln.
 #   stage0: SBCL compiles the five modules and the build program
 #           (lisp/target/build.lisp) to KIR.
 #   kiln0:  the stage0 KIR, linked into an AOT executable; run, it writes
@@ -17,7 +17,7 @@ cargo build -q
 cg=$root/target/debug/kiln-cg
 launcher=$root/target/debug/libkiln_launcher.a
 # Compiling the compiler module keeps the session's environment and the
-# modules compiled before it live (docs/11 §9.5).
+# modules compiled before it live.
 heap=${KILN_BOOT_HEAP:-8589934592}
 modules=(kernel clos frontend eval compiler build)
 

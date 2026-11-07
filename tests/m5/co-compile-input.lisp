@@ -1,4 +1,4 @@
-;;; A program compiled by SBCL and by kiln (tests/m5/co-compile.lisp, docs/11 §8).
+;;; A program compiled by SBCL and by kiln (tests/m5/co-compile.lisp).
 
 (defpackage #:co-compile-input
   (:use #:common-lisp)

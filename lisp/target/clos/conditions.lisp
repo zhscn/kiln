@@ -1,4 +1,4 @@
-;;;; What Predicament expects from the implementation (docs/10 §10), as
+;;;; What Predicament expects from the implementation, as
 ;;;; SICL's Code/Conditions: the metaclass CONDITION-CLASS, the class
 ;;;; CONDITION, DEFINE-CONDITION and the condition maker. Also class names
 ;;;; as types for TYPEP, and the default debugger.

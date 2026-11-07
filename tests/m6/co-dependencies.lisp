@@ -1,4 +1,4 @@
-;;; Dependency tracking (docs/18): definitions evaluated in the image are
+;;; Dependency tracking: definitions evaluated in the image are
 ;;; compiled again when a macro, inline function, SETF expander or
 ;;; constant they were compiled with changes.
 

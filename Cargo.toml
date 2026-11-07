@@ -40,7 +40,7 @@ opt-level = 2
 opt-level = 2
 
 # MMTk's debug assertions check every side-metadata access: with them the
-# GC took a third of the time of kiln compiling its kernel (docs/11 §9).
+# GC took a third of the time of kiln compiling its kernel.
 [profile.dev.package.mmtk]
 debug-assertions = false
 overflow-checks = false

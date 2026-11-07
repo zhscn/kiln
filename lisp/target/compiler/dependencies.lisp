@@ -1,4 +1,4 @@
-;;;; Dependency tracking (docs/18): a definition evaluated in the image
+;;;; Dependency tracking: a definition evaluated in the image
 ;;;; (by EVAL, so LOAD and the back-end protocol) records the definitions
 ;;;; its code depends on at compile time, the keys that front.lisp and
 ;;;; client.lisp note in *DEPENDENCIES*. When one of those is defined
@@ -8,7 +8,7 @@
 ;;;; them again has other effects) are reported.
 ;;;;
 ;;;; An update is ordered and cut off as Zig's incremental compilation
-;;;; (docs/18 §3): the definitions that depend on a changed one are
+;;;;: the definitions that depend on a changed one are
 ;;;; outdated, those that depend on what these define are potentially
 ;;;; outdated, with a count of the definitions they wait for; a definition
 ;;;; is evaluated again once that count is 0, and if what it defines comes

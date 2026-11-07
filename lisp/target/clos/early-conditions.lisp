@@ -1,6 +1,6 @@
 ;;;; The conditions defined before the condition system (with the early
 ;;;; DEFINE-CONDITION of lisp/target/early.lisp: Ecclesia, Clostrophilia)
-;;;; become condition classes, in definition order (docs/10 §10).
+;;;; become condition classes, in definition order.
 
 (in-package #:clostrophilia)
 

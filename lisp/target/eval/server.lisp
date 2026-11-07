@@ -1,4 +1,4 @@
-;;;; The back-end protocol (docs/17 §4): a read-eval-print loop for
+;;;; The back-end protocol: a read-eval-print loop for
 ;;;; programs (tools, editors, agents). Requests and replies are
 ;;;; S-expressions. A request is evaluated as a task; an error the task
 ;;;; does not handle does not end it: the server sends the condition,
@@ -218,7 +218,7 @@ a client reads replies up to that line."
           (t (fail "unknown request ~S" op)))))))
 
 (defun kiln.sys:serve (&key (input *standard-input*) (output *standard-output*))
-  "Serves the back-end protocol (docs/17 §4): reads requests from INPUT,
+  "Serves the back-end protocol: reads requests from INPUT,
 writes replies to OUTPUT, until the end of INPUT or a :QUIT request,
 which abort the tasks in progress."
   (let ((*server-input* input)

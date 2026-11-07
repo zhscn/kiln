@@ -1,5 +1,5 @@
 ;;;; Errors detected by compiled code and the runtime become conditions
-;;;; (docs/10 §10): the kernel's %RUNTIME-ERROR, which ended the program,
+;;;;: the kernel's %RUNTIME-ERROR, which ended the program,
 ;;;; now signals a condition for the error code (lisp/abi.lisp).
 
 (in-package #:clostrophilia)

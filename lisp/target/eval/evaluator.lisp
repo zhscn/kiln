@@ -1,4 +1,4 @@
-;;;; EVAL, COMPILE and LOAD at run time (docs/11 §2.1): Maclina compiles to
+;;;; EVAL, COMPILE and LOAD at run time: Maclina compiles to
 ;;;; bytecode and runs it in its VM, in kiln's global environment. kiln's
 ;;;; Trucler client describes that environment; it is a Trucler "native"
 ;;;; client, for which Maclina's native VM (vm-native.lisp) is written.
@@ -79,7 +79,7 @@
 
 (defvar *eval-function* nil
   "The function EVAL evaluates a form with: the compiler module sets it to
-its native evaluator (docs/11 §12); NIL, Maclina's.")
+its native evaluator; NIL, Maclina's.")
 
 (defun eval (form)
   (if *eval-function*
@@ -102,7 +102,7 @@ its native evaluator (docs/11 §12); NIL, Maclina's.")
 
 (defvar *compile-function* nil
   "The function COMPILE compiles a lambda expression with: the compiler
-module sets it to its native compiler (docs/11 §11); NIL, Maclina's
+module sets it to its native compiler; NIL, Maclina's
 bytecode compiler.")
 
 (defun compile-lambda (definition)

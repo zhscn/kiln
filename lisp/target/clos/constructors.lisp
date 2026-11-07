@@ -1,5 +1,5 @@
-;;;; MAKE-INSTANCE without the generic protocol, for the common case
-;;;; (docs/10 §29). For a class whose metaclass is STANDARD-CLASS and
+;;;; MAKE-INSTANCE without the generic protocol, for the common case.
+;;;; For a class whose metaclass is STANDARD-CLASS and
 ;;;; whose instances get exactly the methods of ALLOCATE-INSTANCE,
 ;;;; INITIALIZE-INSTANCE and SHARED-INITIALIZE that a plain standard object
 ;;;; gets, MAKE-INSTANCE allocates the rack and fills the slots from the

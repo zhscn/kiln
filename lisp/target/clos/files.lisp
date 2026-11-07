@@ -1,4 +1,4 @@
-;;;; File streams (docs/10 §21): Cyclosis' POSIX file streams with a
+;;;; File streams: Cyclosis' POSIX file streams with a
 ;;;; buffer, and OPEN's MAKE-FILE-STREAM for kiln's client. Cyclosis'
 ;;;; transcoders read and write one octet at a time; without a buffer each
 ;;;; would be a system call. The standard streams (streams.lisp) are not
@@ -52,7 +52,7 @@
 (defmethod stream-write-octets ((stream kiln-file-stream) octets &optional (start 0) end)
   ;; Copied into the buffer a chunk at a time: one generic function call
   ;; per octet (STREAM-WRITE-OCTET and its accessors) was most of the time
-  ;; of writing KIR on kiln (docs/11 §10.2).
+  ;; of writing KIR on kiln.
   (let ((end (or end (length octets)))
         (buffer (file-buffer stream))
         (i start))

@@ -1,4 +1,4 @@
-;;; kiln compiles its front-end module (docs/11 §9, M5.4): kernel, CLOS,
+;;; kiln compiles its front-end module: kernel, CLOS,
 ;;; then the front end in one cross compilation session, as SBCL compiles
 ;;; them. The KIR printed must be the front-end module that SBCL made
 ;;; (co-frontend.same-kir). Slow: run only when named (co-frontend.slow).

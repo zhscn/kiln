@@ -1,4 +1,4 @@
-;;;; The back-end protocol (docs/17 §4), served from a string: tasks,
+;;;; The back-end protocol, served from a string: tasks,
 ;;;; output, an error and its debug level, a nested task inside it,
 ;;;; evaluation in a frame, restarts with and without arguments.
 

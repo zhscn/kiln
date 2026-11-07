@@ -1,4 +1,4 @@
-;;;; Structures (docs/10 §15): DEFSTRUCT is expanded in the host by
+;;;; Structures: DEFSTRUCT is expanded in the host by
 ;;;; Anatomicl (lisp/structures.lisp) into a DEFCLASS of the metaclass
 ;;;; STRUCTURE-CLASS, constructors, a predicate and a copier.
 

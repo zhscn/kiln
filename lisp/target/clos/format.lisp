@@ -1,4 +1,4 @@
-;;;; FORMAT (docs/10 §18): kiln's client of Invistra, intrinsic: FORMAT
+;;;; FORMAT: kiln's client of Invistra, intrinsic: FORMAT
 ;;;; and FORMATTER are Invistra's. The client is also the printer's
 ;;;; (Invistra prints through Incless).
 

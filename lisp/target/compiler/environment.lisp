@@ -1,4 +1,4 @@
-;;;; The compiler module's Trucler environments (docs/11 §3): MACRO-FUNCTION
+;;;; The compiler module's Trucler environments: MACRO-FUNCTION
 ;;;; and MACROEXPAND with an environment of Common-boot (a
 ;;;; TRUCLER-REFERENCE:ENVIRONMENT) query it with a reference client.
 

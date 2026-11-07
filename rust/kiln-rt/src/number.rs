@@ -1,4 +1,4 @@
-//! Real numbers: the slow path of generic arithmetic (docs/09-m3-kernel.md §9).
+//! Real numbers: the slow path of generic arithmetic.
 //!
 //! Compiled code open-codes fixnum arithmetic; everything else (bignums,
 //! ratios, floats, fixnum overflow) reaches `kiln_rt_number_op` through the

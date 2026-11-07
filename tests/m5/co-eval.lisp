@@ -1,4 +1,4 @@
-;;; kiln compiles its eval module (docs/11 §9, M5.4): kernel, CLOS, the
+;;; kiln compiles its eval module: kernel, CLOS, the
 ;;; front end, then eval in one cross compilation session, as SBCL
 ;;; compiles them. The KIR printed must be the eval module that SBCL made
 ;;; (co-eval.same-kir). Slow: run only when named (co-eval.slow).

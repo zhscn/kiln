@@ -1,4 +1,4 @@
-;;;; Cross compilation (docs/11 §9): the compile-time environment is a
+;;;; Cross compilation: the compile-time environment is a
 ;;;; Clostrum environment, separate from the image that compiles, in which
 ;;;; Common-boot's HIR evaluator runs the code evaluated at compile time.
 ;;;; The functions of the compiling image ("the host") are imported into
@@ -277,7 +277,7 @@ at compile time (USE-HOST-MACROS).")
     (do-external-symbols (s '#:ecclesia)
       (when (and (fboundp s) (not (macro-function s)))
         (setf (clo:fdefinition client genv s) (fdefinition s))))
-    ;; Cyclosis' macro expanders (streams, docs/10 §16).
+    ;; Cyclosis' macro expanders (streams).
     (setf (clo:fdefinition client genv 'alexandria:parse-body)
           (fdefinition 'alexandria:parse-body))
     ;; LOOP is Khazern's, expanded in the host; its expansions use only
@@ -302,8 +302,8 @@ at compile time (USE-HOST-MACROS).")
     (setf (clo:macro-function client genv 'load-time-only) #'expand-load-time-only)
     env))
 
-;;; Libraries that the host has loaded too (the front end's dependencies,
-;;; docs/11 §3) have their macros expanded by the host's definitions at
+;;; Libraries that the host has loaded too (the front end's dependencies)
+;;; have their macros expanded by the host's definitions at
 ;;; compile time, as LOOP is. Their expanders call functions and use data
 ;;; (parser.packrat's grammars, let-plus's generic functions) that exist at
 ;;; compile time only in the host; some of their macros are defined by
@@ -431,7 +431,7 @@ evaluate some at compile time: parser.packrat's DEFGRAMMAR)."
                                 (check-host-expansion name expansion)
                                 expansion)))))))))))
 
-;;; Compiling the compiler module (docs/11 §8), on the host or on kiln.
+;;; Compiling the compiler module, on the host or on kiln.
 
 (defparameter *compiler-host-macro-packages*
   ;; Expanded by the host at compile time (USE-HOST-MACROS).

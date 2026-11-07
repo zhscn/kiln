@@ -1,5 +1,5 @@
 ;;;; kiln's client of Parcl, and the bootstrap of the run-time packages
-;;;; (docs/10 §12).
+;;;;.
 ;;;;
 ;;;; Every module's symbol table (lower.lisp) describes the host packages
 ;;;; its symbols were read into: name, nicknames, use list, and the status
@@ -332,7 +332,7 @@
  (vector (vector "COMMON-LISP-USER" '("CL-USER") '("COMMON-LISP" "KILN.SYS") (vector) '())))
 (setf *package* (find-package "COMMON-LISP-USER"))
 
-;;; DEFPACKAGE and IN-PACKAGE at run time (docs/10 §23). Compiled modules
+;;; DEFPACKAGE and IN-PACKAGE at run time. Compiled modules
 ;;; get their packages from their symbol tables; these are for code that
 ;;; runs DEFPACKAGE (also inside a function: the front end expands it
 ;;; into the same %DEFPACKAGE call) and for macroexpansion at run time.

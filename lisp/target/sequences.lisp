@@ -12,8 +12,7 @@
           (t (eql item k)))))
 
 ;;; EQ or EQL if the test compares the elements themselves with that
-;;; function: the common case, done without calls (the compiler on kiln,
-;;; docs/11 §9).
+;;; function: the common case, done without calls (the compiler on kiln).
 (defun simple-test (test test-not key)
   (and (null key) (null test-not)
        (cond ((or (null test) (eq test #'eql) (eq test 'eql)) 'eql)
@@ -81,7 +80,7 @@
 ;;; The set functions return their elements in the order SBCL's do (its
 ;;; src/code/list.lisp): CLHS leaves it open, but code evaluated at compile
 ;;; time calls the host's in a cross compilation, and kiln compiling kiln
-;;; must make SBCL's constants (docs/11 §9).
+;;; must make SBCL's constants.
 (defun set-member (x list test test-not key swapped)
   "X (an element of the other list) in LIST; SWAPPED: X is from the
 second list argument, so the test gets it second."

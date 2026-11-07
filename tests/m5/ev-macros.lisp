@@ -1,4 +1,4 @@
-;;; The standard macros at run time (the eval module, docs/11 §3).
+;;; The standard macros at run time (the eval module).
 (dolist (name '(when unless cond case and or dolist dotimes do setf push incf
                 defun defmacro defvar defparameter defclass defgeneric defmethod
                 destructuring-bind multiple-value-bind handler-case restart-case

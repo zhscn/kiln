@@ -1,4 +1,4 @@
-//! Stacks and stack segments (constraints C2 and C8). See docs/07-m1-gc.md §7.
+//! Stacks and stack segments (constraints C2 and C8).
 //!
 //! A context's Lisp frames form segments: each segment runs from a top frame
 //! (the trampoline through which Lisp entered the runtime) to a base frame

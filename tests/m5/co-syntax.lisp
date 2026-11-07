@@ -1,4 +1,4 @@
-;;; s-expression-syntax on kiln (docs/11 §3, M5.2): special forms and
+;;; s-expression-syntax on kiln: special forms and
 ;;; macro forms parsed with the list builder. Objects other than lists,
 ;;; symbols, numbers and strings are shown as their class names.
 

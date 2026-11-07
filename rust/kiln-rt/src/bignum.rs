@@ -1,4 +1,4 @@
-//! Integers beyond the fixnum range (docs/09-m3-kernel.md §8).
+//! Integers beyond the fixnum range.
 //!
 //! A bignum is [header (length << 8 | KIND_BIGNUM), digits...]: two's
 //! complement, little-endian 64-bit digits, minimal length. Integers in the

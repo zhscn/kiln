@@ -1,6 +1,6 @@
 (defpackage #:kiln.abi
   (:use #:cl)
-  (:documentation "Constants shared with the runtime. See docs/06-m0-abi.md.")
+  (:documentation "Constants shared with the runtime.")
   (:export #:+fixnum-shift+ #:+tag-mask+ #:+tag-cons+ #:+tag-general+
            #:+kind-mask+ #:+kind-symbol+ #:+kind-function+ #:+kind-cons+
            #:+kind-simple-vector+ #:+kind-string+ #:+kind-bignum+
@@ -45,15 +45,14 @@
            #:%method-fast-function
            ;; The read-eval-print loop (lisp/target/eval/repl.lisp).
            #:repl
-           ;; Heap images (lisp/target/clos/image.lisp, docs/15).
+           ;; Heap images (lisp/target/clos/image.lisp).
            #:save-image #:*save-hooks* #:*init-hooks*
-           ;; Frames and backtraces (lisp/target/clos/debug.lisp, docs/17).
+           ;; Frames and backtraces (lisp/target/clos/debug.lisp).
            #:frame-list #:frame-name #:frame-source #:frame-variables #:frame-pc
            #:source-line #:print-frame #:print-backtrace #:exit
-           ;; The back-end protocol (lisp/target/eval/server.lisp, docs/17 §4).
+           ;; The back-end protocol (lisp/target/eval/server.lisp).
            #:serve
-           ;; Dependency tracking (lisp/target/compiler/dependencies.lisp,
-           ;; docs/18).
+           ;; Dependency tracking (lisp/target/compiler/dependencies.lisp).
            #:dependents #:dependencies #:*recompile-verbose* #:stale-definition
            #:stack-exhausted
            ;; The sampling profiler (lisp/target/clos/profile.lisp).

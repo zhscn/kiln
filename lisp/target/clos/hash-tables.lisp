@@ -1,6 +1,6 @@
 ;;;; Hash tables: Salmagundi's bucket hash tables with kiln's client and
 ;;;; the CL interface (what Salmagundi's Trinsic-generated interface does,
-;;;; written out; docs/10 §11).
+;;;; written out).
 
 (in-package #:salmagundi)
 

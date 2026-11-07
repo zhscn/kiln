@@ -1,4 +1,4 @@
-;;;; The reader (docs/10 §22): Eclector, with kiln's client and the CL
+;;;; The reader: Eclector, with kiln's client and the CL
 ;;;; interface. Eclector's sources are read into the host's Eclector
 ;;;; packages, in which ECLECTOR.READTABLE shadows the CL readtable
 ;;;; functions and *READTABLE*; the CL functions here call Eclector's, and

@@ -1,4 +1,4 @@
-;;;; Frames and backtraces (docs/17). The :FRAME primop is kiln_rt_frame
+;;;; Frames and backtraces. The :FRAME primop is kiln_rt_frame
 ;;;; (rust/kiln-rt/src/debug.rs). A frame is named by a handle, a fixnum,
 ;;;; which is valid while the frame is on the stack. A frame's function
 ;;;; has a debug info object #(NAME FILE START END VARIABLES), lower.lisp.
@@ -58,7 +58,7 @@ function's code."
 
 (defun kiln.sys:source-line (file position)
   "The line (from 1) and column (from 0, in characters) of POSITION, an
-octet offset as source positions are (docs/17), in the UTF-8 file FILE,
+octet offset as source positions are, in the UTF-8 file FILE,
 or NIL."
   (handler-case
       (with-open-file (in file :element-type '(unsigned-byte 8))

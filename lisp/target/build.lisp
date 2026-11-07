@@ -1,4 +1,4 @@
-;;;; kiln's build program (docs/11 §10). Linked with the five modules (the
+;;;; kiln's build program. Linked with the five modules (the
 ;;;; kernel, CLOS, the front end, eval and the compiler), it compiles them
 ;;;; and itself again, in one cross compilation session, as SBCL compiles
 ;;;; them in stage 0 (kiln:bootstrap-stage0).
@@ -11,7 +11,7 @@
 ;;;;
 ;;;; With the environment variable KILN_SAVE_IMAGE naming a file, the
 ;;;; program saves a heap image there once it has compiled the five
-;;;; modules (docs/15 §5). Started from that image, it reads the manifest
+;;;; modules. Started from that image, it reads the manifest
 ;;;; again and compiles the programs only: tools/test.sh does so when kiln
 ;;;; compiles the tests.
 
@@ -72,7 +72,7 @@ SESSION has compiled."
     (and (stringp value) (plusp (length value)) value)))
 
 ;;; With KILN_SERVE set, the program serves the back-end protocol on its
-;;; standard input and output instead (docs/17 §4).
+;;; standard input and output instead.
 (if (getenv "KILN_SERVE")
     (kiln.sys:serve)
     (let ((manifest (read-build-manifest))

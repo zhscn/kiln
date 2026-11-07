@@ -1,5 +1,5 @@
 ;;;; Builds the braid from the classes recorded so far: Clostrophilia's
-;;;; class hierarchy and kiln's built-in classes (docs/10 §7). The
+;;;; class hierarchy and kiln's built-in classes. The
 ;;;; DEFGENERIC and DEFMETHOD forms seen so far take effect now.
 
 (in-package #:clostrophilia)

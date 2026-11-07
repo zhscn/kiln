@@ -1,4 +1,4 @@
-;;;; The CLOS bootstrap, before Clostrophilia's code is loaded (docs/10 §7).
+;;;; The CLOS bootstrap, before Clostrophilia's code is loaded.
 ;;;;
 ;;;; - The primitives Clostrophilia expects from the implementation.
 ;;;; - DEFCLASS, DEFGENERIC and DEFMETHOD land in KILN.SYS:%DEFCLASS,
@@ -21,7 +21,7 @@
 
 ;;; Primitives
 
-;;; Open-coded where they are called (docs/08 §8).
+;;; Open-coded where they are called.
 (declaim (inline standard-instance-access slot-value-using-location+1
                  slot-boundp-using-location+1 slot-makunbound-using-location+1
                  small-integer= small-integer< instancep class-of+1 stamp+1))

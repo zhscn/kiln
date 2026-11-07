@@ -1,4 +1,4 @@
-;;;; Frames (docs/17): the names of the frames' functions, the source
+;;;; Frames: the names of the frames' functions, the source
 ;;;; positions of their calls and the variables known during the calls.
 
 (defun show-frame (f)

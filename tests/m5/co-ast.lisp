@@ -1,4 +1,4 @@
-;;; Common-boot on kiln (docs/11 §3, M5.2): CST-TO-AST of forms, in a
+;;; Common-boot on kiln: CST-TO-AST of forms, in a
 ;;; Clostrum environment that has kiln's macros. Each AST is shown as
 ;;; (CLASS (CHILD-NAME VALUE)...); an AST seen before is shown as (:AST N),
 ;;; N being the order in which ASTs are first seen.

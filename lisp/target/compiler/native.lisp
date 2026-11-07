@@ -1,4 +1,4 @@
-;;;; COMPILE to native code (M5.5, docs/11 §11): the lambda expression is
+;;;; COMPILE to native code (M5.5): the lambda expression is
 ;;;; compiled by the image's front end and lower.lisp into a KIR module
 ;;;; whose literals are the image's objects, which kiln-cg, linked into the
 ;;;; runtime, compiles into memory (kiln_rt_jit). The compiler module's
@@ -28,7 +28,7 @@ running image, in the null lexical environment."
           (funcall init)
           *compiled-function*)))))
 
-;;; EVAL (docs/11 §12), as SBCL's: forms whose evaluation needs no code
+;;; EVAL, as SBCL's: forms whose evaluation needs no code
 ;;; are evaluated directly, the subforms of PROGN and EVAL-WHEN in turn
 ;;; (so that a DEFMACRO takes effect before the next one is compiled),
 ;;; macro forms after their expansion; any other form is compiled as the
@@ -41,7 +41,7 @@ running image, in the null lexical environment."
               (*eval-definition* nil)
               (*eval-form* form))
           (native-eval-1 form))
-      ;; The definitions that depend on those FORM changed (docs/18).
+      ;; The definitions that depend on those FORM changed.
       (when (and outermost *pending-redefinitions*)
         (update-dependents)))))
 
@@ -63,8 +63,8 @@ running image, in the null lexical environment."
                      (native-eval-body (cddr form)))))
           ((and (symbolp (first form)) (macro-function (first form)))
            ;; The functions a definition defines are named after it
-           ;; (docs/17 §2.1), although its expansion is compiled; its
-           ;; dependencies are recorded (docs/18).
+           ;;, although its expansion is compiled; its
+           ;; dependencies are recorded.
            (multiple-value-bind (name function-p) (definition-name form)
              (when name
                (return
@@ -81,7 +81,7 @@ running image, in the null lexical environment."
 
 (defun native-eval-toplevel (form)
   "Compiles FORM as a top-level form (so that the function a definition
-defines is not inside another, for its name, docs/17 §2.1) and runs it;
+defines is not inside another, for its name) and runs it;
 returns its values."
   (let* ((session (make-session))
          (name (kiln.kir::kir-name "eval-" (incf *native-compile-count*))))

@@ -1,4 +1,4 @@
-;;;; Heap images (docs/15): KILN.SYS:SAVE-IMAGE, as SBCL's
+;;;; Heap images: KILN.SYS:SAVE-IMAGE, as SBCL's
 ;;;; SAVE-LISP-AND-DIE, without the dying.
 
 (in-package #:kiln.kernel)

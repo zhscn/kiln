@@ -1,4 +1,4 @@
-//! Heap images (docs/15-heap-image.md).
+//! Heap images.
 //!
 //! `kiln_rt_save_image` writes the objects reachable from the static
 //! roots (and a toplevel function) into a file, laid out as they will be
@@ -10,7 +10,7 @@
 //! The image region is outside MMTk's spaces: its objects never move and
 //! are never freed. They may come to point into the heap, so every
 //! collection scans the region for such slots (there is no write barrier
-//! yet, docs/15 §4).
+//! yet).
 //!
 //! An image is only valid for the executable that wrote it: code and
 //! static data are at fixed addresses (the executables are not

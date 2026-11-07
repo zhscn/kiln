@@ -757,8 +757,7 @@
 ;;; kiln: generic functions whose lambda lists have only required
 ;;; parameters, at most six, are called without making a list of the
 ;;; arguments: the discriminating function has those parameters, and so
-;;; do the effective method functions of their call histories (docs/10
-;;; §26 of kiln).
+;;; do the effective method functions of their call histories.
 
 ;;; The slots are read directly (kiln's %SLOT): these functions run when
 ;;; a generic function misses, and the readers are generic functions.

@@ -14,7 +14,7 @@ cg=$root/target/debug/kiln-cg
 launcher=$root/target/debug/libkiln_launcher.a
 
 if [ $# -gt 0 ]; then sources=("$@"); else sources=("$root"/tests/*/*.lisp); fi
-# Absolute names: they are in the debug info of the KIR (docs/17), which
+# Absolute names: they are in the debug info of the KIR, which
 # same-kir tests compare.
 for i in "${!sources[@]}"; do sources[i]=$(realpath "${sources[i]}"); done
 # shellcheck disable=SC2206
@@ -29,7 +29,7 @@ if [ $# -eq 0 ]; then
   sources=("${fast[@]}")
 fi
 # A test NAME.lisp with a file NAME.same-kir prints a module compiled on
-# kiln (docs/11 §8, §9): its expected output is the KIR that SBCL made, in
+# kiln: its expected output is the KIR that SBCL made, in
 # the same session, of the test or the module (kernel, clos...) that the
 # file names. Such a test is run too.
 for src in "${sources[@]}"; do
@@ -50,7 +50,7 @@ args=(--eval "(defvar *session* (kiln.compiler:make-session))"
 # Tests named clos-*.lisp run with the CLOS module loaded after the kernel,
 # fe-*.lisp also with the front-end module after it, ev-*.lisp with the
 # eval module after CLOS, co-*.lisp with the front-end, eval and compiler
-# modules (docs/11 §3).
+# modules.
 need_clos=0
 need_fe=0
 need_ev=0
@@ -79,7 +79,7 @@ for src in "${sources[@]}"; do
   args+=(--eval "(kiln:compile-file-to-kir \"$src\" \"$build/$(basename "${src%.lisp}").kir\" :session *session*)")
 done
 if [ -n "${KILN_COMPILER:-}" ]; then
-  # kiln compiles the tests (docs/11 §10.1): KILN_COMPILER is a kiln built
+  # kiln compiles the tests: KILN_COMPILER is a kiln built
   # by tools/bootstrap.sh (build/boot/kiln1). SBCL only writes the
   # manifest; the build program compiles the five modules and then each
   # test, in one session, as SBCL does above.
@@ -92,7 +92,7 @@ if [ -n "${KILN_COMPILER:-}" ]; then
     --eval '(ql:quickload "kiln" :silent t)' \
     --eval "(kiln:write-manifest \"$build/modules.lisp-expr\" :programs '($programs))" \
     >"$build/compile.log" 2>&1 || { cat "$build/compile.log"; exit 1; }
-  # The five modules compiled are saved as a heap image (docs/15 §5),
+  # The five modules compiled are saved as a heap image,
   # reused while the compiler and the modules' sources are the same.
   image=$build/kiln-compiler.img
   key=$( { sha256sum "$compiler"
@@ -153,7 +153,7 @@ for src in "${sources[@]}"; do
     fi
     continue
   fi
-  # A test NAME.lisp with a file NAME.image saves a heap image (docs/15)
+  # A test NAME.lisp with a file NAME.image saves a heap image
   # as NAME.img and an executable with it appended as NAME.exe, running in
   # the build directory: only an AOT executable can. NAME.image is the
   # expected output of the runs from the image, with the usual heap,

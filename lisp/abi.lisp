@@ -1,6 +1,6 @@
 (in-package #:kiln.abi)
 
-;;;; Must match rust/kiln-rt. See docs/06-m0-abi.md.
+;;;; Must match rust/kiln-rt.
 
 ;;; Values: fixnum when the low bit is 0 (value = word >> 1); cons pointer
 ;;; when the low 3 bits are #b001; other object pointer when #b101.
@@ -20,7 +20,7 @@
 (defconstant +kind-bignum+ 6)          ; two's complement 64-bit digits
 (defconstant +kind-ratio+ 7)           ; [header, numerator, denominator]
 (defconstant +kind-double+ 8)          ; [header, IEEE bits]
-;;; CLOS (docs/10 §3).
+;;; CLOS.
 (defconstant +kind-instance+ 9)        ; [header, rack]
 (defconstant +kind-funcallable-instance+ 10) ; [header, entry, rack, function]
 (defconstant +kind-rack+ 11)           ; [header, class, stamp, slot list, slots...]
@@ -30,7 +30,7 @@
 (defconstant +function-kind-mask+ #xf7)
 
 ;;; Immediates: low 3 bits #b011, bits 3-7 the immediate kind, payload from
-;;; bit 8 (docs/09 §2).
+;;; bit 8.
 (defconstant +immediate-mask+ #xff)
 (defconstant +character-tag+ #x0b)
 (defconstant +character-shift+ 8)
@@ -80,7 +80,7 @@
 ;;; Number of words of the transfer area that are GC roots (normally 0).
 (defconstant +ctx-values-live+ 56)
 ;;; Addresses of the cursor and the limit of the context's bump allocator
-;;; (inline allocation, docs/07).
+;;; (inline allocation).
 (defconstant +ctx-alloc-cursor+ 64)
 (defconstant +ctx-alloc-limit+ 72)
 

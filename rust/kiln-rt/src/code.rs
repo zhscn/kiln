@@ -1,6 +1,6 @@
 //! The region for code compiled into the running image (COMPILE,
-//! docs/11 §11), at a fixed address so that heap images can hold it
-//! (docs/15 §6): kiln-cg's JIT allocates its code and data here, in
+//!), at a fixed address so that heap images can hold it
+//!: kiln-cg's JIT allocates its code and data here, in
 //! pages handed out in increasing order, and registers each module's
 //! tables through `register`, which keeps a copy for images.
 

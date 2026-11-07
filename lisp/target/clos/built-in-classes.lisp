@@ -1,5 +1,5 @@
-;;;; Built-in classes of the objects that are not standard objects
-;;;; (docs/10 §7). CLASS-OF maps an object to one of these by its tag and
+;;;; Built-in classes of the objects that are not standard objects.
+;;;; CLASS-OF maps an object to one of these by its tag and
 ;;;; kind (BUILT-IN-CLASS-NAME-OF). T and FUNCTION are Clostrophilia's.
 
 (in-package #:clostrophilia)
@@ -16,7 +16,7 @@
   (symbol t)
   (null symbol list)
   (cons list)
-  ;; Arrays (docs/10 §14): simple vectors and strings are native objects;
+  ;; Arrays: simple vectors and strings are native objects;
   ;; the other arrays are instances of Regalia's standard classes, which
   ;; are subclasses of these.
   (array t)

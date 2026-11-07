@@ -1,5 +1,5 @@
 ;;;; nontrivial-gray-streams, for Inravina and Invistra: its Gray stream
-;;;; names are Cyclosis' (docs/10 §18). STREAM-ELEMENT-TYPE and
+;;;; names are Cyclosis'. STREAM-ELEMENT-TYPE and
 ;;;; STREAM-EXTERNAL-FORMAT are the CL generic functions.
 
 (defpackage #:nontrivial-gray-streams

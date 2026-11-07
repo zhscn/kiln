@@ -1,4 +1,4 @@
-;;; The compiler on kiln (docs/11 §8, M5.3): the front end and lower.lisp
+;;; The compiler on kiln: the front end and lower.lisp
 ;;; compile co-compile-input.lisp to KIR, which is printed. The output
 ;;; must be the module that SBCL made of that file in the same session
 ;;; (co-compile.same-kir names it, tools/test.sh).

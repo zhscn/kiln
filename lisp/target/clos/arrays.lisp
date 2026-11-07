@@ -1,4 +1,4 @@
-;;;; Arrays (docs/10 §14). Simple vectors of T and simple strings are
+;;;; Arrays. Simple vectors of T and simple strings are
 ;;;; native objects (the kernel's). Every other array is an instance of
 ;;;; one of Regalia's classes: multidimensional arrays, specialized
 ;;;; vectors, and arrays that are adjustable, have a fill pointer or are

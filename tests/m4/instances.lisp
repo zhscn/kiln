@@ -1,4 +1,4 @@
-;; Instance representation primitives (docs/10 §3).
+;; Instance representation primitives.
 (defvar *i* (%primop :allocate-general-instance 'my-class 4))
 (%primop :set-standard-instance-access *i* -2 17)          ; stamp
 (%primop :set-standard-instance-access *i* -1 '(a b))      ; slot list

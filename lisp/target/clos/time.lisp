@@ -1,4 +1,4 @@
-;;;; Time (docs/10 §21), through the runtime's clocks (%PRIMOP :SYS). No
+;;;; Time, through the runtime's clocks (%PRIMOP :SYS). No
 ;;;; time zones yet, so no DECODE-UNIVERSAL-TIME.
 
 (in-package #:kiln.kernel)

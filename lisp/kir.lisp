@@ -1,6 +1,7 @@
 (in-package #:kiln.kir)
 
-;;;; KIR construction and printing. Grammar: docs/06-m0-abi.md.
+;;;; KIR construction and printing; the grammar is the reader's in
+;;;; rust/kiln-cg/src/kir.rs.
 ;;;;
 ;;;; KIR is represented as lists. Operators, variables, blocks and slots are
 ;;;; keywords (printed in lower case); names of module-level symbols are
@@ -92,7 +93,7 @@ keeps one definition."
 (defun kir-name (&rest parts)
   "The concatenation of PARTS: strings, symbols (their names) and integers
 (in decimal), as (FORMAT NIL \"~A~A...\" ...) makes it, without FORMAT,
-which is slow on kiln (docs/11 §10.2): names of variables, blocks and
+which is slow on kiln: names of variables, blocks and
 labels are made for every one of them."
   (let* ((strings (mapcar (lambda (x)
                             (etypecase x
@@ -176,7 +177,7 @@ entry block current. Unterminated blocks end with a trap."
 
 ;;; Printing. Each form is built in a string, written with one
 ;;; WRITE-STRING: on kiln, writing a character to a stream is a generic
-;;; function call and an unbuffered write (docs/11 §9).
+;;; function call and an unbuffered write.
 
 (defvar *out*)                          ; simple string being filled
 (defvar *fill*)                         ; its fill index

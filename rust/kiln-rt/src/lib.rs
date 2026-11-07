@@ -64,7 +64,7 @@ pub struct Export {
 /// The shared definitions a module exports, if it defines them: code
 /// compiled into the running image (`kiln_rt_jit` in kiln-cg) imports them
 /// instead of defining its own, since it compares function entries with
-/// the undefined-function entry (docs/11 §11).
+/// the undefined-function entry.
 pub const EXPORTED_NAMES: &[&str] = &[
     "kiln_undefined_function",
     "kiln_undefined_setf_function",
@@ -117,7 +117,7 @@ pub unsafe fn function_entry(fobj: u64) -> *const u8 {
 
 /// Size of the stack Lisp runs on: `KILN_STACK_SIZE` bytes if set, else
 /// 64 MiB. A main thread has 8 MiB, which deep recursions of the compiler
-/// on kiln exceed (docs/11 §9). The pages are reserved, not committed.
+/// on kiln exceed. The pages are reserved, not committed.
 fn lisp_stack_size() -> usize {
     std::env::var("KILN_STACK_SIZE")
         .ok()

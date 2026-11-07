@@ -1,4 +1,4 @@
-//! Object representation. See docs/07-m1-gc.md.
+//! Object representation.
 //!
 //! A Lisp value is a 64-bit word:
 //! - low bit 0: fixnum, value = word >> 1 (63-bit)
@@ -29,7 +29,7 @@ pub const KIND_BIGNUM: u64 = 6;
 pub const KIND_RATIO: u64 = 7;
 /// [header, IEEE 754 binary64 bits].
 pub const KIND_DOUBLE: u64 = 8;
-/// Standard object: [header, rack]. See docs/10-m4-clos.md §3.
+/// Standard object: [header, rack].
 pub const KIND_INSTANCE: u64 = 9;
 /// Funcallable standard object: [header, entry, rack, function]. A
 /// function too: kinds 2 and 10 differ only in bit 3.
@@ -42,7 +42,7 @@ pub const KIND_RACK: u64 = 11;
 pub const KIND_COMPLEX: u64 = 12;
 
 /// Immediates: low 3 bits 0b011, bits 3..8 the immediate kind, payload
-/// from bit 8. See docs/09-m3-kernel.md §2.
+/// from bit 8.
 pub const IMMEDIATE_MASK: u64 = 0xff;
 pub const CHARACTER_TAG: u64 = 0x0b;
 pub const CHARACTER_SHIFT: u32 = 8;
@@ -73,7 +73,7 @@ pub const UNBOUND_SLOT: u64 = 0x2b;
 /// setf function].
 /// `name` is a string object; `package` the package (NIL when
 /// uninterned; the compiler emits the package's name as a string, which
-/// the package system replaces with the package object, docs/10 §12); the
+/// the package system replaces with the package object); the
 /// TLS index is a fixnum, 0 until first bound (special.rs). Symbols
 /// emitted by the compiler are static; `package`, `function`, `value`,
 /// `plist` and `setf_function` are registered as GC roots.

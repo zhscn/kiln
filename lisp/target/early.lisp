@@ -1,4 +1,4 @@
-;;;; Early stand-ins for the condition system and FORMAT (docs/10 §7).
+;;;; Early stand-ins for the condition system and FORMAT.
 ;;;;
 ;;;; Predicament (conditions) and Invistra (FORMAT) need CLOS, and CLOS
 ;;;; needs ERROR and FORMAT, so until they are loaded:

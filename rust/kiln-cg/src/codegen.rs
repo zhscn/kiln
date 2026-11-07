@@ -35,7 +35,7 @@ pub struct StackMapInfo {
     pub offsets: Vec<u32>,
 }
 
-/// Debug information of one function (docs/17): its debug info object
+/// Debug information of one function: its debug info object
 /// and its call sites' source locations and variables, encoded as
 /// `kiln_rt::debug` reads them.
 pub struct FuncDebug {

@@ -1,6 +1,6 @@
 (in-package #:kiln.compiler)
 
-;;;; Multiple values (docs/08 §5.3).
+;;;; Multiple values.
 ;;;;
 ;;;; A function returns its primary value and the number of values; values
 ;;;; after the first are in ctx.values, which the next call overwrites. To

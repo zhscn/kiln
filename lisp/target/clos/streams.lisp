@@ -1,4 +1,4 @@
-;;;; Streams (docs/10 §16): kiln's client of Cyclosis, intrinsic: the CL
+;;;; Streams: kiln's client of Cyclosis, intrinsic: the CL
 ;;;; stream functions are Cyclosis'. The standard streams are POSIX file
 ;;;; streams on descriptors 0, 1 and 2, which read and write through the
 ;;;; runtime (kiln_rt_fd_read, kiln_rt_fd_write).
@@ -66,7 +66,7 @@
 ;;; A string goes out with one write: STREAM-WRITE-CHAR writes the octets
 ;;; of each character with its own (kiln's file streams have no buffer,
 ;;; so that their output and the runtime's PRINT stay in order). The
-;;; compiler on kiln writes its KIR this way (docs/11 §9).
+;;; compiler on kiln writes its KIR this way.
 (defmethod stream-write-string ((stream posix-file-stream) string &optional (start 0) end)
   (check-character-stream stream)
   (let ((end (or end (length string))))

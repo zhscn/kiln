@@ -1,4 +1,4 @@
-;;;; CHANGE-CLASS (docs/10 §18). An instance's class, stamp and slots are
+;;;; CHANGE-CLASS. An instance's class, stamp and slots are
 ;;;; in its rack: a new instance of the new class is made, the slots with
 ;;;; the same names copied, and the instance takes over its rack. The
 ;;;; slots that are new are then initialized with the initargs.

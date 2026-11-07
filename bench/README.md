@@ -1,6 +1,6 @@
 # Benchmarks
 
-- `compare.lisp`, `micro*.lisp`, `gf*.lisp`, `fe-read.lisp`: kiln's own (docs/14).
+- `compare.lisp`, `micro*.lisp`, `gf*.lisp`, `fe-read.lisp`: kiln's own.
 - `cl-bench/`: cl-bench (Eric Marsden, maintained by Daniel Kochmański; public domain per its `cl-bench.asd`; `files/deflate.lisp` is copyright Gilbert Baumann), from https://gitlab.common-lisp.net/ansi-test/cl-bench at commit a054e5f (2026-10-29): the benchmark sources, `misc/gabriel.lisp` and `misc/message.gz`; not the report generator.
 - `benchmarksgame/`: the SBCL programs of the Computer Language Benchmarks Game (revised BSD license, `benchmarksgame/LICENSE`), from its source archive (https://benchmarksgame-team.pages.debian.net/benchmarksgame/download/benchmarksgame-sourcecode.zip, downloaded 2026-11-07).
 

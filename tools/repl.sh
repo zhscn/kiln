@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds the kernel, CLOS and eval modules (SBCL, into build/repl) and an
 # executable linked from them (kiln-cg obj) if a source changed, then
-# starts kiln's read-eval-print loop (docs/11 §3). Forms are evaluated by
+# starts kiln's read-eval-print loop. Forms are evaluated by
 # Maclina's bytecode VM. With --jit, runs the modules with the JIT instead
 # (slower to start: it compiles them all).
 set -euo pipefail

@@ -1,5 +1,5 @@
 //! Debug information of compiled code and the inspection of Lisp frames
-//! (docs/17).
+//!.
 //!
 //! kiln-cg emits one record per function: its code range, its debug info
 //! object (a Lisp object that lower.lisp built: name, source file,

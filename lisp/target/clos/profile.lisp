@@ -1,4 +1,4 @@
-;;;; The sampling profiler (docs/14 §5; rust/kiln-rt/src/profile.rs). The
+;;;; The sampling profiler (rust/kiln-rt/src/profile.rs). The
 ;;;; PROFILE operations of the :FRAME primop start and stop it, and read
 ;;;; the samples: each a weight (timer ticks, or bytes in :ALLOC mode) and
 ;;;; the functions on the stack, innermost first, named here from their

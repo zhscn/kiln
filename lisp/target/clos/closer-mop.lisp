@@ -1,4 +1,4 @@
-;;;; closer-mop for the target (docs/10 §20). Libraries that use
+;;;; closer-mop for the target. Libraries that use
 ;;;; closer-mop are read with the host's CLOSER-MOP package; the
 ;;;; symbols they name get the functions and classes of Clostrophilia's
 ;;;; symbols of the same name (front.lisp, EXPAND-CLOSER-MOP-ALIASES).

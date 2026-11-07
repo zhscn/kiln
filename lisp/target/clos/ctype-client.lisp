@@ -1,4 +1,4 @@
-;;;; kiln's client of ctype (docs/10 §13). It replaces ctype's host.lisp
+;;;; kiln's client of ctype. It replaces ctype's host.lisp
 ;;;; and runtime.lisp, which compute their answers with the host's
 ;;;; SUBTYPEP and classes when they are loaded.
 

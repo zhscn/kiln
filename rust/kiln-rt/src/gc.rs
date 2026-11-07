@@ -1,4 +1,4 @@
-//! MMTk binding. See docs/07-m1-gc.md.
+//! MMTk binding.
 //!
 //! - Every object starts with a header word (see object.rs). MMTk object
 //!   references are header addresses; the forwarding pointer overwrites the
@@ -51,7 +51,7 @@ fn mmtk() -> &'static MMTK<Kiln> {
         let mut builder = MMTKBuilder::new();
         // Defaults; MMTK_* environment variables override them.
         // GC threads: one per core, at most 8 (kiln compiling its modules
-        // keeps hundreds of MiB live, docs/11 §9).
+        // keeps hundreds of MiB live).
         let threads = std::thread::available_parallelism()
             .map_or(2, |n| n.get().min(8))
             .to_string();

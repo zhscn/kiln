@@ -3,7 +3,7 @@
 ;;;; TYPEP knows the built-in atomic types and the common compound
 ;;;; specifiers itself; DEFTYPE names are expanded, class names go to CLOS
 ;;;; and other compound specifiers to ctype, once those are loaded.
-;;;; The compiler open-codes TYPEP for constant atomic types (docs/09 §10).
+;;;; The compiler open-codes TYPEP for constant atomic types.
 
 (in-package #:kiln.kernel)
 

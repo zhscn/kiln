@@ -7,7 +7,7 @@
 ;;;; #'CAR and (APPLY 'CAR ...) find a real function in the symbol's cell.
 ;;;;
 ;;;; Primops are the operations reachable only through
-;;;; (KILN.SYS:%PRIMOP :NAME ARGS...), for kernel code (docs/09 §4).
+;;;; (KILN.SYS:%PRIMOP :NAME ARGS...), for kernel code.
 
 (defmacro define-primitive (name lambda-list &body body)
   "Defines a primitive with a fixed number of arguments."
@@ -36,7 +36,7 @@
 
 ;;; Arithmetic. Fixnums are open-coded; other numbers, and fixnum
 ;;; overflow, take the slow path: a call to the kernel's two-argument
-;;; function (docs/09 §8), which dispatches on the number types.
+;;; function, which dispatches on the number types.
 
 (defun emit-check-fixnums (a b)
   "For operations defined on fixnums only."
@@ -299,7 +299,7 @@ are compared (no short circuit), which also checks every argument."
     (emit-error +err-not-list+ x)
     (start-block ok)))
 
-;;; No write barrier yet: only non-generational GC plans (docs/07 §2).
+;;; No write barrier yet: only non-generational GC plans.
 (define-primitive (setf car) (v x) (emit-check-cons x) (emit `(:store ,x ,+cons-car+ ,v)) v)
 (define-primitive (setf cdr) (v x) (emit-check-cons x) (emit `(:store ,x ,+cons-cdr+ ,v)) v)
 (define-primitive rplaca (x v) (emit-check-cons x) (emit `(:store ,x ,+cons-car+ ,v)) x)
@@ -315,8 +315,8 @@ are compared (no short circuit), which also checks every argument."
   (when (null vals) (fail "LIST* needs at least one argument"))
   (emit-list (butlast vals) (car (last vals))))
 
-;;; Primitives may return a second value, the number of values (docs/08
-;;; §5.3); those that return one value omit it.
+;;; Primitives may return a second value, the number of values;
+;;; those that return one value omit it.
 
 (define-nary-primitive values (vals)
   (when (> (length vals) (1+ +values-max+))
@@ -424,7 +424,7 @@ are compared (no short circuit), which also checks every argument."
     (emit-check-function f)
     (emit `(:call-rt ,(rt-call-on-new-stack) (,r) (:ctx ,f ,arg) ,(handler)))
     r))
-;;; Primops (docs/09 §4). Type checks are the kernel's job; primops that
+;;; Primops. Type checks are the kernel's job; primops that
 ;;; index check their index.
 
 (defun emit-kind-test (x kind)
@@ -635,7 +635,7 @@ cells (both by default)."
   s)
 (define-primop :symbol-plist (s) (copy-to-var `(:load ,s ,+symbol-plist+)))
 (define-primop :set-symbol-plist (s v) (emit `(:store ,s ,+symbol-plist+ ,v)) v)
-;; The package system sets the home package of a symbol (docs/10 §12), and
+;; The package system sets the home package of a symbol, and
 ;; makes a new keyword its own (global) value.
 (define-primop :set-symbol-package (s p) (emit `(:store ,s ,+symbol-package+ ,p)) p)
 (define-primop :set-symbol-global-value (s v) (emit `(:store ,s ,+symbol-value+ ,v)) v)
@@ -716,7 +716,7 @@ cells (both by default)."
 (define-primop :realpart (x) (copy-to-var `(:load ,x ,+vector-data+)))
 (define-primop :imagpart (x) (copy-to-var `(:load ,x ,(+ +vector-data+ 8))))
 ;;; The bits of a float, as unsigned fixnums (lower.lisp writes float
-;;; constants with them when it runs on kiln, docs/11 §8).
+;;; constants with them when it runs on kiln).
 (define-primop :single-float-bits (x) (copy-to-var `(:shl (:shr ,x 32) ,+fixnum-shift+)))
 (define-primop :double-float-high-bits (x)
   (copy-to-var `(:shl (:shr (:load ,x ,+vector-data+) 32) ,+fixnum-shift+)))
@@ -762,7 +762,7 @@ cells (both by default)."
   (emit-fatal-error `(:sar ,code ,+fixnum-shift+) x)
   (nil-value))
 
-;;; CLOS objects (docs/10 §3). A rack is [header, class, stamp, slot list,
+;;; CLOS objects. A rack is [header, class, stamp, slot list,
 ;;; slots...]; STANDARD-INSTANCE-ACCESS location L is rack word L + 4, so
 ;;; -2 is the stamp and -1 the slot list (Clostrophilia's convention).
 
@@ -850,7 +850,7 @@ and slots), zero-filled."
     (jump done)
     (start-block done)
     r))
-;;; File descriptor I/O (Cyclosis' POSIX file streams, docs/10 §16): VECTOR
+;;; File descriptor I/O (Cyclosis' POSIX file streams): VECTOR
 ;;; is a simple vector of octets as fixnums; the result is the count, or -1.
 ;;; The callers check the arguments.
 (define-primop :fd-write (fd vector start end)
@@ -861,7 +861,7 @@ and slots), zero-filled."
   (let ((r (new-var)))
     (emit `(:call-rt ,(rt-fd-read) (,r) (:ctx ,fd ,vector ,start ,end) :nil))
     r))
-;;; File system calls (pathnames and file streams, docs/10 §21): OP selects
+;;; File system calls (pathnames and file streams): OP selects
 ;;; the call (rtfun.rs, kiln_rt_sys); the result is a fixnum, minus errno
 ;;; on failure.
 (define-primop :sys (op a b c)
@@ -870,13 +870,13 @@ and slots), zero-filled."
     r))
 ;;; Compiles the KIR module in the string TEXT into the running image, its
 ;;; literal words filled from the simple vector LITERALS; the module's init
-;;; function object, not yet called, or NIL if kiln-cg failed (kiln_rt_jit,
-;;; docs/11 §11).
+;;; function object, not yet called, or NIL if kiln-cg failed
+;;; (kiln_rt_jit).
 (define-primop :jit (text literals)
   (let ((r (new-var)))
     (emit `(:call-rt ,(rt-jit) (,r) (:ctx ,text ,literals) :nil))
     r))
-;;; Writes a heap image (kiln_rt_save_image, docs/15): PATH is a simple
+;;; Writes a heap image (kiln_rt_save_image): PATH is a simple
 ;;; vector of octets, TOPLEVEL the function an executable started from
 ;;; the image calls, EXECUTABLE true to write a copy of the executable
 ;;; with the image appended. 0, or 1 if it failed.
@@ -884,7 +884,7 @@ and slots), zero-filled."
   (let ((r (new-var)))
     (emit `(:call-rt ,(rt-save-image) (,r) (:ctx ,path ,toplevel ,executable) :nil))
     r))
-;;; Frames (kiln_rt_frame, docs/17): the frame pointer of the calling
+;;; Frames (kiln_rt_frame): the frame pointer of the calling
 ;;; function, an aligned address, so a fixnum; and the inspection of
 ;;; frames, OP selecting what (debug.rs).
 (define-primop :frame-pointer ()
@@ -894,7 +894,7 @@ and slots), zero-filled."
     (emit `(:call-rt ,(rt-frame) (,r) (:ctx ,op ,a ,b) :nil))
     r))
 ;;; The shortest decimal representation of a float: WHICH selects the
-;;; significand (0), exponent (1) or sign (2) (rtfun.rs, docs/10 §17).
+;;; significand (0), exponent (1) or sign (2) (rtfun.rs).
 (define-primop :float-decimal (x which)
   (let ((r (new-var)))
     (emit `(:call-rt ,(rt-float-decimal) (,r) (:ctx ,x ,which) :nil))

@@ -1,5 +1,5 @@
 //! KIR: kiln's low-level IR, the interchange format between the Lisp
-//! compiler and this code generator. Grammar: docs/06-m0-abi.md.
+//! compiler and this code generator.
 //!
 //! KIR is close to Cranelift IR but uses mutable variables instead of SSA
 //! values and block parameters; cranelift-frontend builds the SSA form.
@@ -68,7 +68,7 @@ pub struct Func {
     pub labels: Vec<(String, u32)>,
     pub slots: Vec<(String, u32)>,
     pub blocks: Vec<Block>,
-    /// The function's debug info object (docs/17).
+    /// The function's debug info object.
     pub debug: Option<DebugRef>,
 }
 

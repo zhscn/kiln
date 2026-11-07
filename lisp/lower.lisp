@@ -1,6 +1,6 @@
 (in-package #:kiln.compiler)
 
-;;;; Lowering simplified Iconoclast ASTs to KIR. See docs/08-m2-front-end.md.
+;;;; Lowering simplified Iconoclast ASTs to KIR.
 ;;;;
 ;;;; The input comes from SIMPLIFY-AST: closures are converted (LABELS plus
 ;;;; SET-STATIC-ENVIRONMENT, READ-STATIC-ENVIRONMENT), assigned captured
@@ -35,7 +35,7 @@ which the module first names it, as SBCL's fasl dumper keeps them by
 identity: its label has that number, not its name, so two of the same name
 stay two symbols. A name ending in digits (a gensym's) gets that number
 instead: the host's own gensyms (SBCL's PCL makes some while compiling)
-shift the counter, so the numbers differ between hosts (docs/11 §9)."
+shift the counter, so the numbers differ between hosts."
   (or (gethash sym *uninterned-symbols*)
       (setf (gethash sym *uninterned-symbols*)
             (let* ((index (incf *uninterned-count*))
@@ -101,7 +101,7 @@ so local names carry the module's name; shared ones (symbols) do not."
 ;;; Operands are KIR expressions; data words are KIR data words. A constant
 ;;; is built as a data word, then turned into an operand.
 ;;;
-;;; Code compiled into the running image (COMPILE, docs/11 §11) refers to
+;;; Code compiled into the running image (COMPILE) refers to
 ;;; the image's objects: a literal that is not an immediate is a word of
 ;;; the module's literal words ("kiln_literals", static roots), which the
 ;;; loader fills in from a vector (kiln_rt_jit), and its data word is
@@ -239,7 +239,7 @@ name of its package as a string."
         ;; The package slot holds the package object once packages exist.
         ;; The TLS index (a fixnum) is not a GC root, but it changes as
         ;; the other words do: a heap image saves the static roots
-        ;; (docs/15).
+        ;;.
         (module-root obj 2)
         (module-root obj 3)
         (module-root obj 4)
@@ -258,7 +258,7 @@ name of its package as a string."
 (defconstant +most-negative-fixnum+ (- (ash 1 62)))
 
 ;;; The bits of floats, unsigned: in the host (SBCL) and on kiln (the
-;;; compiler module, docs/11 §8).
+;;; compiler module).
 (defun single-float-bits (x)
   #+sbcl (ldb (byte 32 0) (sb-kernel:single-float-bits x))
   #+kiln (kiln.sys:%primop :single-float-bits x))
@@ -336,7 +336,7 @@ name of its package as a string."
      ;; point to static data. Conses with the same car and cdr words are
      ;; one (similar constants coalesced, CLHS 3.2.4.4, as SBCL's
      ;; COMPILE-FILE does): the KIR does not depend on which conses the
-     ;; host happened to share (docs/11 §9). The label is made after the
+     ;; host happened to share. The label is made after the
      ;; car and cdr, unless the cons is part of a cycle.
      (or (gethash x *constants*)
          (multiple-value-bind (word pending) (gethash x *pending-conses*)
@@ -414,7 +414,7 @@ by ending the program."
     (emit-fatal-error code obj)))
 
 (defun emit-poll (&key stack)
-  "A poll point (docs/06 §7). With STACK (function entries), it also calls
+  "A poll point. With STACK (function entries), it also calls
 the slow path when the frame is below the context's stack limit; the slow
 path then returns true, and KILN.KERNEL::%STACK-EXHAUSTED signals the
 STORAGE-CONDITION."
@@ -512,7 +512,7 @@ word is a list of them and the flag is 1."
 (defvar *vars*)                         ; definition AST -> (kfunc . var or operand)
 (defvar *self*)                         ; variable holding the function object
 
-;;; Debug information (docs/17). Each function has a debug info object,
+;;; Debug information. Each function has a debug info object,
 ;;; #(NAME FILE START END VARIABLES): the name backtraces show, the source
 ;;; file and range of the function (or of its top-level form), and the
 ;;; names of its variables, a simple vector whose elements are symbols,
@@ -597,7 +597,7 @@ in the function being compiled."
   "The name of the variable DEFINITION for the debug info if it is written
 in the source: it occurs in the top-level form. Variables that macros
 introduce do not; their names are of no use, and differ between the host
-and kiln, where some macro packages have other names (docs/11 §3)."
+and kiln, where some macro packages have other names."
   (let ((name (and definition (ico:name definition))))
     (and name (symbolp name) (symbol-package name) *toplevel*
          (gethash name (toplevel-symbols *toplevel*))
@@ -665,7 +665,7 @@ visited once."
 (defmethod lower ((ast t))
   (fail "cannot compile ~S yet" (class-name (class-of ast))))
 
-;;; Multiple values (docs/08 §5.3). LOWER-MV returns the operand of the
+;;; Multiple values. LOWER-MV returns the operand of the
 ;;; primary value and the number of values: an integer, or a raw variable.
 ;;; Values after the first are in the context's transfer area (ctx.values)
 ;;; and must be consumed before the next call. Forms through which values
@@ -1135,7 +1135,7 @@ if needed (not a safepoint)."
 
 (defparameter *inline-alloc-limit* 128
   "Objects of at most this many bytes (a constant size) are allocated by
-compiled code itself, bumping the allocator's cursor (docs/07).")
+compiled code itself, bumping the allocator's cursor.")
 
 (defun emit-alloc (bytes header)
   "Allocates an object; returns a raw variable holding its untagged
@@ -1389,7 +1389,7 @@ DEFMETHOD's name), mangled, for the function's label: profiles show it."
 (defun local-function-label-name (name)
   "NAME's part of the label of a local function: a gensym's without its
 number, so that the labels do not depend on the image that compiles (the
-host or kiln, docs/11 §8)."
+host or kiln)."
   (mangle (cond ((and (symbolp name) (symbol-package name)) (symbol-name name))
                 ((symbolp name) (string-right-trim "0123456789" (symbol-name name)))
                 (t (princ-to-string name)))))
@@ -1481,7 +1481,7 @@ it is a function, the global function of F if it is a symbol."
   "Calls FOBJ with the argument operands VALS. Arguments beyond the
 register arguments go into the context's transfer area, stored after all
 arguments have been evaluated; the callee reads them before its first
-safepoint (docs/08 §4)."
+safepoint."
   (when (> (length vals) (+ +reg-args+ +values-max+))
     (fail "calls with more than ~D arguments are not supported"
           (+ +reg-args+ +values-max+)))
@@ -1512,7 +1512,7 @@ safepoint (docs/08 §4)."
     (float . floatp) (real . realp) (rational . rationalp)
     (single-float . kiln.kernel::single-float-p)
     (double-float . kiln.kernel::double-float-p))
-  "Atomic types whose TYPEP is a call to a predicate (docs/09 §10).")
+  "Atomic types whose TYPEP is a call to a predicate.")
 
 (defun call-ast (name arg-asts)
   (make-instance 'ico:application-ast
@@ -1571,7 +1571,7 @@ make that the test, with no key: none, or :TEST #'EQL, #'EQ, 'EQL or
   "(TYPEP OBJECT 'TYPE), TYPE a symbol that is not a standard type name
 (a class name, mostly): a call to KILN.KERNEL::%TYPEP-CACHED with a cache
 of this call: a cons of static data whose car is NIL or a fixnum, the
-stamp of the last object's class and the result (docs/10 §27). Holding
+stamp of the last object's class and the result. Holding
 no pointer, the cons need not be scanned by the GC."
   (let ((object (copy-to-var (lower object-ast)))
         (label (fresh-label "kiln_typep_cache_")))
@@ -1891,7 +1891,7 @@ be confused with a later activation at the same address."
 static cell when the module is complete) onto
 KILN.KERNEL::*MODULE-SYMBOL-TABLES*, then calls
 KILN.KERNEL::%REGISTER-MODULE-SYMBOLS if the package system has defined
-it (docs/10 §12). Nothing binds the variable while modules are loaded, so
+it. Nothing binds the variable while modules are loaded, so
 its global value is used directly."
   (let* ((sym (copy-to-var (word-operand (symbol-word 'kiln.kernel::*module-symbol-tables*))))
          (old (new-var))
@@ -1957,7 +1957,7 @@ the top-level forms in order, in chunks."
             (emit-lisp-call (copy-to-var (word-operand fobj)) '()))
           (emit `(:return ,(nil-value) 1)))))))
 
-;;; The module's symbol table, for the package system (docs/10 §12): a
+;;; The module's symbol table, for the package system: a
 ;;; simple vector of package descriptions #(name nicknames uses entries),
 ;;; one for each host package that is the home of a symbol of the module
 ;;; or that the module defined. ENTRIES holds a symbol and its status in
@@ -1973,7 +1973,7 @@ the top-level forms in order, in chunks."
 
 (defun target-package-nicknames (package)
   ;; Sorted, as the use list (SYMBOL-TABLE-LITERAL): their order differs
-  ;; between images (ALEXANDRIA's nicknames, docs/11 §9).
+  ;; between images (ALEXANDRIA's nicknames).
   (if (eq package (find-package '#:kiln-user))
       '("CL-USER")
       (sort (copy-list (package-nicknames package)) #'string<)))
@@ -2026,9 +2026,9 @@ use list only names packages that exist at run time."
   "Compiles the simplified top-level ASTS into a KIR module. The module's
 symbol table describes its symbols, the EXTRA-SYMBOLS and the symbols of
 the DEFINED-PACKAGES (host packages its DEFPACKAGE forms created) for the
-package system (docs/10 §12).
-IMAGE true: the module is to be loaded into the running image (docs/11
-§11); its literals are the image's objects, and it has no symbol table.
+package system.
+IMAGE true: the module is to be loaded into the running image; its
+literals are the image's objects, and it has no symbol table.
 Returns the module and the vector of its literals."
   (let ((*module* (make-kmodule module-name))
         (*image-literals* (and image (make-hash-table :test 'eq)))
@@ -2053,7 +2053,7 @@ Returns the module and the vector of its literals."
         (module-init (kiln.kir::kir-name init "_fobj"))
         (return-from compile-module (values *module* literals))))
     ;; Sorted by name: the order of a package's symbols differs between
-    ;; images (docs/11 §9).
+    ;; images.
     (dolist (sym (sort (copy-list extra-symbols) #'string< :key #'symbol-name))
       (symbol-word sym))
     ;; A package of the module has its external symbols, and those it

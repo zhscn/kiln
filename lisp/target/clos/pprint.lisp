@@ -1,4 +1,4 @@
-;;;; The pretty printer (docs/10 §25): kiln's client of Inravina,
+;;;; The pretty printer: kiln's client of Inravina,
 ;;;; intrinsic: PPRINT-LOGICAL-BLOCK, PPRINT-NEWLINE and the other CL
 ;;;; pretty printing functions, *PRINT-PPRINT-DISPATCH* and the dispatch
 ;;;; tables are Inravina's. The interface names that are not CL symbols

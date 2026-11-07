@@ -1,4 +1,4 @@
-;;;; The standard macros at run time (docs/11 §3): what Common-macros
+;;;; The standard macros at run time: what Common-macros
 ;;;; leaves to its client.
 
 (in-package #:kiln.kernel)
@@ -6,7 +6,7 @@
 ;;; Common-macros' definitions of the standard macros, before kiln's own
 ;;; replace some of them: the compile-time environment of a cross
 ;;; compilation starts with these, as the host's does with
-;;; COMMON-MACRO-DEFINITIONS' (lisp/cross.lisp, docs/11 §9).
+;;; COMMON-MACRO-DEFINITIONS' (lisp/cross.lisp).
 (defvar *common-macros*
   (let ((macros '()))
     (do-external-symbols (s '#:common-lisp)

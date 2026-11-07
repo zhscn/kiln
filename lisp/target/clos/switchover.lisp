@@ -1,5 +1,4 @@
-;;;; The switchover from the early functions to the MOP (docs/10 §7,
-;;;; point 7).
+;;;; The switchover from the early functions to the MOP.
 ;;;;
 ;;;; While the early discriminating functions are still installed, every
 ;;;; generic function gets the standard method combination and is

@@ -1,4 +1,4 @@
-;;;; Compiling in the running image (docs/11 §8, M5.3): IMAGE-CLIENT. Loaded
+;;;; Compiling in the running image: IMAGE-CLIENT. Loaded
 ;;;; after front.lisp and cross.lisp. The compile-time environment is the run-time one,
 ;;;; as in other implementations: macros, special variables and constants
 ;;;; are the global environment's, and the code evaluated at compile time
@@ -30,7 +30,7 @@
              (kiln.cmd:get-setf-expansion client expansion environment))
             (t
              ;; A SETF expander defined later changes the expansion
-             ;; (docs/18).
+             ;;.
              (when (and (consp place) (symbolp (first place)))
                (note-dependency :setf (first place)))
              (call-next-method client place environment))))))
@@ -49,7 +49,7 @@
   environment)
 
 ;;; The global macros and constants the compiled code uses are its
-;;; dependencies (docs/18); so are names not defined yet, which a later
+;;; dependencies; so are names not defined yet, which a later
 ;;; DEFMACRO may define.
 (defmethod trucler:describe-variable (client (environment run-time-environment) name)
   (declare (ignore client))

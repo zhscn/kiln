@@ -1,4 +1,4 @@
-//! The sampling profiler (docs/13 §8, docs/14 §5).
+//! The sampling profiler.
 //!
 //! CPU (wall-clock) mode: a timer thread counts ticks and sets the
 //! profiled context's `poll_flag`; the next poll point (function entries,

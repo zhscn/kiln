@@ -143,7 +143,7 @@ kiln 编译自己的五个模块（一个阶段，见 [bootstrap.md](../design/b
 | 第一轮优化（`if` 直接分支、闭包变量用到时再读、Iconoclast 的 `set-slot`、初始化计划、类名 `typep` 缓存、`member`/`assoc`、`logand` 等） | 525 秒 | CLOS 模块约 268 → 148 秒；完整自举约 30 → 19 分钟 |
 | 第二轮（判别闭包的缓存表、`slot-value` 和类名 `typep` 的全局缓存、名字不用 `format` 生成、文件流批量写入） | 321 秒 | kernel 7 秒、CLOS 88 秒、frontend 3 秒、eval 28 秒、compiler 193 秒；完整自举约 12 分钟。SBCL 编同样的五个模块约 50 秒，kiln 慢 6 倍左右（最初是 11 倍） |
 | 加上调试信息 | 339 秒 | 生成的代码不变，没有变慢 |
-| cl-bench 那一批 ANSI 补全之后 | 365 秒 | |
+| 依赖追踪（M6.4）、cl-bench 那一批 ANSI 补全和函数入口的栈检查之后 | 365 秒 | 这期间没有单独计时，三者各占多少不清楚 |
 | 性能第一批：静态对象的身份哈希写进 header（`%slot` 缓存给槽名做哈希，原来每次进 runtime）、EQL 分派命中移到表头、Iconoclast 的 walker 按类的计划遍历且只在子节点变了时写槽、Salmagundi 的桶数取 2 的幂 | 314 秒 | 定位用的是 `KILN_FUNCTION_MAP` 加 perf |
 | 性能第二批：`make-instance` 的快路径 | 306 秒 | |
 | 性能第三批：`call-next-method` 按缓存的槽位置读方法函数、单参数泛函的缓存项直接读槽、哈希表改成开放寻址、`replace` 直接复制向量 | 293 秒 | SBCL 编同样的五个模块约 50 秒 |

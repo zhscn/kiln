@@ -1,4 +1,4 @@
-;;; COMPILE to native code (docs/11 §11, M5.5): the compiler module
+;;; COMPILE to native code: the compiler module
 ;;; compiles lambda expressions into the running image (kiln_rt_jit).
 
 (defun native-p (f)

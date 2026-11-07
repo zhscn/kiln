@@ -1,4 +1,4 @@
-;;;; The eval module (docs/11 §3, M5.1): the standard macros at run time,
+;;;; The eval module: the standard macros at run time,
 ;;;; then Maclina's evaluator.
 ;;;;
 ;;;; Common-macros is compiled for the target with its package renamed to

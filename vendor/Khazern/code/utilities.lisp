@@ -3,7 +3,7 @@
 ;;; kiln: whether FORM is a constant form, conservatively: a self-evaluating
 ;;; object, a constant variable or a QUOTE form. CL:CONSTANTP may also fold
 ;;; calls of pure functions (SBCL's does), so the host and kiln would
-;;; expand the same LOOP differently (docs/11 §9).
+;;; expand the same LOOP differently.
 (defun constant-form-p (form &optional environment)
   (if (consp form)
       (eq (first form) 'quote)
