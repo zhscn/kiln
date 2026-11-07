@@ -112,6 +112,8 @@ SBCL 快在它的前端，即 Lisp 语义层的变换和类型推导，而不是
 4. **库的快速路径**：打印 fixnum 和字符串、`format` 的常见指令、字符串流的批量写入，绕开逐字符的泛函调用。
 5. **类型推导和浮点拆箱**：局部推导出 double 之后不再装箱，算术内联（13 §4）。
 6. **`dynamic-extent` 和逃逸分析**：`&rest` 列表、handler、闭包在栈上分配，同时减轻 GC（13 §4）。
+7. **分代 GC**：现在的 SemiSpace 每次复制全部存活数据，没有分代；编译器产生大量很快死掉的对象。换成 MMTk 的 GenCopy、GenImmix 一类 plan，需要在编译出的代码里加写屏障。kiln 有精确栈图，不需要像 SBCL 的 gencgc 那样保守地钉住对象。先量 GC 时间的占比。
+8. **无 header 的 cons**：cons 现在是 `[header, car, cdr]` 24 字节，SBCL 是 16 字节。做法：所有 header 的低 3 位用保留的 tag `111`，任何 Lisp 值都不会长成 header，于是对象的第一个字不是 header 就是 cons（SBCL 遍历堆也是这样区分的）；MMTk 的 forwarding bits 已在 side metadata，forwarding 指针写在偏移 0 覆盖 car 也没问题。难点是身份哈希：cons 没有 header 就没有地方存，改为按地址哈希，GC 确实移动了某张表的键时才标记这张表需要重新哈希（SBCL 的做法）。SemiSpace 下每次 GC 都会移动全部对象，所以排在分代 GC 之后。先量 cons 在分配量里的占比（按 kind 统计分配字节数）。NIL 同时带 list tag 的技巧收益很小，不做。
 
 ## 4. 测量时发现的问题
 
