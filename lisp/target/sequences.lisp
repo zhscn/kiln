@@ -440,11 +440,36 @@ other, the shorter's length and the rest of the longer after it."
         (setf (aref seq i) item))))
 
 (defun replace (target source &key (start1 0) end1 (start2 0) end2)
-  (let ((items (seq-list source start2 end2)) (i start1))
-    (dolist (x items target)
-      (when (or (and end1 (>= i end1)) (>= i (length target))) (return target))
-      (if (listp target) (setf (nth i target) x) (setf (aref target i) x))
-      (setq i (+ i 1)))))
+  (let* ((end1 (or end1 (length target)))
+         (end2 (or end2 (length source)))
+         (n (min (- end1 start1) (- end2 start2))))
+    (cond ((<= n 0) target)
+          ((and (vectorp target) (vectorp source))
+           (if (and (simple-vector-p target) (simple-vector-p source))
+               ;; The same vector with the target after the source: copy
+               ;; backwards, as if the source were copied first.
+               (if (and (eq target source) (> start1 start2))
+                   (do ((i (- n 1) (- i 1))) ((< i 0) target)
+                     (setf (svref target (+ start1 i)) (svref source (+ start2 i))))
+                   (dotimes (i n target)
+                     (setf (svref target (+ start1 i)) (svref source (+ start2 i)))))
+               (if (and (eq target source) (> start1 start2))
+                   (do ((i (- n 1) (- i 1))) ((< i 0) target)
+                     (setf (aref target (+ start1 i)) (aref source (+ start2 i))))
+                   (dotimes (i n target)
+                     (setf (aref target (+ start1 i)) (aref source (+ start2 i)))))))
+          (t
+           ;; A list on either side: the source's elements first (they may
+           ;; be the target's).
+           (let ((items (seq-list source start2 (+ start2 n))))
+             (if (listp target)
+                 (let ((tail (nthcdr start1 target)))
+                   (dolist (x items target)
+                     (setf (car tail) x tail (cdr tail))))
+                 (let ((i start1))
+                   (dolist (x items target)
+                     (setf (aref target i) x)
+                     (setq i (+ i 1))))))))))
 
 ;;; Sorting: a stable merge sort on lists.
 

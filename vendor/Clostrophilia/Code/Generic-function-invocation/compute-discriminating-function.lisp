@@ -817,11 +817,13 @@
                  (name (%slot (%slot method '%slot-definition) '%name)))
              (if (consp location)
                  (lambda (a0) (declare (ignore a0)) (car location))
-                 (lambda (a0)
-                   (let ((value (kiln.sys:%primop :standard-instance-access a0 location)))
-                     (if (eq value +unbound-slot-value+)
-                         (slot-unbound (class-of a0) a0 name)
-                         value))))))
+                 (note-reader-closure
+                  (lambda (a0)
+                    (let ((value (kiln.sys:%primop :standard-instance-access a0 location)))
+                      (if (eq value +unbound-slot-value+)
+                          (slot-unbound (class-of a0) a0 name)
+                          value)))
+                  location))))
           ((and (eq class (find-class 'standard-writer-method)) (= arity 2))
            (let ((location (%slot method '%slot-location)))
              (if (consp location)
@@ -899,16 +901,42 @@
           do (setf size (+ size size)))
     size))
 
-(defun single-dispatch-miss (cache index stamp initial)
+;;; kiln: slot readers. The effective method of a reader generic function
+;;; for a class whose slot is local is a closure reading the slot's
+;;; location (SPREAD-METHOD-CALL); a direct-mapped table maps such closures
+;;; to their locations (a collision only loses the shortcut). The cache of
+;;; a one-parameter discriminating closure then holds the location instead
+;;; of the closure, and a hit reads the slot itself: one call less for each
+;;; slot read through a reader.
+(defvar *reader-closures* (kiln.kernel::make-simple-vector (* 2 4096) nil))
+
+(defun reader-closure-index (closure)
+  (* 2 (kiln.sys:%primop :fixnum-logand (kiln.sys:%primop :identity-hash closure) 4095)))
+
+(defun note-reader-closure (closure location)
+  (let ((index (reader-closure-index closure)))
+    (setf (svref *reader-closures* index) closure
+          (svref *reader-closures* (+ index 1)) location))
+  closure)
+
+(defun reader-closure-location (function)
+  (let ((index (reader-closure-index function)))
+    (and (eq (svref *reader-closures* index) function)
+         (svref *reader-closures* (+ index 1)))))
+
+(defun single-dispatch-miss (cache index stamp initial &optional fuse-readers)
   "The effective method function for STAMP from the automaton INITIAL,
 entered in CACHE at INDEX; or NIL. Out of line, so that the
-discriminating closure's hit path needs no frame for it."
+discriminating closure's hit path needs no frame for it. With
+FUSE-READERS, a slot reader's closure is entered as its slot's location."
   (let ((state (automaton-transition initial stamp)))
     (if (consp state)
         (progn
           ;; The stamp last: a reader never sees it with another function.
           (setf (svref cache index) nil
-                (svref cache (+ index 1)) (cdr state)
+                (svref cache (+ index 1)) (or (and fuse-readers
+                                                   (reader-closure-location (cdr state)))
+                                              (cdr state))
                 (svref cache index) stamp)
           (cdr state))
         nil)))
@@ -936,8 +964,29 @@ discriminating closure's hit path needs no frame for it."
                     ,@(loop for n from 1 to 6
                             collect `(,n (ecase position
                                            ,@(loop for k from 0 below n
-                                                   collect `(,k (dispatcher ,n ,k)))))))))
-      (dispatchers))))
+                                                   collect `(,k (dispatcher ,n ,k))))))))
+               ;; One parameter: an entry may be a slot reader's location.
+               (reader-dispatcher ()
+                 `(lambda (a0)
+                    (let* ((stamp (argument-stamp a0))
+                           (index (let ((i (kiln.sys:%primop :fixnum-logand stamp mask)))
+                                    (+ i i))))
+                      (if (eq (svref cache index) stamp)
+                          (let ((entry (svref cache (+ index 1))))
+                            (if (kiln.sys:%primop :fixnump entry)
+                                (let ((value (kiln.sys:%primop :standard-instance-access a0 entry)))
+                                  (if (eq value +unbound-slot-value+)
+                                      (funcall (cdr (automaton-transition initial stamp)) a0)
+                                      value))
+                                (funcall entry a0)))
+                          (let ((function (single-dispatch-miss cache index stamp initial t)))
+                            (if function
+                                (funcall function a0)
+                                (default-discriminating-function
+                                 generic-function (list a0) profile))))))))
+      (if (eql arity 1)
+          (reader-dispatcher)
+          (dispatchers)))))
 
 (defun double-dispatch-miss (cache index s1 s2 initial)
   "As SINGLE-DISPATCH-MISS, for two stamps: entries are (S1 S2 function)."

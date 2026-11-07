@@ -106,6 +106,11 @@ Each patched place is marked with a `kiln:` comment.
   dispatch cache's list: the builder protocol's `relate`, with EQL
   specializers on dozens of relation kinds, scanned the whole list at
   every call (3.5% of kiln compiling itself).
+- Slot readers: `spread-method-call` records the closure that reads a
+  local slot with its location in a direct-mapped table, and the
+  discriminating closure of a one-parameter generic function caches the
+  location instead of the closure, reading the slot itself on a hit (an
+  unbound slot goes through the closure, which signals `slot-unbound`).
 
 ## Predicament patches
 
@@ -153,9 +158,13 @@ Under `#+kiln` (kiln reads target sources with its own features):
   in the order of the keys' hashes (identity hashes: different in every
   run). Macro expanders iterate over hash tables (Khazern's destructuring
   temporaries), and kiln compiling kiln must make SBCL's KIR (docs/11 §9).
-- The number of buckets is a power of two: a fixnum hash's bucket is its
-  low bits (`logand`), not its remainder, and a table that grows doubles
-  (the rehash size is a hint, CLHS `make-hash-table`).
+- The table is no longer made of buckets (the class keeps its name): it
+  is open addressing, as CPython's dict. The entries are in three vectors
+  (keys, values, hashes) in iteration order; an index vector, a power of
+  two long and at most half used, maps a hash to an entry by linear
+  probing, comparing the stored hashes first. Nothing is allocated per
+  entry; the vectors double when full (the rehash size and threshold are
+  hints, CLHS `make-hash-table`).
 
 ## Parcl patches
 

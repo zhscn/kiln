@@ -672,18 +672,34 @@ superclasses and metaclasses come first or are built already."
                    *deferred-definitions*)
              name)))
 
+;;; CALL-NEXT-METHOD reads the next method's functions at every call: the
+;;; locations of the two slots are cached for the last slot list seen
+;;; (methods are nearly all STANDARD-METHODs), instead of %SLOT's lookup.
+(defvar *method-slots* nil)
+(defvar *method-function-location* nil)
+(defvar *method-fast-function-location* nil)
+
+(defun method-slot-location (method fast)
+  (let ((slots (standard-instance-access method -1)))
+    (unless (eq slots *method-slots*)
+      (setf *method-function-location* (%slot-location method '%function)
+            *method-fast-function-location* (%find-slot-location method '%fast-function)
+            *method-slots* slots))
+    (if fast *method-fast-function-location* *method-function-location*)))
+
 (defun kiln.sys:%method-function (method)
   ;; A next method is a method metaobject, or during the bootstrap a
   ;; function standing for the rest of the effective method.
   (if (functionp method)
       method
-      (%slot method '%function)))
+      (standard-instance-access method (method-slot-location method nil))))
 
 (defun kiln.sys:%method-fast-function (method)
   ;; NIL for the functions standing for the rest of an effective method.
   (if (functionp method)
       nil
-      (%slot method '%fast-function)))
+      (let ((location (method-slot-location method t)))
+        (and location (standard-instance-access method location)))))
 
 ;;; Accessor methods of the braid's classes. The method functions read
 ;;; the slot by name, since its location can differ in subclasses.
