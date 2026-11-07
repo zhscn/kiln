@@ -623,32 +623,60 @@ true if the variable holds the cell of the variable NAME."
 
 ;;; AST walking
 
+;;; The children of an AST are the ASTs in the slots that its
+;;; SLOT-DESIGNATORS name, except for two kinds of slots that link to ASTs
+;;; elsewhere: those of name ASTs (names of variables, functions, blocks
+;;; and tags), which link definitions and references to each other, and
+;;; the TAGBODY-AST slot of a segment, which links it back to its
+;;; tagbody. Every other slot holds ASTs of its own: the front end makes a
+;;; new AST for each place, and Iconoclast's transformations move ASTs
+;;; rather than copy references to them (inlining a local function moves
+;;; its body to its only call). So the children make a tree, and a walk
+;;; needs no table of the nodes it has seen.
+
+(defvar *children-plans* (make-hash-table :test 'eq))
+                                        ; class -> (NIL reader...)
+
+(defun children-plan (ast)
+  "The readers of the child slots of AST's class, after a NIL."
+  (let ((class (class-of ast)))
+    (or (gethash class *children-plans*)
+        (setf (gethash class *children-plans*)
+              (cons nil
+                    (unless (typep ast '(or ico:function-name-ast ico:variable-name-ast
+                                         ico:block-name-ast ico:tag-ast))
+                      (loop for (cardinality reader) in (ico:slot-designators ast)
+                            when (and (member cardinality '(ico:? 1 *))
+                                      (not (and (eq reader 'ico:tagbody-ast)
+                                                (typep ast 'ico:tagbody-segment-ast))))
+                              collect (fdefinition reader))))))))
+
+(defun map-children (function ast)
+  "Calls FUNCTION on each child of AST, in order."
+  (dolist (reader (cdr (children-plan ast)))
+    (let ((v (funcall reader ast)))
+      (cond ((null v))
+            ((consp v)
+             (dolist (x v)
+               (when (typep x 'ico:ast)
+                 (funcall function x))))
+            ((typep v 'ico:ast)
+             (funcall function v))))))
+
 (defun ast-children (ast)
-  (unless (typep ast '(or ico:function-name-ast ico:variable-name-ast
-                       ico:block-name-ast ico:tag-ast))
-    (loop for designator in (ico:slot-designators ast)
-          for cardinality = (first designator)
-          when (member cardinality '(ico:? 1 *))
-            append (let ((v (funcall (second designator) ast)))
-                     (cond ((null v) '())
-                           ((listp v) (remove-if-not (lambda (x) (typep x 'ico:ast)) v))
-                           ((typep v 'ico:ast) (list v)))))))
+  (let ((children '()))
+    (map-children (lambda (child) (push child children)) ast)
+    (nreverse children)))
 
 (defun walk (function ast)
   "Calls FUNCTION on AST and its descendants, in preorder, with the
 innermost LOCAL-FUNCTION-AST containing the node below the starting point
-(the starting point included), or NIL if there is none. Some slots link
-back to ancestors (a segment to its tagbody), so each node is visited
-once."
-  (let ((seen (make-hash-table :test 'eq)))
-    (labels ((visit (ast owner)
-               (unless (gethash ast seen)
-                 (setf (gethash ast seen) t)
-                 (funcall function ast owner)
-                 (let ((owner (if (typep ast 'ico:local-function-ast) ast owner)))
-                   (dolist (child (ast-children ast))
-                     (visit child owner))))))
-      (visit ast nil))))
+(the starting point included), or NIL if there is none."
+  (labels ((visit (ast owner)
+             (funcall function ast owner)
+             (let ((owner (if (typep ast 'ico:local-function-ast) ast owner)))
+               (map-children (lambda (child) (visit child owner)) ast))))
+    (visit ast nil)))
 
 ;;; What lowering asks about a top-level form, found in one walk of the
 ;;; form before it is lowered (lowering does not change the AST; the ASTs
