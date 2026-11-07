@@ -198,6 +198,10 @@ entry block current. Unterminated blocks end with a trap."
 
 (defvar *out*)                          ; simple string being filled
 (defvar *fill*)                         ; its fill index
+;;; A string that PRINT-KIR may fill, kept by PRINT-MODULE from one form
+;;; to the next: a form started in a new small string, which grew by
+;;; copying until the form fit, and REPLACE copies a character at a time.
+(defvar *spare-out* nil)
 
 (defun out-char (c)
   (when (= *fill* (length *out*))
@@ -236,9 +240,11 @@ entry block current. Unterminated blocks end with a trap."
      (out-char #\)))))
 
 (defun print-kir (x stream)
-  (let ((*out* (make-string 256)) (*fill* 0))
+  (let ((*out* (or *spare-out* (make-string 256))) (*fill* 0))
     (out-kir x)
-    (write-string *out* stream :end *fill*)))
+    (write-string *out* stream :end *fill*)
+    (when *spare-out*
+      (setf *spare-out* *out*))))
 
 (defun out-module (module)
   (out-string "(module ")
@@ -269,6 +275,10 @@ entry block current. Unterminated blocks end with a trap."
 
 (defun print-module (module stream)
   ;; Form by form: the text of a large module is large.
+  (let ((*spare-out* (make-string 4096)))
+    (print-module-forms module stream)))
+
+(defun print-module-forms (module stream)
   (write-string "(module " stream)
   (print-kir (kmodule-name module) stream)
   (write-string (string #\Newline) stream)
