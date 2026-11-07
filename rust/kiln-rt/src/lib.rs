@@ -5,6 +5,7 @@ pub mod code;
 pub mod context;
 pub mod debug;
 pub mod gc;
+pub mod gcstats;
 pub mod image;
 pub mod number;
 pub mod object;

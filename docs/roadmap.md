@@ -57,7 +57,7 @@
 6. **`dynamic-extent` 和逃逸分析**：`&rest` 列表、handler（现在在堆上分配）、闭包在栈上分配，同时减轻 GC。
 7. **局部函数**：对不逃逸的局部函数做 lambda lifting，或者内联小的局部函数，免去闭包对象被 spill 后在循环里的搬移（Maclina 的主循环就是这样）。
 8. inline 支持 `&optional`、`&key` 参数。
-9. **分代 GC**：现在的 SemiSpace 每次复制全部存活数据，编译器产生大量很快死掉的对象。换成 MMTk 的 GenCopy、GenImmix 一类 plan，需要在编译出的代码里加写屏障。kiln 有精确栈图，不需要像 SBCL 的 gencgc 那样保守地钉住对象。先用分析器量 GC 时间的占比。Immix 的大堆配置也可以试。
+9. **分代 GC**：已量过（[performance.md](research/performance.md) 的“GC”）：自举时 GC 停顿约占墙钟的 9%、worker 占 CPU 的 22%，复制的字节 93% 是反复复制的老对象，新对象只有约 1.1% 活过下一次回收（nursery 从 4 GiB 缩到 256 MiB 也不变）。估计分代后 GC 停顿从 31–39 秒降到 6–9 秒，扣掉写屏障净省墙钟的 4–6%。设计和实施步骤见 [gc.md](design/gc.md) 的“Generational GC plan”：先 GenCopy 验证屏障，再换 GenImmix；快照区同时改成 card table。另外两项不依赖分代、要改 MMTk 的：MMTk 写死的清零（约 2.5% 的 CPU），GC 并行度低（8 个线程平均只有约 3 个在干活，线程数不影响停顿）。
 10. **无 header 的 cons**：cons 现在 24 字节，SBCL 是 16 字节。做法：所有 header 的低 3 位用保留的 tag `111`，任何 Lisp 值都不会长成 header，于是对象的第一个字不是 header 就是 cons（SBCL 遍历堆也是这样区分的）；forwarding bits 已在 side metadata，forwarding 指针写在偏移 0 覆盖 car 也没问题。难点是身份哈希：cons 没有 header 就没有地方存，改为按地址哈希，GC 确实移动了某张表的键时才标记这张表需要重新哈希（SBCL 的做法）。SemiSpace 下每次 GC 都移动全部对象，所以排在分代 GC 之后。先量 cons 在分配量里的占比（按 kind 统计分配字节数）。NIL 同时带 list tag 的技巧收益很小，不做。
 11. **CLOS 调用点的内联缓存**，以及 `&rest` 泛函、方法组合不再分配参数列表。
 12. **kiln-cg**：并行构造 CLIF（现在需要 `&mut Module`），减少整个程序的 KIR 和 CLIF 同时在内存里（kiln0 链接时峰值约 9.5 GB）；以 KIR 哈希为键的机器码缓存。

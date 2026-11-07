@@ -171,6 +171,76 @@ kiln 编译自己的五个模块（一个阶段，见 [bootstrap.md](../design/b
 - kiln0：`kiln-cg` 编六个 KIR 约 15 秒，峰值内存约 9.5 GB；可执行文件约 120 MB；启动（各模块的顶层初始化）约 0.65 秒。stage1 峰值 RSS 约 9 GB（8 GiB 堆）。
 - kiln 上编 `co-compile`（约 100 行）：最初 AOT 程序连启动 12 秒（SBCL 不到 1 秒），修掉自动机重建等之后 2.3 秒。
 
+## GC
+
+kiln0 编译五个模块（一个自举阶段），SemiSpace，固定 8 GiB 堆（每个半区 4 GiB），GC 线程 8 个，debug 构建的 runtime（MMTk 是 opt-level 2、关掉 debug assertions），`KILN_GC_STATS`（[gc.md](../design/gc.md)）。测量时机器上还有别的任务在跑（load 4–18），同一个程序的墙钟时间在 380–460 秒之间波动，所以下面只比较 GC 自己的量；单次运行里 mutator 时间的差别看不出 3% 以下的变化。
+
+### 基本数字
+
+| 量 | 值 |
+|---|---|
+| 回收次数 | 66 |
+| 分配总量 | 约 250 GB（255 560 MiB），约 600 MB/s |
+| 每次回收后的存活量 | 平均 490 MiB，最多 1.24 GiB；kernel 和 CLOS 阶段 30–700 MiB，编译 compiler 模块时从 100 MiB 涨到 1.2 GiB |
+| 复制总量 | 32 GB，分配量的 12.7% |
+| 停顿 | 合计 31–39 秒（三次运行；墙钟的 8.5–9%），平均 0.46–0.59 秒，最长 2.2–2.8 秒 |
+| GC worker 的 CPU | 89–109 秒，整个进程 CPU 的 21–23%（perf 的采样也是 21.5%） |
+| static root | 108 401 个 |
+| 峰值 RSS | 约 10 GB |
+
+停顿和存活量成正比，约 1.1 秒每 GB：存活 100 MiB 时 0.19 秒，500 MiB 时约 0.9 秒，1.2 GiB 时 1.6 秒，个别回收到 3 秒。
+
+### 复制的几乎全是老对象
+
+`KILN_GC_AGES=1` 把每次复制的字节分成“上次回收之后分配的”（young，nursery GC 要复制的）和“上次回收复制过的”（old，分代 plan 不再复制的）：
+
+| 运行 | 回收间隔 | 回收次数 | young | old |
+|---|---|---|---|---|
+| 五个模块 | 约 4 GiB | 66 | 2.2 GB | 28.5 GB（93%） |
+| kernel 加 CLOS | 约 4 GiB | 18 | 809 MiB | 4.1 GB |
+| kernel 加 CLOS，每分配 256 MiB 回收一次（`MMTK_STRESS_FACTOR`） | 256 MiB | 282 | 842 MiB | 72.8 GB |
+
+新分配的对象只有约 1.1% 活过下一次回收，而且回收间隔从 4 GiB 缩到 256 MiB 时这个比例几乎不变（809 → 842 MiB）：编译器的临时对象寿命远短于 256 MiB 的分配量。所以 256 MiB 的 nursery 在整个自举里大约复制 2.5 GB（每次约 3 MB），而 SemiSpace 复制了 32 GB。
+
+**分代的估计**：nursery GC 按现在的复制速度约 1.1 秒每 GB，晋升约 2.5 GB 合计约 3 秒；每次 nursery GC 还要扫描栈和 10 万个 static root，约 1000 次合计 1–2 秒；mature 空间涨到 1.2 GiB，8 GiB 堆里只需要几次 full GC，每次约 1–1.5 秒。合计 6–9 秒，现在是 31–39 秒，墙钟省约 25–30 秒（7% 左右），GC worker 的 CPU 省约 80 秒。写屏障要还回去 mutator 的 1–3%（4–11 秒）。净收益约为墙钟的 4–6%，GenImmix 还能把同样的堆的可用空间翻倍、RSS 降下来。设计见 [gc.md](../design/gc.md) 的“Generational GC plan”。
+
+### GC 的并行度
+
+| GC 线程 | 停顿 | worker CPU |
+|---|---|---|
+| 4 | 36.8 秒 | 93 秒 |
+| 8（默认） | 31–39 秒 | 89–109 秒 |
+| 16 | 35.5 秒 | 118 秒 |
+
+线程数几乎不影响停顿：8 个线程时平均只有约 3 个在干活。按 20 毫秒分段统计 perf 样本里同时出现的 worker 数：只有 1 个 worker 的段 739 个，2 个 540，3 个 305，4–7 个合计 69，8 个全忙 531。只有一个 worker 的时段里，热点和全忙时一样（`trace_object`、side metadata、复制），不是调度开销，而是可做的工作窄：链表这种只能顺着一条指针链走的结构。试过：
+- root 分包（static root 原来一个包十万个槽）：停顿不变（33.9 秒），说明瓶颈不在 root。保留了这个改动，它本身没有坏处。
+- 把 MMTk worker 的本地缓存包数从 16 改成 1（强制把新包放进全局队列，唤醒空闲 worker）：停顿翻倍。不过所有改过 MMTk 源码的构建（用 `[patch]` 指向 MMTk 的副本）停顿都约 59 秒，连只改清零的那个也是，所以这个对比不可信，原因没查。
+
+结论：GC 线程数没有可调的收益，4 个线程省约 10% 的 GC CPU、停顿略长。默认值不变。
+
+### GC 时间花在哪里（perf，worker 的样本）
+
+side metadata 的地址计算和读写（forwarding bits）约占 worker 时间的 25%，`trace_object` 14%，`copy` 7%，写 forwarding 指针时 MMTk 用 CAS 循环更新整个 header 字（`fetch_update`）约 7%，bump 分配约 5%，`object_bytes` 3%。forwarding bits 放在 side metadata 是因为 header 的低字节是 kind；如果像 roadmap 里无 header cons 的方案那样给 header 的低 3 位留出保留 tag，forwarding bits 就能放进 header，省掉这部分的大半。
+
+### 清零
+
+- MMTk 的空间取得新页时清零（kiln 用到的 plan 都写死了 `zeroed = true`），这是 mutator 线程上的 `memset`：约 1.9% 的样本（250 GB 的分配全部清零一遍），GC worker 上还有 0.6%（GC 复制的目标块也先清零，完全白做）。
+- `kiln_rt_alloc` 原来在 MMTk 已经清零的内存上再清零一遍（不经内联快路径的分配：变长向量、大于 128 字节的对象）。去掉了；它在 perf 里只占 0.1% 左右，墙钟上量不出来。编译出的代码的内联快路径也逐字写零，同样多余（`lisp/lower.lisp` 的 `emit-alloc`），可以去掉。
+- 反过来做（MMTk 不清零、只靠 kiln 自己清零）要改 MMTk 的 SemiSpace，收益估计是 CPU 的 2.5%、mutator 时间的约 2.4%。不值得为此维护 MMTk 的分支；换分代 plan 时 nursery 同样写死清零，到时候再看。
+
+### 堆大小和触发策略
+
+| 堆 | 回收次数 | 停顿 | worker CPU | 峰值 RSS |
+|---|---|---|---|---|
+| 固定 8 GiB | 66 | 31–39 秒 | 89–109 秒 | 9.9 GB |
+| 固定 12 GiB | 42 | 25.4 秒 | 71 秒 | 14.8 GB |
+
+SemiSpace 的 GC 时间约等于“回收次数 × 平均存活量”，堆加大一半，回收少三分之一，停顿省约 10 秒（墙钟 2.5%），代价是多 5 GB 内存。自举的默认堆（`KILN_BOOT_HEAP`）不变：分代 plan 会让堆大小不再重要。
+
+### release 构建的 runtime
+
+紧挨着跑的两次（load 约 2–3）：debug runtime 停顿 30.6 秒、worker CPU 89 秒、墙钟 344 秒；release runtime（`cargo build --release`，像 `tools/bench.sh` 那样链接）停顿 30.5 秒、worker CPU 88 秒、墙钟 333 秒。GC 的数字一样：dev 构建里 MMTk 和 kiln-rt 本来就是 opt-level 2，MMTk 的 debug assertions 也关了。墙钟差的 11 秒在 mutator 一侧（runtime 函数、debug assertions），在这台机器的噪声范围内。
+
 ## 读入的基准（`bench/fe-read.lisp`）
 
 在 kiln（JIT）和 SBCL 上用同一份 Eclector 代码把 `lisp/target/kernel.lisp`（891 行，307 个形式）读一遍，单位毫秒（`tools/bench-fe-read.sh`）：

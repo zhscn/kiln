@@ -65,6 +65,7 @@ fn mmtk() -> &'static MMTK<Kiln> {
                 assert!(builder.set_option(k, v), "bad MMTk option {k}={v}");
             }
         }
+        crate::gcstats::init();
         memory_manager::mmtk_init::<Kiln>(&builder)
     })
 }
@@ -270,6 +271,7 @@ impl ObjectModel<Kiln> for KilnObjectModel {
         }
         let to = ObjectReference::from_raw_address(dst).unwrap();
         copy_context.post_copy(to, bytes, semantics);
+        crate::gcstats::note_copy(from.to_raw_address().as_usize(), dst.as_usize(), bytes);
         to
     }
 
@@ -319,6 +321,22 @@ impl ObjectModel<Kiln> for KilnObjectModel {
 
 pub struct KilnScanning;
 
+/// Hands root slots to MMTk in packets of at most EDGES_WORK_BUFFER_SIZE
+/// slots. One worker processes a packet: it copies and then scans every
+/// object the packet's slots point to. With all static roots in one packet,
+/// that part of each collection ran on one worker.
+fn create_roots_work(factory: &mut impl RootsWorkFactory<KilnSlot>, slots: Vec<KilnSlot>) {
+    if slots.len() <= mmtk::scheduler::EDGES_WORK_BUFFER_SIZE {
+        if !slots.is_empty() {
+            factory.create_process_roots_work(slots);
+        }
+        return;
+    }
+    for chunk in slots.chunks(mmtk::scheduler::EDGES_WORK_BUFFER_SIZE) {
+        factory.create_process_roots_work(chunk.to_vec());
+    }
+}
+
 impl Scanning<Kiln> for KilnScanning {
     fn scan_roots_in_mutator_thread(
         _tls: VMWorkerThread,
@@ -328,19 +346,20 @@ impl Scanning<Kiln> for KilnScanning {
         let ctx = unsafe { &*ctx_of(mutator.mutator_tls) };
         let mut slots = Vec::new();
         unsafe { stack_slots(ctx, &mut slots) };
-        factory.create_process_roots_work(slots);
+        create_roots_work(&mut factory, slots);
     }
 
     fn scan_vm_specific_roots(_tls: VMWorkerThread, mut factory: impl RootsWorkFactory<KilnSlot>) {
+        // Only the words that point into the heap: most static roots hold
+        // fixnums, NIL or static symbols.
         let slots: Vec<KilnSlot> = STATIC_ROOTS
             .read()
             .unwrap()
             .iter()
             .map(|a| KilnSlot(unsafe { Address::from_usize(*a) }))
+            .filter(|s| s.load().is_some())
             .collect();
-        if !slots.is_empty() {
-            factory.create_process_roots_work(slots);
-        }
+        create_roots_work(&mut factory, slots);
         // Slots of the image's objects that point into the heap.
         crate::image::heap_slots(|batch| {
             factory.create_process_roots_work(
@@ -405,12 +424,20 @@ impl Collection<Kiln> for KilnCollection {
             blocked = MUTATORS_BLOCKED.wait(blocked).unwrap();
         }
         drop(blocked);
+        if crate::gcstats::enabled() {
+            let ages = matches!(*mmtk().get_options().plan, PlanSelector::SemiSpace).then(heap_range);
+            crate::gcstats::gc_start(used_bytes(), ages);
+        }
         for (_, m) in MUTATORS.lock().unwrap().iter() {
             mutator_visitor(unsafe { &mut *(*m as *mut KilnMutator) });
         }
     }
 
     fn resume_mutators(_tls: VMWorkerThread) {
+        if crate::gcstats::enabled() {
+            let live = memory_manager::live_bytes_in_last_gc(mmtk()).values().map(|s| s.live_bytes).sum();
+            crate::gcstats::gc_end(used_bytes(), live);
+        }
         *GC_COUNT.lock().unwrap() += 1;
         GC_DONE.notify_all();
     }
@@ -420,12 +447,14 @@ impl Collection<Kiln> for KilnCollection {
         // Taken before announcing that this mutator is blocked, so that the
         // collection cannot finish (and notify) before this thread waits.
         let mut n = GC_COUNT.lock().unwrap();
+        crate::gcstats::mutator_blocked();
         *BLOCKED_MUTATORS.lock().unwrap() += 1;
         MUTATORS_BLOCKED.notify_all();
         while *n == seen {
             n = GC_DONE.wait(n).unwrap();
         }
         *BLOCKED_MUTATORS.lock().unwrap() -= 1;
+        crate::gcstats::mutator_resumed();
         SEEN_GC_COUNT.with(|c| c.set(*n));
     }
 
@@ -513,6 +542,12 @@ pub unsafe fn alloc(ctx: *mut Context, bytes: u64, header: u64) -> u64 {
     unsafe {
         let mutator = &mut *(*ctx).mutator;
         let bytes = bytes as usize;
+        // The payload is not cleared here: MMTk hands out zeroed memory.
+        // Every space kiln's plans use is created with `zeroed` set, so a
+        // space zeroes the pages it acquires (bump and large-object
+        // allocation, and GC copies); Immix's allocator zeroes the
+        // recycled lines it reuses, the free-list allocator each cell.
+        //
         // Fast path: bump the default allocator's cursor (SemiSpace's copy
         // space; its post_alloc does nothing without the vo_bit feature).
         if bytes <= max_non_los_bytes() {
@@ -521,7 +556,7 @@ pub unsafe fn alloc(ctx: *mut Context, bytes: u64, header: u64) -> u64 {
             let end = start + bytes;
             if end <= (*bump).limit {
                 (*bump).cursor = end;
-                std::ptr::write_bytes(start.to_mut_ptr::<u8>(), 0, bytes);
+                debug_assert_zeroed(start, bytes);
                 start.store::<u64>(header);
                 return start.as_usize() as u64;
             }
@@ -539,7 +574,7 @@ pub unsafe fn alloc(ctx: *mut Context, bytes: u64, header: u64) -> u64 {
             AllocationSemantics::Default
         };
         let addr = memory_manager::alloc(mutator, bytes, 8, 0, semantics);
-        std::ptr::write_bytes(addr.to_mut_ptr::<u8>(), 0, bytes);
+        debug_assert_zeroed(addr, bytes);
         addr.store::<u64>(header);
         let obj = ObjectReference::from_raw_address(addr).unwrap();
         memory_manager::post_alloc(mutator, obj, bytes, semantics);
@@ -548,6 +583,16 @@ pub unsafe fn alloc(ctx: *mut Context, bytes: u64, header: u64) -> u64 {
         }
         addr.as_usize() as u64
     }
+}
+
+/// Checks the first and the last word of a fresh object (all of it would
+/// cost as much as the zeroing it replaces).
+#[inline]
+fn debug_assert_zeroed(start: Address, bytes: usize) {
+    debug_assert!(
+        unsafe { start.load::<u64>() == 0 && (start + (bytes - 8)).load::<u64>() == 0 },
+        "MMTk returned memory that is not zeroed at {start}"
+    );
 }
 
 /// Addresses of the cursor and the limit of MUTATOR's default bump
@@ -642,6 +687,11 @@ pub extern "C" fn kiln_rt_gc_count(_ctx: *mut Context) -> u64 {
     *GC_COUNT.lock().unwrap() << 1
 }
 
+/// Bytes of MMTk's pages in use.
+pub fn used_bytes() -> usize {
+    memory_manager::used_bytes(mmtk())
+}
+
 /// Is the tagged heap pointer `v` an object in an MMTk space (as opposed
 /// to static data, which never moves)?
 pub fn in_mmtk_space(v: u64) -> bool {
@@ -662,10 +712,16 @@ pub fn in_heap(addr: usize) -> bool {
 /// allocates are, and kiln's static data never is.
 #[inline]
 fn in_heap_range(addr: usize) -> bool {
+    let (start, end) = heap_range();
+    addr >= start && addr < end
+}
+
+/// The address range of MMTk's spaces.
+#[inline]
+fn heap_range() -> (usize, usize) {
     static RANGE: OnceLock<(usize, usize)> = OnceLock::new();
-    let (start, end) = *RANGE.get_or_init(|| {
+    *RANGE.get_or_init(|| {
         let layout = mmtk::util::heap::vm_layout::vm_layout();
         (layout.heap_start.as_usize(), layout.heap_end.as_usize())
-    });
-    addr >= start && addr < end
+    })
 }
