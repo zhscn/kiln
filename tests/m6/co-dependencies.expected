@@ -1,0 +1,24 @@
+10
+11
+(USE-TWICE)
+((:MACRO TWICE))
+(:LATER 3)
+20
+200
+10
+-2
+28
+((:FUNCTION 1))
+((:EXPANDER 2))
+10
+20
+warning: (DEFPARAMETER *BASE*) depends on the macro BASE, which changed: evaluate it again
+(1 2)
+warning: USE-STRICT could not be compiled again after the macro STRICT changed: not a string: 7
+7
+(1 1)
+; compiling (MACRO-FUNCTION PING) again: the macro PONG changed
+; compiling CALL-BOTH again: the macro PONG changed
+; compiling (MACRO-FUNCTION PONG) again: the macro PING changed
+; compiling CALL-BOTH again: the macro PING changed
+(2 3)

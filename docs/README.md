@@ -21,10 +21,11 @@ kiln 是一个现代 Common Lisp 实现：开发时是完整的活 image，交�
 | [15-heap-image.md](15-heap-image.md) | M6.1 堆快照：`kiln.sys:save-image`、固定地址映射、静态根、GC 扫描快照区、测试方式 |
 | [16-editor.md](16-editor.md) | 编辑器和 IDE（暂名 KilnWorks）设计草案：细腰、命令循环、按键、输入框、显示、分派点；对 kiln 运行时的需求（依赖追踪、按上下文局部的变量、fiber、debugger 和后端协议、系统接口）；扩展模型和部分 seal |
 | [17-debugging.md](17-debugging.md) | M6.2 帧的调试信息：函数名、调用的源码位置、调用期间变量所在的栈槽（kiln-cg 由栈图的槽推出），`kiln.sys:frame-list` 等接口和 backtrace；M6.3 后端协议：任务、嵌套的 debug 层、restart、在帧中求值，`tools/kiln-server.sh` |
+| [18-dependencies.md](18-dependencies.md) | M6.4 依赖追踪：在 image 里求值的定义记下编译期依赖（宏、内联函数、`setf` 展开器、常量），重定义时自动重新求值依赖者或报告过时的定义 |
 
 ## 状态
 
-M0、M1 已完成：SBCL → KIR → Cranelift（JIT 和 AOT），MMTk 移动式 GC 和精确栈图，多栈段和跨栈展开。M2 基本完成（[08](08-m2-front-end.md)）。M3 完成（[09](09-m3-kernel.md)）：用 Lisp 写的 kernel 单独作为一个模块，数值塔（bignum、ratio、单双精度浮点）、Unicode 字符和字符串、`typep` 和序列函数都已可用；包、数组、哈希表、condition 移到 M4。M4（CLOS 引导）完成（[10](10-m4-clos.md)）。M5 完成（[11](11-m5-self-hosting.md)）：运行期的标准宏、`eval`、`compile`、`load` 和 REPL（`tools/repl.sh`）；编译器在 kiln 上运行，交叉编译 kiln 自己的五个模块，KIR 和 SBCL 编出的逐字节相同；自举闭合：kiln0 → kiln1 → kiln2 的 KIR 逐字节相同，kiln0 和 kiln1 的可执行文件也相同（`tools/bootstrap.sh`），测试程序由 kiln1 编译时 `tools/test.sh` 全部通过；M5.5 起 `compile` 产出原生代码，装进运行中的 image。和 SBCL 的性能对比见 [14](14-performance.md)。M6.1 堆快照完成（[15](15-heap-image.md)）：AOT 程序可以把 image 存成文件或带快照的可执行文件，从快照启动不再执行各模块的初始化。M6.2 帧的调试信息和 M6.3 后端协议完成（[17](17-debugging.md)）：backtrace 显示函数名、源码位置和变量；常驻进程按请求求值，出错时进入嵌套的 debug 层，工具和 agent 从 shell 驱动（`tools/kiln-server.sh`）。各文档的“待定问题”一节列出尚未决定的事项。
+M0、M1 已完成：SBCL → KIR → Cranelift（JIT 和 AOT），MMTk 移动式 GC 和精确栈图，多栈段和跨栈展开。M2 基本完成（[08](08-m2-front-end.md)）。M3 完成（[09](09-m3-kernel.md)）：用 Lisp 写的 kernel 单独作为一个模块，数值塔（bignum、ratio、单双精度浮点）、Unicode 字符和字符串、`typep` 和序列函数都已可用；包、数组、哈希表、condition 移到 M4。M4（CLOS 引导）完成（[10](10-m4-clos.md)）。M5 完成（[11](11-m5-self-hosting.md)）：运行期的标准宏、`eval`、`compile`、`load` 和 REPL（`tools/repl.sh`）；编译器在 kiln 上运行，交叉编译 kiln 自己的五个模块，KIR 和 SBCL 编出的逐字节相同；自举闭合：kiln0 → kiln1 → kiln2 的 KIR 逐字节相同，kiln0 和 kiln1 的可执行文件也相同（`tools/bootstrap.sh`），测试程序由 kiln1 编译时 `tools/test.sh` 全部通过；M5.5 起 `compile` 产出原生代码，装进运行中的 image。和 SBCL 的性能对比见 [14](14-performance.md)。M6.1 堆快照完成（[15](15-heap-image.md)）：AOT 程序可以把 image 存成文件或带快照的可执行文件，从快照启动不再执行各模块的初始化。M6.2 帧的调试信息和 M6.3 后端协议完成（[17](17-debugging.md)）：backtrace 显示函数名、源码位置和变量；常驻进程按请求求值，出错时进入嵌套的 debug 层，工具和 agent 从 shell 驱动（`tools/kiln-server.sh`）。M6.4 依赖追踪完成（[18](18-dependencies.md)）：在 image 里重定义宏、内联函数、`setf` 展开器或常量后，依赖它的定义自动重新编译。各文档的“待定问题”一节列出尚未决定的事项。
 
 ## 约定
 

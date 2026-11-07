@@ -48,6 +48,12 @@
       (rplaca (cdr l) value)
       (return value))))
 
+(defun %get (symbol indicator)
+  (do ((l (%primop :symbol-plist symbol) (cdr (cdr l))))
+      ((null l) nil)
+    (when (eq (car l) indicator)
+      (return (car (cdr l))))))
+
 (defvar *proclaim-hook* nil)
 
 ;;; The run-time macro environment: macro functions are kept on the
@@ -56,12 +62,28 @@
 ;;; time the front end's own definitions are used, docs/08 §2.)
 (defun (setf macro-function) (function name &optional environment)
   (declare (ignore environment))
-  (%put name 'macro-function function))
+  (%put name 'macro-function function)
+  (note-redefinition :macro name)
+  function)
+
+;;; Dependency tracking (docs/18): code compiled in the image records the
+;;; definitions it depends on at compile time (macros, inline functions,
+;;; setf expanders, constants); when one of them is defined again, the
+;;; compiler module's hook recompiles the code that depends on it.
+;;; NIL, or a function of a dependency key (KIND NAME), called when the
+;;; definition it names changes (the compiler module).
+(defvar *redefinition-hook* nil)
+
+(defun note-redefinition (kind name)
+  (let ((hook *redefinition-hook*))
+    (when hook
+      (funcall hook (cons kind (cons name nil))))))
 
 ;;; DEFINE-SETF-EXPANDER (and DEFSETF) at load time: the expander goes on
 ;;; the plist too, for the run-time GET-SETF-EXPANSION (the eval module).
 (defun kiln.sys::%define-setf-expander (name expander)
   (%put name 'setf-expander expander)
+  (note-redefinition :setf name)
   name)
 
 ;;; Byte specifiers are conses (size . position).
@@ -97,8 +119,14 @@
 ;;; %DEFINE-CONSTANT is this function (the host's compile-time
 ;;; environment has its own).
 (defun kiln.sys::%define-constant (name value)
-  (setf (symbol-value name) value)
-  (%put name 'constant t)
+  ;; A constant whose value changes (undefined behavior, CLHS DEFCONSTANT):
+  ;; the code compiled with the old value is out of date.
+  (let ((changed (and (%get name 'constant)
+                      (not (eql (symbol-value name) value)))))
+    (setf (symbol-value name) value)
+    (%put name 'constant t)
+    (when changed
+      (note-redefinition :constant name)))
   name)
 
 (defmacro defconstant (name value &optional documentation)
@@ -106,9 +134,7 @@
   `(progn
      (eval-when (:compile-toplevel)
        (kiln.sys::%define-constant ',name ,value))
-     (setf (symbol-value ',name) ,value)
-     (%put ',name 'constant t)
-     ',name))
+     (kiln.sys::%define-constant ',name ,value)))
 
 (defconstant most-positive-fixnum 4611686018427387903)
 (defconstant most-negative-fixnum -4611686018427387904)

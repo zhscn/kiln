@@ -51,7 +51,10 @@
            #:frame-list #:frame-name #:frame-source #:frame-variables #:frame-pc
            #:source-line #:print-frame #:print-backtrace #:exit
            ;; The back-end protocol (lisp/target/eval/server.lisp, docs/17 §4).
-           #:serve))
+           #:serve
+           ;; Dependency tracking (lisp/target/compiler/dependencies.lisp,
+           ;; docs/18).
+           #:dependents #:dependencies #:*recompile-verbose* #:stale-definition))
 
 (defpackage #:kiln.macros
   (:use #:cl)

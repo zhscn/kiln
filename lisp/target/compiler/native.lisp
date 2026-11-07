@@ -34,9 +34,16 @@ running image, in the null lexical environment."
 ;;; macro forms after their expansion; any other form is compiled as the
 ;;; body of a function of no arguments, which is called.
 (defun native-eval (form)
-  (let ((*eval-definition* nil)
-        (*eval-form* form))
-    (native-eval-1 form)))
+  (let ((outermost (not *evaluating*)))
+    (multiple-value-prog1
+        (let ((*evaluating* t)
+              (*dependencies* nil)
+              (*eval-definition* nil)
+              (*eval-form* form))
+          (native-eval-1 form))
+      ;; The definitions that depend on those FORM changed (docs/18).
+      (when (and outermost *pending-redefinitions*)
+        (update-dependents)))))
 
 (defun native-eval-1 (form)
   (loop
@@ -56,10 +63,16 @@ running image, in the null lexical environment."
                      (native-eval-body (cddr form)))))
           ((and (symbolp (first form)) (macro-function (first form)))
            ;; The functions a definition defines are named after it
-           ;; (docs/17 §2.1), although its expansion is compiled.
+           ;; (docs/17 §2.1), although its expansion is compiled; its
+           ;; dependencies are recorded (docs/18).
            (multiple-value-bind (name function-p) (definition-name form)
              (when name
-               (setf *eval-definition* (cons name function-p))))
+               (return
+                 (let ((*eval-definition* (cons name function-p)))
+                   (evaluate-definition name form
+                                        (let ((form form))
+                                          (lambda () (native-eval-1 (macroexpand-1 form)))))))))
+           (note-dependency :macro (first form))
            (setf form (macroexpand-1 form)))
           (t
            (return (native-eval-toplevel form))))))

@@ -18,14 +18,22 @@
 (defmethod run-time-packages-p ((client image-client))
   t)
 
+(defmethod compiles-into-image-p ((client image-client))
+  t)
+
 ;;; Places: a symbol macro of the lexical environment, else as at run time
 ;;; (lisp/target/eval/macros.lisp).
 (defmethod kiln.cmd:get-setf-expansion ((client image-client) place &optional environment)
   (let ((environment (or environment *environment*)))
     (multiple-value-bind (expansion macrop) (symbol-macro-expansion client environment place)
-      (if macrop
-          (kiln.cmd:get-setf-expansion client expansion environment)
-          (call-next-method client place environment)))))
+      (cond (macrop
+             (kiln.cmd:get-setf-expansion client expansion environment))
+            (t
+             ;; A SETF expander defined later changes the expansion
+             ;; (docs/18).
+             (when (and (consp place) (symbolp (first place)))
+               (note-dependency :setf (first place)))
+             (call-next-method client place environment))))))
 
 ;;; The global environment, for Trucler: described as Maclina's client
 ;;; describes it (lisp/target/eval/evaluator.lisp), whatever the client.
@@ -40,13 +48,22 @@
   (declare (ignore client))
   environment)
 
+;;; The global macros and constants the compiled code uses are its
+;;; dependencies (docs/18); so are names not defined yet, which a later
+;;; DEFMACRO may define.
 (defmethod trucler:describe-variable (client (environment run-time-environment) name)
   (declare (ignore client))
-  (trucler:describe-variable maclina.machine:*client* nil name))
+  (let ((description (trucler:describe-variable maclina.machine:*client* nil name)))
+    (when (typep description 'trucler:constant-variable-description)
+      (note-dependency :constant name))
+    description))
 
 (defmethod trucler:describe-function (client (environment run-time-environment) name)
   (declare (ignore client))
-  (trucler:describe-function maclina.machine:*client* nil name))
+  (let ((description (trucler:describe-function maclina.machine:*client* nil name)))
+    (when (or (null description) (typep description 'trucler:global-macro-description))
+      (note-dependency :macro name))
+    description))
 
 (defmethod trucler:describe-block (client (environment run-time-environment) name)
   (declare (ignore client name))
@@ -123,10 +140,22 @@
 
 (defvar *host-inline-functions*)        ; session.lisp
 
+(defvar *image-inline-functions* nil
+  "The inline proclamations and expansions of the image: those the host
+knew of the modules (*HOST-INLINE-FUNCTIONS*), then those of the code
+compiled in the image. One table for all sessions, so that a function
+declared inline by one EVAL is expanded in the code of the next.")
+
+(defun image-inline-functions ()
+  (or *image-inline-functions*
+      (let ((table (make-hash-table :test 'equal)))
+        (loop for (name . entry) in *host-inline-functions*
+              do (setf (gethash name table) entry))
+        (setf *image-inline-functions* table))))
+
 (defmethod initialize-session ((client image-client) session)
   ;; The packages of the image exist at run time (a symbol table's use
   ;; lists name only those, lower.lisp).
   (setf (session-packages session) (list-all-packages))
-  (loop for (name . entry) in *host-inline-functions*
-        do (setf (gethash name (session-inline-functions session)) entry))
+  (setf (session-inline-functions session) (image-inline-functions))
   session)

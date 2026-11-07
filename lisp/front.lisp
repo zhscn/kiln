@@ -76,6 +76,41 @@ time only.")
 (defun global-environment ()
   (trucler:global-environment *client* *environment*))
 
+;;; Dependency tracking (docs/18). While a definition is compiled in the
+;;; image (lisp/target/compiler/dependencies.lisp), *DEPENDENCIES* is a
+;;; cons whose cdr collects the keys (KIND NAME) of the definitions its
+;;; code depends on at compile time: (:MACRO name) for a global macro
+;;; expanded (or a name not defined when the code was compiled),
+;;; (:INLINE name), (:SETF name) for a place, (:CONSTANT name). Elsewhere
+;;; (cross compilation) it is NIL.
+
+(defvar *dependencies* nil)
+
+(defun note-dependency (kind name)
+  (let ((cell *dependencies*))
+    (when (and cell
+               (let ((symbol (if (consp name) (second name) name)))
+                 (and (symbolp symbol)
+                      (not (eq (symbol-package symbol) (find-package '#:common-lisp)))
+                      (not (keywordp symbol)))))
+      (let ((key (list kind name)))
+        (unless (member key (cdr cell) :test #'equal)
+          (push key (cdr cell)))))))
+
+(defgeneric compiles-into-image-p (client)
+  (:documentation "True if CLIENT compiles code for the running image, whose
+compile-time definitions are the image's (IMAGE-CLIENT).")
+  (:method (client)
+    (declare (ignore client))
+    nil))
+
+(defun note-redefined (kind name)
+  "The definition (KIND NAME) changed at compile time: the code compiled
+in the image that depends on it is out of date (docs/18)."
+  #+kiln (when (compiles-into-image-p *client*)
+           (kiln.kernel::note-redefinition kind name))
+  #-kiln (declare (ignore kind name)))
+
 ;;; Inline functions (docs/08 §8). (DECLAIM (INLINE F)) before
 ;;; (DEFUN F ...) at top level makes calls of F that refer to the global
 ;;; function open-coded: (F A B) is converted as
@@ -127,7 +162,10 @@ taken to cover the whole form: not expanding a call is always correct."
     (dolist (name names)
       (when (or (symbolp name) (setf-function-name-p name))
         (if (eq kind 'notinline)
-            (setf (gethash name *inline-functions*) :notinline)
+            (progn
+              (when (consp (gethash name *inline-functions*))
+                (note-redefined :inline name))
+              (setf (gethash name *inline-functions*) :notinline))
             (unless (consp (gethash name *inline-functions*))
               (setf (gethash name *inline-functions*) :inline)))))))
 
@@ -169,6 +207,8 @@ taken to cover the whole form: not expanding a call is always correct."
                (every #'symbolp lambda-list)
                (notany (lambda (p) (member p lambda-list-keywords)) lambda-list))
       (multiple-value-bind (declarations forms) (split-body body)
+        (when (consp (gethash name *inline-functions*))
+          (note-redefined :inline name))
         (setf (gethash name *inline-functions*)
               (list lambda-list declarations
                     `(block ,(if (symbolp name) name (second name)) ,@forms)
@@ -207,13 +247,15 @@ expands into; else NIL."
                     (and (typep description 'trucler:global-function-description)
                          (not (eq (ignore-errors (trucler:inline description))
                                   'notinline)))))
-              (notany (lambda (symbol)
+              ;; Probing the names of the body is not a dependency.
+              (let ((*dependencies* nil))
+               (notany (lambda (symbol)
                         (or (typep (trucler:describe-function client environment symbol)
                                    '(or trucler:local-function-description
                                      trucler:local-macro-description))
                             (typep (trucler:describe-variable client environment symbol)
                                    'trucler:local-symbol-macro-description)))
-                      (fourth entry)))))))
+                      (fourth entry))))))))
 
 (defun inline-expansion (form)
   (multiple-value-bind (name arguments) (inline-call form)
@@ -254,6 +296,7 @@ true; else NIL and NIL."
 
 (defun convert-maybe-inline (client cst environment form next)
   (when (inline-call-p client environment form)
+    (note-dependency :inline (inline-call form))
     (return-from convert-maybe-inline
       (let ((*inline-expanding* (cons (inline-call form) *inline-expanding*)))
         (funcall next client (cst:reconstruct client (inline-expansion form) cst) environment))))
