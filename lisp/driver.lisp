@@ -298,6 +298,7 @@
          (kiln-clos-file "random")
          (kiln-clos-file "change-class")
          (kiln-clos-file "redefinition")
+         (kiln-clos-file "constructors")
          (kiln-clos-file "trivial-package-locks")
          ;; Trinsic, for the interfaces of Cyclosis and the printer modules.
          (asdf:system-relative-pathname "trinsic" "code/interface.lisp"))

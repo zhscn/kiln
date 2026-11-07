@@ -795,3 +795,13 @@ cl-bench 的 CLOS 组反复执行同样的 `defclass`。`redefinition.lisp` 按 
 - 另外补上了 `find-method`、`make-instances-obsolete`、`slot-exists-p`。
 - **限制**：只在泛函分派时检查过时实例。`slot-value` 直接按实例自己的槽列表找位置，所以过时实例在下次分派之前，用 `slot-value` 读到的仍是旧布局（值是对的，只是还没有更新）。类名 `typep` 的缓存以 stamp 为键，过时实例在更新之前得到的是旧类的结果。泛函的重定义（`defgeneric` 改 lambda list 等）还没有做。
 - `tests/m4/clos-redefine.lisp`：删槽、加槽、加超类、子类跟着更新、`update-instance-for-redefined-class` 的 :after 方法、`find-method`、`make-instances-obsolete`、反复重定义。
+
+## 29. `make-instance` 的快路径（2026-11）
+
+`constructors.lisp`。元类是 `standard-class`、实例适用的 `allocate-instance`、`initialize-instance`、`shared-initialize` 方法和一个普通标准对象的完全相同时，`make-instance` 直接分配 rack，补上 default initargs，再按类的初始化计划（§27 的 `planned-shared-initialize`）填槽。这正是那三个方法做的事，省掉的是三次带 `&rest` 参数的泛函调用，以及 `allocate-instance-using-class` 里 initargs 的处理。
+
+- 判断结果按类缓存：直接映射的表，键是类的 unique number（重定义会改变它，§28）和一个计数；往这三个泛函增删方法时计数加一，所有类重新判断（`add-method`、`remove-method` 的 `:after` 方法）。
+- 判断时要调用 `compute-applicable-methods`，它可能又创建实例；判断期间的 `make-instance` 一律走通用路径，避免递归。
+- `tests/m4/clos-constructors.lisp`：default initargs、后加的 `initialize-instance` 和 `shared-initialize` 方法、超类上加了又删的方法、重定义改变 default initargs。
+- kiln 编译自身：314 → 306 秒。
+

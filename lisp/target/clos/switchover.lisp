@@ -22,6 +22,9 @@
 (defun mop-make-instance (class &rest initargs)
   (when (symbolp class)
     (setf class (find-class class)))
+  ;; The common case without the generic protocol (constructors.lisp).
+  (when (and (fboundp 'cached-fast-construction-p) (cached-fast-construction-p class))
+    (return-from mop-make-instance (construct-instance class initargs)))
   (multiple-value-bind (instance defaulted-initargs)
       (apply #'allocate-instance-using-class class initargs)
     (apply #'initialize-instance instance defaulted-initargs)
