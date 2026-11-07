@@ -27,6 +27,21 @@
   "The packages of the libraries whose macros and functions are the host's
 at compile time (USE-HOST-MACROS).")
 
+;;; (SETF (THE type place) form) is (SETF place (THE type form)) (CLHS
+;;; 5.1.2.6). THE is a special operator: it cannot have a SETF expander
+;;; of the environment.
+(defun the-place-p (place)
+  (and (consp place) (eq (first place) 'the)
+       (consp (rest place)) (consp (cddr place)) (null (cdddr place))))
+
+(defun the-place-expansion (expand place)
+  (destructuring-bind (type inner) (rest place)
+    (multiple-value-bind (temps vals stores store-form access-form) (funcall expand inner)
+      (values temps vals stores
+              `(let ((,(first stores) (the ,type ,(first stores))))
+                 ,store-form)
+              `(the ,type ,access-form)))))
+
 (defmethod #-kiln cmd:get-setf-expansion #+kiln kiln.cmd:get-setf-expansion
     ((client cross-client) place &optional environment)
   (let ((environment (or environment *environment*)))
@@ -37,6 +52,12 @@ at compile time (USE-HOST-MACROS).")
                  (#-kiln cmd:get-setf-expansion #+kiln kiln.cmd:get-setf-expansion
                   client expansion environment)
                  (call-next-method))))
+          ((the-place-p place)
+           (the-place-expansion
+            (lambda (place)
+              (#-kiln cmd:get-setf-expansion #+kiln kiln.cmd:get-setf-expansion
+               client place environment))
+            place))
           ((and (consp place) (symbolp (first place)))
            (let ((expander (clo:setf-expander client
                                               (trucler:global-environment client environment)

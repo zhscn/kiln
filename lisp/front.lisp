@@ -304,7 +304,52 @@ true; else NIL and NIL."
     (when expansion
       (return-from convert-maybe-inline
         (funcall next client (cst:reconstruct client expansion cst) environment))))
+  (let ((rewritten (parallel-special-let client environment form)))
+    (when rewritten
+      (return-from convert-maybe-inline
+        (funcall next client (cst:reconstruct client rewritten cst) environment))))
   (convert-load-time-value client cst environment form next))
+
+;;; LET binds in parallel, but Iconoclast's SPLIT-LET-OR-LET* (in
+;;; SIMPLIFY-AST) nests the bindings one in another. For lexical variables
+;;; that is the same (references are resolved already); for a special
+;;; variable it is not: the init forms after it would be evaluated with it
+;;; bound. So a LET of several variables, one of them special, first
+;;; evaluates the init forms into temporaries.
+(defun parallel-special-let (client environment form)
+  (when (and (consp form) (eq (first form) 'let)
+             (consp (rest form)) (consp (second form)) (consp (rest (second form)))
+             (every (lambda (b) (or (symbolp b) (and (consp b) (symbolp (first b)))))
+                    (second form)))
+    (let* ((bindings (second form))
+           (names (mapcar (lambda (b) (if (consp b) (first b) b)) bindings))
+           (declared (loop for item in (cddr form)
+                           while (and (consp item) (eq (first item) 'declare))
+                           append (loop for spec in (rest item)
+                                        when (and (consp spec) (eq (first spec) 'special))
+                                          append (rest spec)))))
+      (when (and (some (lambda (name)
+                         (or (member name declared)
+                             (typep (trucler:describe-variable client environment name)
+                                    'trucler:special-variable-description)))
+                       names)
+                 ;; Init forms that are constants or lexical variables
+                 ;; (the temporaries) are the same whenever evaluated.
+                 (notevery (lambda (b)
+                             (let ((init (and (consp b) (consp (rest b)) (second b))))
+                               (or (and (atom init) (not (symbolp init)))
+                                   (null init) (keywordp init)
+                                   (and (symbolp init)
+                                        (typep (trucler:describe-variable client environment init)
+                                               'trucler:lexical-variable-description)))))
+                           bindings))
+        (let ((temps (loop for name in names
+                           collect (gensym (symbol-name name)))))
+          `(let ,(loop for b in bindings
+                       for temp in temps
+                       collect (list temp (if (and (consp b) (consp (rest b))) (second b) nil)))
+             (let ,(loop for name in names for temp in temps collect (list name temp))
+               ,@(cddr form))))))))
 
 ;;; Compiler macros: kiln has none of its own yet, but the host's of the
 ;;; libraries whose macros are the host's (USE-HOST-MACROS, cross.lisp)

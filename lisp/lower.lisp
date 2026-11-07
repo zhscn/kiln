@@ -1628,12 +1628,14 @@ no pointer, the cons need not be scanned by the GC."
            (when (> (length arg-asts) (+ +reg-args+ +values-max+))
              (fail "the call to ~S has ~D arguments; at most ~D are supported"
                    name (length arg-asts) (+ +reg-args+ +values-max+)))
-           (let ((primitive (and (not (and *image-literals* (eq name 'print)))
+           (let ((primitive (and (not (and (eq name 'print)
+                                            (or *image-literals* (/= (length arg-asts) 1))))
                                  (gethash name *primitives*)))
                  (vals (lower-args arg-asts)))
              ;; The PRINT primitive is the runtime's printer, for programs
              ;; without streams; code compiled into a running image has
-             ;; them, and its output goes where *STANDARD-OUTPUT* says.
+             ;; them, and its output goes where *STANDARD-OUTPUT* says. A
+             ;; call with a stream is the printer's PRINT.
              (if primitive
                  (funcall primitive vals)
                  (emit-lisp-call (function-cell-value name) vals))))))))

@@ -73,3 +73,11 @@
   (unwind-protect (throw 'k nil)
     (let ((*x* 70)) (print (get-x)))))
 (print (get-x))
+;; LET binds special variables in parallel
+(defvar *a* 1)
+(defvar *b* 2)
+(print (let ((*a* 10) (*b* *a*)) (list *a* *b*)))
+(defun f () (let ((*a* (+ *a* 100)) (*b* *a*)) (list *a* *b*)))
+(print (f))
+(defun g () (let ((*a* (let ((*a* 5) (*b* *a*)) *b*)) (*b* *a*)) (list *a* *b*)))
+(print (g))

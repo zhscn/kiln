@@ -52,3 +52,4 @@
 ;; The REPL, on a string: values, *, an error that returns to the prompt.
 (with-input-from-string (in "(+ 1 2) (list * *) (values 1 2) (car 'x) (* 6 7)")
   (kiln.sys:repl :input in))
+(print (eval '(let ((v (list 0 1))) (setf (the fixnum (car v)) 5) (incf (the fixnum (cadr v)) 2) v)))
