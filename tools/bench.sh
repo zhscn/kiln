@@ -72,7 +72,15 @@ if [ $run_kiln = 1 ]; then
   while read -r name group; do
     # walk-list/mess recurses deeply (SBCL skips it).
     status=0
-    out=$(cd "$build" && BENCH_SELECT="$name" KILN_STACK_SIZE=${KILN_STACK_SIZE:-1073741824} \
+    # The CLOS benchmarks build on the classes and methods the ones before
+    # them define (cl-bench runs them in order in one image): run those
+    # first, in the same process.
+    select=$name
+    case $name in
+      CLOS/*) select=$(awk -v n="$name" '$1 ~ /^CLOS\// { s = s " " $1 } $1 == n { print s; exit }' \
+                         "$build/kiln-list.txt") ;;
+    esac
+    out=$(cd "$build" && BENCH_SELECT="$select" KILN_STACK_SIZE=${KILN_STACK_SIZE:-1073741824} \
             timeout "${BENCH_TIMEOUT:-120}" ./co-cl-bench 2>&1) || status=$?
     line=$(printf '%s\n' "$out" | grep "^$name " | tail -1 || true)
     if [ $status = 124 ]; then line="$name $group TIMEOUT ${BENCH_TIMEOUT:-120}s"
