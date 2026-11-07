@@ -165,6 +165,15 @@ fn code_words(r: &crate::code::Region) -> Vec<u64> {
         }
         w.push(t.roots.len() as u64);
         w.extend(t.roots.iter().map(|&r| r as u64));
+        w.push(t.debug.len() as u64);
+        for (r, sites) in &t.debug {
+            w.extend([r.start as u64, r.len, r.info, r.flags, sites.len() as u64]);
+            w.extend(sites.chunks(8).map(|c| {
+                let mut b = [0u8; 8];
+                b[..c.len()].copy_from_slice(c);
+                u64::from_le_bytes(b)
+            }));
+        }
     }
     w
 }
@@ -211,7 +220,23 @@ fn parse_code_words(w: &[u64]) -> (Vec<crate::code::Segment>, Vec<crate::code::T
                 })
                 .collect();
             let roots = (0..next()).map(|_| next() as usize).collect();
-            Tables { callsites, maps, roots }
+            let debug = (0..next())
+                .map(|_| {
+                    let r = crate::debug::FuncDebugRecord {
+                        start: next() as usize,
+                        len: next(),
+                        info: next(),
+                        flags: next(),
+                        sites: std::ptr::null(),
+                        nsites: 0,
+                    };
+                    let n = next() as usize;
+                    let mut sites: Vec<u8> = (0..n.div_ceil(8)).flat_map(|_| next().to_le_bytes()).collect();
+                    sites.truncate(n);
+                    (r, sites)
+                })
+                .collect();
+            Tables { callsites, maps, roots, debug }
         })
         .collect();
     (segments, tables)

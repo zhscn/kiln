@@ -317,6 +317,7 @@
          (kiln-clos-file "files")
          (kiln-clos-file "time")
          (kiln-clos-file "image")
+         (kiln-clos-file "debug")
          (kiln-clos-file "documentation")
          (kiln-clos-file "closer-mop")
          (kiln-clos-file "trivial-with-current-source-form"))

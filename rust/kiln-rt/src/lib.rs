@@ -3,6 +3,7 @@
 pub mod bignum;
 pub mod code;
 pub mod context;
+pub mod debug;
 pub mod gc;
 pub mod image;
 pub mod number;
@@ -46,6 +47,9 @@ pub struct ModuleInfo {
     /// by name (`EXPORTED_NAMES`).
     pub exports: *const Export,
     pub nexports: u64,
+    /// Debug records of the functions (debug.rs).
+    pub debug: *const debug::FuncDebugRecord,
+    pub ndebug: u64,
 }
 
 /// An entry of a module's export table: a NUL-terminated name and an
@@ -87,9 +91,15 @@ pub fn exported(name: &str) -> Option<usize> {
 /// Registers a program loaded by kiln-cg's JIT, which images cannot hold
 /// (image.rs). Code compiled into the running image is registered by
 /// `code::register`.
-pub fn register_code(callsites: &[CallSiteRecord], maps: &[gc::StackMapRecord], roots: &[usize]) {
+pub fn register_code(
+    callsites: &[CallSiteRecord],
+    maps: &[gc::StackMapRecord],
+    roots: &[usize],
+    debug: &[debug::FuncDebugRecord],
+) {
     image::note_runtime_code();
     register_code_tables(callsites, maps, roots);
+    debug::register(debug);
 }
 
 fn register_code_tables(callsites: &[CallSiteRecord], maps: &[gc::StackMapRecord], roots: &[usize]) {
@@ -145,6 +155,7 @@ unsafe fn run_module_here(info: &ModuleInfo) -> i32 {
             std::slice::from_raw_parts(info.stackmaps, info.nstackmaps as usize),
             std::slice::from_raw_parts(info.roots, info.nroots as usize),
         );
+        debug::register(std::slice::from_raw_parts(info.debug, info.ndebug as usize));
         image::note_executable();
         for e in std::slice::from_raw_parts(info.exports, info.nexports as usize) {
             let name = std::ffi::CStr::from_ptr(e.name as *const std::ffi::c_char);
@@ -194,6 +205,7 @@ pub fn symbols() -> Vec<(&'static str, *const u8)> {
         ("kiln_rt_gc", gc::kiln_rt_gc as *const u8),
         ("kiln_rt_gc_count", gc::kiln_rt_gc_count as *const u8),
         ("kiln_rt_save_image", image::kiln_rt_save_image as *const u8),
+        ("kiln_rt_frame", debug::kiln_rt_frame as *const u8),
         (
             "kiln_rt_call_on_new_stack",
             stack::kiln_rt_call_on_new_stack as *const u8,

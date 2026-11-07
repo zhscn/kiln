@@ -37,6 +37,9 @@ pub struct Tables {
     /// (function, return offset, offsets)
     pub maps: Vec<(usize, u32, Vec<u32>)>,
     pub roots: Vec<usize>,
+    /// Debug records without their call sites, which follow: the
+    /// records' `sites` point into them once registered.
+    pub debug: Vec<(crate::debug::FuncDebugRecord, Vec<u8>)>,
 }
 
 pub struct Region {
@@ -115,7 +118,12 @@ pub fn contains(addr: usize) -> bool {
 
 /// Registers the call sites, stack maps and static roots of a module
 /// compiled into the region, and keeps them for images.
-pub fn register(callsites: &[CallSiteRecord], maps: &[StackMapRecord], roots: &[usize]) {
+pub fn register(
+    callsites: &[CallSiteRecord],
+    maps: &[StackMapRecord],
+    roots: &[usize],
+    debug: &[crate::debug::FuncDebugRecord],
+) {
     let tables = Tables {
         callsites: callsites.to_vec(),
         maps: maps
@@ -123,6 +131,10 @@ pub fn register(callsites: &[CallSiteRecord], maps: &[StackMapRecord], roots: &[
             .map(|m| (m.func, m.ret_off, unsafe { std::slice::from_raw_parts(m.offsets, m.count as usize) }.to_vec()))
             .collect(),
         roots: roots.to_vec(),
+        debug: debug
+            .iter()
+            .map(|r| (*r, unsafe { std::slice::from_raw_parts(r.sites, r.nsites as usize) }.to_vec()))
+            .collect(),
     };
     register_tables(&tables);
     REGION.lock().unwrap().tables.push(tables);
@@ -142,6 +154,13 @@ fn register_tables(t: &Tables) {
     crate::unwind::register_callsites(&t.callsites);
     crate::gc::register_stack_maps(&maps);
     crate::gc::register_static_roots(&t.roots);
+    // The site bytes stay where they are: tables are never dropped.
+    let debug: Vec<crate::debug::FuncDebugRecord> = t
+        .debug
+        .iter()
+        .map(|(r, sites)| crate::debug::FuncDebugRecord { sites: sites.as_ptr(), nsites: sites.len() as u64, ..*r })
+        .collect();
+    crate::debug::register(&debug);
 }
 
 /// Restores the region from an image: `bytes` are the contents of the

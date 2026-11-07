@@ -64,6 +64,7 @@ keeps one definition."
 
 (defstruct kfunc
   name
+  (debug nil)                           ; (:DEBUG word) or (:DEBUG-REF data offset)
   (vars '())
   (slots '())
   (blocks '())
@@ -114,6 +115,12 @@ labels are made for every one of them."
     (push (list v kind) (kfunc-vars *func*))
     v))
 
+(defun label-var (var index)
+  "Marks the variable VAR as holding the source variable whose name has
+INDEX in the function's debug info (lower.lisp)."
+  (let ((entry (find var (kfunc-vars *func*) :key #'first)))
+    (setf (cddr entry) (list index))))
+
 (defun new-slot (size)
   (let ((s (fresh-name "S")))
     (push (list s size) (kfunc-slots *func*))
@@ -161,6 +168,7 @@ entry block current. Unterminated blocks end with a trap."
     (push `(:func ,(kfunc-name *func*)
                   (:vars ,@(reverse (kfunc-vars *func*)))
                   (:slots ,@(reverse (kfunc-slots *func*)))
+                  ,@(and (kfunc-debug *func*) (list (kfunc-debug *func*)))
                   ,@(mapcar (lambda (b)
                               `(:block ,(kblock-name b) ,@(reverse (kblock-stmts b))))
                             blocks))

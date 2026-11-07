@@ -44,7 +44,7 @@ pub enum DataContents {
     Bytes(Vec<u8>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Word {
     Int(i64),
     DataAddr(String, i64),
@@ -63,9 +63,28 @@ pub enum VarKind {
 pub struct Func {
     pub name: String,
     pub vars: Vec<(String, VarKind)>,
+    /// Variables that hold a source variable: (variable, index of its
+    /// name in the function's debug info).
+    pub labels: Vec<(String, u32)>,
     pub slots: Vec<(String, u32)>,
     pub blocks: Vec<Block>,
+    /// The function's debug info object (docs/17).
+    pub debug: Option<DebugRef>,
 }
+
+/// Where a function's debug info object is.
+#[derive(Debug, Clone)]
+pub enum DebugRef {
+    /// The object itself, a static object: `(debug WORD)`.
+    Direct(Word),
+    /// The address of a word holding the object: `(debug-ref "data"
+    /// offset)`, for code compiled into the running image, whose objects
+    /// are literals.
+    Indirect(String, i64),
+}
+
+/// A source range: start and end offsets in the file of the function.
+pub type Loc = (u32, u32);
 
 #[derive(Debug)]
 pub struct Block {
@@ -145,12 +164,14 @@ pub enum Stmt {
         entry: Expr,
         args: Vec<Expr>,
         handler: Option<String>,
+        loc: Option<Loc>,
     },
     CallRt {
         name: String,
         results: Vec<String>,
         args: Vec<Expr>,
         handler: Option<String>,
+        loc: Option<Loc>,
     },
     Ovf {
         op: OvfOp,
@@ -219,6 +240,21 @@ fn arity(form: &str, rest: &[Sexp], n: usize) -> R<()> {
         Ok(())
     } else {
         Err(format!("{form}: expected {n} operands, got {}", rest.len()))
+    }
+}
+
+/// An optional `(loc START END)` after a call's operands.
+fn loc(form: &str, rest: &[Sexp], n: usize) -> R<Option<Loc>> {
+    match rest.len() {
+        len if len == n => Ok(None),
+        len if len == n + 1 => {
+            let (h, r) = head(list(&rest[n])?)?;
+            if h != "loc" || r.len() != 2 {
+                return Err(format!("{form}: expected (loc START END), got {}", rest[n]));
+            }
+            Ok(Some((int(&r[0])? as u32, int(&r[1])? as u32)))
+        }
+        len => Err(format!("{form}: expected {n} operands, got {len}")),
     }
 }
 
@@ -385,8 +421,10 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
     let mut f = Func {
         name: string(name)?.to_string(),
         vars: vec![],
+        labels: vec![],
         slots: vec![],
         blocks: vec![],
+        debug: None,
     };
     for part in body {
         let (h, items) = head(list(part)?)?;
@@ -394,7 +432,7 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
             "vars" => {
                 for v in items {
                     let pair = list(v)?;
-                    if pair.len() != 2 {
+                    if pair.len() != 2 && pair.len() != 3 {
                         return Err(format!("vars: malformed entry {v}"));
                     }
                     let kind = match sym(&pair[1])? {
@@ -402,7 +440,11 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                         "raw" => VarKind::Raw,
                         k => return Err(format!("vars: unknown kind {k}")),
                     };
-                    f.vars.push((sym(&pair[0])?.to_string(), kind));
+                    let name = sym(&pair[0])?.to_string();
+                    if pair.len() == 3 {
+                        f.labels.push((name.clone(), int(&pair[2])? as u32));
+                    }
+                    f.vars.push((name, kind));
                 }
             }
             "slots" => {
@@ -414,6 +456,14 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                     f.slots
                         .push((sym(&pair[0])?.to_string(), int(&pair[1])? as u32));
                 }
+            }
+            "debug" => {
+                arity(h, items, 1)?;
+                f.debug = Some(DebugRef::Direct(parse_word(&items[0])?));
+            }
+            "debug-ref" => {
+                arity(h, items, 2)?;
+                f.debug = Some(DebugRef::Indirect(string(&items[0])?.to_string(), int(&items[1])?));
             }
             "block" => {
                 let (bname, stmts) = items.split_first().ok_or("block: missing name")?;
@@ -459,7 +509,7 @@ fn parse_stmt(s: &Sexp) -> R<Stmt> {
             Stmt::Return(parse_expr(&r[0])?, parse_expr(&r[1])?)
         }
         "call-lisp" => {
-            arity(h, r, 5)?;
+            let loc = loc(h, r, 5)?;
             let args: Vec<Expr> = list(&r[3])?.iter().map(parse_expr).collect::<R<_>>()?;
             if args.len() < 3 || args.len() > 3 + REG_ARGS {
                 return Err(format!("call-lisp: bad argument count {}", args.len()));
@@ -470,10 +520,11 @@ fn parse_stmt(s: &Sexp) -> R<Stmt> {
                 entry: parse_expr(&r[2])?,
                 args,
                 handler: handler(&r[4])?,
+                loc,
             }
         }
         "call-rt" => {
-            arity(h, r, 4)?;
+            let loc = loc(h, r, 4)?;
             Stmt::CallRt {
                 name: string(&r[0])?.to_string(),
                 results: list(&r[1])?
@@ -482,6 +533,7 @@ fn parse_stmt(s: &Sexp) -> R<Stmt> {
                     .collect::<R<_>>()?,
                 args: list(&r[2])?.iter().map(parse_expr).collect::<R<_>>()?,
                 handler: handler(&r[3])?,
+                loc,
             }
         }
         "add-ovf" | "sub-ovf" | "mul-ovf" => {

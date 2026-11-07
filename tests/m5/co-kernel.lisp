@@ -7,9 +7,8 @@
   ;; As kiln:compile-kernel: every standard symbol exists at run time.
   (do-external-symbols (s '#:common-lisp) (push s symbols))
   (multiple-value-bind (asts packages)
-      (kiln.compiler:front-end (list "lisp/target/kernel.lisp" "lisp/target/early.lisp"
-                                     "lisp/target/types.lisp" "lisp/target/sequences.lisp")
-                               session)
+      ;; The files as SBCL names them: the names are in the debug info.
+      (kiln.compiler:front-end (kiln.compiler::module-files "kernel") session)
     (kiln.kir:print-module (kiln.compiler:compile-module asts "kernel" :session session
                                                          :defined-packages packages
                                                          :extra-symbols symbols)

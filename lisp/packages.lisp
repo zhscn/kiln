@@ -46,7 +46,10 @@
            ;; The read-eval-print loop (lisp/target/eval/repl.lisp).
            #:repl
            ;; Heap images (lisp/target/clos/image.lisp, docs/15).
-           #:save-image #:*save-hooks* #:*init-hooks*))
+           #:save-image #:*save-hooks* #:*init-hooks*
+           ;; Frames and backtraces (lisp/target/clos/debug.lisp, docs/17).
+           #:frame-list #:frame-name #:frame-source #:frame-variables #:frame-pc
+           #:source-line #:print-frame #:print-backtrace #:exit))
 
 (defpackage #:kiln.macros
   (:use #:cl)

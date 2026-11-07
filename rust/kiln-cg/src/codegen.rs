@@ -1,6 +1,6 @@
 //! KIR → Cranelift, generic over the JIT and object backends.
 
-use crate::kir::{self, BinOp, CmpOp, DataContents, Expr, OvfOp, ShiftOp, Stmt, VarKind, Word};
+use crate::kir::{self, BinOp, CmpOp, DataContents, DebugRef, Expr, Loc, OvfOp, ShiftOp, Stmt, VarKind, Word};
 use cranelift_codegen::ir::{
     self, AbiParam, BlockArg, ExceptionTableData, ExceptionTableItem, InstBuilder,
     MemFlagsData,
@@ -35,6 +35,27 @@ pub struct StackMapInfo {
     pub offsets: Vec<u32>,
 }
 
+/// Debug information of one function (docs/17): its debug info object
+/// and its call sites' source locations and variables, encoded as
+/// `kiln_rt::debug` reads them.
+pub struct FuncDebug {
+    pub func: FuncId,
+    pub len: u32,
+    pub info: Option<DebugInfo>,
+    pub sites: Vec<u8>,
+}
+
+/// Where the debug info object of a function is.
+#[derive(Clone, Copy)]
+pub enum DebugInfo {
+    /// The object is this word (an immediate)...
+    Word(i64),
+    /// ... or the static object at this address (data + addend)...
+    Data(DataId, i64),
+    /// ... or the object held in this word.
+    Indirect(DataId, i64),
+}
+
 pub struct Output {
     pub enter: FuncId,
     pub inits: Vec<DataId>,
@@ -47,6 +68,7 @@ pub struct Output {
     pub exports: Vec<(String, Ref)>,
     /// All data objects the module defines, by name.
     pub data: HashMap<String, DataId>,
+    pub debug: Vec<FuncDebug>,
 }
 
 #[derive(Clone, Copy)]
@@ -192,6 +214,7 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
     let mut callsites = Vec::new();
     let mut stackmaps = Vec::new();
     let mut funcs = Vec::with_capacity(kir.funcs.len());
+    let mut debug_ir = Vec::with_capacity(kir.funcs.len());
     for f in &kir.funcs {
         let mut func = ir::Function::new();
         func.signature = lisp_sig.clone();
@@ -208,9 +231,14 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
             func_refs: HashMap::new(),
             data_gvs: HashMap::new(),
             lisp_sigref: None,
+            labels: f.labels.iter().cloned().collect(),
+            value_labels: HashMap::new(),
+            call_locs: Vec::new(),
         };
         lw.build(&mut func, &mut fctx, f)
             .map_err(|e| format!("func {}: {e}", f.name))?;
+        let slots = debug_slots(&func, &lw.value_labels, lw.call_locs.len());
+        debug_ir.push((std::mem::take(&mut lw.call_locs), slots));
         if opts.dump_clif {
             eprintln!("; {}\n{}", f.name, func.display());
         }
@@ -224,7 +252,8 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
     }
     let min_align = (module.isa().function_alignment().minimum as u64)
         .max(module.isa().symbol_alignment());
-    for (ctx, &id) in contexts.iter().zip(&func_ids) {
+    let mut debug = Vec::new();
+    for (((ctx, &id), f), (locs, slots)) in contexts.iter().zip(&func_ids).zip(&kir.funcs).zip(&debug_ir) {
         let code = ctx.compiled_code().ok_or("no compiled code")?;
         let relocs: Vec<_> = code
             .buffer
@@ -238,6 +267,30 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
             .map_err(|e| format!("func {id}: {e:?}"))?;
         collect_callsites(ctx, id, &mut callsites)?;
         collect_stackmaps(ctx, id, &mut stackmaps)?;
+        let info = match &f.debug {
+            None => None,
+            Some(DebugRef::Direct(Word::Int(n))) => Some(DebugInfo::Word(*n)),
+            Some(DebugRef::Direct(Word::DataAddr(name, addend))) => match names.get(name) {
+                Some(Ref::Data(d)) => Some(DebugInfo::Data(*d, *addend)),
+                _ => return Err(format!("func {}: debug: unknown data {name}", f.name)),
+            },
+            Some(DebugRef::Direct(Word::FuncAddr(_))) => {
+                return Err(format!("func {}: debug: not an object", f.name));
+            }
+            Some(DebugRef::Indirect(name, off)) => match names.get(name) {
+                Some(Ref::Data(d)) => Some(DebugInfo::Indirect(*d, *off)),
+                _ => return Err(format!("func {}: debug-ref: unknown data {name}", f.name)),
+            },
+        };
+        let sites = encode_debug_sites(ctx, locs, slots)?;
+        if info.is_some() || !sites.is_empty() {
+            debug.push(FuncDebug {
+                func: id,
+                len: code.code_buffer().len() as u32,
+                info,
+                sites,
+            });
+        }
     }
     let mut ctx = module.make_context();
 
@@ -337,7 +390,224 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
         roots,
         exports,
         data,
+        debug,
     })
+}
+
+/// For each call of a function (in the order of `call_locs`), the source
+/// variables whose values are in stack slots during the call: (index of
+/// the name, slot).
+///
+/// The values that are live across a call and need stack maps are in
+/// stack slots there: cranelift-frontend gives each such value a slot for
+/// its whole life, stores it right after its definition and lists the
+/// slot in the call's stack map. The slot of a value is found from that
+/// store; the value in a slot at a call is the one whose store is the
+/// nearest one before the call in dominator order (a slot is reused only
+/// once its value is dead, and a value live at the call is defined in a
+/// dominator of the call). A value's labels come from the variables it
+/// was assigned to; a block parameter that SSA construction made gets the
+/// labels that all its incoming values have.
+fn debug_slots(
+    func: &ir::Function,
+    labels: &HashMap<Value, Vec<u32>>,
+    ncalls: usize,
+) -> Vec<Vec<(u32, ir::StackSlot)>> {
+    use cranelift_codegen::dominator_tree::DominatorTree;
+    use cranelift_codegen::flowgraph::ControlFlowGraph;
+    use cranelift_codegen::ir::{InstructionData, Opcode};
+    let mut out = vec![Vec::new(); ncalls];
+    if labels.is_empty() || ncalls == 0 {
+        return out;
+    }
+    let dfg = &func.dfg;
+    let mut lab: HashMap<Value, Vec<u32>> = HashMap::new();
+    for (v, l) in labels {
+        let e = lab.entry(dfg.resolve_aliases(*v)).or_default();
+        e.extend(l);
+        e.sort_unstable();
+        e.dedup();
+    }
+    // Incoming values of block parameters; None for try_call results.
+    let mut incoming: HashMap<(ir::Block, usize), Vec<Option<Value>>> = HashMap::new();
+    for block in func.layout.blocks() {
+        for inst in func.layout.block_insts(block) {
+            for dest in dfg.insts[inst].branch_destination(&dfg.jump_tables, &dfg.exception_tables) {
+                let target = dest.block(&dfg.value_lists);
+                for (i, arg) in dest.args(&dfg.value_lists).enumerate() {
+                    let v = match arg {
+                        BlockArg::Value(v) => Some(dfg.resolve_aliases(v)),
+                        _ => None,
+                    };
+                    incoming.entry((target, i)).or_default().push(v);
+                }
+            }
+        }
+    }
+    // The least fixed point, which does not depend on the order.
+    loop {
+        let mut changed = false;
+        for ((block, i), vals) in &incoming {
+            let p = dfg.block_params(*block)[*i];
+            if lab.contains_key(&p) {
+                continue;
+            }
+            let Some(Some(first)) = vals.first() else { continue };
+            let Some(l) = lab.get(first) else { continue };
+            if vals.iter().all(|v| v.and_then(|v| lab.get(&v)) == Some(l)) {
+                let l = l.clone();
+                lab.insert(p, l);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    let mut map_slots = std::collections::HashSet::new();
+    for block in func.layout.blocks() {
+        for inst in func.layout.block_insts(block) {
+            if let Some(entries) = dfg.user_stack_map_entries(inst) {
+                map_slots.extend(entries.iter().map(|e| e.slot));
+            }
+        }
+    }
+    let cfg = ControlFlowGraph::with_function(func);
+    let domtree = DominatorTree::with_function(func, &cfg);
+    let Some(entry) = func.layout.entry_block() else { return out };
+    // Depth-first over the dominator tree, with an undo log for the
+    // slot -> value map.
+    let mut current: HashMap<ir::StackSlot, Value> = HashMap::new();
+    enum Step {
+        Enter(ir::Block),
+        Undo(Vec<(ir::StackSlot, Option<Value>)>),
+    }
+    let mut stack = vec![Step::Enter(entry)];
+    while let Some(step) = stack.pop() {
+        let block = match step {
+            Step::Enter(b) => b,
+            Step::Undo(log) => {
+                for (slot, old) in log.into_iter().rev() {
+                    match old {
+                        Some(v) => current.insert(slot, v),
+                        None => current.remove(&slot),
+                    };
+                }
+                continue;
+            }
+        };
+        let mut log = Vec::new();
+        for inst in func.layout.block_insts(block) {
+            let data = &dfg.insts[inst];
+            if data.opcode() == Opcode::Store {
+                let args = dfg.inst_args(inst);
+                let addr = dfg.resolve_aliases(args[1]);
+                if let Some(def) = dfg.value_def(addr).inst()
+                    && let InstructionData::StackAddr { stack_slot, offset, .. } = dfg.insts[def]
+                    && i64::from(offset) == 0
+                    && map_slots.contains(&stack_slot)
+                {
+                    let old = current.insert(stack_slot, dfg.resolve_aliases(args[0]));
+                    log.push((stack_slot, old));
+                }
+            }
+            let loc = func.srcloc(inst);
+            if loc.is_default() {
+                continue;
+            }
+            let index = loc.bits() as usize - 1;
+            if index >= ncalls {
+                continue;
+            }
+            if let Some(entries) = dfg.user_stack_map_entries(inst) {
+                let mut vars = Vec::new();
+                for e in entries {
+                    if let Some(l) = current.get(&e.slot).and_then(|v| lab.get(v)) {
+                        vars.extend(l.iter().map(|&n| (n, e.slot)));
+                    }
+                }
+                vars.sort_unstable();
+                vars.dedup();
+                out[index] = vars;
+            }
+        }
+        stack.push(Step::Undo(log));
+        let mut children: Vec<ir::Block> = domtree.children(block).collect();
+        children.reverse();
+        stack.extend(children.into_iter().map(Step::Enter));
+    }
+    out
+}
+
+fn put_varint(out: &mut Vec<u8>, mut n: u64) {
+    loop {
+        let b = (n & 0x7f) as u8;
+        n >>= 7;
+        if n == 0 {
+            out.push(b);
+            return;
+        }
+        out.push(b | 0x80);
+    }
+}
+
+/// Encodes the call sites of a compiled function that have a source
+/// location or variables, by increasing return offset (kiln_rt::debug):
+/// return offset, start + 1 of the source range (0: none), its end (if
+/// any), number of variables, then for each its name index and its slot's
+/// offset from the SP at the call, in words.
+fn encode_debug_sites(ctx: &Context, locs: &[Option<Loc>], slots: &[Vec<(u32, ir::StackSlot)>]) -> R<Vec<u8>> {
+    let mut out = Vec::new();
+    if locs.iter().all(Option::is_none) && slots.iter().all(Vec::is_empty) {
+        return Ok(out);
+    }
+    let code = ctx.compiled_code().ok_or("no compiled code")?;
+    let layout = code.buffer.frame_layout().ok_or("no frame layout")?;
+    let base = ctx.func.params.base_srcloc();
+    let srclocs = code.buffer.get_srclocs_sorted();
+    let maps: HashMap<u32, std::collections::HashSet<u32>> = code
+        .buffer
+        .user_stack_maps()
+        .iter()
+        .map(|(off, _, map)| (*off, map.entries().map(|(_, o)| o).collect()))
+        .collect();
+    let mut rets: Vec<u32> = code.buffer.call_sites().map(|cs| cs.ret_addr).collect();
+    rets.sort_unstable();
+    rets.dedup();
+    for ret in rets {
+        // The call instruction ends at the return address.
+        let i = srclocs.partition_point(|s| s.end < ret);
+        let Some(s) = srclocs.get(i).filter(|s| s.start < ret && ret <= s.end) else { continue };
+        let loc = if s.loc.is_rel() { s.loc.as_rel().expand(base) } else { s.loc.as_abs() };
+        if loc.is_default() {
+            continue;
+        }
+        let index = loc.bits() as usize - 1;
+        let Some(call_loc) = locs.get(index) else { continue };
+        let vars: Vec<(u32, u32)> = slots[index]
+            .iter()
+            .map(|&(n, slot)| (n, layout.stackslots[slot].offset))
+            // Only slots of the call's stack map: what the GC updates.
+            .filter(|(_, off)| maps.get(&ret).is_some_and(|m| m.contains(off)))
+            .collect();
+        if call_loc.is_none() && vars.is_empty() {
+            continue;
+        }
+        put_varint(&mut out, ret as u64);
+        match call_loc {
+            Some((start, end)) => {
+                put_varint(&mut out, *start as u64 + 1);
+                put_varint(&mut out, *end as u64);
+            }
+            None => put_varint(&mut out, 0),
+        }
+        put_varint(&mut out, vars.len() as u64);
+        for (n, off) in vars {
+            put_varint(&mut out, n as u64);
+            put_varint(&mut out, (off / 8) as u64);
+        }
+    }
+    Ok(out)
 }
 
 fn collect_callsites(ctx: &Context, func: FuncId, out: &mut Vec<CallSiteInfo>) -> R<()> {
@@ -489,13 +759,56 @@ pub fn emit_module_info<M: Module>(module: &mut M, out: &Output) -> R<()> {
     edesc.define(vec![0u8; out.exports.len() * 16 + 8].into_boxed_slice());
     module.define_data(exports, &edesc).map_err(err)?;
 
+    // Debug records (kiln_rt::debug::FuncDebugRecord); their call sites
+    // are in one byte array.
+    let sites_id = module
+        .declare_data("kiln_debug_sites", Linkage::Local, false, false)
+        .map_err(err)?;
+    let debug_id = module
+        .declare_data("kiln_debug", Linkage::Local, false, false)
+        .map_err(err)?;
+    let mut ddesc = DataDescription::new();
+    ddesc.set_align(8);
+    let mut dbytes = vec![0u8; out.debug.len() * 48 + 8];
+    let mut sites: Vec<u8> = Vec::new();
+    let sgv = module.declare_data_in_data(sites_id, &mut ddesc);
+    for (i, d) in out.debug.iter().enumerate() {
+        let off = i * 48;
+        let fr = module.declare_func_in_data(d.func, &mut ddesc);
+        ddesc.write_function_addr(off as u32, fr);
+        dbytes[off + 8..off + 16].copy_from_slice(&(d.len as u64).to_le_bytes());
+        match d.info {
+            // 0: no debug info object.
+            None => {}
+            Some(DebugInfo::Word(n)) => dbytes[off + 16..off + 24].copy_from_slice(&n.to_le_bytes()),
+            Some(DebugInfo::Data(id, addend)) | Some(DebugInfo::Indirect(id, addend)) => {
+                let gv = module.declare_data_in_data(id, &mut ddesc);
+                ddesc.write_data_addr((off + 16) as u32, gv, addend);
+            }
+        }
+        let flags: u64 = if matches!(d.info, Some(DebugInfo::Indirect(..))) { 1 } else { 0 };
+        dbytes[off + 24..off + 32].copy_from_slice(&flags.to_le_bytes());
+        ddesc.write_data_addr((off + 32) as u32, sgv, sites.len() as i64);
+        dbytes[off + 40..off + 48].copy_from_slice(&(d.sites.len() as u64).to_le_bytes());
+        sites.extend_from_slice(&d.sites);
+    }
+    ddesc.define(dbytes.into_boxed_slice());
+    module.define_data(debug_id, &ddesc).map_err(err)?;
+    let mut sdesc = DataDescription::new();
+    sites.push(0);
+    sdesc.define(sites.into_boxed_slice());
+    module.define_data(sites_id, &sdesc).map_err(err)?;
+
     // Layout: kiln_rt::ModuleInfo.
     let info = module
         .declare_data(MODULE_INFO_NAME, Linkage::Export, false, false)
         .map_err(err)?;
     let mut desc = DataDescription::new();
     desc.set_align(8);
-    let mut bytes = vec![0u8; 88];
+    let mut bytes = vec![0u8; 104];
+    bytes[96..104].copy_from_slice(&(out.debug.len() as u64).to_le_bytes());
+    let gv = module.declare_data_in_data(debug_id, &mut desc);
+    desc.write_data_addr(88, gv, 0);
     bytes[80..88].copy_from_slice(&(out.exports.len() as u64).to_le_bytes());
     let gv = module.declare_data_in_data(exports, &mut desc);
     desc.write_data_addr(72, gv, 0);
@@ -532,6 +845,12 @@ struct FuncLowering<'a, M: Module> {
     func_refs: HashMap<FuncId, ir::FuncRef>,
     data_gvs: HashMap<DataId, ir::GlobalValue>,
     lisp_sigref: Option<ir::SigRef>,
+    /// Variables holding source variables -> index of the name.
+    labels: HashMap<String, u32>,
+    /// Values assigned to such variables -> the names' indices.
+    value_labels: HashMap<Value, Vec<u32>>,
+    /// Source location of each call; call I has the srcloc I + 1.
+    call_locs: Vec<Option<Loc>>,
 }
 
 impl<M: Module> FuncLowering<'_, M> {
@@ -604,6 +923,26 @@ impl<M: Module> FuncLowering<'_, M> {
         b.seal_all_blocks();
         b.finalize(self.module.target_config());
         Ok(())
+    }
+
+    /// Assigns `val` to the variable `name`.
+    fn def(&mut self, b: &mut FunctionBuilder, name: &str, val: Value) -> R<()> {
+        b.def_var(self.var(name)?, val);
+        if let Some(&n) = self.labels.get(name) {
+            self.value_labels.entry(val).or_default().push(n);
+        }
+        Ok(())
+    }
+
+    /// Marks the instructions emitted until `end_call` as call number
+    /// `call_locs.len()`, at `loc`.
+    fn begin_call(&mut self, b: &mut FunctionBuilder, loc: Option<Loc>) {
+        self.call_locs.push(loc);
+        b.set_srcloc(ir::SourceLoc::new(self.call_locs.len() as u32));
+    }
+
+    fn end_call(&mut self, b: &mut FunctionBuilder) {
+        b.set_srcloc(ir::SourceLoc::default());
     }
 
     fn var(&self, name: &str) -> R<Variable> {
@@ -688,7 +1027,7 @@ impl<M: Module> FuncLowering<'_, M> {
         match s {
             Stmt::Set(v, e) => {
                 let val = self.expr(b, e)?;
-                b.def_var(self.var(v)?, val);
+                self.def(b, v, val)?;
             }
             Stmt::Store(a, off, v) => {
                 let addr = self.expr(b, a)?;
@@ -723,6 +1062,7 @@ impl<M: Module> FuncLowering<'_, M> {
                 entry,
                 args,
                 handler,
+                loc,
             } => {
                 let callee = self.expr(b, entry)?;
                 let mut vals = args
@@ -735,15 +1075,18 @@ impl<M: Module> FuncLowering<'_, M> {
                 let sig = *self
                     .lisp_sigref
                     .get_or_insert_with(|| b.import_signature(self.lisp_sig.clone()));
+                self.begin_call(b, *loc);
                 let rets = self.emit_call(b, Callee::Indirect(sig, callee), &vals, 2, handler.as_deref())?;
-                b.def_var(self.var(v0)?, rets[0]);
-                b.def_var(self.var(nv)?, rets[1]);
+                self.end_call(b);
+                self.def(b, v0, rets[0])?;
+                self.def(b, nv, rets[1])?;
             }
             Stmt::CallRt {
                 name,
                 results,
                 args,
                 handler,
+                loc,
             } => {
                 let imp = *self
                     .imports
@@ -761,9 +1104,11 @@ impl<M: Module> FuncLowering<'_, M> {
                     (id, None)
                 };
                 let fr = self.func_ref(b, id);
+                self.begin_call(b, *loc);
                 let rets = self.emit_call(b, Callee::Direct(fr), &vals, imp.returns, handler)?;
+                self.end_call(b);
                 for (r, v) in results.iter().zip(rets) {
-                    b.def_var(self.var(r)?, v);
+                    self.def(b, r, v)?;
                 }
             }
             Stmt::Ovf {
@@ -781,8 +1126,8 @@ impl<M: Module> FuncLowering<'_, M> {
                     OvfOp::Mul => b.ins().smul_overflow(x, y),
                 };
                 let of = b.ins().uextend(I64, of);
-                b.def_var(self.var(result)?, r);
-                b.def_var(self.var(overflow)?, of);
+                self.def(b, result, r)?;
+                self.def(b, overflow, of)?;
             }
             Stmt::Trap => {
                 b.ins().trap(TrapCode::user(1).unwrap());

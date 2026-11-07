@@ -298,7 +298,7 @@ fn c_path(bytes: Vec<u8>) -> Option<std::ffi::CString> {
 /// - 13 strerror(errno, buffer).
 /// - 14 the monotonic clock in microseconds. 15 the time in seconds since
 ///   1970. 16 the processor time of the process in microseconds.
-/// - 17 sleep for a microseconds.
+/// - 17 sleep for a microseconds. 18 exit with status a.
 ///
 /// # Safety
 /// The arguments must be as described.
@@ -434,6 +434,11 @@ pub unsafe extern "C" fn kiln_rt_sys(_ctx: *mut Context, op: u64, a: u64, b: u64
         17 => {
             std::thread::sleep(std::time::Duration::from_micros(fixnum_value(a).max(0) as u64));
             0
+        }
+        18 => {
+            use std::io::Write;
+            let _ = std::io::stdout().flush();
+            std::process::exit(fixnum_value(a) as i32)
         }
         _ => einval,
     };

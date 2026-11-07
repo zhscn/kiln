@@ -870,6 +870,15 @@ and slots), zero-filled."
   (let ((r (new-var)))
     (emit `(:call-rt ,(rt-save-image) (,r) (:ctx ,path ,toplevel ,executable) :nil))
     r))
+;;; Frames (kiln_rt_frame, docs/17): the frame pointer of the calling
+;;; function, an aligned address, so a fixnum; and the inspection of
+;;; frames, OP selecting what (debug.rs).
+(define-primop :frame-pointer ()
+  (copy-to-var '(:fp)))
+(define-primop :frame (op a b)
+  (let ((r (new-var)))
+    (emit `(:call-rt ,(rt-frame) (,r) (:ctx ,op ,a ,b) :nil))
+    r))
 ;;; The shortest decimal representation of a float: WHICH selects the
 ;;; significand (0), exponent (1) or sign (2) (rtfun.rs, docs/10 §17).
 (define-primop :float-decimal (x which)

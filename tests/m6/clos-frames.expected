@@ -1,0 +1,18 @@
+FRAMES-A clos-frames.lisp (19 4)
+  ((X . 11) (Y . 22))
+FRAMES-B clos-frames.lisp (23 21)
+  ((N . 10) (Z . 10))
+(METHOD FRAMES-GF (INTEGER)) clos-frames.lisp (30 11)
+  ((X . 10))
+(LAMBDA :IN (LAMBDA :IN CLOSTROPHILIA::SPREAD-METHOD-CALL)) compute-discriminating-function.lisp (826 18)
+  NIL
+(10 (11 22) 10)
+
+FRAMES-CELL clos-frames.lisp (41 6)
+  ((COUNT . 6))
+7
+
+FRAMES-FAIL clos-frames.lisp (51 4)
+  NIL
+(LAMBDA :IN FRAMES-MAP) clos-frames.lisp (65 22)
+  ((E . 1))

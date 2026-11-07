@@ -130,8 +130,9 @@ Rust: kiln-launcher           staticlib，提供 C main，链接 kiln-rt
   (root "数据名" 字下标)            ; 静态 GC root（M2）
   (shared "名字" ...)               ; 可被多个模块定义的数据和函数（M3.2，见 09 §7）
   (func "名字"
-    (vars (v obj|raw) ...)         ; obj 会登记进栈图
+    (vars (v obj|raw [下标]) ...)  ; obj 会登记进栈图；下标：源码变量名（17 §2.2）
     (slots (s 字节数) ...)
+    [(debug W) | (debug-ref "数据名" 偏移)]  ; 调试信息对象（17 §2.1）
     (block b 语句...) ...))        ; 第一个 block 是入口
 ```
 
@@ -143,8 +144,8 @@ Rust: kiln-launcher           staticlib，提供 C main，链接 kiln-rt
 | `(store A 偏移 V)` | 存一个字 |
 | `(jump b)` / `(br C b1 b2)` | 跳转；C 非零走 b1 |
 | `(return V0 NV)` | 返回 |
-| `(call-lisp v0 nv ENTRY (ctx self nargs a...) H)` | 调用 Lisp 函数；H 是 handler block 名，或 `nil` |
-| `(call-rt "名字" (结果...) (参数...) H)` | 调用 runtime 函数；只有 `unwinds` 的函数才使用 H |
+| `(call-lisp v0 nv ENTRY (ctx self nargs a...) H [(loc 起始 结束)])` | 调用 Lisp 函数；H 是 handler block 名，或 `nil`；`loc` 是调用形式的源码范围（17 §2.2） |
+| `(call-rt "名字" (结果...) (参数...) H [(loc 起始 结束)])` | 调用 runtime 函数；只有 `unwinds` 的函数才使用 H |
 | `(add-ovf r o A B)` / `sub-ovf` / `mul-ovf` | 带溢出标志的有符号运算 |
 | `(trap)` | 不可达 |
 

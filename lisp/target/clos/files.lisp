@@ -111,14 +111,25 @@
       (element-length (octet-transcoder stream))
       1))
 
+(defun unread-octets (stream)
+  "The octets of the character UNREAD-CHAR gave back to STREAM, in UTF-8:
+they have been read from the file, but the character has not."
+  (let ((char (previous-char stream)))
+    (if (characterp char)
+        (let ((code (char-code char)))
+          (cond ((< code #x80) 1) ((< code #x800) 2) ((< code #x10000) 3) (t 4)))
+        0)))
+
 (defmethod stream-file-position ((stream kiln-file-stream))
   (let ((position (check-sys stream (kiln.kernel::sys 2 (descriptor stream) 0 1))))
-    (/ (+ position (out-end stream) (- (in-start stream) (in-end stream)))
+    (/ (- (+ position (out-end stream) (- (in-start stream) (in-end stream)))
+          (unread-octets stream))
        (octets-per-element stream))))
 
 (defmethod (setf stream-file-position) (position (stream kiln-file-stream))
   (flush-file-buffer stream)
   (setf (in-start stream) 0 (in-end stream) 0)
+  (setf (previous-char stream) nil)
   (let ((r (case position
              (:start (kiln.kernel::sys 2 (descriptor stream) 0 0))
              (:end (kiln.kernel::sys 2 (descriptor stream) 0 2))

@@ -1,7 +1,7 @@
 //! In-memory compilation: whole programs (`kiln-cg jit`) and code compiled
 //! into a running image (`kiln_rt_jit`, docs/11 §11).
 
-use crate::codegen::{self, Options, Output, Ref};
+use crate::codegen::{self, DebugInfo, Options, Output, Ref};
 use crate::kir;
 use cranelift_codegen::isa::OwnedTargetIsa;
 use cranelift_codegen::settings::{self, Configurable};
@@ -170,9 +170,32 @@ pub fn load(kir: &kir::Module, opts: &Options, memory: Memory) -> Result<Loaded,
         .iter()
         .map(|(id, off)| module.get_finalized_data(*id).0 as usize + *off as usize)
         .collect();
+    // The records point into `out`'s site bytes, which `Loaded` keeps;
+    // code::register copies them.
+    let debug: Vec<kiln_rt::debug::FuncDebugRecord> = out
+        .debug
+        .iter()
+        .map(|d| {
+            let data = |id, addend: i64| (module.get_finalized_data(id).0 as i64 + addend) as u64;
+            let (info, flags) = match d.info {
+                None => (0, 0),
+                Some(DebugInfo::Word(n)) => (n as u64, 0),
+                Some(DebugInfo::Data(id, addend)) => (data(id, addend), 0),
+                Some(DebugInfo::Indirect(id, off)) => (data(id, off), kiln_rt::debug::FLAG_INDIRECT),
+            };
+            kiln_rt::debug::FuncDebugRecord {
+                start: module.get_finalized_function(d.func) as usize,
+                len: d.len as u64,
+                info,
+                flags,
+                sites: d.sites.as_ptr(),
+                nsites: d.sites.len() as u64,
+            }
+        })
+        .collect();
     match memory {
-        Memory::Own(_) => kiln_rt::register_code(&callsites, &maps, &roots),
-        Memory::Shared => kiln_rt::code::register(&callsites, &maps, &roots),
+        Memory::Own(_) => kiln_rt::register_code(&callsites, &maps, &roots, &debug),
+        Memory::Shared => kiln_rt::code::register(&callsites, &maps, &roots, &debug),
     }
     for (name, r) in &out.exports {
         let addr = match r {

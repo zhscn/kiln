@@ -53,6 +53,8 @@ fn run_jit(kir: &kir::Module, opts: &Options) -> Result<i32, String> {
         nroots: 0,
         exports: none as *const _,
         nexports: 0,
+        debug: none as *const _,
+        ndebug: 0,
     };
     let code = unsafe { kiln_rt::run_module(&info) };
     std::mem::forget(loaded);

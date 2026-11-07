@@ -8,7 +8,10 @@
       ;; The undefined functions (the accessors of a DEFCLASS) are reported
       ;; in SBCL too.
       (handler-bind ((style-warning #'muffle-warning))
-        (kiln.compiler:front-end (list "tests/m5/co-compile-input.lisp") session))
+        ;; The absolute name, as tools/test.sh gives it to SBCL: names
+        ;; are in the debug info.
+        (kiln.compiler:front-end
+         (list (namestring (truename "tests/m5/co-compile-input.lisp"))) session))
     (kiln.kir:print-module (kiln.compiler:compile-module asts "co-compile-input"
                                                          :session session
                                                          :defined-packages packages)

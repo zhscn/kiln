@@ -354,7 +354,45 @@ the file. Reading starts in KILN-USER, with the target's features."
 ;;; Top-level form processing (CLHS 3.2.3.1)
 
 (defvar *defined-packages*)             ; host packages created by DEFPACKAGE forms
-(defvar *toplevel-asts*)                ; simplified ASTs, most recent first
+(defvar *toplevel-asts*)                ; TOPLEVEL-FORMs (lower.lisp), most recent first
+
+;;; Where the top-level form being processed comes from, for the debug
+;;; information of the functions compiled from it (docs/17).
+(defvar *source-file* nil)              ; the file's name (one string per file), or NIL
+(defvar *toplevel-source* nil)          ; (START . END) of the outermost form, or NIL
+(defvar *definition-name* nil)          ; DEFINITION-NAME of the innermost definition form
+
+(defun cst-source-range (cst)
+  "The source range (START . END) of CST if it has one."
+  (let ((source (cst:source cst)))
+    (and (consp source) (integerp (car source)) (integerp (cdr source)) source)))
+
+(defun method-specializers (lambda-list)
+  (loop for p in lambda-list
+        until (member p lambda-list-keywords)
+        collect (if (consp p) (second p) t)))
+
+(defun definition-name (form)
+  "For a definition FORM (a DEF... form), the name under which backtraces
+show what it defines; for DEFUN, DEFMACRO, DEFMETHOD, DEFGENERIC and
+DEFINE-COMPILER-MACRO the name of the function it defines, and true as
+the second value."
+  (when (and (consp form) (symbolp (first form)) (consp (rest form)))
+    (let ((op (first form)) (name (second form)))
+      (case op
+        ((defun defgeneric) (values name t))
+        (defmacro (values `(macro-function ,name) t))
+        (define-compiler-macro (values `(compiler-macro ,name) t))
+        (defmethod
+         (let ((qualifiers (loop for x in (cddr form) until (listp x) collect x))
+               (lambda-list (find-if #'listp (cddr form))))
+           (values `(method ,name ,@qualifiers ,(method-specializers lambda-list)) t)))
+        (t
+         (and (symbolp op)
+              (> (length (symbol-name op)) 3)
+              (string= "DEF" (symbol-name op) :end2 3)
+              (or (symbolp name) (and (consp name) (eq (first name) 'setf)))
+              (values (list op name) nil)))))))
 
 (defun cst-list (cst)
   "The elements of the proper-list CST."
@@ -371,8 +409,9 @@ the file. Reading starts in KILN-USER, with the target's features."
 (defun compile-toplevel-form (cst compile-time-too)
   (when compile-time-too
     (compile-time-eval cst))
-  (push (simplify (let ((*inline-enabled* t))
-                    (cb:cst-to-ast *client* cst *environment*)))
+  (push (make-toplevel-form (simplify (let ((*inline-enabled* t))
+                                        (cb:cst-to-ast *client* cst *environment*)))
+                            *source-file* *toplevel-source* *definition-name*)
         *toplevel-asts*))
 
 (defun macroexpand-toplevel (form)
@@ -467,7 +506,9 @@ module).")
     (if entry (cdr entry) (string designator))))
 
 (defun process-toplevel (cst compile-time-too)
-  (let ((form (cst:raw cst)))
+  (let* ((form (cst:raw cst))
+         (*definition-name* (multiple-value-bind (name function-p) (definition-name form)
+                              (if name (cons name function-p) *definition-name*))))
     (when (and (consp form) (eq (first form) 'defun) (consp (rest form)) (consp (cddr form)))
       (note-inline-definition form))
     (if (and (consp form) (symbolp (first form)))
@@ -604,7 +645,9 @@ created."
              (*package-renames* (if (and (consp path) (eq (first path) :renames))
                                     (second path)
                                     '()))
-             (*file-sets-package* nil))
+             (*file-sets-package* nil)
+             (*source-file* (let ((file (if (consp path) (car (last path)) path)))
+                              (if (stringp file) file (namestring file)))))
          (when *trace-toplevel*
            (format *error-output* "~&~A~%" (if (consp path) (car (last path)) path)))
          (map-file-csts (lambda (cst) (process-toplevel-cst cst compile-time-too))
@@ -640,7 +683,9 @@ created."
   ;; As SBCL's COMPILE-FILE: gensyms are numbered from 0 in each
   ;; top-level form. COMPILE-MODULE names those in constants by their
   ;; order in the module (MODULE-SYMBOL-NAME).
-  (let ((*gensym-counter* 0))
+  (let ((*gensym-counter* 0)
+        (*toplevel-source* (cst-source-range cst))
+        (*definition-name* nil))
     (process-toplevel cst compile-time-too)))
 
 (defun call-with-front-end (session thunk)

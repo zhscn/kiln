@@ -494,9 +494,90 @@ word is a list of them and the flag is 1."
 (defvar *vars*)                         ; definition AST -> (kfunc . var or operand)
 (defvar *self*)                         ; variable holding the function object
 
-(defun bind-var (definition operand)
+;;; Debug information (docs/17). Each function has a debug info object,
+;;; #(NAME FILE START END VARIABLES): the name backtraces show, the source
+;;; file and range of the function (or of its top-level form), and the
+;;; names of its variables, a simple vector whose elements are symbols,
+;;; or (:CELL symbol) for a variable that a closure assigns (its value is
+;;; in a cell). The KIR variables that hold source variables carry the
+;;; index of the name, and calls carry the source range of the call
+;;; form: kiln-cg records where the variables are during each call.
+
+(defstruct (toplevel-form (:constructor make-toplevel-form (ast file source definition)))
+  "A top-level form to compile (front.lisp): its simplified AST, the name
+of its file, its source range (START . END) and the definition it belongs
+to, (NAME . FUNCTION-P) as DEFINITION-NAME returns them, or NIL."
+  ast file source definition)
+
+(defvar *toplevel* nil)                 ; the TOPLEVEL-FORM being compiled
+(defvar *function-name* nil)            ; name of the function being compiled; NIL at top level
+(defvar *debug-vars* '())               ; names of its variables, newest first
+(defvar *debug-var-count* 0)
+(defvar *call-source* nil)              ; source range of the innermost call form
+
+(defun ast-source (ast)
+  "The source range (START . END) of AST's origin, if it has one."
+  (let ((origin (ico:origin ast)))
+    (and (typep origin 'cst:cst)
+         (let ((source (cst:source origin)))
+           (and (consp source) (integerp (car source)) (integerp (cdr source)) source)))))
+
+(defun call-loc ()
+  "The (LOC START END) part of the call being emitted, as a list."
+  (and *call-source* *toplevel* (toplevel-form-file *toplevel*)
+       `((:loc ,(car *call-source*) ,(cdr *call-source*)))))
+
+(defun note-debug-var (var name cell)
+  (when (and name (symbolp name) (symbol-package name))
+      (push (if cell (list :cell name) name) *debug-vars*)
+    (kiln.kir::label-var var *debug-var-count*)
+    (incf *debug-var-count*)))
+
+(defun local-function-debug-name (name)
+  "The debug name of a local function named NAME (a LAMBDA's is a gensym)
+in the function being compiled."
+  (let* ((definition (and *toplevel* (toplevel-form-definition *toplevel*)))
+         (parent (or *function-name* (car definition))))
+    (cond ((or (and (symbolp name) (symbol-package name))
+               (and (consp name) (eq (first name) 'setf)))
+           (if parent `(flet ,name :in ,parent) `(flet ,name)))
+          ;; The function a DEFUN (DEFMETHOD...) defines.
+          ((and (null *function-name*) (cdr definition))
+           (car definition))
+          (parent `(lambda :in ,parent))
+          (t '(lambda)))))
+
+(defun set-function-debug (name source)
+  "Gives the function being built its debug info object."
+  (let* ((file (and *toplevel* (toplevel-form-file *toplevel*)))
+         (source (or source (and *toplevel* (toplevel-form-source *toplevel*))))
+         (word (constant-word
+                (vector name file (car source) (cdr source)
+                        (and *debug-vars* (coerce (reverse *debug-vars*) 'simple-vector))))))
+    (setf (kiln.kir::kfunc-debug *func*)
+          (if (and (consp word) (eq (first word) :literal))
+              `(:debug-ref ,+literals-label+ ,(* 8 (second word)))
+              `(:debug ,word)))))
+
+(defun source-variable-name (definition)
+  "The name of the variable DEFINITION for the debug info if it is written
+in the source: its source range is the name. Variables that macros
+introduce have the range of the macro form (CST:RECONSTRUCT); their names
+are of no use, and differ between the host and kiln, where some macro
+packages have other names (docs/11 §3)."
+  (let ((source (and definition (ast-source definition)))
+        (name (and definition (ico:name definition))))
+    (and source (symbolp name)
+         (= (- (cdr source) (car source)) (length (symbol-name name)))
+         name)))
+
+(defun bind-var (definition operand &key (name (source-variable-name definition)) cell)
+  "Binds the variable DEFINITION to a new KIR variable holding OPERAND.
+NAME is the source variable's name for the debug info, NIL for none; CELL
+true if the variable holds the cell of the variable NAME."
   (let ((v (copy-to-var operand)))
     (setf (gethash definition *vars*) (cons *func* v))
+    (note-debug-var v name cell)
     v))
 
 (defun var-of (definition)
@@ -648,6 +729,13 @@ live across calls, and they were spilled."
            (setf (gethash def *vars*)
                  (cons *func* `(:load ,*self* ,(+ +fobj-env+
                                                   (* 8 (ico:literal (ico:index-ast form))))))))
+          ((and (typep form 'ico:make-cell-ast)
+                (typep (ico:form-ast form) 'ico:variable-reference-ast))
+           ;; Closure conversion: the cell of a variable that a closure
+           ;; assigns, made from the variable.
+           (bind-var def (lower form)
+                     :name (source-variable-name (ico:definition-ast (ico:form-ast form)))
+                     :cell t))
           (t
            (bind-var def (lower form))))))
 
@@ -830,6 +918,7 @@ known to hold one), and true; else NIL and NIL."
 (defun rt-sys () (module-import-func "kiln_rt_sys" 5 1))
 (defun rt-jit () (module-import-func "kiln_rt_jit" 3 1))
 (defun rt-save-image () (module-import-func "kiln_rt_save_image" 4 1))
+(defun rt-frame () (module-import-func "kiln_rt_frame" 4 1))
 
 (defun emit-tls-slot (sym)
   "Raw address of the TLS slot of the symbol operand SYM (index 0 if it
@@ -1220,15 +1309,19 @@ allowed) a keyword not in KEYWORDS."
                          (s (bind-var supplied (nil-value))))
                      (emit-find-key list keyword v s))))))))
 
-(defun compile-function (name lambda-list body)
-  "Builds the KIR function NAME. LAMBDA-LIST is a parsed lambda list."
-  (let ((*regions* '()))
+(defun compile-function (name lambda-list body &key debug-name source)
+  "Builds the KIR function NAME. LAMBDA-LIST is a parsed lambda list.
+DEBUG-NAME and SOURCE (a source range) go into its debug info."
+  (let ((*regions* '())
+        (*debug-vars* '())
+        (*debug-var-count* 0))
     (with-function (name)
       (let ((*self* (copy-to-var :self)))
         (emit-entry lambda-list)
         (emit-poll)
         (multiple-value-bind (v n) (lower-progn-mv body)
-          (emit `(:return ,v ,n)))))))
+          (emit `(:return ,v ,n))))
+      (set-function-debug debug-name source))))
 
 (defun static-env-size (name-definition asts)
   "Number of env words of the function named by NAME-DEFINITION, from
@@ -1277,20 +1370,24 @@ host or kiln, docs/11 §8)."
                 for label = (fresh-label (kiln.kir::kir-name
                                      "kiln_f_" (local-function-label-name (ico:name def)) "_"
                                      (if hint (kiln.kir::kir-name hint "_") "")))
-                do (let ((*name-hint* hint))
+                for debug-name = (local-function-debug-name (ico:name def))
+                do (let ((*name-hint* hint)
+                         (*function-name* debug-name))
                      (compile-function label
                                        (parse-lambda-list (ico:lambda-list-ast lf))
-                                       (ico:form-asts lf)))
+                                       (ico:form-asts lf)
+                                       :debug-name debug-name
+                                       :source nil))
                 collect (list def label (static-env-size def (ico:form-asts ast))))))
     (loop for (def label n) in functions
           do (if (zerop n)
                  (let ((data (kiln.kir::kir-name label "_fobj")))
                    (module-data data `(:words ,+kind-function+ (:func ,label)))
-                   (bind-var def `(:addr ,data ,+tag-general+)))
+                   (bind-var def `(:addr ,data ,+tag-general+) :name nil))
                  (let ((p (emit-alloc (+ 16 (* 8 n))
                                       (logior +kind-function+ (ash n +length-shift+)))))
                    (emit `(:store ,p 8 (:addr ,label)))
-                   (bind-var def `(:add ,p ,+tag-general+)))))
+                   (bind-var def `(:add ,p ,+tag-general+) :name nil))))
     (lower-progn-mv (ico:form-asts ast))))
 
 (defmethod lower ((ast ico:set-static-environment-ast))
@@ -1363,7 +1460,8 @@ safepoint (docs/08 §4)."
           do (emit `(:store :ctx ,(+ +ctx-values+ (* 8 i)) ,v)))
     (emit `(:call-lisp ,v0 ,nv ,entry
                        (:ctx ,fobj ,(length vals) ,@(subseq vals 0 (min (length vals) +reg-args+)))
-                       ,(handler)))
+                       ,(handler)
+                       ,@(call-loc)))
     (values v0 nv)))
 
 (defun function-cell-value (name)
@@ -1534,7 +1632,8 @@ no pointer, the cons need not be scanned by the GC."
         (fail "unknown primop ~S" (ico:literal op)))))
 
 (define-mv-lowering ico:application-ast (ast)
-  (let ((fn (ico:function-name-ast ast)))
+  (let ((fn (ico:function-name-ast ast))
+        (*call-source* (or (ast-source ast) *call-source*)))
     (multiple-value-bind (v n)
         (etypecase fn
           (ico:global-function-name-reference-ast
@@ -1581,13 +1680,13 @@ be confused with a later activation at the same address."
           (make-exit-info :func *func* :regions *regions* :exit exit :result r :count n))
     (if (not nonlocal)
         (progn
-          (bind-var (ico:variable-definition-ast ast) 0)
+          (bind-var (ico:variable-definition-ast ast) 0 :name nil)
           (multiple-value-call #'set-mv r n (lower-progn-mv body))
           (jump exit))
         (let* ((token (emit-exit-token))
                (region (establish-entry :exit-point token))
                (land (new-block)))
-          (bind-var (ico:variable-definition-ast ast) token)
+          (bind-var (ico:variable-definition-ast ast) token :name nil)
           (let ((*regions* (cons region *regions*)))
             (multiple-value-call #'set-mv r n (lower-progn-mv body)))
           (pop-entry region)
@@ -1639,7 +1738,7 @@ be confused with a later activation at the same address."
          (token (and nonlocal (emit-exit-token)))
          (region (and nonlocal (establish-entry :exit-point token)))
          (inner (if region (cons region *regions*) *regions*)))
-    (bind-var (ico:variable-definition-ast ast) (or token 0))
+    (bind-var (ico:variable-definition-ast ast) (or token 0) :name nil)
     (loop for def in defs
           for b in blocks
           when def
@@ -1783,14 +1882,21 @@ size of a function.")
 (defun compile-toplevel-chunk (name asts)
   "A function NAME of no arguments that runs the top-level forms ASTS;
 returns the operand of its (static) function object."
-  (let ((*regions* '()))
+  (let ((*regions* '())
+        (*debug-vars* '())
+        (*debug-var-count* 0)
+        (files (remove-duplicates (mapcar #'toplevel-form-file asts))))
     (with-function (name)
       (let ((*self* (copy-to-var :self)))
         (emit-poll)
-        (dolist (ast asts)
-          (emit-load-time-values ast)
-          (lower ast))
-        (emit `(:return ,(nil-value) 1)))))
+        (dolist (form asts)
+          (let ((*toplevel* form))
+            (emit-load-time-values (toplevel-form-ast form))
+            (lower (toplevel-form-ast form))))
+        (emit `(:return ,(nil-value) 1)))
+      (let ((*toplevel* (and (= (length files) 1) (first files)
+                             (make-toplevel-form nil (first files) nil nil))))
+        (set-function-debug '(:top-level-form) nil))))
   (let ((fobj (kiln.kir::kir-name name "_fobj")))
     (module-data fobj `(:words ,+kind-function+ (:func ,name)))
     `(:data ,fobj ,+tag-general+)))
