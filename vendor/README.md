@@ -111,6 +111,15 @@ Each patched place is marked with a `kiln:` comment.
   discriminating closure of a one-parameter generic function caches the
   location instead of the closure, reading the slot itself on a hit (an
   unbound slot goes through the closure, which signals `slot-unbound`).
+- Effective methods of the standard method combination's shapes (`progn`,
+  `multiple-value-prog1`, `call-method`, `make-method`) whose methods have
+  fast functions become closures of the spread arguments
+  (`spread-form-closure`), and a `make-method` next method gets a fast
+  function too, for `call-next-method` from an `:around` method. Only a
+  bare `call-method` did before; two primary methods (a specific one and
+  a default one) make a `multiple-value-prog1` form, so most calls of the
+  compiler's generic functions consed their arguments and interpreted the
+  form.
 
 ## Predicament patches
 

@@ -794,20 +794,82 @@
   (spread-case arity
     (lambda (%arguments) (funcall list-function (list %arguments)))))
 
-;;; An effective method that is one method: an accessor method that
-;;; MAYBE-REPLACE-METHOD made, which accesses the slot directly, or a
-;;; method with a fast function. Anything else goes through the list.
+;;; An effective method made of methods with fast functions (or accessor
+;;; methods that MAYBE-REPLACE-METHOD made, which access the slot
+;;; directly), combined by the standard method combination's PROGN,
+;;; MULTIPLE-VALUE-PROG1, CALL-METHOD and MAKE-METHOD, is a closure of the
+;;; spread arguments that calls them directly. Anything else goes through
+;;; the list. (Two primary methods, a specific one and a default one, make
+;;; a MULTIPLE-VALUE-PROG1 form: before this, most calls of the
+;;; compiler's generic functions took the list.)
 (defun spread-effective-method-function
     (generic-function arity effective-method list-function)
-  (let ((form (effective-method-body effective-method))
-        (method-class (generic-function-method-class generic-function)))
-    (or (and (consp form)
-             (eq (first form) 'call-method)
-             (not (make-method-form-p (second form)))
-             (spread-method-call (second form)
-                                 (resolve-next-methods (third form) method-class)
-                                 arity))
-        (spread-list-function arity list-function))))
+  (or (spread-form-closure (effective-method-body effective-method) arity
+                           (generic-function-method-class generic-function))
+      (spread-list-function arity list-function)))
+
+(defun spread-form-closure (form arity method-class)
+  "A function of ARITY arguments that does what the effective method FORM
+does, or NIL."
+  (flet ((sub (form) (spread-form-closure form arity method-class)))
+    (cond ((atom form) nil)
+          ((eq (first form) 'call-method)
+           (let ((method (second form)))
+             (if (make-method-form-p method)
+                 (sub (second method))
+                 (spread-method-call method
+                                     (spread-next-methods (third form) arity method-class)
+                                     arity))))
+          ((eq (first form) 'progn)
+           (let ((closures (mapcar #'sub (rest form))))
+             (and closures
+                  (every #'identity closures)
+                  (if (null (rest closures))
+                      (first closures)
+                      (spread-case arity
+                        (lambda (%arguments)
+                          (let ((tail closures))
+                            (loop (if (rest tail)
+                                      (progn (funcall (first tail) %arguments)
+                                             (setf tail (rest tail)))
+                                      (return (funcall (first tail) %arguments)))))))))))
+          ((eq (first form) 'multiple-value-prog1)
+           (let ((first (sub (second form)))
+                 (closures (mapcar #'sub (rest (rest form)))))
+             (and first
+                  (every #'identity closures)
+                  (if (null closures)
+                      first
+                      (spread-case arity
+                        (lambda (%arguments)
+                          (multiple-value-prog1 (funcall first %arguments)
+                            (dolist (closure closures)
+                              (funcall closure %arguments)))))))))
+          (t nil))))
+
+(defun spread-next-methods (next-methods arity method-class)
+  "As RESOLVE-NEXT-METHODS, and the method made for a MAKE-METHOD form has a
+fast function when its form has a spread closure (CALL-NEXT-METHOD in an
+:AROUND method calls it without a list)."
+  (loop for next in next-methods
+        collect
+        (if (make-method-form-p next)
+            (let ((closure (effective-method-closure (second next) method-class))
+                  (spread (spread-form-closure (second next) arity method-class)))
+              (apply #'make-method-instance method-class
+                     :qualifiers '()
+                     :lambda-list '()
+                     :specializers '()
+                     :function (lambda (arguments next-methods)
+                                 (declare (ignore next-methods))
+                                 (funcall closure arguments))
+                     (and spread
+                          (list :fast-function
+                                (spread-case arity
+                                  (lambda (next-methods %arguments)
+                                    (declare (ignore next-methods))
+                                    (funcall spread %arguments)))))))
+            next)))
 
 (defun spread-method-call (method next-methods arity)
   (let ((class (class-of method)))
