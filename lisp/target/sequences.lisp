@@ -36,7 +36,9 @@
   "LIST as a sequence of the same kind as SEQ."
   (cond ((listp seq) list)
         ((stringp seq) (coerce list 'string))
-        (t (coerce list 'vector))))
+        ((simple-vector-p seq) (coerce list 'vector))
+        (t (let ((new (make-sequence-like seq (length list))) (i 0))
+             (dolist (x list new) (setf (aref new i) x) (setq i (+ i 1)))))))
 
 ;;; Membership and association
 
@@ -264,21 +266,37 @@ other, the shorter's length and the rest of the longer after it."
     (dolist (x (seq-list seq start end) n)
       (when (funcall pred (if key (funcall key x) x)) (setq n (+ n 1))))))
 
-(defun mismatch (a b &key test test-not key)
-  (let ((la (length a)) (lb (length b)))
-    (dotimes (i (min la lb) (if (= la lb) nil (min la lb)))
-      (unless (satisfies-test (if key (funcall key (elt a i)) (elt a i)) (elt b i)
-                              test test-not key)
-        (return i)))))
-(defun search (needle haystack &key test test-not key (start2 0))
-  (let ((n (length needle)) (h (length haystack)))
+(defun mismatch (a b &key from-end test test-not key (start1 0) end1 (start2 0) end2)
+  (let ((end1 (or end1 (length a))) (end2 (or end2 (length b))))
+    (flet ((same (i j)
+             (satisfies-test (if key (funcall key (elt a i)) (elt a i))
+                             (if key (funcall key (elt b j)) (elt b j))
+                             test test-not nil)))
+      (if from-end
+          (do ((i (- end1 1) (- i 1)) (j (- end2 1) (- j 1)))
+              ((or (< i start1) (< j start2))
+               (if (and (< i start1) (< j start2)) nil (+ i 1)))
+            (unless (same i j) (return (+ i 1))))
+          (do ((i start1 (+ i 1)) (j start2 (+ j 1)))
+              ((or (>= i end1) (>= j end2))
+               (if (and (>= i end1) (>= j end2)) nil i))
+            (unless (same i j) (return i)))))))
+(defun search (needle haystack &key from-end test test-not key
+                                    (start1 0) end1 (start2 0) end2)
+  (let* ((end1 (or end1 (length needle)))
+         (end2 (or end2 (length haystack)))
+         (n (- end1 start1))
+         (result nil))
     (do ((i start2 (+ i 1)))
-        ((> (+ i n) h) nil)
-      (when (dotimes (k n t)
-              (unless (satisfies-test (if key (funcall key (elt needle k)) (elt needle k))
-                                      (elt haystack (+ i k)) test test-not key)
-                (return nil)))
-        (return i)))))
+        ((> (+ i n) end2) result)
+      (when (do ((k 0 (+ k 1)))
+                ((>= k n) t)
+              (let ((x (elt needle (+ start1 k))) (y (elt haystack (+ i k))))
+                (unless (satisfies-test (if key (funcall key x) x) (if key (funcall key y) y)
+                                        test test-not nil)
+                  (return nil))))
+        (setq result i)
+        (unless from-end (return i))))))
 
 ;;; Filtering
 

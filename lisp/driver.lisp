@@ -295,6 +295,7 @@
    *regalia-files*
    (list (kiln-clos-file "arrays")
          (kiln-clos-file "structures")
+         (kiln-clos-file "random")
          (kiln-clos-file "change-class")
          (kiln-clos-file "trivial-package-locks")
          ;; Trinsic, for the interfaces of Cyclosis and the printer modules.

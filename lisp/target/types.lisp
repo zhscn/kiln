@@ -45,6 +45,8 @@
         (simple-vector (simple-vector-p object))
         (vector (vectorp object))
         (simple-array (simple-array-p object))
+        ;; BIT-VECTOR is Regalia's class; it has no subclass for the simple ones.
+        (simple-bit-vector (and (typep object 'bit-vector) (simple-array-p object)))
         (array (arrayp object))
         (sequence (or (listp object) (vectorp object)))
         (number (numberp object))

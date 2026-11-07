@@ -146,6 +146,16 @@
 (defun unintern (symbol &optional (package-designator *package*))
   (parcl-low:unintern *client* (find-package-or-error package-designator) symbol))
 
+;;; GENTEMP (deprecated, but cl-bench's browse uses it).
+(defvar *gentemp-counter* 0)
+
+(defun gentemp (&optional (prefix "T") (package *package*))
+  (check-type prefix string)
+  (loop (let ((name (format nil "~A~D" prefix (incf *gentemp-counter*))))
+          (multiple-value-bind (symbol status) (find-symbol name package)
+            (declare (ignore symbol))
+            (unless status (return (values (intern name package))))))))
+
 (defun find-all-symbols (name)
   (let ((name (string name))
         (result '()))

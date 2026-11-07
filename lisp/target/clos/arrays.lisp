@@ -189,7 +189,8 @@
     (:array-dimensions (copy-list (dimensions array)))
     (:array-total-size (total-size array))
     (:array-element-type (element-type array))
-    (:simple-array-p (array-is-simple array))))
+    (:simple-array-p (array-is-simple array))
+    (:make-like (cl:make-array (first args) :element-type (element-type array)))))
 
 (setf kiln.kernel::*complex-array-kind* #'complex-array-kind
       kiln.kernel::*complex-array-op* #'complex-array-op)
@@ -457,6 +458,42 @@
   (apply #'(setf cl:aref) bit array subscripts))
 (defun (setf cl:sbit) (bit array &rest subscripts)
   (apply #'(setf cl:aref) bit array subscripts))
+;;; The bitwise operations on bit arrays (CLHS BIT-AND). RESULT is NIL (a
+;;; new array), T (the first argument) or a bit array of the same
+;;; dimensions.
+(defun bit-array-result (array result)
+  (cond ((null result)
+         (cl:make-array (cl:array-dimensions array) :element-type 'cl:bit))
+        ((eq result t) array)
+        (t result)))
+
+(defun bit-array-op (function a b result)
+  (unless (equal (cl:array-dimensions a) (cl:array-dimensions b))
+    (error "The bit arrays ~S and ~S do not have the same dimensions." a b))
+  (let ((result (bit-array-result a result)))
+    (dotimes (i (cl:array-total-size a) result)
+      (setf (cl:row-major-aref result i)
+            (logand 1 (funcall function (cl:row-major-aref a i) (cl:row-major-aref b i)))))))
+
+(macrolet ((define (name function)
+             `(defun ,name (bit-array1 bit-array2 &optional result)
+                (bit-array-op ,function bit-array1 bit-array2 result))))
+  (define cl:bit-and #'logand)
+  (define cl:bit-ior #'logior)
+  (define cl:bit-xor #'logxor)
+  (define cl:bit-eqv #'logeqv)
+  (define cl:bit-nand #'lognand)
+  (define cl:bit-nor #'lognor)
+  (define cl:bit-andc1 #'logandc1)
+  (define cl:bit-andc2 #'logandc2)
+  (define cl:bit-orc1 #'logorc1)
+  (define cl:bit-orc2 #'logorc2))
+
+(defun cl:bit-not (bit-array &optional result)
+  (let ((result (bit-array-result bit-array result)))
+    (dotimes (i (cl:array-total-size bit-array) result)
+      (setf (cl:row-major-aref result i) (- 1 (cl:row-major-aref bit-array i))))))
+
 (defun cl:bit-vector-p (object)
   (typep object 'cl:bit-vector))
 (defun cl:simple-bit-vector-p (object)
