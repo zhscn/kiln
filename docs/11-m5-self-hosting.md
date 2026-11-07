@@ -604,3 +604,5 @@ compiler 模块载入后，`eval` 也走原生编译（`lisp/target/compiler/nat
 测试：`tests/m5/co-native` 覆盖不在顶层的 `macrolet`（内层展开函数用到外层局部宏），以及 `eval` 和 `load`。
 
 还没做：`compile-file` 和 FASL；运行期的 `defstruct`（§8.3）。
+
+已知问题：`defsetf` 的长形式（带 lambda list 和存储变量的那种）在 image 里求值时出错，报 `No variable-description for V`（V 是存储变量）。原因在 Common-macros 的 `expand-long-defsetf`：展开出的 `define-setf-expander` 直接把用户写的存储变量当作存储变量返回，但 body 里的 `,v` 要在展开时求值，那里 `v` 没有绑定。正确的展开要为每个存储变量生成 gensym，在 body 外把存储变量绑定到它。修它要先把 Common-macro-definitions vendor 进来（现在用的是 deps 里的原版），再打补丁。短形式没有问题。
