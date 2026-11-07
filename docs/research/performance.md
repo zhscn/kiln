@@ -1,8 +1,10 @@
-# 14 性能：和 SBCL 的差距在哪里
+# 性能测量
 
-**状态**：测量和分析（2026-11），还没有开始改。自举本身的优化见 [11](11-m5-self-hosting.md) §10.2。
+**日期**：2026-11。数字是当时的测量，不随代码更新；同一张表里的前后对比是在同一台机器上测的。要做的优化见 [roadmap.md](../roadmap.md) 的“性能”。
 
-## 1. 测量方法
+结论：kiln 生成的基础代码（调用、闭包、fixnum 算术、控制流）已经和 SBCL 相当，差距在 Lisp 语义层：库的通用实现、CLOS 的运行时（解释执行的判别函数和有效方法、完整的初始化协议）、`&rest`/`&key` 的分配、浮点装箱。SBCL 快在它的前端（Lisp 语义层的变换和类型推导），而不是通用中端。
+
+## 测量方法
 
 `bench/compare.lisp` 是一组可移植的 CL 代码，在 kiln 和 SBCL 上运行同样的操作，输出每次操作的纳秒数：
 - kiln：复制成 `clos-*.lisp` 交给 `tools/test.sh`，取 AOT 的输出；
@@ -10,9 +12,15 @@
 
 几纳秒的项目只能看数量级，SBCL 那边的计时器分辨率是微秒。
 
-## 2. 结果（2026-11）
+剖析的工具：
+- perf：`kernel.perf_event_paranoid` 为 2 时，只有软件事件（`-e cpu-clock`）能用；设为 1 后，硬件事件和 `-g` 都能用。kiln 的 AOT 代码有帧指针，`perf report --children` 能给出包含时间。
+- kiln-cg 的 JIT 设了 `KILN_PERF_MAP=1` 时写出 perf map，perf 能显示 JIT 函数的名字。
+- AOT 程序有帧指针，gdb 能回溯。每次 attach 一次 gdb 抽一个调用栈；在同一次 gdb 会话里连续抽样时，进程一直停着，得到的其实是同一个瞬间。
+- 函数的标签带名字（[lowering.md](../design/lowering.md)）；标签里没有名字的，从 KIR 里“把哪个函数对象存进哪个符号”可以对回全局函数名。
 
-### 2.1 编译器生成的基础代码：和 SBCL 持平
+## 和 SBCL 的对比（`bench/compare.lisp`）
+
+### 编译器生成的基础代码：和 SBCL 持平
 
 | 操作 | kiln (ns) | SBCL (ns) | 倍数 |
 |---|---|---|---|
@@ -25,20 +33,20 @@
 | `fib 20` | 52 µs | 75 µs | 0.7× |
 | fixnum 求和循环（1000 次） | 1.6 µs | 3.0 µs | 0.5× |
 
-调用约定、寄存器分配、fixnum 算术和控制流已经和 SBCL 相当。GVN、LICM 这类通用的 SSA 优化 Cranelift 已经在做，再加一层通用中端，改变不了这里的数字，也解决不了 §2.2 的差距。
+调用约定、寄存器分配、fixnum 算术和控制流已经和 SBCL 相当。GVN、LICM 这类通用的 SSA 优化 Cranelift 已经在做，再加一层通用中端，改变不了这里的数字，也解决不了下面的差距。
 
-### 2.2 库和运行时：差距所在
+### 库和运行时：差距所在
 
 | 操作 | kiln (ns) | SBCL (ns) | 倍数 | 原因 |
 |---|---|---|---|---|
 | `(format nil "~a" i)` | 13373 | 30 | 446× | Invistra、Incless 每一步都是泛函，每个字符经过 Gray stream 协议 |
 | `princ-to-string` 一个 fixnum | 11816 | 30 | 394× | 同上 |
-| `find` 一个字符（100 个字符的字符串） | 2290 | 10 | 229× | Consecution 的通用实现：每次解析关键字参数，逐元素调用泛函 |
-| `make-instance`（2 个 initarg） | 1189 | 10 | 119× | 每次都按 initarg 走完整的初始化协议；SBCL 有预编译的构造器（PCL 的 ctor）。kiln 只缓存了初始化计划（10 §27） |
+| `find` 一个字符（100 个字符的字符串） | 2290 | 10 | 229× | 序列函数的通用实现：每次解析关键字参数，逐元素经 `funcall` 比较（原文写作 Consecution，但 Consecution 还没有接入，是 kernel 的 `sequences.lisp`） |
+| `make-instance`（2 个 initarg） | 1189 | 10 | 119× | 每次都按 initarg 走完整的初始化协议；SBCL 有预编译的构造器（PCL 的 ctor）。kiln 只缓存了初始化计划 |
 | `defstruct` 的构造函数 | 546 | 7 | 78× | 本该是一次分配加几次写入，现在走 CLOS 实例的路径 |
 | `read-from-string` | 43401 | 400 | 109× | Eclector 加 CLOS 流 |
 | 双精度浮点求和（1000 次） | 203 µs | 7 µs | 29× | 每次运算都装箱，再经 `kiln_rt_number_op` 进 Rust；SBCL 也装箱，但运算是内联的 |
-| `member :test #'equal` | 306 | 13 | 24× | 带关键字时走通用路径（不带关键字的已经改成两个参数的专用函数，11 §10.2） |
+| `member :test #'equal` | 306 | 13 | 24× | 带关键字时走通用路径（不带关键字的已经改成两个参数的专用函数） |
 | `typep x '(integer 0 10)` | 13.6 | 1 | 14× | 运行期解释类型说明符；SBCL 在编译期展开成比较 |
 | `intern` 已有的符号 | 338 | 30 | 11× | Parcl 的协议层 |
 | `call-next-method` | 98 | 9 | 11× | 有效方法是解释执行的闭包，每次分配参数列表 |
@@ -47,104 +55,136 @@
 | `&key` 调用（1 个关键字） | 31 | 5 | 6.2× | 运行期扫描关键字列表 |
 | `gethash` / `(setf gethash)`（eq） | 19 / 21 | 3 / 5 | 4–6× | Salmagundi 的协议层（泛函、客户端对象） |
 | `gethash`（equal，字符串键） | 85 | 21 | 4.0× | 同上 |
-| 泛函调用（单态 / 3 个类的多态） | 14 / 22 | 5 / 5 | 3–4× | 分派闭包和缓存表（10 §27） |
+| 泛函调用（单态 / 3 个类的多态） | 14 / 22 | 5 / 5 | 3–4× | 分派闭包和缓存表 |
 | `slot-value` / 访问器 | 22 / 11 | 5 / 4 | 3–5× | 按槽位置的缓存，没有内联到调用点 |
 | `catch`/`throw` | 34 | 7 | 4.9× | |
 | `&rest`（3 个参数） | 39 | 24 | 1.6× | |
 | `defstruct` 的访问器 | 3.4 | 2 | 1.7× | |
 
-自举时编译器主要在做 §2.2 后半部分的事：泛函分派、槽访问、`make-instance`、哈希表、`&rest`、`&key`（11 §10.2 的 profile）。kiln 编译自己比 SBCL 慢 6 倍左右，原因就在这里。GC 占的约 13%，也主要来自这些地方的分配：`&rest` 列表、浮点装箱、初始化时的 initarg 列表、堆上的 handler。所以只换 GC 解决不了根本问题。
+自举时编译器主要在做上表后半部分的事：泛函分派、槽访问、`make-instance`、哈希表、`&rest`、`&key`（见下文自举的 profile）。kiln 编译自己比 SBCL 慢 6 倍左右，原因就在这里。GC 占的约 13%，也主要来自这些地方的分配：`&rest` 列表、浮点装箱、初始化时的 initarg 列表、堆上的 handler。所以只换 GC 解决不了根本问题。
 
-### 2.3 cl-bench（2026-11）
+## 自举的速度
 
-`tools/bench.sh` 在 kiln（AOT，五个模块，release 版的 runtime）和 SBCL（`sbcl --script`，默认优化级别）上运行 cl-bench（`bench/README.md`），每项至多运行 2 秒；kiln 上每项单独一个进程，超时 120 秒。毫秒每次：
+kiln 编译自己的五个模块（一个阶段，见 [bootstrap.md](../design/bootstrap.md)）：
 
-| 组 | 项目 | kiln | SBCL | 倍数 |
-|---|---|---|---|---|
-| 调用和控制流 | tak / trtak / takl | 0.15 / 0.15 / 1.14 | 0.11 / 0.12 / 0.79 | 1.3–1.4× |
-| | fib | 0.60 | 0.76 | 0.8× |
-| | ackermann | 769 | 649 | 1.2× |
-| | richards | 52 | 38 | 1.4× |
-| | stak（特殊变量） | 0.69 | 0.38 | 1.8× |
-| | ctak（`catch`/`throw`） | 0.48 | 0.08 | 5.7× |
-| cons 和符号 | boyer / deriv / dderiv | 5.6 / 3.0 / 3.3 | 3.9 / 1.8 / 1.9 | 1.5–1.7× |
-| | destructive / div2 | 1.5 / 1.3–1.5 | 0.6 / 0.9–1.1 | 1.3–2.7× |
-| | traverse / triangle | 37 / 52 | 13 / 23 | 2.2–2.9× |
-| | sum-permutations | 267 | 31 | 8.7× |
-| 浮点 | fft | 110 | 0.13 | 826× |
-| | mandelbrot/dfloat | 6.9 | 0.010 | 691× |
-| | frpoly/float | 10.8 | 0.93 | 12× |
-| 数组 | puzzle | 120 | 0.71 | 168× |
-| | 1d / 2d / 3d-arrays | 556 / 21143 / 61517 | 7.5 / 92 / 256 | 74–240× |
-| bignum 和有理数 | bignum/elem-100-1000 / 1000-100 | 4325 / 66578 | 20 / 21 | 222× / 3216× |
-| | bignum/elem-10000-1 | 超时 | 12 | — |
-| | pari / pi-decimal / pi-atan | 95–2581 | 0.6–25 | 32–103× |
-| | fib-ratio / pi-ratios | 0.39 / 407 | 0.006 / 190 | 65× / 2.1× |
-| | crc40（40 位整数） | 191 | 78 | 2.5× |
-| 打印和流 | fprint/ugly / pretty | 50 / 107 | 0.38 / 1.7 | 133× / 62× |
-| | slurp-lines（`read-line`） | 5177 | 17 | 303× |
-| | deflate-file | 16 | 0.18 | 90× |
-| 字符串 | bench-strings / fill-strings/adjustable | 5532 / 17472 | 340 / 483 | 16× / 36× |
-| | string-concat（`with-output-to-string`） | 超时 | 4594 | — |
-| GC | boehm-gc | 3980 | 256 | 16× |
-| CLOS | simple-instantiate | 8.1 | 0.22 | 37× |
-| | eql-specialized-fib | 114 | 16 | 7× |
+| 时间点 | 一个阶段 | 说明 |
+|---|---|---|
+| kernel 的交叉编译刚能在 kiln 上跑 | kernel 超过一小时 | Clostrophilia 未命中时重建整个自动机（N³），packrat 的 `parse` 在运行期重新解析和编译，输出不缓冲 |
+| 修完上面三处 | kernel 38 秒 | |
+| 哈希表、分派单项缓存、GC 设置 | kernel 17 秒，kernel 加 CLOS 约 7.7 分钟（JIT） | SBCL：kernel 1.8 秒，CLOS 25.6 秒 |
+| 五个模块第一次都能编 | 约 40 分钟（五个模块合计） | co-clos 约 7 分钟，co-compiler 约 15 分钟（8 GiB 堆） |
+| 第一次完整 profile | 845 秒 | |
+| 第一轮优化（`if` 直接分支、闭包变量用到时再读、Iconoclast 的 `set-slot`、初始化计划、类名 `typep` 缓存、`member`/`assoc`、`logand` 等） | 525 秒 | CLOS 模块约 268 → 148 秒；完整自举约 30 → 19 分钟 |
+| 第二轮（判别闭包的缓存表、`slot-value` 和类名 `typep` 的全局缓存、名字不用 `format` 生成、文件流批量写入） | 321 秒 | kernel 7 秒、CLOS 88 秒、frontend 3 秒、eval 28 秒、compiler 193 秒；完整自举约 12 分钟。SBCL 编同样的五个模块约 50 秒，kiln 慢 6 倍左右（最初是 11 倍） |
+| 加上调试信息 | 339 秒 | 生成的代码不变，没有变慢 |
 
-结论：
-- **调用、控制流、cons、符号**和 SBCL 在同一个量级（1.3–2.9×），和 §2.1 一致。例外是 `catch`/`throw`（5.7×，和 §2.2 的 4.9× 相符）。
-- **数值是最大的差距**：浮点每次运算都装箱，再进 Rust（§2.2）；bignum 慢到两三千倍，乘除法的算法和实现要整个重看；多维数组走 Regalia 的通用路径。
-- **打印、读行、字符串流**慢一到两个数量级，原因同 §2.2。
+845 秒那次的 profile（按模块统计自身时间）：
 
-**补上 ANSI 缺口之后**（2026-11：`random`、`gentemp`、complex、位数组运算、`search` 的全部关键字、类的重定义、栈耗尽的 `storage-condition`）新跑起来的项目：
+| 部分 | 占比 |
+|---|---|
+| clos 模块（分派、slot 访问、实例初始化、哈希表） | 约 45% |
+| kernel 模块（`member`、`typep`、`logand` 等） | 约 27% |
+| GC（MMTk 工作线程） | 约 17% |
+| compiler 模块自己的代码 | 约 3% |
+| Maclina 的字节码 VM | 约 1%（包含时间 14%，几乎都是它调用的原生函数：parser.packrat 的规则） |
 
-| 组 | 项目 | kiln | SBCL | 倍数 |
-|---|---|---|---|---|
-| gabriel | browse | 23 | 4.9 | 4.7× |
-| 数值 | mandelbrot/complex | 21 | 0.89 | 23× |
-| | mrg32k3a（double 运算） | 1462 | 5.2 | 281× |
-| 哈希表 | htable-mixbag / fixnum / equalp-numbers / sparse | 52 / 691 / 27 / 4.1 | 32 / 89 / 3.5 / 0.75 | 1.6–7.7× |
-| | htable-string-small / large / set+remove | 52 / 40 / 35 | 4.3 / 1.3 / 1.5 | 12–32× |
-| | htable-string-fair | 超时 | 149 | — |
-| | sxhash-string-small / sxhash-fixnum | 152 / 455 | 2.3 / 4.8 | 67× / 96× |
-| | sxhash-string-large | 7.4 | 59 | 0.1×（kiln 只哈希前 64 个字符） |
-| 序列 | bitvectors（位数组运算逐位 `row-major-aref`） | 超时 | 40 | — |
-| | search-sequence（`search` 逐个 `elt`） | 106914 | 62 | 1724× |
-| CLOS | defclass / defmethod（运行期 `compile`） | 872 / 1733 | 98 / 183 | 9× |
-| | instantiate / method+after | 2009 / 755 | 51 / 83 | 39× / 9× |
-| | methodcalls / complex-methods | 211 / 18 | 205 / 20 | 1.0× / 0.9× |
+所以换成原生 `compile` 几乎不会让自举变快：字节码只是一层很薄的胶水。HIR 求值器的参数解析器改用原生编译后，一个阶段反而从 321 秒变成 357 秒（每个只运行几次，编译时间占主导）。
 
-- CLOS 的泛函调用（methodcalls、complex-methods）已经和 SBCL 持平，判别闭包的缓存表起了作用（10 §27）；`make-instance`（instantiate、simple-instantiate 30–40×）和定义类、方法（运行期编译）是差距所在，对应 §3 第 3 项。
-- `sxhash` 和字符串键的哈希表慢在哈希函数本身：`sxhash` 走 Salmagundi 的累加闭包，没有 `equal-hash` 那样的快路径。
-- bitvectors、search-sequence 是新补的函数用了最朴素的实现，属于 §3 第 2、4 项的快速路径。
-- CLOS 组的后几项依赖前面几项定义的类和方法（cl-bench 在同一个 image 里按顺序运行），`tools/bench.sh` 让它们在同一个进程里先运行前面的项目。
-- 递归很深的 walk-list/mess 仍要 1 GiB 的栈；栈不够时现在发出 `kiln.sys:stack-exhausted`。SBCL 跳过这一项。
-- compiler、load-fasl 需要 `compile-file`，harness 不运行。
+321 秒之后剩下的热点（CLOS 阶段）：GC 约 13%；kernel 的函数约 21%，比较分散；Salmagundi 哈希表约 5%；`append` 方法组合（Iconoclast 的 `slot-designators`，walker 每访问一个节点调用一次）约 5%；`&rest` 泛函每次调用分配参数列表。
 
-## 3. 需要的优化
+其他观察：
+- 试过 Immix（`MMTK_PLAN=Immix`）：比 SemiSpace 慢约 5%。
+- MMTk 的 debug assertions 检查每次 side metadata 访问，GC 曾占约三分之一的时间，dev 构建里对 mmtk 关掉了。
+- compiler 模块在 2 GiB 堆（SemiSpace，可用一半）下跑了 51 分钟后内存不足：存活数据接近半堆时几乎一直在 GC。
+- kiln0：`kiln-cg` 编六个 KIR 约 15 秒，峰值内存约 9.5 GB；可执行文件约 120 MB；启动（各模块的顶层初始化）约 0.65 秒。stage1 峰值 RSS 约 9 GB（8 GiB 堆）。
+- kiln 上编 `co-compile`（约 100 行）：最初 AOT 程序连启动 12 秒（SBCL 不到 1 秒），修掉自动机重建等之后 2.3 秒。
 
-SBCL 快在它的前端，即 Lisp 语义层的变换和类型推导，而不是通用中端。按收益排：
+## 读入的基准（`bench/fe-read.lisp`）
 
-1. **`defstruct` 直接分配**：构造函数和访问器直接编成内联的分配和读写，不经过 CLOS。改动小，收益大。
-2. **调用点上的变换**：`find`、`position`、`member`、`assoc`、`typep` 等在参数和类型已知时，于编译期展开成循环或比较（相当于 SBCL 的 `deftransform` 和编译器宏）；对已知函数的 `&key` 调用，在编译期解析关键字。覆盖 §2.2 一半以上的项目。
-3. **CLOS 运行时编译化**：有了 M5.5 的原生 `compile`（11 §11）才能做。判别函数、有效方法、`make-instance` 的构造器在运行期编成机器码，替代现在解释执行的闭包。`call-next-method`、`make-instance`、泛函调用、`slot-value` 都靠这个。这一项对自举提速最多。
-4. **库的快速路径**：打印 fixnum 和字符串、`format` 的常见指令、字符串流的批量写入，绕开逐字符的泛函调用。
-5. **类型推导和浮点拆箱**：局部推导出 double 之后不再装箱，算术内联（13 §4）。
-6. **`dynamic-extent` 和逃逸分析**：`&rest` 列表、handler、闭包在栈上分配，同时减轻 GC（13 §4）。
-7. **分代 GC**：现在的 SemiSpace 每次复制全部存活数据，没有分代；编译器产生大量很快死掉的对象。换成 MMTk 的 GenCopy、GenImmix 一类 plan，需要在编译出的代码里加写屏障。kiln 有精确栈图，不需要像 SBCL 的 gencgc 那样保守地钉住对象。先量 GC 时间的占比。
-8. **无 header 的 cons**：cons 现在是 `[header, car, cdr]` 24 字节，SBCL 是 16 字节。做法：所有 header 的低 3 位用保留的 tag `111`，任何 Lisp 值都不会长成 header，于是对象的第一个字不是 header 就是 cons（SBCL 遍历堆也是这样区分的）；MMTk 的 forwarding bits 已在 side metadata，forwarding 指针写在偏移 0 覆盖 car 也没问题。难点是身份哈希：cons 没有 header 就没有地方存，改为按地址哈希，GC 确实移动了某张表的键时才标记这张表需要重新哈希（SBCL 的做法）。SemiSpace 下每次 GC 都会移动全部对象，所以排在分代 GC 之后。先量 cons 在分配量里的占比（按 kind 统计分配字节数）。NIL 同时带 list tag 的技巧收益很小，不做。
+在 kiln（JIT）和 SBCL 上用同一份 Eclector 代码把 `lisp/target/kernel.lisp`（891 行，307 个形式）读一遍，单位毫秒（`tools/bench-fe-read.sh`）：
 
-## 4. 测量时发现的问题
+| 阶段 | `read` | CST 读取 | `read-line` |
+|---|---|---|---|
+| 开始 | 9379 | 9964 | 1441 |
+| 自动机二分查找不再调用 runtime 的 `floor` | 4228 | 4559 | 545 |
+| 哈希函数和 `subtypep` 的快速路径 | 3902 | 4119 | 230 |
+| runtime 的分配快速路径 | 2229 | 2360 | 177 |
+| EQL 特化调用的有效方法缓存 | 664 | 807 | 178 |
+| `svref`/`length` 内联，自动机转移内联 | 493 | 615 | 131 |
+| 展开调用的判别函数和快速方法函数 | 363 | 460 | 106 |
+| 判别函数里的 EQL 缓存 | 161 | 253 | 108 |
+| 内联分配，GC 扫描改为判断地址范围，256 MiB 堆 | 135 | 205 | 100 |
+| inline 声明，`eql` 原语少调用 kernel | 120 | 187 | 68 |
+| SBCL（同一份 Eclector；`read` 是 SBCL 自己的） | 0.7 | 6.3 | 0.0 |
 
-- **浮点解码函数缺失（已修复）**：kiln 原来没有 CLHS 12.2 的 `integer-decode-float`、`decode-float`、`scale-float`、`float-sign`、`float-digits`、`float-precision`、`float-radix`。kiln 的 Quaviver 替身（`lisp/target/clos/quaviver.lisp`）也只支持以 10 为底。Invistra 的 `~F` 在舍入遇到恰好是 5 的那一位时，要用以 2 为底的精确表示来判断，于是报错。现在这些函数按位实现在 kernel 里，以 2 为底时用 `integer-decode-float`。测试 `tests/m4/clos-float-decode`，结果和 SBCL 一致。非规格化数 kiln 打印成最短的等价形式（`5.0d-324`），SBCL 打印成 `4.9406564584124654d-324`。
+最后 CST 读取约是 SBCL 的 30 倍，开始时是 1600 倍。在 493 ms 那一步的 profile 里，Lisp 代码约 55%（其中分派约 25%），GC 和分配约 37%。
+
+CST 读取的耗时随堆大小（SemiSpace）：64 MiB 227 ms，256 MiB 203 ms，1 GiB 239 ms（首次访问新页面的缺页和清零抵消了 GC 次数减少的收益），`DynamicHeapSize`（32 MiB 到 4 GiB）261 ms。后来自举的存活数据变大，默认堆改成了 1 GiB。
+
+## 泛函调用（`bench/gf.lisp`）
+
+单次调用，微秒。“之前”是判别函数只按列表调用、EQL 特化每次重算的时候，“之后”是展开调用和 EQL 缓存（[clos.md](../design/clos.md)）：
+
+| 调用（µs） | 之前 | 之后 |
+|---|---|---|
+| 普通函数 | 0.003 | 0.003 |
+| 1 个参数，按类分派 | 0.089 | 0.037 |
+| 1 个参数，fixnum | 0.128 | 0.039 |
+| 2 个参数 | 0.107 | 0.035 |
+| 读取器 / 写入器 | 0.035 / 0.046 | 0.020 / 0.022 |
+| `call-next-method` | 0.128 | 0.112 |
+| `:around` 加 `:before` | 0.203 | 0.153 |
+| `&key` | 0.268 | 0.209 |
+| EQL 特化 | 1.904 | 0.043 |
+
+读一遍 `kernel.lisp`，`state-value` 原来有 42856 次未命中，现在是 0（`bench/gf-misses.lisp`）。`make-instance` 从 2.1 µs 降到约 1.0 µs（inline 声明、初始化计划）。
+
+## 字节码 VM（Maclina）
+
+`(fib 25)` 在 REPL 里由字节码执行（AOT 可执行文件），SBCL 的编译代码约 1 毫秒：
+
+| 改动 | 秒 |
+|---|---|
+| eval 模块刚完成时 | 5.70 |
+| 字节码存成 simple vector（原来是 Regalia 的 `(unsigned-byte 8)` 数组，`aref` 要经过几层泛函和 `typep`） | 1.90 |
+| 结构的访问器不再是泛函 | 1.27 |
+| `ash` 的 fixnum 快速路径 | 1.18 |
+| `ceiling`、`round` 的 fixnum 快速路径（`(loop repeat n)` 用到 `ceiling`） | 0.81 |
+| 访问器是 inline 函数，槽位置是常量 | 0.70 |
+| `(eql x 常量)` 按 `eq` 降级；一个下标的 `aref` 就地读写 | 0.55 |
+
+剩下的开销：主循环本身约占三分之一，热点是循环头的一长串栈槽到栈槽的搬移：大约二十个值活过整个循环，主要是 VM 的局部函数（`spush`、`spop` 等）的闭包对象，它们都被 spill 了。对不逃逸的局部函数做 lambda lifting 或内联小的局部函数能解决，这对所有代码都有用。
+
+## 原生 `compile`
+
+在 AOT 可执行文件里测量，每次的毫秒数：
+
+| | 原生 | Maclina |
+|---|---|---|
+| 编译 `(lambda (x) (* x x))` | 3.4 | 0.12 |
+| 编译一个带 `loop` 的 lambda | 约 20 | 1.2 |
+| 运行一百万次迭代的 `dotimes` | 2.2 | 1250 |
+
+编译 `(lambda (x) (* x x))` 的 3.4 ms 中，前端 1.9 ms，降级 0.4 ms，打印 KIR 0.2 ms，kiln-cg 0.7 ms，新建 session 0.2 ms。`eval` 一个小形式用 Maclina 约 0.22 ms。登记新模块的表原来每次重排整张表（image 的几十万项），一次要 1.2 ms，改为追加后可以忽略。
+
+## 启动、快照和体积
+
+| 程序 | 正常启动 | 从快照启动 | 快照大小 |
+|---|---|---|---|
+| kernel + CLOS | 0.23 s | 0.04 s | 3.4 MB |
+| kernel + CLOS + 前端 + eval + 编译器 | 0.74 s | 0.10 s | 8.9 MB |
+
+从快照启动的时间里还包括测试程序本身的运行和两次原生 `compile`。映射快照用 `mmap`（私有、写时复制），没有反序列化。kiln 编译测试时用的编译器快照约 360 MB。
+
+- eval 模块刚完成时，AOT 可执行文件启动 0.3 秒；JIT 7.7 秒，用来编译所有模块。CLOS 模块的 KIR 曾有 45 MB，debug 构建下 JIT 启动 32 秒，顶层形式分块和并行生成机器码之后约 10 秒（读入 KIR 2 秒，构造 CLIF 3 秒，生成机器码 3 秒，运行 2 秒）。
+- 加上 compiler 模块后 KIR 约 100 MB，可执行文件约 120 MB。
+- strip 后：kernel 加 CLOS 26 MB，加上编译器 69 MB；加上调试信息之后 kiln1 是 77 MB。增加的 8 MB 中，函数记录（约 3.1 万个函数，每个 48 字节）1.5 MB，调用点数据 1.8 MB，其余是调试信息对象。
+
+## I/O
+
+接入流和 FORMAT 时：往字符串流或文件写一个字符要 1 ms 左右，`format` 一次 10 ms。泛函调用本身约 0.5 µs，慢在字符串输出流平方级的增长、可调数组的增长走完整的 `make-array`、每个字符都调用的 `check-character-stream` 里的 `subtypep`、Invistra 每次重新解析控制串。修掉之后往文件写一个字符约 30 µs，`format` 一次 0.3–0.7 ms，`princ-to-string` 约 0.4 ms。上面对比表里的 `format` 是这之后的数字。
+
+## 测量时发现的问题
+
+- **浮点解码函数缺失（已修复）**：kiln 原来没有 CLHS 12.2 的 `integer-decode-float`、`decode-float`、`scale-float`、`float-sign`、`float-digits`、`float-precision`、`float-radix`。kiln 的 Quaviver 替身（`lisp/target/clos/quaviver.lisp`）当时也只支持以 10 为底。Invistra 的 `~F` 在舍入遇到恰好是 5 的那一位时，要用以 2 为底的精确表示来判断，于是报错。现在这些函数按位实现在 kernel 里，以 2 为底时用 `integer-decode-float`。测试 `tests/m4/clos-float-decode`，结果和 SBCL 一致。非规格化数 kiln 打印成最短的等价形式（`5.0d-324`），SBCL 打印成 `4.9406564584124654d-324`。
 - **Invistra 的舍入 bug（上游，未修）**：`(format nil "~,1f" 0.05f0)` 和 `(format nil "~,1f" 0.05d0)` 给出 `"0.0"`，应该是 `"0.1"`：两者的精确值都略大于 0.05。在 SBCL 上配原版 Quaviver 运行 Invistra，结果也一样，所以不是 kiln 的问题（vendor/README.md）。
-
-## 5. 内建的采样分析器（2026-11）
-
-实现了 [13](13-modern-practices.md) §8 的采样分析器和分配分析器（`rust/kiln-rt/src/profile.rs`、`lisp/target/clos/profile.lisp`）。
-
-- **CPU 模式**：一个定时器线程按间隔（默认 1 ms，实际时间）累加 tick，并设置被分析的 context 的 `poll_flag`。下一个 poll 点（函数入口、循环头）进入 `kiln_rt_poll`，沿帧指针链记下栈上各帧所在的函数（最多 256 帧，跨过 `%call-on-new-stack` 的栈段），权重是上次采样以来的 tick 数。所以一次很长的 runtime 调用（bignum 运算等）按它的时长计在调用它的 Lisp 帧上，不会因为中间没有 poll 点而少算。偏差是 safepoint 偏差：样本落在 poll 点，而不是精确的指令上。
-- **分配模式**：分配的慢路径（bump 分配器的缓冲用完，或者大对象）记录栈，权重是上次采样以来分配的字节数。编译出的代码内联分配，只在缓冲用完时进入 runtime，所以这是按缓冲大小（几十 KB）的采样。
-- 样本按栈聚合。函数名取自调试信息对象（[17](17-debugging.md)），读取经 `:frame` primop 的 PROFILE 操作（32–37），不分配。
-- **Lisp 接口**（`kiln.sys`）：`start-profiler`（`:mode :cpu`/`:alloc`，`:interval` 微秒）、`stop-profiler`、`profile-samples`（`(权重 . 函数名列表)`，最内层在前）、`profile-report`（按自身权重和按在栈上的总权重各列一张表）、`write-folded-stacks`（火焰图工具的 folded 格式）、`with-profiling`。
-- **整个程序**：环境变量 `KILN_PROFILE=cpu[:微秒]` 或 `alloc` 在启动时开始采样，程序结束（正常结束或 `exit`）时把 folded 栈写到 `KILN_PROFILE_OUT`（默认 `kiln-profile.folded`），并在标准错误上打印摘要。不用改程序，就能分析编译器自己（自举的各阶段）。程序自己调用 `start-profiler` 时，之前的样本被丢弃。
-- `tests/m4/clos-profile.lisp`。

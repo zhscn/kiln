@@ -1,200 +1,140 @@
-# 08 M2：Common-boot 前端和 AST 降级
+# 前端：读入、顶层形式和编译期环境
 
-**状态**：M2 进行中（2026-11）。前端已经换成 Eclector + Common-boot + Iconoclast，M0 的脚手架编译器已删除，M0、M1 的测试全部改走新前端。特殊变量的动态绑定（§5.2）、多值（§5.3）、`&optional`/`&rest`/`&key`（§5.4）已经实现，CL 的 25 个特殊操作符都能降级（§5.5）。剩下的见 §7。
+前端把源码变成简化后的 AST，降级见 [lowering.md](lowering.md)。同一份前端既在 SBCL 上运行（交叉编译出 stage0），也在 kiln 上运行（自举、运行期 `compile`/`eval`）。
 
-## 1. 流水线
+## 流水线
 
 ```
 源文件
-  │ Eclector（eclector.concrete-syntax-tree:read）
+  │ Eclector（eclector.concrete-syntax-tree:read），一次读一个形式
   ▼
 CST ── 顶层形式处理（lisp/front.lisp，CLHS 3.2.3.1）
-  │      progn / eval-when / 宏展开在这里做，编译期求值交给 HIR 求值器
+  │      progn / eval-when / 宏展开在这里做，编译期求值交给 client 的求值器
   ▼
 Common-boot cst-to-ast ──► Iconoclast AST
   │ simplify-ast（Common-boot AST-to-HIR 里的一串 Iconoclast 变换）
   ▼
 简化后的 AST ── 降级（lisp/lower.lisp、lisp/primitives.lisp）
   ▼
-KIR ── kiln-cg ──► Cranelift（JIT / 目标文件）
+KIR
 ```
 
-交接点按 [05 §7.1](05-sicl-survey.md#71-采纳) 的结论定在 `simplify-ast` 的输出。这时：
+**交接点是 `simplify-ast` 的输出**（理由见 [sicl-survey.md](../research/sicl-survey.md) 的“对 kiln 的影响”）。这时：
 
 - 闭包已经转换：自由变量的值通过 `set-static-environment` 存进函数对象，函数体里用 `(static-environment)` 和 `read-static-environment` 读出；
 - 被闭包捕获又被赋值的变量已经放进 cell（`make-cell`、`read-cell`、`write-cell`）；
 - `let`/`let*` 变成一串 `let-temporary`，`flet` 和 lambda 都变成 `labels`，函数名字空间被消除（局部函数就是持有函数对象的变量）；
 - 每个 `block`、`tagbody` 都带一个变量，表示它的退出点；`return-from`、`go` 引用这个变量；
+- `symbol-macrolet` 已经代入，`macrolet` 变成 `locally`；
 - 只调用一次的局部函数已经内联，没有用到的 block 已经删除。
 
-## 2. 顶层形式处理和编译期环境
+目标端没有 Common-boot 的 AST-to-HIR 系统，`simplify` 抄了它的 `simplify-ast`。
 
-Common-boot 本身的顶层处理不完整：`*compile-time-too*` 从来不会被设为真，`eval-when` 的 `:compile-toplevel` 不起作用。SICL 加载文件时是逐个形式 `eval-cst`，相当于 `load` 语义，不是 `compile-file` 语义。所以 kiln 在 CST 层自己做顶层处理（`lisp/front.lisp`）：
+## 文件划分和三种 client
+
+| 文件 | 在哪里 | 内容 |
+|---|---|---|
+| `lisp/front.lisp` | 两边共用 | 顶层形式处理、inline 展开、声明简化、读入、session |
+| `lisp/cross.lisp` | 两边共用 | `cross-client`：交叉编译用的编译期环境 |
+| `lisp/target/compiler/client.lisp` | 只在 kiln 上 | `image-client`：在运行中的 image 里编译 |
+
+`make-session` 的 `:client-class` 选择 client。宿主默认 `cross-client`，kiln 上默认 `image-client`。少量差异在 `front.lisp` 里用 `#+kiln` 区分（宿主为目标端编译时读入用的是目标的 features）：client 的超类、目标端读入的包是 CL-USER 而宿主是 KILN-USER、Common-macros 的包名等。
+
+### cross-client：交叉编译
+
+编译 kiln 自己的模块用它，在 SBCL 上和在 kiln 上都一样（kiln 编译自己时不能改掉正在运行编译器的 image，而且两边必须从同一个空的编译期环境开始）。
+
+- **编译期环境是一个 Clostrum 环境**，和运行编译器的 image 隔离。目标里重定义 `car`、`defclass` 都不会碰到宿主。
+- **编译期求值用 Common-boot 的 HIR 求值器**（`cb:eval-cst`）。它和 kiln 的前端一致，SICL 也这样做。宏函数会调用目标环境里定义的辅助函数，所以不能直接交给宿主的 `compile`。
+- 宿主 CL 包里所有的函数导入编译期环境，宏展开函数可以直接调用它们。和全局环境打交道的函数换成访问 Clostrum 环境的版本：`macro-function`、`(setf macro-function)`、`fdefinition`、`(setf fdefinition)`、`fboundp`、`symbol-value`、`(setf symbol-value)`、`boundp`、`proclaim`、`macroexpand`、`macroexpand-1`，以及接受符号作为函数标识的 `funcall`、`apply`。
+- **编译期的 CLOS**：被交叉编译的库在编译期需要 `defclass`、`defgeneric`、`define-condition` 的副作用，这部分用宿主 CLOS（通过 closer-mop），并且和目标 image 里的 metaobject 严格分开（SICL 的 E1 也是这样）。
+- 在 kiln 上，“宿主”就是 kiln 自己：编译期环境同样是 Clostrum 环境，HIR 求值器的三个系统编进了 compiler 模块，导入的函数和宿主宏是 image 里的。
+
+**宿主宏**：有些宏在编译期用宿主自己的展开函数，编译期的 `(setf macro-function)` 不覆盖它们：
+
+- `quasiquote`/`unquote`/`unquote-splicing`（Eclector 的反引号）、`loop`/`loop-finish`（Khazern）、`defstruct`（Anatomicl，在宿主里运行，生成的代码不引用它自己）、不在顶层的 `defpackage`。否则目标源码里的 `defmacro quasiquote` 等会把编译期的反引号换成调用目标端函数的展开函数。
+- **宿主库**：compiler 模块里的那些库（parser.packrat、s-expression-syntax、let-plus 等，包列表在 `*compiler-host-macro-packages*`）宿主也载入了，编译期直接用宿主的宏、函数和常量（`use-host-macros`）。宏照常编进模块，供运行期使用。不在编译期求值这些库本身，因为它们的宏在展开时要用编译期没有的东西（parser.packrat 的 `defrule` 要用 grammar 对象，let-plus 用泛函展开），有些宏也不在顶层定义。
+- 宿主宏的展开里有宿主的反引号对象（SBCL 的 `sb-int:quasiquote` 和 `sb-impl::comma`），改写成 Eclector 的形式（`translate-host-backquote`），并且总是复制，不共享展开函数里的字面量。改写之后如果还有宿主对象或 `SB-` 包的符号就报错（`check-host-expansion`）。
+- 这些宿主库的 compiler macro 也用于为目标编译的代码（`client-compiler-macro`），展开结果同样要通过检查，不合格的放弃展开。parser.packrat 的 `parse` 靠它在编译期编译常量表达式。
+- **不能在编译期改宿主的状态**：`defgrammar`、`defrule`、`define-syntax` 的展开去掉 `(eval-when (:compile-toplevel) ...)` 部分，`ensure-grammar` 等包进 `kiln.compiler::load-time-only`（顶层只编译、不求值），否则会把宿主语法里正在使用的规则换掉。
+
+**Common-macros 的宏**：标准宏在编译期用 Common-macros 的定义。宿主取 `cmd:macro-function`；kiln 上取 eval 模块载入 Common-macros 时存下的 `kiln.kernel::*common-macros*`。kiln 上 Common-macros 的包是 `KILN.CMD`，宿主上是 `COMMON-MACRO-DEFINITIONS`，所以 kiln 上展开结果里新出现的 `KILN.CMD` 符号换成宿主包的同名符号，它们的内部宏也以宿主的名字放进编译期环境。kiln 对 Common-macros 的定制在 `lisp/macro-client.lisp`，宿主载入包 `kiln.macros`，目标端读进 `kiln.macros-target`，同一个宏在编译期和运行期展开的结果相同。
+
+### image-client：在 image 里编译
+
+运行期 `compile`、`eval`、`load` 用它（[eval-compile.md](eval-compile.md)）。编译期环境就是运行期的环境，和一般的实现一样：
+
+- Trucler 的全局环境是一个 `run-time-environment` 对象，对它的查询转给 eval 模块的 Maclina client：宏、特殊变量、常量、已定义的函数都来自运行中的 image。依赖追踪在这里记录查询（[dependencies.md](dependencies.md)）。
+- 编译期求值用 Maclina。顶层 `macrolet`、`symbol-macrolet` 的局部宏换成 Maclina 词法环境里的局部宏。不在顶层的 `macrolet`：Common-boot 把局部宏的展开函数交成 AST，而 Maclina 要的是形式，所以 image-client 在 `finalize-local-macro-ast` 外面包一层，取局部函数 AST 的 origin（定义的 CST），由 Maclina 从这个形式编译，所在环境含外层的局部宏。
+- 编译期的效果直接落在 image 里：`defmacro` 定义宏，`defvar` 宣告特殊变量，`deftype` 和 `define-setf-expander` 记在 plist 上。`declaim inline` 经 kernel `proclaim` 的 `*proclaim-hook*` 通知前端。
+- image 里所有的编译会话共用一张内联函数表（`*image-inline-functions*`），初始内容是宿主编完 compiler 模块那一刻的 inline 表（`host-inline-functions`）。
+
+## 顶层形式处理
+
+Common-boot 本身的顶层处理不完整（`*compile-time-too*` 从来不会被设为真；SICL 加载文件时逐个形式 `eval-cst`，是 `load` 语义），所以 kiln 在 CST 层自己做：
 
 - `progn`：逐个子形式递归处理。
 - `eval-when`：按 CLHS 3.2.3.1 的表格决定是编译、编译期求值，还是两者都做。
-- 宏形式：先查环境里的宏（`trucler:describe-function`），再查 Common-macros 的宏（`cmd:macroexpand-1`），展开后用 `cst:reconstruct` 保留源码位置，再递归处理。
+- 宏形式：先查环境里的宏（`trucler:describe-function`），再查 Common-macros 的宏，展开后用 `cst:reconstruct` 保留源码位置，再递归处理。
+- `locally`、`macrolet`、`symbol-macrolet`：主体按顶层形式处理，局部宏的展开函数求值后加进 Trucler 环境（`process-toplevel-body`）；主体以声明开头时整体编译。
 - 其他形式：在 compile-time-too 模式下先求值，然后 `cst-to-ast`、`simplify-ast`，加入顶层 AST 列表。
-- `locally`、`macrolet`、`symbol-macrolet`：主体按顶层形式处理，局部宏加进 Trucler 环境；主体以声明开头时整体编译。
+- 处理每个顶层形式时 `*gensym-counter*` 绑定为 0，和 SBCL 的 `compile-file` 一样。
+- `kiln.compiler::*trace-toplevel*` 为真时，把每个文件和每个顶层形式的开头打印到 `*error-output*`。
 
-**编译期求值**用 Common-boot 的 HIR 求值器（`cb:eval-cst`），在一个 Clostrum 编译期环境里执行：
+**文件项**：模块的文件列表里除了路径，还有 `(:compile-time-too 路径)`（文件里的形式都当作在 `(eval-when (:compile-toplevel :load-toplevel :execute))` 里处理，用于定义宏的展开函数要调用同文件里的函数的库）和 `(:renames 别名表 路径)`（读入时按别名换包名，作用于 `in-package` 和 `defpackage`；这样的文件里对编译期已有宏的重新定义只在载入时生效）。
 
-- `cb:create-environment` 已经把 Common-macros 的宏装进环境。
-- kiln 再把宿主 CL 包里所有的函数导入环境，宏展开函数就可以直接调用它们。
-- 和全局环境打交道的函数换成访问 Clostrum 环境的版本：`macro-function`、`(setf macro-function)`、`fdefinition`、`(setf fdefinition)`、`fboundp`、`symbol-value`、`(setf symbol-value)`、`boundp`、`proclaim`，以及接受符号作为函数标识的 `funcall`、`apply`。
+**包和读入**：
 
-所以 `defmacro` 定义的宏在同一个文件后面就能使用，`(eval-when (:compile-toplevel ...) (defun ...))` 定义的函数也能被宏展开函数调用。
+- 顶层的 `defpackage` 和 `in-package` 在编译期执行（宿主上在宿主里），影响后面的读入；运行期的包从模块的符号表得到（[modules.md](modules.md)）。包系统存在之后编译的文件里，顶层 `in-package` 在载入时也设置 `*package*`，文件末尾恢复成 CL-USER，和 `load` 一样。
+- 读目标源码时 `*features*` 绑定为 kiln 的列表（`:kiln :common-lisp :64-bit :x86-64 ...`），编译期环境里的 `*features*` 也是它，所以 `#+sbcl` 的分支不会读进 kiln 的代码。
+- `#.` 在编译期环境里求值。
 
-**未定义函数的警告**推迟到文件末尾（CLHS 3.2.2.3）：Common-boot 遇到未知函数时发出的 `no-function-description` 先被屏蔽、记录下来；文件处理完后，去掉本文件 `defun` 过的函数（通过 `cmd:defun-compile-time-action` 记录）和原语，剩下的作为一个 style-warning 报告。
+**未定义函数的警告**推迟到文件末尾（CLHS 3.2.2.3）：Common-boot 遇到未知函数时发出的 `no-function-description` 先被屏蔽、记录下来；文件处理完后，去掉本文件定义过的函数和原语，剩下的作为一个 style-warning 报告。
 
-**运行期的宏**：`defmacro` 展开后同时会被编译进目标代码，其中的 `(setf macro-function)` 在运行期把展开函数记到符号的 plist 上，`macro-function`、`macroexpand` 能用到它们（M4.6，见 [10 §20](10-m4-clos.md)）。标准宏在运行期由 eval 模块提供（[11 §5](11-m5-self-hosting.md)）。运行期的 `proclaim` 只记录 `special`。
+## 对 Common-boot 的调整
 
-## 3. 对象布局的扩展
+不改 Common-boot 的部分在 kiln 的 client 上用 `cb::convert` 的 `:around` 方法等完成；必须改源码的打成 vendor 补丁（`vendor/Common-boot`，见 `vendor/README.md`）。
 
-在 [07 §1](07-m1-gc.md#1-值和对象的表示) 的基础上：
+- **对 symbol macro 做 `setq`**：Common-boot 不接受，CLHS 3.1.2.1.1 要求按对展开式的 `setf` 处理。转换之前把这样的 `setq` 改写成 `(setf 展开式 值)`。`with-slots`、`with-accessors` 依赖这一点。
+- **声明和 `the` 里的复合类型**：Iconoclast 没有 `(function ...)`、`(values ...)` 这类类型的 AST，转换之前降级为 `function` 或 `t`，并去掉 `ftype` 声明。它们目前只是提示。
+- **`(load-time-value form read-only-p)`**：转换前去掉 read-only-p。
+- **Trucler 的缓存**：reference 环境会把查到的全局描述缓存在环境对象里，而会话的环境在多个文件之间是同一个，后来重新定义的宏会被缓存挡住，所以每个顶层形式之前都清空缓存。
+- vendor 补丁修的上游问题：全局 special 变量的绑定之后环境变成 NIL；`load-time-value` 的子形式没有词法环境；lambda list 所在函数体里声明中的名字没有解析。
 
-| kind | 布局 |
-|---|---|
-| symbol | `[header, 名字指针, 名字长度, function, value, TLS 下标]`，48 字节，仍然只有静态分配 |
-| function | `[header(env 长度 << 8), 入口地址, env...]`，GC 扫描 env，跳过入口地址 |
+## inline 声明
 
-- **函数 cell 就是 symbol 的 `function` 槽。** 调用全局函数：从 symbol 读出函数对象，再读入口地址，`call_indirect`。`(setf fdefinition)` 直接写这个槽，重定义因此立即生效。`(setf f)` 形式的函数名各有一个单独的静态 cell。
-- **未定义函数**：每个 symbol 的 `function` 槽初始指向一个静态的“未定义函数”对象。它是一个 env 长度为 1 的函数对象，入口是 `kiln_undefined_function`，env 里放着这个 symbol，所以出错时能报告函数名。调用点不需要额外检查。
-- **`value` 槽**：全局值，未绑定时是 `UNBOUND`（`0x13`，tag `011` 的立即数，GC 不处理）。keyword 的值是它自己。NIL 和 T 是 runtime 里的静态对象，它们的 `function`、`value` 槽不使用。
-- **静态 root**：symbol 的 `function`、`value` 槽可能指向堆上的闭包和数据，所以编译器用 KIR 的 `(root "数据名" 字下标)` 把它们登记为 GC root。kiln-cg 把这些地址写进 `kiln_roots` 表（JIT 时直接注册），`kiln_module_info` 增加 `roots`、`nroots` 两个字段，大小变为 64 字节。GC 每次都扫描并更新它们。
-- **常量**：fixnum、symbol 和由它们组成的 cons 树。cons 常量作为静态数据输出，GC 不移动也不扫描（它们只指向静态数据）。字符串、字符等还不支持。
+实现在 `lisp/front.lisp`。
 
-## 4. 调用约定的补充：超过 3 个参数
-
-[06 §4](06-m0-abi.md#4-调用约定) 预留的溢出区现在实现了，复用 context 的 `values` 区（现在偏移 80，1021 个字，见 06 §5）：
-
-- 调用方先求出所有参数，然后把第 4 个及之后的参数写进 `ctx.values[0..]`，紧接着调用。
-- 被调方在入口处、第一个 safepoint 之前（poll 和参数个数检查的出错路径之前）把它们读进自己的变量。
-- 这段时间里没有 safepoint，所以这些字不需要作为 GC root。以后多值返回也用这块区域，两者的使用时段不重叠。
-
-上限原来是 3 + 64 = 67 个参数（CLHS 要求 `call-arguments-limit` 至少 50），M5.4 起是 3 + 1021 = 1024（06 §5）。`apply` 和 `multiple-value-call` 在运行期按列表长度分配寄存器和传递区，超过上限时报错。
-
-`&rest` 的列表在入口处构造，这会分配内存，而传递区里还有没读出的参数。所以构造期间把 `ctx.values_live`（偏移 568）设为传递区里的参数个数，GC 把这些字当作 root，构造完再清零（§5.3）。
-
-## 5. 降级
-
-`lisp/lower.lisp` 的 `lower` 是按 AST 类分派的泛函，返回保存结果的 KIR 操作数。
-
-- **函数**：每个 `local-function-ast` 编译成一个 KIR 函数。`labels` 为每个绑定的函数建立函数对象：没有自由变量的函数用静态函数对象（大多数顶层 `defun` 都是这种），闭包按 env 长度在堆上分配，再由 `set-static-environment` 填写 env。env 长度从对应的 `set-static-environment-ast` 得到。
-- **变量**：每个变量定义对应当前 KIR 函数里的一个 `obj` 变量。闭包转换保证变量只在定义它的函数里被引用，降级时会检查这一点。
-- **cell**：用一个 cons，car 存值。
-- **`block`/`tagbody`**：先扫描主体，看有没有来自嵌套函数（闭包）的 `return-from`/`go`。
-  - 没有：只用本地跳转，和 M0 一样，跳转前弹出途经的条目，内联执行 cleanup。
-  - 有：每次进入时分配一个新的**令牌**（一个 cons），建立一个退出点条目（动态环境条目 kind 5），tag 就是令牌；令牌存进 block 的变量，闭包通过静态环境拿到它。闭包里的 `return-from`/`go` 调用 `kiln_rt_exit_to(ctx, token, value)`：runtime 在动态环境链上找 tag 为这个令牌的退出点条目，找不到就报错（退出点已失效），找到了就按 [06 §6.3](06-m0-abi.md#63-展开算法rustkiln-rtsrcunwindrs) 展开到它。`go` 传递的值是目标标签所在段的下标；落地后 tagbody 把条目重新链上（runtime 展开到目标时会摘掉它），再按下标分派。
-  - **为什么不直接让闭包持有条目的栈地址**：那样堆对象就指向了栈帧内部，违反 C5，以后拷栈（fiber、续延）时无法修正。而且同一个栈地址会被后来的另一次进入重用，已经失效的闭包会错误地退出到新的那次进入里。令牌只在需要非局部退出的 block 上分配，代价是每次进入一个 cons。
-- **`catch`/`throw`/`unwind-protect`**：沿用 M0 的做法（[06 §6](06-m0-abi.md#6-非局部退出c3-的决定)）。
-- **特殊变量**：见 §5.2。
-
-### 5.2 特殊变量（C1 的 TLS 下标方案）
-
-`rust/kiln-rt/src/special.rs`。
-
-- symbol 第一次被动态绑定时，runtime（`kiln_rt_tls_index`）给它分配一个 TLS 下标，写进 symbol 的第 6 个字。下标从 1 开始，0 表示还没有分配。
-- 每个 context 有一张 TLS 表（`ctx.tls`，偏移 48，目前固定 4096 项）。表项是 `NO_TLS_VALUE`（`0x23`，立即数）表示这个 context 里没有绑定，回退到 symbol 的全局值。第 0 项永远是 `NO_TLS_VALUE`，所以读一个从没被绑定过的 symbol 时不需要先判断下标是否为 0。
-- **读**：`v = tls[sym.index]`，是 `NO_TLS_VALUE` 就读 `sym.value`，最后检查 `UNBOUND`。**写**（`setq`、`(setf symbol-value)`）：TLS 表项有值就写表项，否则写全局值。
-- **绑定**：在栈上建立一个绑定条目（动态环境条目 kind 6）：tag 是 symbol，`pend_target` 是下标，`pend_value` 是旧的表项（GC root）。然后写入新值。正常离开和本地退出（`return-from`、`go`）时从条目恢复旧值；展开经过绑定条目时，unwinder 恢复旧值。
-- 绑定条目没有 handler，它所在区域里的调用使用外层区域的 handler。
-- GC 扫描每个 context 的 TLS 表里已分配的项。
-- 切换 context（以后的线程、fiber）只需换一张表，O(1)，符合 C1。
-
-### 5.3 多值
-
-- **返回约定**沿用 [06 §4](06-m0-abi.md#4-调用约定)：返回主值和值的个数，第二个及之后的值在 `ctx.values` 里。`(values)` 的主值是 NIL。
-- **编译器**：`lower-mv` 返回主值的操作数和值的个数（整数或 raw 变量）。会把值传递出去的形式（`progn`、`if`、`let`、`labels`、`block`、`catch`、`unwind-protect`、绑定、函数调用等）实现 `lower-mv`，它们的 `lower` 只取主值。函数体用 `lower-mv`，所以函数返回它最后一个形式的全部值。
-- `ctx.values` 会被下一次调用覆盖。需要跨过可能调用函数的代码保留多值时（cleanup、`multiple-value-prog1` 的其余形式、`return-from` 途经的 cleanup、为 `multiple-value-call` 收集参数），只有一个值就直接保存它，否则先把值转成列表，事后再展开回 `ctx.values`。
-- 转成列表要分配，而值还在 `ctx.values` 里：转换期间 `ctx.values_live` 是值的个数减一，GC 把这些字当作 root。平时它是 0，GC 不扫描 `ctx.values`（那里多半是失效的旧值）。
-- `multiple-value-call` 把所有值收集成一个列表，再按 `apply` 的方式调用。
-- **经过展开传递多值**（`throw`、闭包里的 `return-from`）：runtime 的待传值只有一个字。值的个数不是 1 时，先像跨 cleanup 时那样把值转成列表，再传这个列表，并带一个“已打包”标志。标志放在目标条目地址的第 0 位（条目 8 字节对齐）：到达时在 payload 寄存器 exn0 里，cleanup 拦截期间在 `pend_target` 里。handler 分派时先屏蔽这一位再比较条目，落地代码看到标志就把列表展开回多值。`go` 传递的段下标不打包。
-
-### 5.4 lambda list
-
-`lexify-lambda-list` 之后，每个 `&optional` 和 `&key` 参数都有 supplied-p 变量，默认值在函数体里根据 supplied-p 计算，所以函数入口只需要：
-
-1. 读出位置参数：必需参数和 `&optional` 参数，按 `nargs` 选择实参或 NIL，同时设置 supplied-p。这一步在第一个 safepoint 之前，因为后面的参数在传递区里。
-2. 检查参数个数。
-3. 有 `&rest` 或 `&key` 时构造剩余参数的列表（§4）。
-4. `&key`：检查列表长度是偶数；没有 `&allow-other-keys` 时，除非参数里有 `:allow-other-keys` 且值为真，否则遇到未知关键字报错；每个关键字参数取第一次出现的值。
-
-原语作为函数对象使用时，`list` 和 `values` 这类可变参数原语的包装函数也用同样的方式构造参数列表。
-
-### 5.5 `progv`、`load-time-value` 和其他特殊操作符
-
-- **`progv`**：绑定的个数运行期才知道，没法每个绑定占一个栈上条目。所以只建立一个 progv 条目（动态环境条目 kind 7），tag 是一个 `(symbol . 旧 TLS 值)` 的列表。先把所有旧值存进列表，再链接条目，最后写入新值，所以展开时看到的列表总是完整的。值不够时，多出来的 symbol 变为未绑定。离开时（正常、本地退出、unwinder）按列表恢复。
-- **`load-time-value`**：降级每个顶层形式之前，先找出其中所有的 `load-time-value`，在模块的 init 函数里求值，存进静态 root cell；引用处读这个 cell。所以它在包含它的顶层形式执行之前、在空词法环境里求值一次。
-- **`symbol-macrolet`**：简化之后展开已经代入，只剩主体。`macrolet` 被 `macrolet-to-locally` 变成 `locally`。`flet`、`let`、`let*`、`function` 都被简化掉了。
-- **对 symbol macro 做 `setq`**：Common-boot 没有对应的方法（`finalize-variable-name-ast-from-description` 不接受 symbol macro 的描述），会展开成 `setq` 的 `setf` 也一样。CLHS 3.1.2.1.1 要求这时按对展开式的 `setf` 处理。kiln 在自己的 client 上给 `cb::convert` 加了一个 `:around` 方法：转换之前把这样的 `setq` 改写成 `(setf 展开式 值)`，不需要修改 Common-boot。`with-slots`、`with-accessors` 依赖这一点。
-
-`tests/m2/special-forms.lisp` 在非顶层位置覆盖了全部 25 个特殊操作符。
-
-### 5.1 原语
-
-`lisp/primitives.lisp` 定义了编译器直接展开的函数（另有 `values`、`values-list`、`apply`、`nth`、`nthcdr`）：fixnum 的 `+ - * 1+ 1- < > <= >= = zerop plusp minusp`，`eq eql null not`，类型谓词，cons 操作（`cons car cdr first rest second cadr cddr endp rplaca rplacd list list*`），`funcall`、`fdefinition`、`(setf fdefinition)`、`symbol-value`、`(setf symbol-value)`、`boundp`、`print`，以及 `kiln.sys` 里的测试用原语。
-
-- CL 的函数不能被重定义（CLHS 11.1.2.1.2），所以内联是合法的。
-- 原语被当作函数对象使用时（`#'car`），读 symbol 的函数 cell；M3 起由 kernel 为每个原语定义真正的函数（[09 §4](09-m3-kernel.md#4-primop)），M2 时生成的包装函数已删除。
-- 这是过渡做法。M3 交叉编译内核库以后，这些函数大多变成用 `%primop` 写的普通函数，这里只保留内联。
-
-## 6. 测试
-
-`tools/test.sh` 编译 `tests/*/*.lisp`，每个用例跑 JIT、GC 压力（1 MiB 堆）、AOT 三遍。`tests/m2/`：
-
-- `closures.lisp`：计数器、共享 cell 的两个闭包、递归和互相递归的局部函数、跨 GC 存活的闭包列表、原语和全局函数作为值；
-- `exits.lisp`：闭包里的非局部 `return-from`、`go`，非局部退出经过 `unwind-protect`，`catch` 和 `unwind-protect` 里的本地退出；
-- `macros.lisp`：用户宏、编译期定义的辅助函数、`cond`/`dolist`/`dotimes`/`and`/`or`/`when`/`unless`/`case`/`push`、`defvar`/`defparameter`；
-- `values.lisp`：多值经过各种形式和 cleanup、`multiple-value-call`/`-prog1`/`-bind`、`nth-value`、`values-list`、`apply`、GC 期间的多值列表；
-- `lambda-lists.lisp`：`&optional`（默认值引用前面的参数和特殊变量）、`&rest`（含传递区里的参数、GC）、`&key`（重复关键字、改名、`:allow-other-keys`）、闭包的 lambda list；
-- `special-forms.lisp`：全部特殊操作符，含 `progv`（值不够时变为未绑定、`throw` 穿过时恢复）、`load-time-value` 只求值一次；
-- `specials.lisp`：嵌套绑定、绑定内的 `setq`、经过 `throw`/非局部和本地 `return-from`/`go` 退出时恢复绑定、闭包不捕获动态绑定、`boundp`、跨栈展开时恢复绑定、cleanup 里的绑定。
-
-本地开发时用 `KILN_DEPS_DIR` 或 `deps` 符号链接指向依赖目录，见 [04 的 Lisp 依赖](04-bootstrap.md#lisp-依赖)一节。
-
-## 7. 遗留事项
-
-按计划的顺序：
-
-1. ~~特殊变量的动态绑定~~（已完成，§5.2）。TLS 表的大小是固定的，以后需要能扩容。
-2. ~~多值~~（已完成，§5.3），包括经过 `throw` 和非局部 `return-from`。
-3. ~~lambda list~~（已完成，§5.4）。`&aux` 还没有确认 `lexify-lambda-list` 之后的形式。
-4. ~~顶层的 `locally`、`macrolet`、`symbol-macrolet`~~（已完成）：主体按顶层形式处理，局部宏的展开函数用 HIR 求值器求值后加进 Trucler 环境（`process-toplevel-body`）。主体以声明开头时仍然整体编译。
-5. ~~`load-time-value`~~（已完成，§5.5）。字符串和字符常量要等 M3 定下它们的对象表示。
-8. ~~对 symbol macro 的 `setq`~~（已解决，§5.5）。
-9. `progv`：已完成（§5.5）。
-6. 跨环境的符号：现在目标符号就是宿主符号（在 `kiln-user` 包里读入），包系统等 M3 用 Parcl 做。
-7. 运行期的宏环境：`(setf macro-function)` 已完成（10 §20）；`proclaim` 目前是空操作。
-
-## 8. inline 声明（M4.6 之后）
-
-docs/10 §24 的建议 3。实现在 `lisp/front.lisp`。
-
-**规则**：
-- 编译期的 `proclaim` 记录 `inline` 和 `notinline`，存在 session 的 `inline-functions` 表里，所以跨模块有效：kernel 里声明的函数，在 CLOS 模块和程序里调用时也会展开。
-- 顶层的 `(defun f ...)` 若在 `(declaim (inline f))` 之后，就记下它的 lambda list、声明和 `(block f ...)` 形式的函数体。只记录两种情况：lambda list 只有必需参数，且定义在空词法环境里（不在顶层的 `macrolet`、`symbol-macrolet` 里）。之后的同名定义会替换记下的展开。
-- Common-boot 转换形式之前（`cb::convert :around`），`(f a b)` 改写成 `(let ((x a) (y b)) 声明 (block f ...))` 再转换。参数用 `let` 绑定，所以实参按顺序求值，而且在外层环境里求值。以下情况不展开：
+- 编译期的 `proclaim` 记录 `inline` 和 `notinline`，存在 session 的 inline 表里，所以跨模块有效：kernel 里声明的函数，在 CLOS 模块和程序里调用时也会展开。
+- 顶层的 `(defun f ...)` 若在 `(declaim (inline f))` 之后，就记下它的 lambda list、声明和 `(block f ...)` 形式的函数体。只记录 lambda list 只有必需参数、且定义在空词法环境里的函数。之后的同名定义替换记下的展开。`(setf f)` 函数同样可以 inline；Common-macros 把 setf 一个 place 默认展开成 `(funcall #'(setf f) 新值 参数...)`，这种调用按 `(setf f)` 的调用展开。
+- Common-boot 转换形式之前（`cb::convert :around`），`(f a b)` 改写成 `(let ((x a) (y b)) 声明 (block f ...))` 再转换，所以实参按顺序、在外层环境里求值。以下情况不展开：
   - f 在调用处是局部函数；
-  - 正在展开 f 自身，所以递归调用只展开一层；展开嵌套深度不超过 8；
+  - 正在展开 f 自身（递归调用只展开一层），或者展开嵌套深度超过 8；
   - 有覆盖这个调用的 `notinline` 声明；
   - 调用处的局部函数、局部宏或局部 symbol macro 遮蔽了函数体里出现的某个名字；
   - 实参个数不对，这时照常调用，由运行期报错。
-- **局部 `notinline`**：Common-boot 的环境不记录 inline 声明，所以前端自己处理。转换 `lambda`、`let`、`locally` 等形式时，收集其主体开头的 `notinline` 声明，在转换整个形式期间生效。范围比 CL 规定的宽：绑定的初始化形式也包括在内。不展开总是正确的。
-- **编译期的代码不展开**：展开式里可能用到 kernel 的内部函数和 `%primop`，它们在编译期并不存在。只有 `compile-toplevel-form` 把形式转成目标端 AST 时才打开展开（`*inline-enabled*`）。`cb:eval-cst`（编译期求值，包括宏定义）和 `cb::finalize-local-macro-ast`（局部宏展开函数的函数体）上的 `:around` 方法会把它关掉。
+- **局部 `notinline`**：Common-boot 的环境不记录 inline 声明，所以前端自己处理。转换 `lambda`、`let`、`locally` 等形式时，收集其主体开头的 `notinline` 声明，在转换整个形式期间生效。范围比 CL 规定的宽（绑定的初始化形式也包括在内），不展开总是正确的。
+- **编译期的代码不展开**：展开式里可能用到 kernel 的内部函数和 `%primop`，它们在编译期并不存在。只有把形式转成目标端 AST 时才打开展开（`*inline-enabled*`）。
+- kernel 和 CLOS 里声明为 inline 的：一行的类型谓词、`char-code`、`acons`、`identity`、cXXr，`standard-instance-access`、`instancep`、`class-of+1`、`stamp+1`，结构的访问器等。
 
-**声明为 inline 的函数**：
-- kernel（`kernel.lisp` 开头）：一行的类型谓词（`fixnump`、`characterp`、`simple-vector-p` 等）、`char-code`、`acons`、`identity`、`fourth`、`fifth` 和 cXXr 等。
-- CLOS（`early.lisp`）：`standard-instance-access`、`slot-value-using-location+1` 等、`small-integer=`、`instancep`、`class-of+1`、`stamp+1`。
+## 编译器宏
 
-**`eql` 原语**：两个不同的一般对象原来都要调用 kernel 的 `eql-slow`。现在先看第一个对象的 kind，只有 bignum、比率、double float 才调用，其他对象直接返回 NIL。
+用户和库的 `define-compiler-macro` 在编译期被忽略（编译期环境里的 `(setf compiler-macro-function)` 什么也不做：登记进 Clostrum 的话，Common-boot 会调用它尚未实现的 `expand-compiler-macro`），运行期只记在 plist 上。唯一的例外是上文的宿主库 compiler macro。
 
-**结果**（`bench/fe-read.lisp`）：CST 读取 205 → 187 ms，`read` 135 → 120 ms，`read-line` 100 → 68 ms；`make-instance` 2.1 → 1.1 µs（`bench/gf.lisp`）。
+## 确定性
 
-**setf 函数**（M5.1 之后）：`(declaim (inline (setf f)))` 之后定义的 `(defun (setf f) ...)` 也会展开。setf 一个 place 时 Common-macros 默认展开成 `(funcall #'(setf f) 新值 参数...)`，这种调用按 `(setf f)` 的调用展开。结构的访问器用到了这一点（[10 §15](10-m4-clos.md)）。
+自举要求同一份源码在 SBCL 和 kiln 上编出逐字节相同的 KIR（[bootstrap.md](bootstrap.md)），所以前端和降级不能依赖：
 
-**降级时的改写**（`lower-global-call`）：
-- `(eql x 常量)`：常量不是堆上的数（bignum、ratio、double float）时，按 `eq` 降级。`case` 展开成这样的比较。
-- 只有一个下标的 `aref` 和 `(setf aref)`：simple vector 就地读写，其他数组调用 kernel 的函数（原语 `%aref-1`、`%set-aref-1`）。
+- **哈希表的遍历顺序**：模块的额外符号和新定义包的外部符号按名字排序后输出。
+- **gensym 计数器**：名字是 gensym 的局部函数，标签里去掉数字，由 `fresh-label` 的计数保证唯一。模块常量里的无名符号按第一次出现的顺序编号，标签用这个序号和模块名，名字以数字结尾的也改用这个序号（相当于 SBCL fasl 按对象本身保存无名符号）。代价是源码里写的 `#:x1` 这类名字也会被改掉，只影响打印。
+- **宿主里碰巧共享的结构**：KIR 的 cons 常量按 car 和 cdr 合并（`constant-word`）；Eclector 的反引号对模板里没有 unquote 的子表和尾部、以及最后的 `,@x`，都像 SBCL 一样当作字面量或尾部共享（vendor 补丁，CLHS 2.4.6 允许）。
+- **宿主包名**：符号的标签和包名字符串统一用 `target-package-name`（测试程序的包在运行期叫 COMMON-LISP-USER）。
+- **源码位置**：位置是 `file-position` 的八位组偏移，kiln 的文件流要扣除 `unread-char` 退回的字符；编译时的文件名两边要相同。
 
-**还没有**：`&optional`、`&key` 参数的展开；编译器宏（`define-compiler-macro` 在编译期仍被忽略）。`member`、`assoc` 这类带 `:test` 的函数，要靠编译器宏或源码变换，按常量 test 生成专门的循环，光 inline 不够，因为 kiln 不做常量传播，`(funcall test ...)` 仍是间接调用。
+还不确定的：字面数据里未 intern 的符号，名字里带宿主当时的 gensym 计数（宿主自己也会调用 `gensym`，例如 SBCL 的 PCL）。
+
+## 已知限制
+
+- `defclass` 定义的访问函数，在文件末尾被报成未定义函数（`cmd:defclass-compile-time-action` 拿不到槽）。
+- 全局符号宏（`define-symbol-macro`）：image-client 的运行期环境描述没有它，目标端编译器看不到。
+- 运行期的 `proclaim` 只记录 `special` 和 inline 相关的声明。

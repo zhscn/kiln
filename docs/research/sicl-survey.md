@@ -1,8 +1,8 @@
-# 05 SICL 现状调研
+# SICL 现状调研
 
 **调研日期**：2026-11-03
 **依据**：SICL 主仓库 <https://github.com/robert-strandh/SICL>（HEAD fce5770d4，2026-08-30），以及 s-expressionists、robert-strandh 等组织下的各模块仓库（各模块的提交日期见 6.2）。
-**用途**：记录 SICL 的最新设计和实际代码进度，供后续会话直接引用，不必重新调研。若 SICL 有大的更新，按文末“如何更新本文”重新核对。
+**用途**：记录 SICL 的最新设计和实际代码进度，供后续会话直接引用，不必重新调研。本文不随 kiln 的代码更新；若 SICL 有大的更新，按文末“如何更新本文”重新核对。
 
 文中的路径：`S/` 指 SICL 仓库根目录，`D/<模块>/` 指该模块仓库的根目录（例如 `D/Common-boot/` 是 Common-boot 仓库）。**规范**指 `S/Specification/` 里的文字，**代码**指实际存在并在用的代码。两者经常不一致：规范里有大段过时内容，以代码和 git log 为准。
 
@@ -321,6 +321,8 @@ rack 的布局：cell −2 是 stamp，cell −1 是有效槽列表（`Class-ini
 ---
 
 ## 7. 对 kiln 的影响
+
+这一节写于 kiln 实现前端和 CLOS 之前，记录的是当时的判断。后来的决定：前端见 [front-end.md](../design/front-end.md)，复用的划分见 [modules.md](../design/modules.md)，CLOS 见 [clos.md](../design/clos.md)（单一环境的目标端引导、vendor Clostrophilia、分派解释执行），运行期 `compile` 见 [eval-compile.md](../design/eval-compile.md)。
 
 ### 7.1 采纳
 

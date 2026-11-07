@@ -1,4 +1,4 @@
-# 01 定位
+# 定位和 seal
 
 ## 一句话
 
@@ -11,12 +11,12 @@ kiln 开发时是一个完整的、可以随时修改的 CL 活环境，交付�
 | 方面 | 选择 |
 |---|---|
 | 语言 | Common Lisp，以 ANSI 为主；可以额外提供一个 staging 库 |
-| 复用 | SICL 生态的独立模块（Eclector、Clostrum、Common-boot 等）、Trivia，详见 [04-bootstrap.md](04-bootstrap.md) |
+| 复用 | SICL 生态的独立模块（Eclector、Clostrum、Common-boot 等），详见 [modules.md](modules.md) |
 | 开发期代码生成 | cranelift-jit |
 | 交付期代码生成 | cranelift-object，AOT |
 | Runtime | Rust 写的小 runtime，静态链接 |
 | GC | MMTk |
-| 异步 | 底层用 stackful 栈切换，对外暴露和 condition 系统统一的一次性续延，详见 [03-async.md](03-async.md) |
+| 异步 | 底层用 stackful 栈切换，对外暴露和 condition 系统统一的一次性续延，详见 [async.md](async.md) |
 | 早期宿主 | SBCL |
 
 ## 和现有实现的区别
@@ -55,7 +55,7 @@ kiln 开发时是一个完整的、可以随时修改的 CL 活环境，交付�
 
 - 泛函数去虚化、方法内联；
 - 删除没有用到的函数、类、方法、`format` 指令和 `loop` 子句的实现；
-- 把满足条件的 async 函数编译成状态机（见 [03-async.md](03-async.md)）。
+- 把满足条件的 async 函数编译成状态机（见 [async.md](async.md)）。
 
 ### 交付期
 
@@ -87,10 +87,10 @@ kiln 开发时是一个完整的、可以随时修改的 CL 活环境，交付�
 - 交付期不支持任意的运行期重定义。
 - 不实现 `call/cc` 那种多次可重入的续延，只做一次性续延。
 - 不追求和 SBCL 的扩展（`sb-ext` 等）二进制兼容。需要的地方提供兼容层。
-- ANSI 自举完成之前不做异步。底层约束先留好，见 [02-runtime-constraints.md](02-runtime-constraints.md)。
+- ANSI 自举完成之前不做异步。底层约束先留好，见 [runtime-constraints.md](runtime-constraints.md)。
 
 ## 待定问题
 
 - staging 库的范围：只给 WPO 提供提示，还是作为一种一等的多阶段编程设施？
-- seal 的粒度：是整个程序，还是可以按系统或按包分别 seal？
+- seal 的粒度：是整个程序，还是可以按系统或按包分别 seal？编辑器的需求是至少支持“整个程序 seal，但列出的定义保持开放”（[editor.md](editor.md) 的“扩展模型和 seal”）。
 - 交付期的可选编译器模块：只带字节码解释器，还是带完整的 Cranelift？

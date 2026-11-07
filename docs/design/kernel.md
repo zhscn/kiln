@@ -1,154 +1,72 @@
-# 09 M3：kernel 和 ANSI 核心库
+# kernel
 
-**状态**：M3.1–M3.5 已完成（2026-11）。包、Regalia 的数组和 complex 移到 M4 之后（见 §1 和 §10）。本文记录 M3 的分步计划和已经定下的对象表示。
+kernel 是第一个模块，源码在 `lisp/target/`（`kernel.lisp`、`types.lisp`、`sequences.lisp`、`early.lisp`），用 kiln 编译器交叉编译。它是 CLOS 之前能有的全部东西：几乎所有 SICL 模块都依赖 CLOS（[modules.md](modules.md) 的加载顺序），所以 kernel 只能是原语和手写的引导代码。
 
-M3 的目标见 [04 的里程碑](04-bootstrap.md#里程碑)：把 ANSI 核心库交叉编译进 kiln。按 [04 的加载顺序](04-bootstrap.md#目标端的加载顺序)，CLOS 之前只能有 kernel 原语和手写的引导代码，而大多数 SICL 模块依赖 CLOS（M4）。所以 M3 先做不依赖 CLOS 的部分：对象表示、kernel、多模块链接、符号和包、字符和字符串、数值塔。
+## 写法限制
 
-## 1. 分步
+- 只能用 `%primop`、已经定义的 kernel 函数和 Common-macros 的宏（[lowering.md](lowering.md)）。
+- 宏展开函数在编译期由交叉编译的求值器运行，必须是可移植 CL。
+- `defmacro` 在加载期也要调用 `(setf macro-function)`，所以 `(setf macro-function)` 是 kernel 的第一个定义，只用原语。
 
-| 步骤 | 内容 | 状态 |
+## 钩子
+
+kernel 先给出简单的版本，后面的模块替换或扩充。钩子是 `kiln.kernel` 里的特殊变量或可重定义的函数：
+
+| 钩子 | kernel 的默认 | 谁替换 |
 |---|---|---|
-| M3.1 | 立即数和堆对象的完整 kind 表；字符、字符串、simple-vector；symbol 的名字改为字符串对象；`%primop`；用 Lisp 写的 kernel（`lisp/target/`） | ✅ |
-| M3.2 | 多模块：kernel 只编译一次，用户程序作为另一个模块和它链接；symbol 在模块之间保持同一身份 | ✅ |
-| M3.3 | 整数：bignum、溢出时转 bignum、整数除法和位运算 | ✅ |
-| M3.4 | ratio、浮点（Quaviver 负责 I/O）、complex | ✅（complex 和 Quaviver 未做，见 §9） |
-| M3.5 | 剩下的不依赖 CLOS 的部分：`typep`、`type-of`、`coerce`、`equalp`、序列和列表函数 | ✅（数组移到 M4，见 §10） |
+| `%runtime-error` | 打印并结束程序（错误码 20） | CLOS 模块：按错误码 signal condition |
+| `*class-typep*` | 无 | CLOS：类名作为类型 |
+| `*ctype-typep*` | 无 | ctype：复合类型 |
+| `%typep-cached` | 就是 `typep` | CLOS：带调用点缓存的版本（[clos.md](clos.md)） |
+| `*complex-array-kind*`、`*complex-array-op*` | 无 | Regalia 数组层（[stdlib.md](stdlib.md)） |
+| `*instance-type-of*`、`*instance-equal*` | 无 | CLOS：实例的 `type-of`，pathname 的 `equal` |
+| `*environment-macro-function*` | 无 | eval 模块：Maclina 词法环境里的局部宏 |
+| `*compile-function*`、`*eval-function*` | 无 | eval 模块和 compiler 模块（[eval-compile.md](eval-compile.md)） |
+| `*proclaim-hook*` | 无 | image-client：inline 声明 |
+| `*redefinition-hook*` | 无 | compiler 模块：依赖追踪（[dependencies.md](dependencies.md)） |
+| `*module-symbol-tables*`、`%register-module-symbols` | 只记录 | CLOS 模块的包系统（[modules.md](modules.md)） |
 
-依赖 CLOS 的模块（Predicament、ctype、Consecution、Salmagundi、Cyclosis、打印器等）放到 M4 之后。
+**early 桩**（`lisp/target/early.lisp`）：`error` 和 `cerror` 打印参数后终止程序（错误码 20），`warn` 只打印，`format` 的目标是 NIL 时直接返回控制串，`assert`，`define-condition` 把定义记在 `*early-condition-types*` 里（CLOS 模块在 Predicament 之后建成真正的 condition 类），`documentation` 和它的 `setf` 把文档存在 symbol 的 plist 上。流变量（`*error-output*` 等）先定义为 NIL。
 
-**包移到 M4**：Parcl 的底层协议（`parcl-low`）全是泛函，包本身是 CLOS 类（`Low/package-class.lisp`），符号表用哈希表。它要在 CLOS 和 Salmagundi 之后才能运行。在那之前自己写一套简单的包实现，Parcl 一到就要扔掉，所以不做。在那之前，symbol 的 `package` 槽存包名字符串，`keywordp` 和打印器靠它判断（M4.5 的做法见 [10 §12](10-m4-clos.md#12-m45包parcl)）。交叉编译时目标包和宿主包怎么分开（例如目标的 Eclector 和宿主编译器用的 Eclector 同名），也等到真正交叉编译这些模块时再定。
+## 数
 
-## 2. 值的表示
+- **运算在 Rust 里**：`kiln_rt_integer_op(ctx, op, a, b)`（`rust/kiln-rt/src/bignum.rs`，num-bigint）实现整数的加减乘、四种除法（商作为返回值，余数在 `ctx.values[0]`）、比较、位运算、`ash`、`gcd`、`expt`、`integer-length`。`kiln_rt_number_op`（`number.rs`，num-bigint 和 num-rational）处理全部实数的四则、四种除法（商是整数，余数和参数同类型）、比较、`eql`、转成浮点、`rational`、`sqrt`、`exp`、`log`、三角函数、`atan` 的两参数形式、`expt`。
+- runtime 先把参数读成 BigInt 再分配结果，所以分配时的 GC 不影响参数；结果有多个堆对象时（ratio 的分子分母、除法的余数）先分配的用 `values_live` 登记为 root。
+- **快路径和慢路径**：编译器对 `+ - *`、比较、除法、`ash`、`logand` 等内联 fixnum 运算。参数不是 fixnum 或者溢出时，调用 kernel 的 `two-arg-+`、`two-arg-<` 等函数，由它们按类型分派。`eql` 对不是同一对象的数调用 `eql-slow`。
+- **数值错误是 condition**：runtime 的数值运算（Rust）发现的错误没法变成 condition，所以 kernel 在调用 runtime 之前先在 Lisp 里检查：`two-arg-*` 系列检查参数是不是实数，除法检查除数是不是零。
+- **类型传染**按 CLHS 12.1.4：double > single > 有理数；有理数的初等函数结果是 single-float。比较是精确的：浮点数按它表示的有理数和有理数比较。
+- **浮点的分解**（CLHS 12.2）：`integer-decode-float`、`decode-float`、`scale-float`、`float-sign`、`float-digits`、`float-precision`、`float-radix` 按位实现在 kernel 里。
+- 常量：超出 fixnum 范围的字面量编译成静态 bignum，double-float 和 ratio 编译成静态对象，single-float 是立即数。
+- 还没有：complex、浮点的 trap、NaN 和无穷的读写。
 
-低 3 位是 tag（[07 §1](07-m1-gc.md#1-值和对象的表示)）：
+## 字符和字符串
 
-| 低位 | 含义 |
-|---|---|
-| `...0` | fixnum，63 位 |
-| `001` | cons |
-| `101` | 其他堆对象（带 header） |
-| `011` | 立即数，第 3–7 位是立即数的种类，第 8 位起是载荷 |
-| `111` | 保留 |
+- 字符是 Unicode 码点，字符串是 UTF-32（[objects.md](objects.md)）。
+- 字符的大小写和分类只覆盖 Latin-1。
+- 字符串比较（`string=` 到 `string-not-lessp`，以及不区分大小写的版本和 `char-lessp` 等）接受 `:start1` 等关键字；`string=` 用 primop 逐字比较。
 
-立即数：
+## 类型
 
-| 低 8 位 | 种类 | 载荷 |
-|---|---|---|
-| `0x0B` | character | Unicode 码点（第 8 位起） |
-| `0x13` | UNBOUND（未绑定标记，不是一等值） | — |
-| `0x1B` | single-float | 第 32–63 位是 IEEE 754 单精度 |
-| `0x23` | NO_TLS（TLS 表的空项，不是一等值） | — |
-| `0x2b` | 标准对象里未绑定的槽（Clostrophilia 的 `+unbound-slot-value+`，M4） | — |
+- **`typep`**（`types.lisp`）认识内建的原子类型和常用的复合类型（`or`、`and`、`not`、`member`、`eql`、`satisfies`、带范围的 `integer`/`rational`/`real`/`float`、`mod`、`unsigned-byte`、`signed-byte`、`cons`、带长度的字符串和向量、数组类型的维度）。其余的先用 `typexpand-1` 展开 `deftype` 定义的名字（展开函数在 plist 上）；展开不了的，symbol 交给 `*class-typep*`，复合类型交给 `*ctype-typep*`。
+- 编译期把常量原子类型的 `typep` 换成谓词调用，把类名的 `typep` 换成 `%typep-cached`（[lowering.md](lowering.md)）。
+- `type-of`、`coerce`、`equalp` 覆盖已有的类型。`deftype` 和 `subtypep` 由 ctype 提供（[stdlib.md](stdlib.md)）。
 
-## 3. 堆对象的 kind
+## 序列和列表
 
-header 的低 8 位是 kind，第 8 位起是长度（含义随 kind 而定）。GC 只扫描标为“扫描”的部分。
+- `sequences.lisp` 是 bootstrap 用的简单实现：`find`、`position`、`count`、`remove`、`remove-duplicates`、`substitute`、`some`/`every`、`map`、`map-into`、`reduce`、`sort`/`stable-sort`（稳定的归并排序）、`fill`、`replace`、`search`、`mismatch`，以及 `member`/`assoc`/`adjoin`/`union` 等带 `:test`/`:test-not`/`:key` 的列表函数。很多函数先把序列转成列表再处理；对非 simple 向量返回 simple 向量。Consecution 还没有接入。
+- 快路径：`member`、`assoc`、`find`、`position` 在 test 是 `eq`/`eql`、又没有 key 时直接循环比较；不带关键字或 `:test` 是 `#'eq`、`#'eql` 时调用两个参数的 `%member-eql` 等，不解析关键字参数；列表上的 `find`/`position` 不复制列表。
+- `map`、`map-into` 不复制列表参数，在最短的序列处停止（builder-protocol 会传入循环列表）。
 
-| kind | 类型 | 布局 | 长度 | GC 扫描 |
-|---|---|---|---|---|
-| 1 | symbol | `[header, name, package, function, value, TLS 下标, plist, setf 函数]` | — | name 到 setf 函数（TLS 下标是 fixnum 形式的整数，不影响） |
-| 2 | function | `[header, 入口, env...]` | env 字数 | env |
-| 3 | cons | `[header, car, cdr]` | — | car、cdr |
-| 4 | simple-vector | `[header, 元素...]` | 元素个数 | 全部元素 |
-| 5 | simple-character-string | `[header, UTF-32 码点...]`，按 8 字节补齐 | 字符个数 | 否 |
-| 6 | bignum | `[header, 64 位数字...]`，二进制补码，小端，最短 | 数字个数 | 否 |
-| 7 | ratio | `[header, 分子, 分母]`，约分过，分母 > 1 | — | 分子、分母 |
-| 8 | double-float | `[header, IEEE 754 位模式]` | — | 否 |
-| 12 | complex | `[header, 实部, 虚部]`（2026-11，见 §9） | — | 实部、虚部 |
+## 运行期的宏环境
 
-以后的 kind（M3.4、M3.5）：simple-base-string、specialized vector（`(unsigned-byte 8)` 等）、bit-vector、bignum、ratio、double-float、complex、array header、标准对象和 rack（M4）。
+- `(setf macro-function)` 把展开函数记在符号 plist 的 `macro-function` 下；`macro-function`、`macroexpand-1`、`macroexpand`、`*macroexpand-hook*`、`constantp` 都在 kernel 里。带 Maclina 或 Common-boot 环境时，由造出这个环境的 client 查询局部宏（`kiln.eval:environment-client`）。
+- `defconstant` 在加载期给符号做常量标记；`define-setf-expander` 和 `defsetf` 的展开函数也记在 plist 上（eval 模块之后）。
+- 编译期仍然用前端自己的环境（[front-end.md](front-end.md)），两者互不影响。
 
-**字符串**：只有一种 UTF-32 的 `simple-character-string`，每个字符 4 字节。`base-string` 以后再加，到时作为 `simple-character-string` 的子类型单独一个 kind。
+## 运行期错误
 
-**symbol**：
+编译器生成的报错代码调用 `%runtime-error`（[abi.md](abi.md)）。kernel 的定义是结束程序；`%runtime-error` 还没定义的时候（kernel 加载完之前），报错代码先检查它的函数格，未定义就直接结束程序。CLOS 模块（`runtime-errors.lisp`）把它重定义为 signal `type-error`、`undefined-function`、`unbound-variable`、`division-by-zero`、`program-error` 等。`:lisp-error`（early `error` 和兜底的 debugger 用的）始终直接结束程序。
 
-- `name` 是字符串对象，`package` 是包对象，未 intern 的 symbol 是 NIL。编译器生成的静态 symbol 在这个槽里存包名字符串，包系统（M4.5，[10 §12](10-m4-clos.md#12-m45包parcl)）启动时把它换成包对象。
-- keyword 的值是它自己，`function` 槽初始指向“未定义函数”对象（[08 §3](08-m2-front-end.md#3-对象布局的扩展)）。
-- NIL 和 T 仍然是 runtime 里的静态对象，名字字符串在 runtime 启动时填写（Rust 的常量求值不能做指针加 tag）。
+## 打印
 
-## 4. `%primop`
-
-`(kiln.sys:%primop :名字 参数...)` 是 kernel 代码访问底层操作的唯一入口（[05 §7.1](05-sicl-survey.md#71-采纳)）。
-
-- 它对前端来说是普通的函数调用，降级时按第一个参数（必须是 keyword 字面量）查 primop 表，展开成内联代码，所以前端不需要改。
-- [08 §5.1](08-m2-front-end.md#51-原语) 的原语仍然保留：对 CL 函数的调用照样内联。kernel 用 `(defun car (x) (car x))` 这种写法给每个原语一个真正的全局函数，这样 `#'car`、`(apply 'car ...)` 都能工作，不再需要编译器生成的包装函数。
-
-## 5. kernel
-
-`lisp/target/` 是目标端的 Lisp 源码，用 kiln 编译器交叉编译。M3.2 之前它作为前缀和每个程序编译进同一个模块。
-
-kernel 的写法限制：
-
-- 只能用 `%primop`、已经定义的 kernel 函数和 Common-macros 的宏。
-- 宏展开函数在宿主里运行，必须是可移植 CL（[04 关键选择 1](04-bootstrap.md#关键选择)）。
-
-## 6. M3.1 的实现记录
-
-- **KIR** 增加了 `(load32 A 偏移)`（零扩展）和 `(store32 A 偏移 V)`，用于 UTF-32 字符串。
-- **TLS 下标**改为按 fixnum 存放（下标 << 1），symbol 的所有字段都是合法的 Lisp 值，GC 可以统一扫描堆上的 symbol。TLS 表项地址 = 表基址 + 存放的值 << 2。
-- **大对象**：超过当前 plan 的普通分配上限时，`kiln_rt_alloc` 改用 MMTk 的 large object space。
-- **函数标识**：`funcall`、`apply`、`multiple-value-call` 接受 symbol，取它的全局函数。
-- **`(setf f)` 函数**：`defun` 展开成 `(funcall #'(setf fdefinition) f name)`，而 `name` 经过简化后是一个绑定到常量的临时变量。降级时记录“绑定到常量且从不赋值”的临时变量，函数名是编译期常量时直接写进对应的 cell。运行期才知道的 `(setf f)` 函数名要等 M3.3。
-- **比较原语**接受任意个参数，按相邻两两比较。
-- **前端**：
-  - 文件改为读一个形式处理一个，顶层的 `in-package` 在宿主里设置 `*package*`，影响后面的读入（目标端还没有包，不编译它）。
-  - Eclector 把反引号读成 `eclector.reader:quasiquote`，这个宏和 `eclector.reader::expand` 要装进编译期环境（SICL 也这样做）。
-  - 宏展开函数在编译期环境里由 HIR 求值器执行，那里还没有 `loop`（Khazern 要等 M4 之后）。
-- **原语的包装函数已删除**：kernel 为每个原语定义了真正的函数，`#'car` 直接读 symbol 的函数 cell（[08 §5.1](08-m2-front-end.md#51-原语) 里的包装函数不再需要）。
-- **测试**：所有测试都以 kernel 为前缀编译。`tests/m3/chars-strings.lisp`（Unicode 字符和字符串、Latin-1 的大小写、跨 GC 的字符串、large object space 里的大字符串）、`tests/m3/sequences.lisp`（向量、列表函数、原语作为函数对象、symbol 的 plist）。
-- **限制**：字符的大小写和分类只覆盖 Latin-1；`string=` 等还不支持 `:start`/`:end`；`make-array` 只能建一维 simple-vector；数只有 fixnum。
-
-## 7. M3.2：多模块
-
-- **KIR**：`(shared "名字"...)` 声明本模块里哪些数据和函数可能被别的模块以相同内容定义：symbol 对象、它的名字字符串和未定义函数对象、`(setf f)` 的 cell、包名字符串、`kiln_undefined_function`。其他名字（函数、常量、`load-time-value` 的 cell、init 函数）都带模块名前缀，不会冲突。
-- **kiln-cg** 一次接受多个 KIR 文件（`kiln-cg jit kernel.kir prog.kir`、`kiln-cg obj kernel.kir prog.kir -o prog.o`），先合并成一个模块：导入去重，共享定义只保留第一份，其他名字重复就报错，root 去重，各模块的 init 函数按给出的顺序执行。runtime 登记静态 root 时也会去重。
-- **`kiln_module_info`** 改为 72 字节：`enter`、`inits`（init 函数对象数组）、`ninits`、调用点表、栈图、root 表。
-- **编译会话**（`kiln.compiler:make-session`）：Clostrum 编译期环境和已定义函数的记录在多个文件之间保留。`kiln:compile-kernel` 先把 kernel 编译成 `kernel.kir`，之后同一个会话里用 `kiln:compile-file-to-kir` 编译的程序能看到 kernel 的宏和函数。`tools/test.sh` 这样只编译一次 kernel。
-- **以后**：分别生成的目标文件之间链接（共享定义用 weak 链接，launcher 汇总多个 module info），以及 image 里增量加载模块。
-
-## 8. M3.3：整数
-
-- **表示**：fixnum 范围（63 位）之外的整数是 bignum（kind 6）：二进制补码、小端的 64 位数字，长度最短。fixnum 范围内的整数永远是 fixnum，所以整数的 `eql` 就是 fixnum 的 `eq` 或 bignum 的值相等。
-- **运算在 Rust 里**（`rust/kiln-rt/src/bignum.rs`，用 num-bigint）：`kiln_rt_integer_op(ctx, op, a, b)` 实现加减乘、四种除法（商作为返回值，余数在 `ctx.values[0]`，即两个值）、比较、位运算、`ash`、`gcd`、`expt`、`integer-length`。它先把参数读成 BigInt 再分配结果，所以分配时的 GC 不影响参数；除法先分配余数并通过 `values_live` 把它登记为 root，再分配商。
-- **快路径和慢路径**：编译器对 `+ - *` 和比较照样内联 fixnum 运算。参数不是 fixnum 或者溢出时，调用 kernel 里的 `two-arg-+`、`two-arg-<` 等函数，由它们按类型分派（现在只有整数，M3.4 加 ratio 和浮点）。`eql` 对不是同一对象的堆对象调用 kernel 的 `eql-slow`。
-- **kernel**：`truncate`/`floor`/`ceiling`/`round`（两个值）、`mod`、`rem`、`logand`/`logior`/`logxor`（fixnum 有快路径：带 tag 的 fixnum 直接按位运算）、`lognot`、`logtest`、`logbitp`、`ash`、`integer-length`、`evenp`/`oddp`、`gcd`、`lcm`、`expt`、`isqrt`、`abs`、`signum`。
-- **常量**：超出 fixnum 范围的字面量编译成静态 bignum。
-- **打印**：runtime 的打印器用 num-bigint 输出十进制，以后换成 Lisp 写的打印器。
-- `tests/m3/integers.lisp`：溢出成 bignum 再回到 fixnum、fixnum 边界、大数乘法、比较、除法的四种取整、位运算、`ash`、`gcd`、`expt`、`isqrt`、跨 GC 的 bignum。
-
-## 9. M3.4：ratio 和浮点
-
-- **表示**：ratio 是 kind 7，总是约分过、分母大于 1，分母为 1 时就是整数。single-float 是立即数，所以 `eql` 对它就是 `eq`（`0.0` 和 `-0.0` 位模式不同，因此不 `eql`，符合 CLHS）。double-float 是 kind 8，装箱存放。默认浮点格式是 single-float，和宿主读入 `1.5` 的结果一致。
-- **运算在 Rust 里**（`rust/kiln-rt/src/number.rs`，用 num-bigint 和 num-rational）：`kiln_rt_number_op` 处理全部实数的加减乘除、四种除法（商是整数，余数和参数同类型）、比较、`eql`、转成浮点、`numerator`/`denominator`、`rational`、`sqrt`、`exp`、`log`、三角函数、`atan` 的两参数形式、`expt`。类型传染按 CLHS 12.1.4：double > single > 有理数；有理数的初等函数结果是 single-float。比较是精确的：浮点数按它表示的有理数和有理数比较。
-- **分配和 GC**：结果为 ratio 时，分子和分母可能是 bignum，先分配它们，并通过 `values_live` 把它们登记为 root，再分配 ratio。除法的余数同理。
-- **kernel**：`two-arg-*` 一律交给 `kiln_rt_number_op`；`/`、`float`、`numerator`、`denominator`、`rational`、`rationalp`、`floatp`、`realp`、`sqrt`、`exp`、`log`、`sin`、`cos`、`tan`、`atan`、`ffloor`；`truncate` 等四种除法支持所有实数。位运算仍然只接受整数。
-- **常量**：single-float 编译成立即数，double-float 和 ratio 编译成静态对象。
-- **打印**：runtime 的打印器按 `*read-default-float-format*` = single-float 的规则输出：最短的、能读回原值的数字；`1e-3 <= |x| < 1e7` 用定点表示，否则用指数表示；double 用 `d`（`1.0d0`、`1.5d-5`）。以后由 Lisp 写的打印器和 Quaviver 取代。
-- **complex**（2026-11）：kind 12，`[header, 实部, 虚部]`，只由 kernel 的 `complex` 构造，所以总是规范的（CLHS 12.1.5）：两部分都是有理数且虚部不为 0，或者是同一格式的两个浮点数。运算在 kernel 里按两部分做（`two-arg-+` 等先判断有没有 complex 参数），部分之间的类型传染由实数的传染得到。`eql` 的慢路径、`=`、`zerop`、`abs`（浮点按比例缩放）、`phase`、`signum`、`conjugate`、`cis`，以及 `sqrt`/`exp`/`log`/`expt` 和三角、双曲函数及其反函数的 complex 版本，负数的 `sqrt`/`log` 和负底数的非整数次幂得到 complex；分支切割按 CLHS 12.1.5.3，在实轴上的取值和 SBCL 一致。`typep` 认识 `complex` 和 `(complex 类型)`，`class-of` 是内建类 `complex`。编译期常量编译成静态对象。`tests/m4/clos-complex.lisp`。
-- **没做**：浮点的 trap 和 `float-digits`、`integer-decode-float`、`scale-float` 等；NaN 和无穷的读写。
-- `tests/m3/reals.lisp`：ratio 的约分和运算、类型传染、浮点打印、`=` 和 `eql` 对 `0.0`/`-0.0` 和不同格式的区别、有理数和浮点的精确比较、四种除法、初等函数、跨 GC 的 ratio 和 double。
-
-## 10. M3.5：类型和序列
-
-- **数组移到 M4**：Regalia 的每种数组（`array-t`、`vector-single-float`、`bit-vector` 等）都是 CLOS 类，多维数组、fill pointer、displaced 数组和特化数组都要等 CLOS。在那之前只有一维的 simple-vector 和字符串。
-- **`typep`**（`lisp/target/types.lisp`）：内建的原子类型，以及常用的复合类型（`or`、`and`、`not`、`member`、`eql`、`satisfies`、带范围的 `integer`/`rational`/`real`/`float`、`mod`、`unsigned-byte`、`signed-byte`、`cons`、带长度的字符串和向量）。`deftype` 和 `subtypep` 等 ctype（M4 之后）。类型是编译期常量的原子类型时，编译器把 `typep` 直接换成对应的谓词调用（`*type-predicates*`），`typecase` 因此也不慢。
-- **`type-of`、`coerce`、`equalp`**：覆盖目前已有的类型。
-- **序列和列表函数**（`lisp/target/sequences.lisp`）：`find`、`position`、`count`、`remove`、`remove-duplicates`、`substitute`、`some`/`every`、`map`、`reduce`、`sort`/`stable-sort`（稳定的归并排序）、`fill`、`replace`、`search`、`mismatch`，以及 `member`/`assoc`/`adjoin`/`union` 等带 `:test`/`:test-not`/`:key` 的列表函数、`string-trim`、`string-capitalize`。它们是 bootstrap 用的简单实现：先把序列转成列表再处理。Consecution（依赖 CLOS）接管序列之后替换掉。
-- `tests/m3/types-seqs.lisp`。
-
-## 11. M3 的结果和遗留
-
-kernel 现在由 `lisp/target/` 下的三个文件组成（约 900 行 Lisp），作为单独的模块编译一次。M3 之后可以用的：fixnum、bignum、ratio、单双精度浮点，Unicode 字符和 UTF-32 字符串，simple-vector，cons 和列表，symbol 的 plist，`typep`、序列函数。
-
-移到后面的：
-
-| 内容 | 移到 | 原因 |
-|---|---|---|
-| 包 | M4（Parcl） | Parcl 需要 CLOS 和哈希表 |
-| 多维、特化、可调整的数组 | M4（Regalia） | 数组是 CLOS 类 |
-| 哈希表 | M4（Salmagundi） | 依赖 CLOS，还要补身份哈希 |
-| condition 系统 | M4（Predicament） | 依赖 CLOS；目前出错时 runtime 直接退出 |
-| complex | 2026-11 完成（§9） | 不阻塞 bootstrap |
-| `deftype`、`subtypep` | ctype（CLOS 之后） | |
-| 打印器、reader、`format` | Incless、Eclector、Invistra（CLOS 之后） | 目前由 runtime 的 Rust 打印器代替 |
-| Unicode 大小写表 | 以后 | 字符的大小写和分类目前只覆盖 Latin-1 |
+runtime 有一个 Rust 写的打印器（`kiln_rt_print`），给编译器原语 `print` 和早期的错误信息用：整数（bignum 用 num-bigint 输出十进制）、浮点（最短的、能读回原值的数字；`1e-3 <= |x| < 1e7` 用定点表示，否则用指数表示；double 用 `d`）、symbol（包前缀、keyword 的判断见 [objects.md](objects.md)）、字符串、列表、向量。CL 的打印函数是 Incless（[io.md](io.md)）。

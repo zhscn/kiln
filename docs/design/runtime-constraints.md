@@ -1,22 +1,24 @@
-# 02 底层约束
+# 底层约束
 
 这些约束从第一行代码起就必须遵守。它们大多数在早期没有直接用处，但一旦写死，以后加 GC 精确扫描、异步、抢占或重定义时，就要改动整个 runtime 和编译器。
 
-每条约束都写了理由，以及以后哪些功能依赖它。
+每条约束都写了理由，以及以后哪些功能依赖它。写 runtime 或编译器代码时对照文末的检查清单。
 
 ## C1 动态环境全部通过 context 指针访问
 
 **约束**
 
 - special 变量的动态值、handler 链、restart 链、catch 链、unwind-protect 链、当前 dynamic-extent 帧链，全部挂在一个 `context` 对象上。
-- 编译后的代码通过固定寄存器或第一个隐式参数拿到 `context`。
+- 编译后的代码通过第一个隐式参数拿到 `context`。
 - runtime 不能用 Rust 的 `thread_local!` 或全局变量保存上述状态。
 
-**special 变量的实现**：采用 TLS 索引方案（参考 SBCL）。M2 已实现，见 [08 §5.2](08-m2-front-end.md#52-特殊变量c1-的-tls-下标方案)。
+**special 变量的实现**：TLS 下标方案（参考 SBCL），见 [abi.md](abi.md) 的“特殊变量”。
 
-- 每个 symbol 在第一次被动态绑定时分配一个 index。
-- 每个 context 有一张动态值表，按 index 查找。表项为空时回退到 symbol 的全局值。
-- 绑定和解绑在 context 的绑定栈上记录旧值。
+- 每个 symbol 在第一次被动态绑定时分配一个下标。
+- 每个 context 有一张动态值表，按下标查找。表项为空时回退到 symbol 的全局值。
+- 绑定和解绑在动态环境链上记录旧值。
+
+handler 和 restart 是 Predicament 的 special 变量，所以也自然挂在 context 上。
 
 **否决的方案**：浅绑定加切换时回滚。它的切换开销和绑定深度成正比，fiber 频繁切换时代价不可接受。
 
@@ -27,11 +29,11 @@
 **约束**
 
 - 栈抽象成 runtime 对象，记录上下界、guard page 和所属 context。
-- GC 扫描 root 时遍历一个栈列表，不能直接取当前线程的栈。
+- GC 扫描 root 时遍历一个栈段列表，不能直接取当前线程的栈。
 - 栈溢出检查读 context 里的 limit。
 - 栈溢出要 signal `storage-condition`，能进 debugger，不能直接 segfault。
 
-早期每个线程只有一个栈，列表里只有一项。
+现在的状态：栈对象和栈段已经有了（[gc.md](gc.md) 的“栈和栈段”），GC 和 unwinder 都遍历段列表。栈溢出还没有转成 `storage-condition`，context 里也还没有 stack limit。
 
 **依赖它的功能**：fiber、续延、拷栈。
 
@@ -43,11 +45,11 @@
 - 不能依赖“栈底就是线程入口”之类的假设。
 - 展开时按顺序执行沿途的 `unwind-protect` cleanup、恢复 special 绑定、弹出 handler 和 restart。
 
-**已决定（M0）**：用 Cranelift 的 `try_call` 和异常表，加上 kiln 自己的 unwinder，详见 [06-m0-abi.md §6](06-m0-abi.md#6-非局部退出c3-的决定)。下表保留当时的比较。
+**决定**：用 Cranelift 的 `try_call` 和异常表，加上 kiln 自己的 unwinder，见 [abi.md](abi.md) 的“非局部退出”。当时比较过的方案：
 
 | 方案 | 优点 | 缺点 |
 |---|---|---|
-| Cranelift 的 `try_call` 和异常表 | 正常路径零开销 | 依赖较新的 Cranelift 特性，需要确认 JIT 和 object 两条路径都支持 |
+| Cranelift 的 `try_call` 和异常表（采用） | 正常路径零开销 | 依赖较新的 Cranelift 特性；JIT 和 object 两条路径都已确认支持 |
 | 返回值带退出标记，每个调用点检查 | 实现简单，可移植 | 每个调用点多一次分支 |
 | 类似 setjmp/longjmp 的保存点 | 容易理解 | 和精确栈图、帧可搬动（C5）配合不好 |
 
@@ -61,14 +63,14 @@
 - poll 检查 context 里的一个标志字，为零时直接继续（快路径）。不为零时调用 runtime 的慢路径。
 - 慢路径按标志位分派。
 
-| 标志位 | 用途 | 何时需要 |
-|---|---|---|
-| GC 请求 | 停在 safepoint，配合 MMTk | M1 |
-| REPL 中断 | 进入 debugger（C-c C-c） | M6 |
-| 重定义屏障 | 类或方法表更新时 stop-the-world | M4 |
-| 抢占 | fiber 时间片用完时让出 | 异步阶段 |
+| 标志位 | 用途 |
+|---|---|
+| GC 请求 | 停在 safepoint，配合 MMTk（多 mutator 时需要） |
+| REPL 中断 | 进入 debugger（C-c C-c），打断后端协议里正在运行的任务 |
+| 重定义屏障 | 类或方法表更新时 stop-the-world |
+| 抢占 | fiber 时间片用完时让出 |
 
-同一套机制承担四件事。栈图也只需要在调用点和 poll 点生成。
+同一套机制承担四件事。栈图也只需要在调用点和 poll 点生成。现在 poll 点已经插入，慢路径只是把标志清零，四种用途都还没有接上。
 
 **配套约束**：提供 `without-interrupts` 和（以后的）`without-preemption`。持锁或修改 runtime 内部结构的代码在这些区域里只延迟处理标志，不响应。
 
@@ -77,7 +79,7 @@
 **约束**
 
 - 所有调用点和 poll 点都生成 stack map（使用 Cranelift 的 user stack maps），GC 精确扫描 Lisp 帧。
-- 堆对象不能持有指向栈帧内部的指针。
+- 堆对象不能持有指向栈帧内部的指针。闭包的非局部退出因此用堆上的令牌，而不是条目的栈地址（[lowering.md](lowering.md) 的 `block` 和 `tagbody`）。
 - `dynamic-extent` 分配的对象不能逃逸到堆里，编译器负责检查。证明不了不逃逸时，退回堆分配。
 - 不对 Lisp 帧做保守扫描。
 
@@ -95,14 +97,14 @@
 - trampoline 在 context 上切换状态：`in-lisp` 或 `in-native`。处于 `in-native` 状态的线程视为 GC-safe，GC 不需要等它（类似 JNI）。
 - native 帧里不能直接持有 Lisp 对象指针，只能通过 handle 引用。
 
-早期只切换状态位，其他什么都不做。
+现在只有会展开的 runtime 函数经过 `tail` trampoline（[abi.md](abi.md) 的“会展开的 runtime 函数”），还没有状态切换。
 
 **依赖它的功能**：
 
 - GC 不必等待长时间阻塞在 C 里的线程；
 - 以后的 sysmon：检测到 FFI 调用阻塞太久，就把这个 OS 线程让给它，另起线程继续跑调度器。“阻塞检测”和“GC 协作”用同一个状态机。
 
-**待定**：栈上夹着 C 帧时（FFI 回调进 Lisp），是只允许用 handle，还是对 C 帧区域做保守扫描。倾向只允许用 handle。Rust 宿主模块的设计（[19](19-rust-interop.md) §3、§4）按这个倾向：外部帧里只持有登记过的根，Lisp 的非局部退出在边界上转成返回值，外部代码返回后再继续展开，unwinder 不需要认识外部帧。
+**栈上夹着外部帧时**（FFI 回调进 Lisp）：倾向只允许用 handle，不对外部帧做保守扫描。Rust 宿主模块（[rust-interop.md](rust-interop.md)）按这个倾向设计：外部帧里只持有登记过的根，Lisp 的非局部退出在边界上转成返回值，外部代码返回后再继续展开，unwinder 不需要认识外部帧。
 
 ## C7 condition 的 handler 查找由 runtime 自己控制
 
@@ -112,19 +114,31 @@
 - `signal`、`invoke-restart` 的遍历逻辑由 kiln 自己实现，不借用宿主语言或 C 的机制。
 - handler cluster 带一个类型字段，为以后的 handler 类型留位置。
 
-**依赖它的功能**：能捕获一次性续延的 handler（见 [03-async.md](03-async.md)），以及 debugger 列出某个 fiber 的 restart。
+现在 condition 系统是 Predicament，handler 和 restart 是 special 变量，满足这条约束。
 
-## C8 早期验证：`%switch-stack` 测试
+**依赖它的功能**：能捕获一次性续延的 handler（见 [async.md](async.md)），以及 debugger 列出某个 fiber 的 restart。
 
-**已完成（M1）**：实现为 `%call-on-new-stack`，见 [07-m1-gc.md §8](07-m1-gc.md#8-栈和栈段c2c8)。第 3 项的语义定为：handler 查找沿动态环境链进行，与栈无关，所以在新栈上 signal 时可以找到旧栈上建立的 handler（等 condition 系统实现后再测）。
+## C8 早期验证：多栈测试
 
-在 runtime 的测试里实现一个最小的 `%switch-stack` 原语，不对用户暴露。它在 M1 阶段完成，用来尽早验证 C2、C3、C5：
+为了尽早验证 C2、C3、C5，runtime 提供一个只用于测试的原语 `kiln.sys:%call-on-new-stack`（[gc.md](gc.md) 的“栈和栈段”）。要验证的三件事：
 
-1. 两个栈上各有存活对象，触发一次（移动式）GC，确认两个栈都被正确扫描，指针也被修正。
-2. 在切换后的栈上 `throw` 到分界点，确认 `unwind-protect` 的 cleanup 执行了，并且展开在分界点停下，没有越界。
-3. 在切换后的栈上 signal 一个 condition，handler 在另一个栈上建立，确认查找结果符合预期（这个行为的语义需要先定）。
+1. 两个栈上各有存活对象，触发（移动式）GC，两个栈都被正确扫描，指针也被修正。
+2. 在新栈上 `throw` 到旧栈上的 catch，`unwind-protect` 的 cleanup 依次执行，展开在分界点停下，没有越界。
+3. 在新栈上 signal 一个 condition，handler 在另一个栈上建立。语义定为：handler 查找沿动态环境链进行，与栈无关，所以在新栈上 signal 时可以找到旧栈上建立的 handler。
 
-代码量估计几百行。这些假设在异步阶段之前很难被别的测试覆盖，越晚发现错误，代价越大。
+前两项由 `tests/m0/stacks.lisp` 覆盖。第三项的语义已定，测试在 condition 系统接入之后补（见 [roadmap.md](../roadmap.md)）。
+
+这些假设在异步之前很难被别的测试覆盖，越晚发现错误，代价越大。
+
+## 待定：内存模型
+
+ANSI 没有定义线程，但 kiln 要支持多线程：并行编译和 M:N 调度（[async.md](async.md)）都需要它。在开始写多线程的 Lisp 代码之前，要把下面这些规则写下来：
+
+- special 变量的绑定是线程（fiber）局部的，全局值的读写有什么顺序保证；
+- 哈希表、包、类的重定义、泛函的方法表在并发访问下的语义（哪些操作原子、哪些需要用户加锁）；
+- 对象发布（publication）的保证：构造好的对象交给别的线程时，对方能不能看到完整的初始化结果。
+
+参考 Java 内存模型（JSR-133）和 C++11 的 data-race-free 模型。SBCL 没有成文的模型，这正是要避免的。
 
 ## 检查清单
 

@@ -1,150 +1,76 @@
-# 07 M1：对象表示、MMTk 与精确栈扫描
+# GC、栈图和栈
 
-**状态**：M1 已完成（2026-11）：对象表示、MMTk 接入、精确栈图、移动式 GC，以及 C8 的多栈测试（§8）。
+对象表示见 [objects.md](objects.md)，context 和动态环境条目见 [abi.md](abi.md)。
 
-## 1. 值和对象的表示
-
-| 低位 | 含义 |
-|---|---|
-| `...0` | fixnum，63 位，值 = word >> 1 |
-| `001` | cons 指针，地址 = word − 1 |
-| `101` | 其他对象的指针，地址 = word − 5 |
-| `011`、`111` | 保留（以后放字符等立即数） |
-
-- **每个对象都以一个 header 字开头，cons 也不例外。** header 的低 8 位是 kind，其余位是变长对象的载荷字数。
-- 对象 8 字节对齐。
-- cons 的布局是 `[header, car, cdr]`，共 24 字节。
-
-| kind | 值 | 布局 |
-|---|---|---|
-| symbol | 1 | `[header, 名字指针, 名字长度, function, value, TLS 下标]`，目前只有静态分配（M2 加了后三个槽，见 [08 §3](08-m2-front-end.md#3-对象布局的扩展)） |
-| function | 2 | `[header(env 长度 << 8), 入口地址, env...]`；闭包在堆上分配（M2） |
-| cons | 3 | `[header, car, cdr]` |
-| simple-vector | 4 | `[header(长度 << 8), 元素...]` |
-| string | 5 | UTF-32，见 [09 §3](09-m3-kernel.md#3-堆对象的-kind) |
-| bignum | 6 | 二进制补码的 64 位数字，见 [09 §8](09-m3-kernel.md#8-m33整数) |
-| ratio、double-float | 7、8 | 见 [09 §9](09-m3-kernel.md#9-m34ratio-和浮点) |
-
-**为什么 cons 也带 header**：MMTk 要能从对象本身算出它的大小（`get_current_size`），而对象引用里不带 tag。没有 header 的话，就得为 cons 单独开一个 space，或者用 side metadata 记录类型，这两种做法在 MMTk 的标准 plan 下都很麻烦。代价是每个 cons 多占 8 字节。以后如果需要，可以给 cons 专门做一个按大小分类的 space 再优化。
-
-**静态对象**：NIL、T，以及编译器输出到数据段里的 symbol、函数对象，都在 MMTk 的 space 之外，GC 不会移动也不会扫描它们。symbol 的 `function`、`value` 槽可能指向堆，M2 起作为静态 root 登记（[08 §3](08-m2-front-end.md#3-对象布局的扩展)）。
-
-两侧的定义在 `rust/kiln-rt/src/object.rs` 和 `lisp/abi.lisp`，修改时必须同步。
-
-## 2. MMTk binding（`rust/kiln-rt/src/gc.rs`）
+## MMTk binding（`rust/kiln-rt/src/gc.rs`）
 
 - 使用 mmtk 0.33（crates.io），关闭默认 feature，因此不带内置日志。
-- 默认 plan 是 **SemiSpace**（移动式），堆大小固定为 1 GiB（原为 64 MiB，后为 256 MiB，见 §11；M5.4 改为 1 GiB，见 docs/11 §9），GC 线程数等于 CPU 核数，最多 8 个（原为 2 个，M5.4 改，见 docs/11 §9）。都可以用 `MMTK_PLAN`、`MMTK_GC_TRIGGER`、`MMTK_THREADS` 等环境变量覆盖。MarkSweep 和 Immix 也已验证可用：分配快路径用默认分配器的 bump pointer（SemiSpace 的 bump 分配器、Immix 的 Immix 分配器），MarkSweep 的默认分配器没有 bump pointer，快路径总是失败，走 MMTk 的分配。MarkSweep 不移动对象，CLOS 测试在 8 MiB 的 GC 压力堆里会因碎片而内存不足。
-- **还没有写屏障，所以分代 plan（GenCopy、GenImmix、StickyImmix 等）目前不能用。** 测试在这些 plan 下也能通过，只是因为测试程序从不让老对象指向新对象（还没有 `rplaca` 之类的修改操作）。加入修改操作之前必须先实现写屏障，或者限定只用非分代 plan。
-- **对象引用就是 header 的地址。** forwarding pointer 写在 header 字里，forwarding bit 和 mark bit 放在 side metadata。
+- 默认 plan 是 **SemiSpace**（移动式），固定堆 1 GiB，GC 线程数等于 CPU 核数，最多 8 个。都可以用 `MMTK_PLAN`、`MMTK_GC_TRIGGER`、`MMTK_THREADS` 等环境变量覆盖。
+- MarkSweep 和 Immix 也可用。分配快路径用 plan 默认分配器的 bump pointer（SemiSpace 的 bump 分配器、Immix 的 Immix 分配器）；MarkSweep 的默认分配器没有 bump pointer，快路径总是失败，走 MMTk 的分配。MarkSweep 不移动对象，CLOS 测试在 8 MiB 的 GC 压力堆里会因碎片而内存不足。Immix 在自举上比 SemiSpace 慢约 5%。
+- **没有写屏障，所以分代 plan（GenCopy、GenImmix、StickyImmix 等）不能用。** 有写屏障之前只能用非分代 plan。写屏障的做法：生成的代码里每个往堆对象写指针的地方，以及 runtime 里修改堆对象的地方，都先检查源对象的 log bit（side metadata），没登记的就登记，即 MMTk 的 object barrier。
+- **对象引用就是 header 的地址。** forwarding pointer 写在 header 字里，forwarding bit 和 mark bit 放在 side metadata（header 的低字节是 kind，不能像 OpenJDK 那样把 forwarding bit 放进 header 的低位）。
 - **Slot 类型 `KilnSlot`**：槽里存的是带 tag 的值。
-  - load 时去掉 tag；fixnum、立即数和静态对象返回 `None`，GC 不处理。
+  - load 时去掉 tag；fixnum、立即数和静态对象（地址不在 MMTk 的堆范围内）返回 `None`，GC 不处理。用地址范围判断，不用 `is_in_mmtk_spaces`（它要查 SFT 表，慢）。
   - store 时保留原来的 tag。
 - **mutator**：每个 context 绑定一个 MMTk mutator，tls 就是 context 的地址。
 
-## 3. Root
+### 多 mutator 和握手
 
-1. **每个 mutator 的每个栈段上的 Lisp 帧**（栈段见 §8）。当前段从最近一次 safepoint 的 trampoline 帧指针（`ctx.safepoint_fp`）出发，沿 FP 链走到段底（`ctx.stack_base_fp`，由 `kiln_enter` 记录）；挂起的段记录在 `ctx.segments` 链上，各自带有段顶和段底。对每一帧：
+现在 GC 只会由唯一的 mutator 发起：分配失败，或者 `kiln_rt_gc` 调用 `handle_user_collection_request`。
+
+MMTk 收到请求后立刻开始回收，而发起请求的 mutator 这时还在离开分配器的路上：它要释放自己的页预留，栈也还没有静止。所以 `stop_all_mutators` 要等所有 mutator 都进入 `block_for_gc`：每个 mutator 在那里登记自己，`BLOCKED_MUTATORS` 加一并通知。假定 mutator 已经阻塞的话，GC 可能先清空空间的页计数，MMTk 的调试断言 `_prev >= pages` 会偶发失败。
+
+多线程或多 fiber 时需要真正的 safepoint 协议：poll 标志（C4）加上等待所有 mutator 到达 safepoint。
+
+## Root
+
+1. **每个 mutator 的每个栈段上的 Lisp 帧**。当前段从最近一次 safepoint 的 trampoline 帧指针（`ctx.safepoint_fp`）出发，沿 FP 链走到段底（`ctx.stack_base_fp`，由 `kiln_enter` 记录）；挂起的段记录在 `ctx.segments` 链上，各自带有段顶和段底。对每一帧：
    - 返回地址是 `[fp+8]`；
-   - 调用方在这个调用点的 SP 是 `fp + 16`。这一点成立，是因为 Lisp 调用约定的所有参数都放在寄存器里（见 §5）；
+   - 调用方在这个调用点的 SP 是 `fp + 16`。这一点成立，是因为 Lisp 调用约定的所有参数都放在寄存器里（[abi.md](abi.md)）；
    - 用返回地址查栈图，得到存放 Lisp 对象的槽位（相对 SP 的偏移）。
 2. **动态环境链上每个条目的 `tag` 和 `pend_value` 字段。**
-3. **静态 root**：模块登记的静态字（symbol 的 `function`、`value` 槽，M2）。
-4. **每个 context 的 TLS 表**（特殊变量的动态绑定值，M2）。
+3. **静态 root**：模块登记的静态字（symbol 的包、函数、值、TLS 下标、plist、setf 函数槽，`load-time-value` 的格子，运行期编出的模块的字面量字，NIL 和 T 的几个字）。
+4. **每个 context 的 TLS 表**里已分配的项。
+5. **传递区的前 `ctx.values_live` 个字**。
+6. **堆快照区里指向堆的字**（[heap-image.md](heap-image.md)）。
 
-## 4. 栈图
+## 栈图
 
 - kiln-cg 对 KIR 里所有 `obj` 类型的变量调用 `declare_var_needs_stack_map`。cranelift-frontend 会在每个调用点之前把活跃的引用溢出到栈槽，调用之后再重新加载，所以 **GC 移动对象后，代码看到的是新地址**。寄存器里不会有跨调用点存活的引用。
-- 每个函数编译完后，kiln-cg 读出 `user_stack_maps`，按调用点的返回地址偏移记录下来。kiln-cg 会检查每个栈图确实位于某个调用点的返回地址上。
-  - JIT：直接用绝对地址注册。
-  - AOT：写进 `kiln_stackmaps` 表和 `kiln_stackmap_offsets` 数组，由 `kiln_module_info` 指向。
-- 这和 06 §6 的调用点表一样，都按返回地址索引。以后合并成统一的调用点描述符（GC 槽位、handler、frame_offset，加上 debugger 需要的信息）。
+- 每个函数编译完后，kiln-cg 读出 `user_stack_maps`，按调用点的返回地址偏移记录下来，并检查每个栈图确实位于某个调用点的返回地址上。JIT 直接用绝对地址注册，AOT 写进模块信息（[codegen.md](codegen.md)）。
+- 调试信息用同一组栈槽找变量（[debugging.md](debugging.md)）。栈图、调用点表、调试记录都按返回地址索引，以后可以合并成统一的调用点描述符。
 
-## 5. 调用约定的修订：3 个寄存器参数
-
-签名从 M0 的 7 个参数改为 `(ctx, self, nargs, a0, a1, a2) -> (v0, nvals)`，共 6 个参数，在 x86-64 上正好都放进参数寄存器。这样任何调用点都没有栈参数，被调方帧指针加 16 就一定等于调用方在调用点的 SP，GC 遍历栈时不需要每个调用点各自的 frame_offset。（Cranelift 只为 `try_call` 记录 frame_offset，普通调用没有。）超过 3 个参数时放进 context 的溢出区，还没有实现。SBCL 在 x86-64 上同样用 3 个寄存器传参。
-
-## 6. 编译器必须遵守的规则
+## 编译器必须遵守的规则
 
 - **`raw` 变量不能跨 safepoint 持有堆地址。** 任何调用都是 safepoint。栈图只覆盖 `obj` 变量，raw 变量里的堆地址在 GC 之后会失效。分配之后要在下一个 safepoint 之前给地址加上 tag，存进 `obj` 变量。
 - **分配协议**：`kiln_rt_alloc(ctx, bytes, header)` 返回未加 tag 的地址，载荷字全部清零（也就是 fixnum 0），header 已经写好。编译器在下一个 safepoint 之前写完各个字段、加上 tag。分配是 safepoint，所以作为 `unwinds` 函数经过 trampoline 调用，trampoline 的帧指针就是栈遍历的起点。
-- **动态环境条目的所有 Lisp 对象字段都要初始化**（`tag` 和 `pend_value`，没有值时写 0），因为 GC 会把它们当作 root 扫描。
+- **动态环境条目的所有 Lisp 对象字段都要初始化**（没有值时写 0）。
+- **分配期间还在传递区里的值**要用 `values_live` 登记（[abi.md](abi.md)）。runtime 函数自己分配多个对象时同理：例如除法先分配余数并登记为 root，再分配商。
+- 堆对象不能指向栈帧内部（C5）。
 
-## 7. 修复：cleanup 运行期间条目留在链上
+## 内联分配
 
-GC 压力测试（1 MiB 堆）发现：throw 经过 unwind-protect 时，runtime 会先把条目从 `ctx.dynenv` 摘下来再跳进 cleanup，而暂存在条目里的待传值就不再被扫描。cleanup 一旦分配，这个值就成了悬空指针。
+- context 的 `alloc_cursor` 和 `alloc_limit` 字段是该 context 的 MMTk 默认分配器里 cursor 和 limit 字段的地址，`Context::new` 绑定 mutator 后填入（`gc::bump_pointer_fields`）。分配器属于 mutator，地址不变。
+- `emit-alloc`（`lisp/lower.lisp`）对大小为常量、不超过 128 字节（`*inline-alloc-limit*`）的对象生成快路径：读 cursor，加上大小，和 limit 比较；够的话写回 cursor，再写 header 并把其余的字清零；不够才调用 `kiln_rt_alloc`。
+- `kiln_rt_alloc` 自己也先直接移动 bump 指针，空间不够时才走 MMTk 的分配函数（MMTk 的分配路径要锁一次 GC 计数的互斥量、查 allocator、调用 `post_alloc`）。
+- MMTk 的分配器里 cursor 总是 8 字节对齐。GC 之后 MMTk 会重置分配器，cursor 和 limit 都变成 0，于是下一次分配进入慢路径。生成的代码每次都从内存里读这两个字段，不需要和 runtime 同步。
 
-现在的做法：
-
-- 条目在 cleanup 运行期间**留在链上**，kind 改为 `DYN_CLEANUP_RUNNING`（3）。GC 照常扫描它的 `pend_value`。
-- 后续的展开再次经过它时，直接摘掉，不会第二次执行 cleanup。cleanup 里再 throw 就是这种情况，原来那次展开随之放弃。
-- cleanup 正常结束时调用 `kiln_rt_continue_unwind`。这时它必须是链上最内层的条目，摘掉之后继续原来的展开。
-- 编译器在 cleanup 的落地代码外面加一个 `:cleanup-running` 区域。从 cleanup 里做本地退出（`return-from`、`go`）时会先摘掉它；cleanup 里的调用使用外层的 handler。
-
-## 8. 栈和栈段（C2、C8）
+## 栈和栈段（C2、C8）
 
 `rust/kiln-rt/src/stack.rs`。
 
-- **栈对象**：用 mmap 分配，下方带一个 guard page，默认 1 MiB，`MAP_NORESERVE`，按需提交物理页（03 里“初期方案”的做法）。
-- **栈段**：一个 context 的 Lisp 帧分成若干段。每段从一个 trampoline 帧（段顶）延伸到一个 `kiln_enter` 帧（段底）。当前段的两端记在 context 里，挂起的段链接在 `ctx.segments` 上。GC 扫描所有段。
-- **`(%call-on-new-stack f arg)`**（在 `kiln.sys` 包里，只用于测试）：
+- **Lisp 线程**：Lisp 程序不在主线程上跑（主线程只有 8 MiB，以后还要交给 GUI 的平台层，[rust-interop.md](rust-interop.md)）。`run_module` 起一个名为 `lisp` 的线程，栈默认 64 MiB，环境变量 `KILN_STACK_SIZE`（字节数）可调。kiln 编译自己时 Common-boot 的 HIR 求值器给长指令链建 thunk，递归约 3500 层，每层要经过泛函分派、`:around` 方法和 `call-next-method`，约 14 个帧、2.4 KB 栈。
+- **栈对象**：用 mmap 分配，下方带一个 guard page，默认 1 MiB，`MAP_NORESERVE`，按需提交物理页（[async.md](async.md) 里“初期方案”的做法）。
+- **栈段**：一个 context 的 Lisp 帧分成若干段。每段从一个 trampoline 帧（段顶）延伸到一个 `kiln_enter` 帧（段底）。当前段的两端记在 context 里，挂起的段链接在 `ctx.segments` 上。GC、unwinder、调试信息的走栈都遍历所有段。
+- **`(kiln.sys:%call-on-new-stack f arg)`**（只用于测试）：
   1. 把当前段压进 `ctx.segments`；
-  2. 在动态环境链上插入一个**栈边界条目**（kind 4）。它的 `fp` 是旧栈上 trampoline 的帧指针，`pend_target` 持有新栈；
+  2. 在动态环境链上插入一个栈边界条目（kind 4）；
   3. 切换到新栈，并把 rbp 清零，让新栈的 FP 链在这里终止，然后经过 `kiln_enter` 调用 `f`；
   4. 返回时切回旧栈，弹出边界条目和段，释放新栈。
-- **跨栈展开**：unwinder 沿动态环境链展开时如果遇到边界条目，就恢复旧栈的段信息，把新栈放进待释放列表（unwinder 这时还运行在新栈上，不能立即释放），然后**从边界条目记录的旧栈 trampoline 帧继续展开**。这正是 C3 里说的“展开停在帧标记上”：每个栈各自用自己的 FP 链寻找目标帧。
-- 以后 fiber 和 runtime 回调 Lisp 都会用同一套栈段机制。
+- **跨栈展开**：见 [abi.md](abi.md) 的展开算法。每个栈各自用自己的 FP 链寻找目标帧，展开停在帧标记上（C3）。
+- fiber 和 runtime 回调 Lisp 都会用同一套栈段机制：回调时压入一个段即可，但还没有实际的回调路径。
+- 栈溢出：有 guard page，但还没有把 SIGSEGV 转成 `storage-condition`，context 里也还没有 stack limit。
 
-`tests/m0/stacks.lisp` 覆盖了以下情况，每一项都在 GC 压力和多种 plan 下通过：
+## 测试
 
-- 新栈上的活数据跨越多次 GC；
-- 旧栈上的活数据跨越发生在新栈上的 GC；
-- 嵌套 5 层新栈；
-- 从新栈 throw 到旧栈上的 catch，途中依次执行新栈和旧栈上的 cleanup；
-- 跨 3 层栈的 throw；
-- 展开之后段信息已经恢复。
-
-## 9. 测试
-
-`tools/test.sh` 对每个用例跑三遍：JIT、JIT 加 GC 压力（`MMTK_GC_TRIGGER=FixedHeapSize:1048576`，迫使频繁的移动式回收）、AOT。`tests/m0/gc.lisp` 覆盖：
-
-- 跨越多次 GC 仍然存活的列表；
-- 深递归中每一帧都持有活对象；
-- 用堆对象作 catch tag；
-- throw 的值是堆对象，并且经过一个会分配内存的 cleanup。
-
-在 1 MiB 堆下，`keep-alive` 一个用例就触发了 261 次 SemiSpace 回收，结果正确。
-
-## 10. 遗留事项
-
-- **写屏障**：分代 plan 必须有。加入修改操作（`rplaca`、`setf` 到对象槽等）的同时实现。
-- **栈溢出**：已经有 guard page，但还没有把 SIGSEGV 转成 `storage-condition`，context 里也还没有 stack limit（C2）。
-  - Lisp 程序不在主线程上跑（主线程只有 8 MiB）：`run_module` 起一个名为 `lisp` 的线程，栈默认 64 MiB，可以用环境变量 `KILN_STACK_SIZE`（字节数）调整。原因是 M5.4 里 kiln 编 CLOS 时，Common-boot 的 HIR 求值器给一个很长的指令链建 thunk，递归了约 3500 层；一层要经过泛函分派、`:around` 方法和 `call-next-method`，约 14 个帧、2.4 KB 栈（docs/11 §9）。
-- **多 mutator**：目前 GC 只会由唯一的 mutator 发起，发起的地方有两处：分配失败，或者 `kiln_rt_gc` 调用 `handle_user_collection_request`。
-  - **握手**：MMTk 在收到请求后立刻开始回收，而发起请求的 mutator 这时还在离开分配器的路上：它要释放自己的页预留，栈也还没有静止。所以 `stop_all_mutators` 要等所有 mutator 都进入 `block_for_gc`：每个 mutator 在那里登记自己，`BLOCKED_MUTATORS` 加一并通知。
-  - **之前的 bug**：原来的实现假定 mutator 已经阻塞，结果 GC 可能先清空空间的页计数，MMTk 的调试断言 `_prev >= pages` 偶发失败。在 GC 压力测试 `tests/m0/stacks.lisp` 里，这个失败曾经几乎每次都出现。
-  - **以后**：多线程或多 fiber 时需要真正的 safepoint 协议，即 poll 标志加上等待所有 mutator 到达 safepoint。
-- ~~分配走的是 runtime 调用，没有内联 bump pointer 快路径~~（§11）。
-- runtime 回调进 Lisp：栈段机制已经具备，回调时压入一个段即可，但还没有实际的回调路径。
-- ~~静态对象指向堆时的 root 登记~~（M2 完成）。
-
-## 11. 内联分配和堆的调整（M4.6 之后）
-
-docs/10 §24 的建议 2。
-
-**内联分配**：
-- context 多了两个字段：`alloc_cursor`（偏移 576）和 `alloc_limit`（584）。它们是该 context 的 MMTk 默认分配器（SemiSpace 下是 bump 分配器）里 cursor 和 limit 字段的地址，`Context::new` 绑定 mutator 后填入（`gc::bump_pointer_fields`）。分配器属于 mutator，地址不变。
-- `emit-alloc`（`lisp/lower.lisp`）对大小为常量、不超过 128 字节（`*inline-alloc-limit*`）的对象生成快路径：读 cursor，加上大小，和 limit 比较；够的话写回 cursor，再写 header 并把其余的字清零，不够才调用 `kiln_rt_alloc`。runtime 里原有的快路径还在，处理大小不是常量的对象。
-- MMTk 的分配器里 cursor 总是 8 字节对齐，因为 kiln 的对象大小都是 8 的倍数。GC 之后 MMTk 会重置分配器，cursor 和 limit 都变成 0，于是下一次分配进入慢路径。生成的代码每次都从内存里读这两个字段，所以不需要和 runtime 同步。
-
-**GC 扫描**：`KilnSlot::load` 原来对每个指针调用 `memory_manager::is_in_mmtk_spaces`，用来排除静态对象，它要查 SFT 表。现在改为判断地址是否落在 MMTk 的堆地址范围内（`vm_layout` 的 `heap_start`..`heap_end`）。MMTk 分配的对象都在这个范围里，kiln 的静态数据（模块数据、JIT 内存、AOT 的数据段、malloc 出来的内存）都不在。`in_mmtk_space` 也改成这样判断。
-
-**堆大小**：默认的固定堆从 64 MiB 改为 256 MiB。在 `bench/fe-read.lisp` 上，CST 读取的耗时随堆大小变化如下：
-- 64 MiB：227 ms；
-- 256 MiB：203 ms；
-- 1 GiB：239 ms，首次访问新页面的缺页和清零抵消了 GC 次数减少的收益；
-- `DynamicHeapSize`（32 MiB 到 4 GiB）：261 ms。
-
-**分代堆还没有做**：需要写屏障。生成的代码里每个往堆对象写指针的地方，以及 runtime 里修改堆对象的地方，都要先检查源对象的 log bit（side metadata），没登记的就登记。MMTk 的 object barrier 就是这样做的。这个负载下 GC 和分配合计约占 17%（64 MiB 时），分代能省下的大约是其中一半，所以先没有做。forwarding bit 也还在 side metadata 里，因为 header 的低字节是 kind，不能像 OpenJDK 那样放进 header 的低位。
-
-**结果**：CST 读取 253 → 233 ms（内联分配），SFT 表那 5% 消失，堆改为 256 MiB 后约 205 ms。
+`tools/test.sh` 对每个用例跑三遍：JIT、JIT 加 GC 压力（`MMTK_GC_TRIGGER=FixedHeapSize:1048576`，迫使频繁的移动式回收；CLOS 测试用 8 MiB，慢测试和快照测试另有设定）、AOT。`tests/m0/gc.lisp` 覆盖跨 GC 存活的列表、深递归中每一帧都持有活对象、堆对象作 catch tag、throw 的值是堆对象并经过一个会分配的 cleanup。`tests/m0/stacks.lisp` 覆盖多栈：新栈和旧栈上的活数据跨越 GC、嵌套 5 层新栈、从新栈 throw 到旧栈上的 catch 并依次执行两边的 cleanup、跨 3 层栈的 throw、展开之后段信息已经恢复。

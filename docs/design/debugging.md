@@ -1,21 +1,17 @@
-# 17 调试信息和后端协议（M6.2、M6.3）
+# 调试信息
 
-**状态**：M6.2 帧的调试信息、M6.3 后端协议（批处理 REPL 和嵌套式 debugger）已完成（2026-11）。
+本文是编译器产出的调试数据和 runtime 的帧接口。工具、编辑器和 agent 怎样使用它们见 [backend-protocol.md](backend-protocol.md)；参考过的系统（LispWorks、Emacs、Racket、Clordane）见 [debugging-references.md](../research/debugging-references.md)。
 
-这是 [11](11-m5-self-hosting.md) §4.2 计划的实现：§4.2 定的是调用点描述符加源码位置，变量位置留到 M6。两者在这里一起做了。
-
-## 1. 目标
+## 目标
 
 - backtrace：每一帧显示函数名、源文件、当前调用在源码中的位置。
 - 帧检查：每一帧显示变量的值。
-- 不影响生成的代码：调试信息只是附加的表。代码和没有调试信息时完全相同，所以自举和性能都不受影响。
-- 后端协议（§4）建立在这些接口上，编辑器（[16](16-editor.md)）、外部工具和 agent 共用。
+- **不影响生成的代码**：调试信息只是附加的表。代码和没有调试信息时完全相同，所以自举和性能都不受影响。
+- 跳转到定义、who-calls、按文件列出定义、重定义警告、宏展开查看器、单步执行：数据格式由编译器定，界面以后做。这些数据要在 KIR 和 ABI 里留出位置，以后再改代价很大。
 
-## 2. 数据
+## 函数的调试信息对象
 
-### 2.1 函数的调试信息对象
-
-每个编译出的函数带一个 Lisp 对象（lower.lisp 构造，作为常量放进模块）：
+每个编译出的函数带一个 Lisp 对象（`lower.lisp` 构造，作为常量放进模块）：
 
 ```
 #(NAME FILE START END VARIABLES)
@@ -38,15 +34,11 @@
 | 顶层形式的代码 | `(:top-level-form)` |
 
 - 外层名字是包含它的函数的名字。直接位于顶层形式中的 `lambda`，外层名字是该定义的名字：`(defvar *x* (lambda ...))` 中的是 `(lambda :in (defvar *x*))`。
-- 定义的名字由 front.lisp 的 `definition-name` 在宏展开之前从形式算出：
-  - 上表中的定义宏有专门的规则；
-  - 其他 CL 包里以 `DEF` 开头的宏，取 `(宏名 名字)`。
+- 定义的名字由 `front.lisp` 的 `definition-name` 在宏展开之前从形式算出：上表中的定义宏有专门的规则；其他 CL 包里以 `DEF` 开头的宏，取 `(宏名 名字)`。原生 `eval` 在展开定义宏之前记下它（[eval-compile.md](eval-compile.md)）。
 - 展开结果里的定义优先于外层的定义。例如 `defstruct` 展开出的访问函数用自己的名字。
-- 这是 [11](11-m5-self-hosting.md) §4.1 dspec 的一个子集，只用于命名。定义表和重定义警告还没做。
+- 这是下文定义记录（dspec）的一个子集，只用于命名。依赖追踪也用它命名定义（[dependencies.md](dependencies.md)）。
 
-### 2.2 KIR
-
-[06](06-m0-abi.md) §8 的语法增加了三处：
+## KIR 里的调试数据
 
 ```
 (func "名字"
@@ -60,37 +52,26 @@
 ```
 
 - 源码范围取自调用形式（`application-ast`）的 CST。宏展开生成的调用没有自己的范围，就用外层调用的范围。
-- 只有绑定源码变量的 KIR 变量才带下标。源码变量指名字出现在顶层形式（宏展开之前、按原样写出的形式）中的变量。不带下标的有：
+- 只有绑定源码变量的 KIR 变量才带下标。源码变量指名字在顶层形式（宏展开之前、按原样写出的形式）中出现过的变量，不要求有源码位置，所以 `eval` 编出的代码也有变量名。不带下标的有：
   - 编译器的临时变量；
-  - 宏引入的变量：名字不出现在形式中。这些变量对调试没有用；而且 Common-macros 这类宏库的包在宿主和 kiln 上名字不同（[11](11-m5-self-hosting.md) §3），把它们写进 KIR，两边就不一致了；
+  - 宏引入的变量：名字不出现在形式中。它们对调试没有用；而且 Common-macros 这类宏库的包在宿主和 kiln 上名字不同，写进 KIR 两边就不一致了；
   - 局部函数对象；
-  - 退出用的 token。
-- 文件名和位置都写进了 KIR，所以 SBCL 和 kiln 读同一个文件时，必须得到相同的名字和偏移：
-  - 偏移是 `file-position` 的值，即八位组偏移。kiln 的文件流以前没有扣除 `unread-char` 退回的字符，所以 Eclector 读到的形式起点在 kiln 上晚一个字符；现在扣除了（`files.lisp`）；
-  - 编译一个模块时，文件名必须和 SBCL 用的相同（测试 `co-kernel` 改为用 `module-files`）。
+  - 退出用的令牌。
+- 文件名和位置都写进了 KIR，所以 SBCL 和 kiln 读同一个文件时必须得到相同的名字和偏移（[front-end.md](front-end.md) 的“确定性”）。
 
-### 2.3 kiln-cg：变量在哪里
+## kiln-cg：变量在哪里
 
-调试信息只在调用点上有意义：除了正在执行的那一帧，每一帧都停在一次调用上。正在执行的帧是 runtime 或 debugger 自己。
+调试信息只在调用点上有意义：除了正在执行的那一帧，每一帧都停在一次调用上，而正在执行的帧是 runtime 或 debugger 自己。
 
-- 在调用期间仍然活着、需要栈图的值，cranelift-frontend 都放在栈槽里：
-  - 每个这样的值在整个生命期内占一个槽；
-  - 值定义之后立即存入；
-  - 槽列在调用的栈图里，GC 也会更新它（[07](07-m1-gc.md) §4）。
-  
-  所以每个调用点上，活着的 Lisp 变量都可以在一个已知的栈槽里找到，不需要处理寄存器。
+- 在调用期间仍然活着、需要栈图的值，cranelift-frontend 都放在栈槽里：每个这样的值在整个生命期内占一个槽，值定义之后立即存入，槽列在调用的栈图里，GC 也会更新它（[gc.md](gc.md)）。所以每个调用点上，活着的 Lisp 变量都可以在一个已知的栈槽里找到，不需要处理寄存器。
 - kiln-cg 在 `FunctionBuilder::finalize` 之后（这时已经插入了存槽指令）分析 IR：
   1. 值的标签：KIR 变量带下标时，每次赋给它的 SSA 值都记上这个下标。SSA 构造产生的块参数，如果所有传入值的标签都相同，就继承这些标签。取最小不动点，结果与遍历顺序无关。
-  2. 槽中的值：沿支配树深度优先遍历，维护「槽 → 最近一次存入的值」，带撤销日志。
-     - 一个槽只有在其中的值死亡之后才会被复用；
-     - 在调用点活着的值，一定定义在调用点的支配者中；
-     
-     所以在支配序上离调用点最近的那次存入，就是调用期间槽里的值。
-  3. 每个调用指令用 srcloc 标上调用序号（第几个 `call-lisp`/`call-rt`）。编译完成后，按返回地址找到序号，再取帧布局中各槽相对 SP 的偏移。
+  2. 槽中的值：沿支配树深度优先遍历，维护“槽 → 最近一次存入的值”，带撤销日志。一个槽只有在其中的值死亡之后才会被复用，在调用点活着的值一定定义在调用点的支配者中，所以在支配序上离调用点最近的那次存入，就是调用期间槽里的值。
+  3. 每个调用指令用 srcloc 标上调用序号。编译完成后，按返回地址找到序号，再取帧布局中各槽相对 SP 的偏移。
   4. 只保留出现在该调用点栈图里的偏移，和 GC 看到的一致。
 - 变量的值是调用时的值。调用之后不再用到的变量已经死亡，不显示，和优化编译的调试器一样。
 
-### 2.4 运行期的表
+## 运行期的表
 
 每个函数一条记录（`kiln_rt::debug::FuncDebugRecord`，48 字节）：
 
@@ -102,162 +83,65 @@
 | 标志 | |
 | 调用点数据 | 地址和长度 |
 
-- 调用点数据是变长整数序列，按返回地址递增排列。每个调用点依次是：
-  - 返回偏移；
-  - 起始 + 1（0 表示没有源码范围）；
-  - 结束（有起始时才有）；
-  - 变量个数；
-  - 每个变量的名字下标和槽偏移（字）。
-  
-  只记有源码范围或有变量的调用点。
-- 记录的来源：
-  - AOT：`kiln_module_info` 新增两项（记录数组和个数）；
-  - JIT 运行的程序：`register_code`；
-  - 装进运行中 image 的代码：`code::register`，它保留一份副本，堆快照保存它（[15](15-heap-image.md) §3）。
+- 调用点数据是变长整数序列，按返回地址递增排列。每个调用点依次是：返回偏移；起始 + 1（0 表示没有源码范围）；结束（有起始时才有）；变量个数；每个变量的名字下标和槽偏移（字）。只记有源码范围或有变量的调用点。
+- 记录的来源：AOT 的模块信息；JIT 运行的程序在 `register_code` 里；装进运行中 image 的代码在 `code::register` 里，它保留一份副本，堆快照保存它。
 - 记录在启动时只是追加进表，第一次查找时才排序，所以不增加启动时间。
 - 查找：按返回地址二分查找函数，再顺序解码它的调用点。
+- seal 时可以整个去掉，或者只留函数名。
 
-### 2.5 走栈
+## 走栈
 
 `kiln_rt_frame(ctx, op, a, b)`：
 
 - 帧用句柄表示：它所调用的那一帧的帧指针。句柄 + 8 处是返回地址，在本帧的函数里；句柄 + 16 是调用时的 SP。句柄是对齐的地址，在 Lisp 里就是 fixnum。
-- 走栈的方式和 GC 相同：沿帧指针链，先走当前栈段，再走挂起的栈段（[07](07-m1-gc.md) §7）。只返回返回地址落在有记录的函数里的帧。
+- 走栈的方式和 GC 相同：沿帧指针链，先走当前栈段，再走挂起的栈段。只返回返回地址落在有记录的函数里的帧。
 - 不分配内存。帧列表填进 Lisp 传入的 simple-vector，放不下时 Lisp 换一个更大的向量重试。
 
-### 2.6 Lisp 接口（`kiln.sys`，`lisp/target/clos/debug.lisp`）
+## Lisp 接口（`kiln.sys`，`lisp/target/clos/debug.lisp`）
 
 | 函数 | |
 |---|---|
 | `(frame-list)` | 栈上 Lisp 帧的句柄，由内向外，第一个是调用者的帧 |
-| `(frame-name f)` | §2.1 的名字 |
+| `(frame-name f)` | 函数的名字 |
 | `(frame-source f)` | 文件名，当前调用的起止位置（没有时取函数的范围） |
 | `(frame-variables f)` | `((名字 . 值) ...)`，cell 中的变量取 cell 的内容 |
 | `(frame-pc f)` | 返回地址和在函数中的偏移 |
 | `(source-line file pos)` | 行（从 1 起）和列（从 0 起） |
 | `(print-frame f stream &key variables)`、`(print-backtrace &key stream frames count variables)` | |
-| `(exit &optional code)` | 结束进程（kiln_rt_sys 的新操作 18） |
+| `(exit &optional code)` | 结束进程 |
 
-默认的 debugger 改为：打印 condition 的报告，以及 `invoke-debugger` 之外的帧（最多 30 帧，带变量），然后以状态 1 退出。环境变量 `KILN_BACKTRACE=0` 时不打印 backtrace。以前的默认 debugger 只打印 condition 的类和槽，现在只在打印本身出错时使用。
+**默认的 debugger**：打印 condition 的报告，以及 `invoke-debugger` 之外的帧（最多 30 帧，带变量），然后以状态 1 退出。环境变量 `KILN_BACKTRACE=0` 时不打印 backtrace。打印本身出错时，退回只打印 condition 的类和槽。
 
-### 2.7 测试
-
-`tests/m6/clos-frames.lisp` 覆盖以下内容：
-
-- `defun`、`flet`（被内联后的样子）、`defmethod`、`lambda` 帧的名字；
-- 文件、行和列；
-- 活着的变量和 cell 中的变量；
-- 从 handler 里看出错的帧。
-
-JIT、GC 压力和 AOT 三遍输出相同。
-
-文件名写进了 KIR，所以 `tools/test.sh` 把测试源文件都换成绝对路径交给 SBCL。比较 KIR 的测试（`co-compile`、`co-kernel`）在 kiln 上也用同样的名字。修正 `file-position` 之后，`fe-read` 的期望输出改成了正确的位置。
-
-### 2.8 代价
-
-| | 之前 | 之后 |
-|---|---|---|
-| kiln1（strip 后） | 69 MB | 77 MB |
-| 自举每个阶段 | 约 5.5–6 分钟 | 339 s，没有变慢 |
-
-- 增加的 8 MB 中：
-  - 函数记录（约 3.1 万个函数，每个 48 字节）1.5 MB；
-  - 调用点数据 1.8 MB；
-  - 其余是调试信息对象（向量、名字表、名字里的列表）。
-- 生成的代码不变。
-- seal 时可以整个去掉，或者只留函数名。
-
-## 3. 还没做
+## 限制
 
 - 闭包从静态环境读取的变量不显示：每次使用时才从函数对象里读，不在帧里。可以在调试信息中记下环境下标和变量名，再从帧的 `self` 读出来，但 `self` 也不一定活着。
+- 出错那一帧的变量往往看不到：错误之后不再用到的变量已经死亡。要有一个调试优化级别：在 `(optimize (debug 2))` 下让所有变量活过出错路径上的调用（SBCL 的做法）。默认级别下不这样做，因为它会改变生成的代码。
 - 源码位置是八位组偏移，行号要打开文件重新数（`source-line`）。
-- `compile` 编出的函数名是 `(lambda)`；`load` 逐个读取形式再求值，没有文件和位置。
-- 单步、断点、在帧中求值、从帧返回、重新执行帧：在 [11](11-m5-self-hosting.md) §4.4 的方案上做，需要后端协议。
-- 定义表（dspec 和位置）、who-calls：[11](11-m5-self-hosting.md) §4.1。
 
-## 4. 后端协议（M6.3）
+## 定义记录（dspec，格式已定，还没有实现）
 
-`kiln.sys:serve`（`lisp/target/eval/server.lisp`）：给程序用的 REPL，使用者是工具、编辑器和 agent。不是 MCP，也不是 Swank；以后可以在它上面接这些。
+参考 LispWorks 的 dspec 和 Emacs 的 `load-history`。Emacs 的教训是：不记位置、靠正则搜索找回来，宏生成的定义就很难找；kiln 有 CST，可以直接记位置。
 
-### 4.1 模型
+- 名字采用 LispWorks 的规范形式 `(类 主名字 . 限定)`，用 `equal` 比较。符号单独出现时表示函数。
+- 第一批类：`defun`、`defmacro`、`defgeneric`、`defmethod`（限定为方法限定符加特化列表）、`defclass`、`defstruct`、`define-condition`、`defvar`（`defparameter` 是别名）、`defconstant`、`deftype`、`defsetf`、`define-setf-expander`、`define-compiler-macro`、`define-method-combination`、`defpackage`。
+- 位置：`(文件 起始偏移 结束偏移)`，取自顶层形式的 CST。子定义多一项父 dspec。文件用编译时的名字，交付期可以去掉。
+- 记录点在顶层形式处理里：
+  - 宏展开之前，按顶层形式的 car 查一张表算出 dspec。这张表相当于 LispWorks 的 form parser，用户可以扩展（名字待定，比如 `kiln:define-dspec-parser`）；表里没有的定义宏，按 `DEF` 前缀的默认规则处理。
+  - 展开之后，结果里的 `defun` 等记为子定义，例如 `defstruct` 展开出的访问函数。
+- KIR 模块加一个顶层条目 `(defs (dspec 位置) ...)`，dspec 是普通数据。模块初始化时，把这些记录装进 image 里的定义表。
+- 同一个 dspec 被另一个文件重新定义时，载入时发出警告。这是重定义屏障（C4）的一部分；对哪些包报错、对哪些包只警告，可以配置。
+- 局部函数复用函数标签的名字提示：`(flet g (defun f))` 写进函数的调试信息。
+- seal 时，tree shaking 用定义表知道每个函数来自哪个定义。依赖追踪、重新载入文件、image 和源码的同步都用这张表。
 
-- 每个请求作为一个任务求值。任务未处理的错误不会结束任务：
-  1. 服务端发出 condition、restart 和帧；
-  2. 在 debugger 里接着处理新的请求。这一层 debugger 与出错的计算在同一个栈上，嵌套在它上面，称为一个 debug 层。
-- 新请求在当前层里求值，可以再出错，于是又嵌套一层。
-- 用 restart 离开一层。离开的方式取决于 restart：
-  - 继续出错的计算：任务最终正常完成，或者再次出错；
-  - 中止任务：每个任务都有自己的 ABORT restart；
-  - 跳到外层任务的 restart：经过的任务都算中止。
-- 这就是 SLIME 的 sldb 加上 `eval-in-frame` 的模型，不需要 fiber。fiber（[03](03-async.md)）以后用来同时挂起多个出错的任务，协议不变。
+## 宏展开的追踪（计划）
 
-### 4.2 消息
+- Eclector 的 CST 加上 `cst:reconstruct`，已经能让展开结果里和原参数 `eq` 的部分回到源码位置。这和 LispWorks 的规则一样。
+- 在两个地方发出“宏名、展开前的 CST、展开后的 CST”事件：顶层形式处理的宏展开，以及 `cb::convert` 的 `:around`（inline 展开已经挂在这里）。先做一个 `kiln:trace-expansions` 调试 kiln 自己。
+- 展开结果里不来自原始源码的部分，标上生成它的宏的调用位置，这样源码位置至少能指到那个宏调用。
+- 宏展开查看器（只看用户自己的宏的隐藏策略、逐步展开）建立在这个事件流上，参照 Racket 的 macro stepper。
 
-请求和回复都是 S 表达式。
+## 单步和断点（计划）
 
-- 回复只用到列表、关键字、整数、`nil` 和字符串。
-- 字符串里的反斜杠、双引号、换行（`\n`）、回车（`\r`）、制表符（`\t`）都转义，所以每条回复正好占一行。
-- Emacs Lisp 可以直接 `read` 回复；CL 的读取器会把 `\n` 读成 `n`。
-- 服务端每次读请求之前发出 `(:waiting 层)`。客户端发出一个请求之后，读回复直到这一行为止。一个请求可能引出多条回复，例如一个 restart 中止了几个任务。
-
-| 请求 | 回复 |
-|---|---|
-| `(:eval ID "文本")` | 依次求值文本中的形式：`(:ok ID ("值"...) "输出")`；出错时 `(:debug ID 层 "类型" "报告" ((序号 "名字" "说明")...) (帧...) "输出")` |
-| `(:frame ID 序号)` | `(:frame ID 帧)`；帧是 `(序号 "名字" "文件" 行 列 (("变量" "值")...))` |
-| `(:eval-in-frame ID 序号 "文本")` | 把该帧已知的变量绑定为词法变量，在这个环境里求值文本（值是拷贝，赋值不会写回帧）；回复同 `:eval` |
-| `(:restart ID 序号 ["文本"])` | 调用当前层第 N 个 restart，文本中形式的值作为参数；回复是被它继续或中止的任务的结果：`:ok`、`:debug` 或 `(:aborted ID "输出")` |
-| `(:package ID "名字")` | 设置 `*package*` |
-| `(:quit ID)` | `(:bye ID)`，中止所有任务，`serve` 返回 |
-
-- 任务期间，`*standard-output*`、`*error-output*` 和 `*trace-output*` 的输出都收集起来，放进任务的结果里。
-- 值用 `prin1` 打印。打印帧中的变量时，`*print-length*` 为 20，`*print-level*` 为 4。
-- 返回的帧最多 30 个，去掉了两部分：
-  - 发出 condition 的部分：`error`、`signal`、`%runtime-error` 等函数，以及 Clostrophilia 的分派（`debugger-frames`）；
-  - 服务端求值的部分（`task-frames`）。
-
-### 4.3 从 shell 驱动
-
-- 设了 `KILN_SERVE` 时，构建程序（kiln1）不做构建，在标准输入输出上运行 `serve`。kiln1 链接了全部五个模块，所以 `eval` 产出原生代码。
-- `tools/kiln-server.sh`：
-  - `start [EXE]`：用一个 FIFO 作输入，回复追加到文件里；
-  - `eval`、`frame`、`eval-in-frame`、`restart`、`package`、`send`：发出请求，打印回复直到 `(:waiting ...)`；
-  - `stop`。
-  
-  agent 用它就够了，不需要 MCP。
-
-```
-$ tools/kiln-server.sh start
-$ tools/kiln-server.sh eval '(defun h (x) (let ((y (+ x 1))) (check y) (list x y)))'
-$ tools/kiln-server.sh eval '(h 9)'
-(:debug 3 1 "SIMPLE-ERROR" "check 10" ((0 "ABORT" "Abort task 3.")) ((0 "CHECK" ...) (1 "H" nil nil nil (("X" "9") ("Y" "10"))) ...) "")
-(:waiting 1)
-$ tools/kiln-server.sh eval-in-frame 1 '(* x y)'
-(:ok 4 ("90") "")
-(:waiting 1)
-$ tools/kiln-server.sh restart 0
-(:aborted 3 "")
-(:waiting 0)
-```
-
-### 4.4 为此做的修改
-
-- `eval` 的定义名：原生 `eval` 先展开宏再编译，所以 `defun` 的名字在展开之后就丢了。现在的做法：
-  - `native-eval` 在展开定义宏之前记下 `definition-name`，交给前端（`*eval-definition*`）；
-  - 不由 `eval` 直接处理的形式，作为顶层形式编译，不再包进 `(lambda () ...)`。这样定义出的函数位于第一层，名字就是 `srv-f`，而不是 `(lambda :in srv-f)`。
-- 变量名的规则（§2.2）：只要名字在顶层形式中出现过就记下来，不要求有源码位置。这样 `eval` 编出的代码虽然没有源码位置，也有变量名。宏引入的变量仍然排除在外，因为它们的名字不出现在形式中。
-- 单参数的 `print` 原本是编译器原语，直接调用 runtime 的打印函数。这是给没有流的早期测试用的。装进运行中 image 的代码不再使用这个原语，所以输出会走 `*standard-output*`。
-
-### 4.5 测试
-
-`tests/m6/co-server.lisp`：
-
-- 用字符串流运行 `serve`，覆盖：定义、输出、出错、嵌套任务、帧、在帧中求值、带参数和不带参数的 restart、未知请求；
-- 帧只比较函数名，因为帧中有文件名和地址。
-
-### 4.6 还没做
-
-- 出错那一帧的变量往往看不到：错误之后不再用到的变量已经死亡。这需要一个调试优化级别：在 `(optimize (debug 2))` 下，让所有变量活过出错路径上的调用（SBCL 的做法）。默认级别下不这样做，因为它会改变生成的代码。
-- 打断正在运行的任务（poll 点，[06](06-m0-abi.md) §7），以及任务运行期间的流式输出。
-- 定义表、跳转到定义、who-calls：[11](11-m5-self-hosting.md) §4.1。
-- `load` 的文件位置；`compile` 编出的函数名。
-- 单步、从帧返回、重新执行帧。
+- 不在机器码上打断点。Cranelift 不做去优化，机器码层面的断点很难做对。
+- 按 Clordane 的方式在源码形式前后插入检查，但不默认插入：用户对某个函数要求单步时，用 JIT 重新编译一份带检查的版本，替换函数格里的入口，借助重定义屏障（C4）。检查先看 `ctx` 上的标志（和 poll 点共用），再看按 PC 取模的摘要位表，最后才查断点表；不在调试时开销只是一次标志检查。
+- 需要源码位置、变量位置和交互式 debugger，这些都已经有了。

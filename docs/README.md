@@ -1,35 +1,56 @@
-# kiln 设计文档
+# kiln 文档
 
 kiln 是一个现代 Common Lisp 实现：开发时是完整的活 image，交付时是经过整体优化和裁剪的静态原生二进制。
 
+- `design/`：系统现在的样子和理由。改代码时同步更新。
+- `research/`：调研和测量，每篇注明日期，不随代码更新。
+- [roadmap.md](roadmap.md)：里程碑、优先级、还没做的事。
+
+## design/
+
 | 文档 | 内容 |
 |---|---|
-| [01-positioning.md](01-positioning.md) | 定位、目标与非目标、开发期和交付期的边界 |
-| [02-runtime-constraints.md](02-runtime-constraints.md) | 底层约束：从第一天起必须遵守，为 GC、异步、重定义留出空间 |
-| [03-async.md](03-async.md) | 异步模型：一次性定界续延和 condition 系统的统一，以及被否决的方案 |
-| [04-bootstrap.md](04-bootstrap.md) | 复用与自研的划分、借助 SBCL 的自举路线、里程碑 |
-| [05-sicl-survey.md](05-sicl-survey.md) | SICL 现状调研（2026-11）：自举、编译器、对象表示、模块生态、ANSI 覆盖情况、对 kiln 的影响 |
-| [06-m0-abi.md](06-m0-abi.md) | M0 定下的 ABI：值表示、调用约定、context 布局、非局部退出（try_call + unwinder）、poll 点、KIR 语法 |
-| [07-m1-gc.md](07-m1-gc.md) | M1：对象表示、MMTk binding、精确栈图、root 集合、编译器必须遵守的 GC 规则 |
-| [08-m2-front-end.md](08-m2-front-end.md) | M2：Common-boot 前端、顶层形式处理和编译期环境、AST 降级、闭包和非局部退出 |
-| [09-m3-kernel.md](09-m3-kernel.md) | M3：分步计划、立即数和堆对象的 kind 表、`%primop`、kernel |
-| [10-m4-clos.md](10-m4-clos.md) | M4：CLOS 引导，复用 Clostrophilia 的方式、分派的解释执行、实例表示、分步计划 |
-| [11-m5-self-hosting.md](11-m5-self-hosting.md) | M5：编译器在 kiln 上运行和自举的分步计划，目标端 `eval`/`compile`（Maclina），调试基础设施的数据格式（定义记录、调用点源码位置、宏展开追踪） |
-| [12-abi-policy.md](12-abi-policy.md) | ABI 的稳定性方针：同一构建内部的契约、不承诺跨版本兼容、ABI 指纹、内联依赖，和 Swift ABI 稳定化的对照 |
-| [13-modern-practices.md](13-modern-practices.md) | 可借鉴的现代编译器实践：构建期初始化和堆快照、依赖追踪和增量重编译、PGO 和内联缓存、逃逸分析和拆箱、并行编译和缓存、诊断和工具协议、测试方法、内建的性能分析器、image 和源码的同步、记录与回放、项目工具和包管理（先兼容 ASDF、MVS、一个 image 一个版本）、格式化器和 linter、内容寻址的定义、扩展的能力沙箱；暂不采用的做法；内存模型；优先级 |
-| [14-performance.md](14-performance.md) | 和 SBCL 的性能差距：对比基准（`bench/compare.lisp`）、差距集中在库和 CLOS 运行时而不是代码生成、需要的 Lisp 语义层优化 |
-| [15-heap-image.md](15-heap-image.md) | M6.1 堆快照：`kiln.sys:save-image`、固定地址映射、静态根、GC 扫描快照区、测试方式 |
-| [16-editor.md](16-editor.md) | 编辑器和 IDE（暂名 KilnWorks）设计草案：细腰、命令循环、按键、输入框、分派点；显示管线（重显示前钩子、装饰提供者、Lisp 写的布局、显示列表）和 GUI 的分层（Rust 的平台层、文字服务和渲染器，声明式动画）；对 kiln 运行时的需求（依赖追踪、按上下文局部的变量、fiber、debugger 和后端协议、系统接口）；扩展模型和部分 seal |
-| [17-debugging.md](17-debugging.md) | M6.2 帧的调试信息：函数名、调用的源码位置、调用期间变量所在的栈槽（kiln-cg 由栈图的槽推出），`kiln.sys:frame-list` 等接口和 backtrace；M6.3 后端协议：任务、嵌套的 debug 层、restart、在帧中求值，`tools/kiln-server.sh` |
-| [18-dependencies.md](18-dependencies.md) | M6.4 依赖追踪：在 image 里求值的定义记下编译期依赖（宏、内联函数、`setf` 展开器、常量），重定义时自动重新求值依赖者或报告过时的定义 |
-| [19-rust-interop.md](19-rust-interop.md) | Rust 宿主模块和双向互操作（草案）：机器层面用 `extern "C"`、语义上用 kiln 的对象模型；过程宏生成桥接函数和登记信息；借用检查器保证 GC 安全和零拷贝借用；非局部退出在边界上转换；Rust 对象作为 Lisp 外部对象；主线程交给平台层；有源码的 Rust 代码交付时生成唯一的 staticlib 静态链接 |
+| [positioning.md](design/positioning.md) | 定位、目标与非目标、开发期和交付期、seal 的语义 |
+| [runtime-constraints.md](design/runtime-constraints.md) | 底层约束 C1–C8 和检查清单，内存模型 |
+| [modules.md](design/modules.md) | 复用哪些 SICL 模块、kiln 的五个模块和加载顺序、运行期的包、Lisp 依赖 |
+| [objects.md](design/objects.md) | 值的 tag、立即数、堆对象的 kind 和布局、静态对象、身份哈希 |
+| [abi.md](design/abi.md) | 调用约定、context 布局、动态环境条目、非局部退出和 unwinder、特殊变量、多值、poll 点 |
+| [abi-policy.md](design/abi-policy.md) | ABI 不承诺跨版本兼容、ABI 指纹、编译期依赖 |
+| [codegen.md](design/codegen.md) | KIR 语法、kiln-cg（JIT、目标文件、多模块、模块信息、运行期编译） |
+| [gc.md](design/gc.md) | MMTk binding、root、栈图、编译器的 GC 规则、内联分配、栈和栈段 |
+| [front-end.md](design/front-end.md) | Eclector 到简化后的 AST、顶层形式处理、编译期环境（cross-client、image-client）、inline、确定性 |
+| [lowering.md](design/lowering.md) | AST 到 KIR：闭包、退出点、多值、原语和 `%primop`、降级时的改写 |
+| [kernel.md](design/kernel.md) | kernel 模块：钩子、数、字符串、类型、序列、运行期的宏环境和错误 |
+| [clos.md](design/clos.md) | CLOS：vendor Clostrophilia、目标端引导、分派和缓存、实例初始化、类名 `typep` |
+| [stdlib.md](design/stdlib.md) | condition、哈希表、包、ctype、数组、结构、LOOP |
+| [io.md](design/io.md) | 系统接口、流、pathname 和文件、reader、打印器、FORMAT、美化打印 |
+| [eval-compile.md](design/eval-compile.md) | eval 模块（Maclina）、原生 `compile`/`eval`/`load`、image 模式的 KIR |
+| [bootstrap.md](design/bootstrap.md) | 自举（stage0 → kiln0 → kiln1）、构建程序和清单、测试方式、仓库结构 |
+| [heap-image.md](design/heap-image.md) | 堆快照：固定地址、静态根、运行期代码区、GC 扫描快照区 |
+| [debugging.md](design/debugging.md) | 函数和调用点的调试信息、变量的栈槽、走栈接口、定义记录和单步的方案 |
+| [backend-protocol.md](design/backend-protocol.md) | `kiln.sys:serve`：任务、嵌套的 debug 层、消息格式、`tools/kiln-server.sh` |
+| [dependencies.md](design/dependencies.md) | image 里定义的依赖追踪：依赖的种类、失效、提前截断 |
+| [async.md](design/async.md) | 异步模型（未实现）：一次性续延和 condition 系统的统一、被否决的方案 |
+| [rust-interop.md](design/rust-interop.md) | Rust 宿主模块和双向互操作（草案） |
+| [editor.md](design/editor.md) | 编辑器和 IDE KilnWorks（草案）：架构、显示管线、对运行时的需求、扩展模型 |
 
-## 状态
+## research/
 
-M0、M1 已完成：SBCL → KIR → Cranelift（JIT 和 AOT），MMTk 移动式 GC 和精确栈图，多栈段和跨栈展开。M2 基本完成（[08](08-m2-front-end.md)）。M3 完成（[09](09-m3-kernel.md)）：用 Lisp 写的 kernel 单独作为一个模块，数值塔（bignum、ratio、单双精度浮点）、Unicode 字符和字符串、`typep` 和序列函数都已可用；包、数组、哈希表、condition 移到 M4。M4（CLOS 引导）完成（[10](10-m4-clos.md)）。M5 完成（[11](11-m5-self-hosting.md)）：运行期的标准宏、`eval`、`compile`、`load` 和 REPL（`tools/repl.sh`）；编译器在 kiln 上运行，交叉编译 kiln 自己的五个模块，KIR 和 SBCL 编出的逐字节相同；自举闭合：kiln0 → kiln1 → kiln2 的 KIR 逐字节相同，kiln0 和 kiln1 的可执行文件也相同（`tools/bootstrap.sh`），测试程序由 kiln1 编译时 `tools/test.sh` 全部通过；M5.5 起 `compile` 产出原生代码，装进运行中的 image。和 SBCL 的性能对比见 [14](14-performance.md)。M6.1 堆快照完成（[15](15-heap-image.md)）：AOT 程序可以把 image 存成文件或带快照的可执行文件，从快照启动不再执行各模块的初始化。M6.2 帧的调试信息和 M6.3 后端协议完成（[17](17-debugging.md)）：backtrace 显示函数名、源码位置和变量；常驻进程按请求求值，出错时进入嵌套的 debug 层，工具和 agent 从 shell 驱动（`tools/kiln-server.sh`）。M6.4 依赖追踪完成（[18](18-dependencies.md)）：在 image 里重定义宏、内联函数、`setf` 展开器或常量后，依赖它的定义自动重新编译。各文档的“待定问题”一节列出尚未决定的事项。
+| 文档 | 日期 | 内容 |
+|---|---|---|
+| [sicl-survey.md](research/sicl-survey.md) | 2026-11-03 | SICL 现状：自举、编译器、对象表示、模块生态、ANSI 覆盖、对 kiln 的影响；文末有更新步骤。涉及 SICL 的问题先查这里 |
+| [clostrophilia.md](research/clostrophilia.md) | 2026-11 | Clostrophilia 的规模、要实现方提供的东西、缺陷 |
+| [modern-practices.md](research/modern-practices.md) | 2026-11 | 可借鉴的现代编译器实践和暂不采用的做法 |
+| [performance.md](research/performance.md) | 2026-11 | 和 SBCL 的对比、自举速度的变化、各基准的测量 |
+| [dotnet-runtime-async.md](research/dotnet-runtime-async.md) | 2026-11 | .NET 的 runtime async 和对 kiln 拷栈方案的启发 |
+| [swift-abi.md](research/swift-abi.md) | 2026-11 | Swift 的 ABI 稳定化和 kiln 的对照 |
+| [zig-incremental.md](research/zig-incremental.md) | 2026-11 | Zig 的增量编译和 kiln 的依赖追踪的对照 |
+| [debugging-references.md](research/debugging-references.md) | 2026-11 | LispWorks dspec、Emacs、Racket、Clordane 的调试设施 |
 
 ## 约定
 
-- **决定**：已经确定，修改前需要先更新文档。
+- **决定**：已经确定，修改前先更新文档。
 - **约束**：实现必须遵守的规则，违反会导致后续设计无法实现。
 - **待定**：尚未决定，附带倾向和需要验证的内容。
+- 文档之间用文件名和标题互相引用，不用节号。
+- 不写本机路径；仓库内的路径（`lisp/...`、`rust/kiln-rt/src/...`）可以写。
