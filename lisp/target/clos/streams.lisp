@@ -89,7 +89,8 @@
                      (setf count (+ count 1))))
               (loop for index from start below end
                     for char = (aref string index)
-                    for code = (char-code char)
+                    ;; A string's elements are characters.
+                    for code = (kiln.sys:%primop :char-code char)
                     do (when (> count limit)
                          (stream-write-octets stream octets 0 count)
                          (setf count 0))

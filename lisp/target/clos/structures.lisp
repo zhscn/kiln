@@ -11,13 +11,15 @@
   ()
   (:metaclass structure-class))
 
+;;; A structure's slots are at the locations 0 to N-1, in the order of its
+;;; layout (lisp/structures.lisp): the copy takes the words as they are,
+;;; unbound markers included.
 (defun copy-structure (structure)
   (let* ((class (class-of structure))
          (copy (allocate-instance class)))
-    (dolist (slot (class-slots class) copy)
-      (let ((name (slot-definition-name slot)))
-        (when (slot-boundp structure name)
-          (setf (slot-value copy name) (slot-value structure name)))))))
+    (dotimes (location (length (class-slots class)) copy)
+      (setf (standard-instance-access copy location)
+            (standard-instance-access structure location)))))
 
 ;;; Anatomicl's constructors call ALLOCATE-INSTANCE directly, which does
 ;;; not finalize the class as MAKE-INSTANCE does.

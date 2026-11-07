@@ -173,7 +173,9 @@ Under `#+kiln` (kiln reads target sources with its own features):
   two long and at most half used, maps a hash to an entry by linear
   probing, comparing the stored hashes first. Nothing is allocated per
   entry; the vectors double when full (the rehash size and threshold are
-  hints, CLHS `make-hash-table`).
+  hints, CLHS `make-hash-table`). The vectors are allocated with kiln's
+  primitive (`kiln.kernel::make-simple-vector`) and copied with plain
+  loops when they grow.
 
 ## Parcl patches
 

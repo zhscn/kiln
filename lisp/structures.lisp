@@ -124,6 +124,22 @@
       (declaim (inline ,@(mapcar #'second accessors)))
       ,@(reverse accessors))))
 
+;;; Constructors allocate from the class in the structure's variable and
+;;; store each slot at its location, as the accessors read it (Anatomicl's
+;;; default looks the class up with FIND-CLASS and sets each slot with
+;;; SETF SLOT-VALUE by name, a search of the class's slots per slot).
+(defmethod anatomicl::generate-allocation-form
+    ((client anatomicl-client) (description anatomicl::defstruct-object-description) layout)
+  (declare (ignore layout))
+  `(allocate-instance ,(structure-class-variable (anatomicl::defstruct-name description))))
+
+(defmethod anatomicl::generate-slot-initialization-form
+    ((client anatomicl-client) (description anatomicl::defstruct-object-description)
+     layout object slot value)
+  `(kiln.sys:%primop :set-standard-instance-access ,object
+                     ,(position (anatomicl::slot-name slot) layout :key #'anatomicl::slot-name)
+                     ,value))
+
 (defmethod anatomicl::generate-copier
     ((client anatomicl-client) (description anatomicl::defstruct-object-description) layout copier-name)
   (declare (ignore layout))

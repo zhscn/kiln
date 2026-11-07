@@ -59,14 +59,14 @@
 
 (defmethod initialize-instance :after ((hash-table bucket-hash-table) &key)
   (let* ((capacity (max 4 (slot-value hash-table 'size)))
-         (core (make-array +core-length+))
+         (core (kiln.kernel::make-simple-vector +core-length+ nil))
          (test (salmagundi:hash-table-test hash-table))
          (hash (salmagundi:hash-table-hash-function hash-table)))
-    (setf (svref core +index+) (make-array (power-of-two-at-least (* 2 capacity))
-                                           :initial-element 0)
-          (svref core +keys+) (make-array capacity :initial-element +free-key+)
-          (svref core +values+) (make-array capacity :initial-element nil)
-          (svref core +hashes+) (make-array capacity :initial-element 0)
+    (setf (svref core +index+) (kiln.kernel::make-simple-vector
+                                    (power-of-two-at-least (* 2 capacity)) 0)
+          (svref core +keys+) (kiln.kernel::make-simple-vector capacity +free-key+)
+          (svref core +values+) (kiln.kernel::make-simple-vector capacity nil)
+          (svref core +hashes+) (kiln.kernel::make-simple-vector capacity 0)
           (svref core +count+) 0
           (svref core +test-code+) (test-code test)
           (svref core +test+) (if (functionp test) test (fdefinition test))
@@ -148,7 +148,7 @@ vector; or NIL."
 
 (defun rebuild-index (core length)
   "A new index of LENGTH elements for the entries."
-  (let* ((index (make-array length :initial-element 0))
+  (let* ((index (kiln.kernel::make-simple-vector length 0))
          (mask (- length 1))
          (keys (svref core +keys+))
          (hashes (svref core +hashes+)))
@@ -170,12 +170,17 @@ entry vectors double when full)."
             (keys (svref core +keys+)))
         (when (= place (length keys))
           (let* ((capacity (* 2 (length keys)))
-                 (new-keys (make-array capacity :initial-element +free-key+))
-                 (new-values (make-array capacity :initial-element nil))
-                 (new-hashes (make-array capacity :initial-element 0)))
-            (replace new-keys keys)
-            (replace new-values (svref core +values+))
-            (replace new-hashes (svref core +hashes+))
+                 (values (svref core +values+))
+                 (hashes (svref core +hashes+))
+                 (new-keys (kiln.kernel::make-simple-vector capacity +free-key+))
+                 (new-values (kiln.kernel::make-simple-vector capacity nil))
+                 (new-hashes (kiln.kernel::make-simple-vector capacity 0)))
+            ;; kiln: the primitive allocation and a plain copy (MAKE-ARRAY
+            ;; parses its keywords, REPLACE its own).
+            (dotimes (i place)
+              (setf (svref new-keys i) (svref keys i)
+                    (svref new-values i) (svref values i)
+                    (svref new-hashes i) (svref hashes i)))
             (setf (svref core +keys+) new-keys
                   (svref core +values+) new-values
                   (svref core +hashes+) new-hashes)))
