@@ -49,14 +49,42 @@
                          :fill-pointer position)))))
 
 (defmethod stream-write-char ((stream string-output-stream) character)
-  (with-accessors ((position stream-file-position)
-                   (string stream-string))
-      stream
-    (if (< position (length string))
-        (setf (char string position) character)
-        (vector-push-extend character (stream-string stream)))
-    (incf position)
+  ;; kiln: the position is the string's length (STREAM-FILE-POSITION
+  ;; below), so the character is always appended, and VECTOR-PUSH-EXTEND
+  ;; keeps the fill pointer: the slot is written directly, without the
+  ;; methods of (SETF STREAM-FILE-POSITION), which did that bookkeeping
+  ;; through generic functions for every character.
+  (let ((string (stream-string stream)))
+    (vector-push-extend character string)
+    (setf (slot-value stream '%position) (length string))
     character))
+
+;;; kiln: a string is appended at once (the default method writes it a
+;;; character at a time), and the output cursor updated as for each
+;;; character.
+(defmethod stream-write-string
+    ((stream string-output-stream) seq &optional (start 0) end)
+  (let* ((string (stream-string stream))
+         (end (or end (length seq)))
+         (current-length (length string))
+         (new-length (+ current-length (- end start))))
+    (when (< start end)
+      (when (< (array-total-size string) new-length)
+        (adjust-array string (max new-length (* 2 (array-total-size string)))))
+      (setf (fill-pointer string) new-length)
+      (replace string seq :start1 current-length :start2 start :end2 end)
+      (setf (slot-value stream '%position) new-length)
+      (let* ((cursor (output-cursor stream))
+             (column (caar cursor)) (line (cdar cursor))
+             (previous-column column) (previous-line line))
+        (loop for index from start below end
+              do (setf previous-column column previous-line line)
+                 (if (char= (char seq index) #\Newline)
+                     (setf column 0 line (1+ line))
+                     (setf column (1+ column))))
+        (setf (caar cursor) column (cdar cursor) line
+              (caadr cursor) previous-column (cdadr cursor) previous-line)))
+    seq))
 
 (defmethod stream-write-sequence
     ((stream string-output-stream) seq &optional (start 0) end)

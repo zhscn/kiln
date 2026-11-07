@@ -139,8 +139,7 @@
 (defconstant most-positive-fixnum 4611686018427387903)
 (defconstant most-negative-fixnum -4611686018427387904)
 
-;;; Calls pass at most 3 + 64 arguments, and return at most 1 + 64 values
-;;;.
+;;; Calls pass at most 3 + 64 arguments, and return at most 1 + 64 values.
 (defconstant call-arguments-limit 1024)
 (defconstant lambda-parameters-limit 1024)
 (defconstant multiple-values-limit 1022)
@@ -895,6 +894,16 @@
          (unless (and subscripts (null (cdr subscripts))) (%primop :type-error-integer subscripts))
          (svref a (car subscripts)))
         (t (apply #'complex-aref a subscripts))))
+(defun %aref-1-slow (a i)
+  "AREF with one subscript, when the compiled code's inline path does not
+apply."
+  (cond ((%primop :stringp a) (schar a i))
+        ((%primop :simple-vector-p a) (svref a i))
+        (t (complex-aref a i))))
+(defun %set-aref-1-slow (x a i)
+  (cond ((%primop :stringp a) (setf (schar a i) x))
+        ((%primop :simple-vector-p a) (setf (svref a i) x))
+        (t (setf (complex-aref a i) x))))
 (defun (setf aref) (x a &rest subscripts)
   (cond ((%primop :stringp a)
          (unless (and subscripts (null (cdr subscripts))) (%primop :type-error-integer subscripts))

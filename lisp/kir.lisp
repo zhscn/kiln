@@ -187,7 +187,7 @@ entry block current. Unterminated blocks end with a trap."
     (let ((new (make-string (* 2 (length *out*)))))
       (replace new *out*)
       (setf *out* new)))
-  (setf (char *out* *fill*) c)
+  (setf (aref *out* *fill*) c)
   (setf *fill* (+ *fill* 1)))
 
 (defun out-string (string)
@@ -206,7 +206,7 @@ entry block current. Unterminated blocks end with a trap."
     (string
      (out-char #\")
      (loop for c across x
-           do (when (member c '(#\" #\\)) (out-char #\\))
+           do (when (or (eql c #\") (eql c #\\)) (out-char #\\))
               (out-char c))
      (out-char #\"))
     (integer (out-integer x))

@@ -63,40 +63,56 @@
 
 (define-interface :client-class kiln-client :client-form *client* :intrinsic t)
 
-;;; A string goes out with one write: STREAM-WRITE-CHAR writes the octets
-;;; of each character with its own (kiln's file streams have no buffer,
-;;; so that their output and the runtime's PRINT stay in order). The
-;;; compiler on kiln writes its KIR this way.
+;;; A string is encoded a chunk at a time and handed to
+;;; STREAM-WRITE-OCTETS, instead of one STREAM-WRITE-CHAR (a generic
+;;; function call) per character. The compiler on kiln writes its KIR this
+;;; way. The output cursor (Cyclosis's two (COLUMN . LINE) entries, the
+;;; position after the last character and the one before it) is kept in
+;;; variables and stored at the end.
+(defconstant +write-string-chunk+ 4096)
+
 (defmethod stream-write-string ((stream posix-file-stream) string &optional (start 0) end)
   (check-character-stream stream)
   (let ((end (or end (length string))))
     (if (not (typep (octet-transcoder stream) 'utf-8-transcoder))
         (call-next-method)
-        (let ((octets (kiln.kernel::make-simple-vector (* 4 (- end start)) 0))
-              (count 0)
-              (cursor (output-cursor stream)))
-          (flet ((out (octet)
-                   (setf (svref octets count) octet)
-                   (setf count (+ count 1))))
-            (loop for index from start below end
-                  for char = (char string index)
-                  for code = (char-code char)
-                  do (cond ((< code #x80)
-                            (out code))
-                           ((< code #x800)
-                            (out (logior #b11000000 (ash code -6)))
-                            (out (logior #b10000000 (logand code #b111111))))
-                           ((< code #x10000)
-                            (out (logior #b11100000 (ash code -12)))
-                            (out (logior #b10000000 (logand (ash code -6) #b111111)))
-                            (out (logior #b10000000 (logand code #b111111))))
-                           (t
-                            (out (logior #b11110000 (ash code -18)))
-                            (out (logior #b10000000 (logand (ash code -12) #b111111)))
-                            (out (logior #b10000000 (logand (ash code -6) #b111111)))
-                            (out (logior #b10000000 (logand code #b111111)))))
-                     (update-cursor cursor char)))
-          (when (plusp count)
-            (stream-write-octets stream octets 0 count))
-          (setf (output-cursor stream) cursor)
-          string))))
+        (when (< start end)
+          (let* ((octets (kiln.kernel::make-simple-vector
+                          (min (* 4 (- end start)) +write-string-chunk+) 0))
+                 (limit (- (length octets) 4))
+                 (count 0)
+                 (cursor (output-cursor stream))
+                 (column (caar cursor)) (line (cdar cursor))
+                 (previous-column column) (previous-line line))
+            (flet ((out (octet)
+                     (setf (svref octets count) octet)
+                     (setf count (+ count 1))))
+              (loop for index from start below end
+                    for char = (aref string index)
+                    for code = (char-code char)
+                    do (when (> count limit)
+                         (stream-write-octets stream octets 0 count)
+                         (setf count 0))
+                       (cond ((< code #x80)
+                              (out code))
+                             ((< code #x800)
+                              (out (logior #b11000000 (ash code -6)))
+                              (out (logior #b10000000 (logand code #b111111))))
+                             ((< code #x10000)
+                              (out (logior #b11100000 (ash code -12)))
+                              (out (logior #b10000000 (logand (ash code -6) #b111111)))
+                              (out (logior #b10000000 (logand code #b111111))))
+                             (t
+                              (out (logior #b11110000 (ash code -18)))
+                              (out (logior #b10000000 (logand (ash code -12) #b111111)))
+                              (out (logior #b10000000 (logand (ash code -6) #b111111)))
+                              (out (logior #b10000000 (logand code #b111111)))))
+                       (setf previous-column column previous-line line)
+                       (if (eql code 10)
+                           (setf column 0 line (+ line 1))
+                           (setf column (+ column 1)))))
+            (when (plusp count)
+              (stream-write-octets stream octets 0 count))
+            (setf (caar cursor) column (cdar cursor) line
+                  (caadr cursor) previous-column (cdadr cursor) previous-line))))
+    string))

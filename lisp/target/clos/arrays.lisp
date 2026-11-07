@@ -190,7 +190,14 @@
     (:array-total-size (total-size array))
     (:array-element-type (element-type array))
     (:simple-array-p (array-is-simple array))
-    (:make-like (cl:make-array (first args) :element-type (element-type array)))))
+    (:make-like (cl:make-array (first args) :element-type (element-type array)))
+    ;; The native vector that holds a one-dimensional array's elements at
+    ;; the same indices, or NIL (displaced): REPLACE copies into and out of
+    ;; it directly.
+    (:native-storage
+     (and (null (underlying-array array))
+          (= (length (dimensions array)) 1)
+          (contents array)))))
 
 (setf kiln.kernel::*complex-array-kind* #'complex-array-kind
       kiln.kernel::*complex-array-op* #'complex-array-op)
@@ -331,8 +338,7 @@
 (defun resize-vector (vector size initial-element)
   (let* ((old (contents vector))
          (new (make-storage (if (stringp old) 'character t) size initial-element)))
-    (dotimes (i (min size (length old)))
-      (setf (cl:aref new i) (cl:aref old i)))
+    (replace new old :end2 (min size (length old)))
     (setf (contents vector) new
           (array-dimensions-slot vector) (list size))
     (let ((fp (vector-fill-pointer vector)))

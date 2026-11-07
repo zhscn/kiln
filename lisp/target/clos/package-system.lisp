@@ -1,5 +1,4 @@
-;;;; kiln's client of Parcl, and the bootstrap of the run-time packages
-;;;;.
+;;;; kiln's client of Parcl, and the bootstrap of the run-time packages.
 ;;;;
 ;;;; Every module's symbol table (lower.lisp) describes the host packages
 ;;;; its symbols were read into: name, nicknames, use list, and the status

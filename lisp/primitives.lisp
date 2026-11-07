@@ -560,17 +560,53 @@ of it, SLOW-FN otherwise; both return an operand. Returns the result."
                         (lambda () (emit-slow-call '(setf svref) x v i))))
 
 ;;; AREF and (SETF AREF) with one subscript (lower-global-call renames
-;;; them): a simple vector is accessed inline, anything else through the
-;;; kernel's functions.
-(define-primitive kiln.kernel::%aref-1 (v i)
-  (emit-svref-fast-path v i
-                        (lambda () `(:load (:add ,v (:shl ,i 2)) ,+vector-data+))
-                        (lambda () (emit-slow-call 'aref v i))))
+;;; them): a simple vector or a string is accessed inline, anything else,
+;;; a bad index or a non-character stored into a string through the
+;;; kernel's two- and three-argument functions (no &REST list).
+(defun emit-aref-1 (v i x)
+  "The one-subscript AREF of V at I, or with X true, the store of X there."
+  (let ((r (new-var)) (k (new-var :raw))
+        (general (new-block)) (other (new-block)) (vector (new-block)) (string (new-block))
+        (fast-vector (new-block)) (fast-string (new-block)) (slow (new-block))
+        (done (new-block))
+        (bad-index `(:or (:and ,i 1) (:or (:lt ,i 0) (:ge ,i ,(vector-length v))))))
+    (br `(:eq (:and ,v ,+tag-mask+) ,+tag-general+) general slow)
+    (start-block general)
+    (emit `(:set ,k (:and (:load ,v ,(- +tag-general+)) ,+kind-mask+)))
+    (br `(:eq ,k ,+kind-simple-vector+) vector other)
+    (start-block other)
+    (br `(:eq ,k ,+kind-string+) string slow)
+    (start-block vector)
+    (br bad-index slow fast-vector)
+    (start-block fast-vector)
+    (if x
+        (progn (emit `(:store (:add ,v (:shl ,i 2)) ,+vector-data+ ,x))
+               (emit `(:set ,r ,x)))
+        (emit `(:set ,r (:load (:add ,v (:shl ,i 2)) ,+vector-data+))))
+    (jump done)
+    (start-block string)
+    (br (if x
+            `(:or ,bad-index (:ne (:and ,x ,+immediate-mask+) ,+character-tag+))
+            bad-index)
+        slow fast-string)
+    (start-block fast-string)
+    (if x
+        (progn (emit `(:store32 (:add ,v (:shl ,i 1)) ,+vector-data+ (:shr ,x ,+character-shift+)))
+               (emit `(:set ,r ,x)))
+        (emit `(:set ,r (:or (:shl (:load32 (:add ,v (:shl ,i 1)) ,+vector-data+)
+                                   ,+character-shift+)
+                             ,+character-tag+))))
+    (jump done)
+    (start-block slow)
+    (emit `(:set ,r ,(if x
+                         (emit-slow-call 'kiln.kernel::%set-aref-1-slow x v i)
+                         (emit-slow-call 'kiln.kernel::%aref-1-slow v i))))
+    (jump done)
+    (start-block done)
+    r))
 
-(define-primitive kiln.kernel::%set-aref-1 (x v i)
-  (emit-svref-fast-path v i
-                        (lambda () (emit `(:store (:add ,v (:shl ,i 2)) ,+vector-data+ ,x)) x)
-                        (lambda () (emit-slow-call '(setf aref) x v i))))
+(define-primitive kiln.kernel::%aref-1 (v i) (emit-aref-1 v i nil))
+(define-primitive kiln.kernel::%set-aref-1 (x v i) (emit-aref-1 v i x))
 
 (define-primitive length (x)
   (let ((r (new-var)) (fast (new-block)) (slow (new-block)) (done (new-block)))

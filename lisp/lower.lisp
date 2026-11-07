@@ -18,12 +18,32 @@
 
 ;;; Names in the object file
 
+(defun mangle-char-p (c)
+  (let ((code (char-code c)))
+    (or (<= 48 code 57) (<= 65 code 90) (<= 97 code 122))))
+
 (defun mangle (string)
-  (with-output-to-string (out)
-    (loop for c across string
-          do (if (and (< (char-code c) 128) (alphanumericp c))
-                 (write-char c out)
-                 (format out "_~X_" (char-code c))))))
+  "STRING with every character but an ASCII letter or digit written as
+_HEX_. Most names need no change and are returned as they are."
+  (if (every #'mangle-char-p string)
+      string
+      (with-output-to-string (out)
+        (loop for c across string
+              do (if (mangle-char-p c)
+                     (write-char c out)
+                     (progn (write-char #\_ out)
+                            (write-string (hex-string (char-code c)) out)
+                            (write-char #\_ out)))))))
+
+(defun hex-string (n)
+  "N, a non-negative integer, in upper-case hexadecimal."
+  (if (zerop n)
+      "0"
+      (let ((digits '()))
+        (loop until (zerop n)
+              do (push (char "0123456789ABCDEF" (logand n 15)) digits)
+                 (setf n (ash n -4)))
+        (coerce digits 'string))))
 
 (defvar *uninterned-symbols* nil
   "Uninterned symbol -> (INDEX . NAME) in the module (COMPILE-MODULE).")
@@ -207,8 +227,14 @@ name of its package as a string."
 
 (defvar *module-symbols*)               ; symbols with static data, newest first
 
+(defvar *symbol-data-names*)            ; symbol -> SYMBOL-DATA's name, per module
+
 (defun symbol-data (sym)
   "Name of the static data object of the symbol SYM (not NIL or T)."
+  (or (gethash sym *symbol-data-names*)
+      (setf (gethash sym *symbol-data-names*) (make-symbol-data sym))))
+
+(defun make-symbol-data (sym)
   (let* ((label (symbol-label sym))
          (obj (kiln.kir::kir-name "kiln_sym_" label)))
     (unless (gethash obj (kiln.kir::kmodule-defined *module*))
@@ -238,8 +264,7 @@ name of its package as a string."
         (push sym *module-symbols*)
         ;; The package slot holds the package object once packages exist.
         ;; The TLS index (a fixnum) is not a GC root, but it changes as
-        ;; the other words do: a heap image saves the static roots
-        ;;.
+        ;; the other words do: a heap image saves the static roots.
         (module-root obj 2)
         (module-root obj 3)
         (module-root obj 4)
@@ -2042,6 +2067,7 @@ Returns the module and the vector of its literals."
         (*pending-conses* (make-hash-table :test 'eq))
         (*constant-vars* (make-hash-table :test 'eq))
         (*module-symbols* '())
+        (*symbol-data-names* (make-hash-table :test 'eq))
         (*uninterned-symbols* (make-hash-table :test 'eq))
         (*uninterned-count* 0))
     (let ((*load-time-values* (make-hash-table :test 'eq)))

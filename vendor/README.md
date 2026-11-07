@@ -224,6 +224,10 @@ Under `#+kiln`:
   `#x1000`); decoding shifts the octets' bits left (upstream: right).
 - A string output stream's string grows geometrically (upstream: by 32
   elements, which makes writing quadratic).
+- A string output stream appends a character without going through
+  `(setf stream-file-position)` and its methods, and has its own
+  `stream-write-string`, which appends the string at once (upstream: one
+  `stream-write-char` per character).
 
 ## Incless patches
 

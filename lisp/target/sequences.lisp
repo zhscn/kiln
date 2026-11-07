@@ -443,6 +443,15 @@ other, the shorter's length and the rest of the longer after it."
          (end2 (or end2 (length source)))
          (n (min (- end1 start1) (- end2 start2))))
     (cond ((<= n 0) target)
+          ((and (vectorp target) (vectorp source)
+                (or (not (native-vector-p target)) (not (native-vector-p source)))
+                (or (native-vector-p target) (complex-array-op :native-storage target))
+                (or (native-vector-p source) (complex-array-op :native-storage source)))
+           ;; An adjustable vector or one with a fill pointer: its native
+           ;; storage, as the elements are at the same indices.
+           (replace (if (native-vector-p target) target (complex-array-op :native-storage target))
+                    (if (native-vector-p source) source (complex-array-op :native-storage source))
+                    :start1 start1 :end1 (+ start1 n) :start2 start2 :end2 (+ start2 n)))
           ((and (vectorp target) (vectorp source))
            (if (and (simple-vector-p target) (simple-vector-p source))
                ;; The same vector with the target after the source: copy

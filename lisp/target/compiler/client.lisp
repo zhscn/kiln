@@ -29,8 +29,7 @@
       (cond (macrop
              (kiln.cmd:get-setf-expansion client expansion environment))
             (t
-             ;; A SETF expander defined later changes the expansion
-             ;;.
+             ;; A SETF expander defined later changes the expansion.
              (when (and (consp place) (symbolp (first place)))
                (note-dependency :setf (first place)))
              (call-next-method client place environment))))))
