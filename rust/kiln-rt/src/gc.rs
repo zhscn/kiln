@@ -321,6 +321,22 @@ impl ObjectModel<Kiln> for KilnObjectModel {
 
 pub struct KilnScanning;
 
+/// Hands root slots to MMTk in packets of at most EDGES_WORK_BUFFER_SIZE
+/// slots. One worker processes a packet: it copies and then scans every
+/// object the packet's slots point to. With all static roots in one packet,
+/// that part of each collection ran on one worker.
+fn create_roots_work(factory: &mut impl RootsWorkFactory<KilnSlot>, slots: Vec<KilnSlot>) {
+    if slots.len() <= mmtk::scheduler::EDGES_WORK_BUFFER_SIZE {
+        if !slots.is_empty() {
+            factory.create_process_roots_work(slots);
+        }
+        return;
+    }
+    for chunk in slots.chunks(mmtk::scheduler::EDGES_WORK_BUFFER_SIZE) {
+        factory.create_process_roots_work(chunk.to_vec());
+    }
+}
+
 impl Scanning<Kiln> for KilnScanning {
     fn scan_roots_in_mutator_thread(
         _tls: VMWorkerThread,
@@ -330,19 +346,20 @@ impl Scanning<Kiln> for KilnScanning {
         let ctx = unsafe { &*ctx_of(mutator.mutator_tls) };
         let mut slots = Vec::new();
         unsafe { stack_slots(ctx, &mut slots) };
-        factory.create_process_roots_work(slots);
+        create_roots_work(&mut factory, slots);
     }
 
     fn scan_vm_specific_roots(_tls: VMWorkerThread, mut factory: impl RootsWorkFactory<KilnSlot>) {
+        // Only the words that point into the heap: most static roots hold
+        // fixnums, NIL or static symbols.
         let slots: Vec<KilnSlot> = STATIC_ROOTS
             .read()
             .unwrap()
             .iter()
             .map(|a| KilnSlot(unsafe { Address::from_usize(*a) }))
+            .filter(|s| s.load().is_some())
             .collect();
-        if !slots.is_empty() {
-            factory.create_process_roots_work(slots);
-        }
+        create_roots_work(&mut factory, slots);
         // Slots of the image's objects that point into the heap.
         crate::image::heap_slots(|batch| {
             factory.create_process_roots_work(
@@ -525,6 +542,12 @@ pub unsafe fn alloc(ctx: *mut Context, bytes: u64, header: u64) -> u64 {
     unsafe {
         let mutator = &mut *(*ctx).mutator;
         let bytes = bytes as usize;
+        // The payload is not cleared here: MMTk hands out zeroed memory.
+        // Every space kiln's plans use is created with `zeroed` set, so a
+        // space zeroes the pages it acquires (bump and large-object
+        // allocation, and GC copies); Immix's allocator zeroes the
+        // recycled lines it reuses, the free-list allocator each cell.
+        //
         // Fast path: bump the default allocator's cursor (SemiSpace's copy
         // space; its post_alloc does nothing without the vo_bit feature).
         if bytes <= max_non_los_bytes() {
@@ -533,7 +556,7 @@ pub unsafe fn alloc(ctx: *mut Context, bytes: u64, header: u64) -> u64 {
             let end = start + bytes;
             if end <= (*bump).limit {
                 (*bump).cursor = end;
-                std::ptr::write_bytes(start.to_mut_ptr::<u8>(), 0, bytes);
+                debug_assert_zeroed(start, bytes);
                 start.store::<u64>(header);
                 return start.as_usize() as u64;
             }
@@ -551,7 +574,7 @@ pub unsafe fn alloc(ctx: *mut Context, bytes: u64, header: u64) -> u64 {
             AllocationSemantics::Default
         };
         let addr = memory_manager::alloc(mutator, bytes, 8, 0, semantics);
-        std::ptr::write_bytes(addr.to_mut_ptr::<u8>(), 0, bytes);
+        debug_assert_zeroed(addr, bytes);
         addr.store::<u64>(header);
         let obj = ObjectReference::from_raw_address(addr).unwrap();
         memory_manager::post_alloc(mutator, obj, bytes, semantics);
@@ -560,6 +583,16 @@ pub unsafe fn alloc(ctx: *mut Context, bytes: u64, header: u64) -> u64 {
         }
         addr.as_usize() as u64
     }
+}
+
+/// Checks the first and the last word of a fresh object (all of it would
+/// cost as much as the zeroing it replaces).
+#[inline]
+fn debug_assert_zeroed(start: Address, bytes: usize) {
+    debug_assert!(
+        unsafe { start.load::<u64>() == 0 && (start + (bytes - 8)).load::<u64>() == 0 },
+        "MMTk returned memory that is not zeroed at {start}"
+    );
 }
 
 /// Addresses of the cursor and the limit of MUTATOR's default bump
