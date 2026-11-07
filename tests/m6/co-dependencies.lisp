@@ -82,3 +82,23 @@
       (*error-output* *standard-output*))
   (eval '(defmacro pong () (+ (ping) 1))))
 (print (call-both))
+
+;; ordering: a definition is compiled again after those it waits for,
+;; once (USE-K depends on K and on M1, which depends on K)
+(eval '(defmacro k () 1))
+(eval '(defmacro m1 () `(+ ,(k) 0)))
+(eval '(defun use-k () (list (k) (m1))))
+(let ((kiln.sys:*recompile-verbose* t)
+      (*error-output* *standard-output*))
+  (eval '(defmacro k () 3)))
+(print (use-k))
+
+;; cutoff: a macro compiled again to the same code does not affect the
+;; definitions that use it
+(eval '(defmacro two () 2))
+(eval '(defmacro add-two (x) `(+ ,x ,(two))))
+(eval '(defun use-add-two (y) (add-two y)))
+(let ((kiln.sys:*recompile-verbose* t)
+      (*error-output* *standard-output*))
+  (eval '(defmacro two () (+ 1 1))))
+(print (use-add-two 5))

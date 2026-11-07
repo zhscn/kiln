@@ -18,7 +18,12 @@ warning: USE-STRICT could not be compiled again after the macro STRICT changed: 
 7
 (1 1)
 ; compiling (MACRO-FUNCTION PING) again: the macro PONG changed
-; compiling CALL-BOTH again: the macro PONG changed
 ; compiling (MACRO-FUNCTION PONG) again: the macro PING changed
 ; compiling CALL-BOTH again: the macro PING changed
 (2 3)
+; compiling (MACRO-FUNCTION M1) again: the macro K changed
+; compiling USE-K again: the macro K changed
+(3 3)
+; compiling (MACRO-FUNCTION ADD-TWO) again: the macro TWO changed
+; (MACRO-FUNCTION ADD-TWO) is the same
+7

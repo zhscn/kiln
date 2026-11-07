@@ -6,20 +6,34 @@
 ;;;; on it are evaluated again, so that their code sees the new
 ;;;; definition; those that cannot be (a DEFVAR, a DEFCLASS: evaluating
 ;;;; them again has other effects) are reported.
+;;;;
+;;;; An update is ordered and cut off as Zig's incremental compilation
+;;;; (docs/18 §3): the definitions that depend on a changed one are
+;;;; outdated, those that depend on what these define are potentially
+;;;; outdated, with a count of the definitions they wait for; a definition
+;;;; is evaluated again once that count is 0, and if what it defines comes
+;;;; out the same (the same code), the definitions waiting for it need not
+;;;; be.
 
 (in-package #:kiln.compiler)
 
-(defstruct (definition-unit (:constructor make-definition-unit (name form package keys)))
+(defstruct (definition-unit (:constructor make-definition-unit
+                                (name form package keys outputs fingerprint order)))
   name                                  ; DEFINITION-NAME of FORM
   form                                  ; the definition, as EVAL got it
   package                               ; *PACKAGE* when it was evaluated
-  keys)                                 ; its dependencies, (KIND NAME)
+  keys                                  ; its dependencies, (KIND NAME)
+  outputs                               ; the keys its evaluation changed
+  fingerprint                           ; the code compiled for it
+  order)                                ; when it was first defined
 
 (defvar *definition-units* (make-hash-table :test 'equal)
   "The definitions with dependencies, by name.")
 
 (defvar *dependents* (make-hash-table :test 'equal)
   "For a key (KIND NAME), the definition units that depend on it.")
+
+(defvar *definition-order* 0)
 
 (defvar *pending-redefinitions* '()
   "The keys of the definitions that changed: their dependents are
@@ -61,6 +75,67 @@ evaluating them again only replaces what they define.")
                   (:constant "the constant ~S"))
             name)))
 
+;;; Recording
+
+(defvar *unit-outputs* nil
+  "While a definition is evaluated: a cons whose cdr collects the keys of
+the definitions its evaluation changes.")
+
+(defvar *unit-fingerprint* nil
+  "While a definition is evaluated: a cons whose cdr collects the code
+compiled for it (NOTE-COMPILED-CODE).")
+
+(defvar *captured-fingerprint* nil
+  "UPDATE-DEFINITION: (NAME . FINGERPRINT) once the definition NAME has
+been evaluated again.")
+
+(defun replace-all (string old new)
+  (with-output-to-string (out)
+    (loop with start = 0
+          for position = (search old string :start2 start)
+          do (write-string string out :start start :end (or position (length string)))
+          while position
+          do (write-string new out)
+             (setf start (+ position (length old))))))
+
+(defun note-compiled-code (module-name kir literals)
+  "NATIVE-EVAL-TOPLEVEL compiled KIR, a module named MODULE-NAME with the
+LITERALS (a vector), for the definition being evaluated."
+  (let ((cell *unit-fingerprint*))
+    (when cell
+      ;; Module names are numbered; the code is the same without them.
+      (push (cons (replace-all (replace-all kir (mangle module-name) "")
+                               module-name "")
+                  literals)
+            (cdr cell)))))
+
+(defun similar-literal-p (a b depth)
+  "Are the literals A and B the same as far as code goes: EQL, or equal
+strings, conses, vectors, uninterned symbols with the same name (the
+gensyms of a macro expansion)?"
+  (cond ((eql a b) t)
+        ((zerop depth) nil)
+        ((and (consp a) (consp b))
+         (and (similar-literal-p (car a) (car b) (1- depth))
+              (similar-literal-p (cdr a) (cdr b) (1- depth))))
+        ((and (stringp a) (stringp b)) (string= a b))
+        ((and (simple-vector-p a) (simple-vector-p b))
+         (and (= (length a) (length b))
+              (every (lambda (x y) (similar-literal-p x y (1- depth))) a b)))
+        ((and (symbolp a) (symbolp b))
+         (and (null (symbol-package a)) (null (symbol-package b))
+              (string= (symbol-name a) (symbol-name b))))
+        ((and (numberp a) (numberp b)) (eql a b))
+        (t nil)))
+
+(defun same-fingerprint-p (a b)
+  (and (= (length a) (length b))
+       (every (lambda (x y)
+                (and (string= (car x) (car y))
+                     (= (length (cdr x)) (length (cdr y)))
+                     (every (lambda (p q) (similar-literal-p p q 100)) (cdr x) (cdr y))))
+              a b)))
+
 (defun remove-definition-unit (name)
   (let ((old (gethash name *definition-units*)))
     (when old
@@ -69,73 +144,209 @@ evaluating them again only replaces what they define.")
         (let ((units (delete old (gethash key *dependents*))))
           (if units
               (setf (gethash key *dependents*) units)
-              (remhash key *dependents*)))))))
+              (remhash key *dependents*)))))
+    old))
 
-(defun register-definition-unit (name form keys)
+(defun register-definition-unit (name form keys outputs fingerprint)
   "The definition FORM, named NAME, has been evaluated: its dependencies
 are KEYS (replacing those of its previous evaluation)."
-  (remove-definition-unit name)
-  (when keys
-    (let ((unit (make-definition-unit name form *package* keys)))
-      (setf (gethash name *definition-units*) unit)
-      (dolist (key keys)
-        (push unit (gethash key *dependents*))))))
+  (let ((old (remove-definition-unit name)))
+    (when keys
+      (let ((unit (make-definition-unit name form *package* keys outputs fingerprint
+                                        (if old
+                                            (definition-unit-order old)
+                                            (incf *definition-order*)))))
+        (setf (gethash name *definition-units*) unit)
+        (dolist (key keys)
+          (setf (gethash key *dependents*)
+                (merge 'list (list unit) (gethash key *dependents*) #'<
+                       :key #'definition-unit-order)))))))
 
 (defun evaluate-definition (name form evaluate)
   "Calls EVALUATE, which evaluates the definition FORM named NAME,
 collecting the dependencies of the code compiled for it; returns its
 values. A definition within FORM's expansion is a unit of its own."
-  (let ((*dependencies* (list :dependencies)))
+  (let ((*dependencies* (list :dependencies))
+        (*unit-outputs* (list :outputs))
+        (*unit-fingerprint* (list :fingerprint)))
     (note-dependency :macro (first form))
     (multiple-value-prog1 (funcall evaluate)
-      (register-definition-unit name form (reverse (rest *dependencies*))))))
+      (let ((fingerprint (reverse (rest *unit-fingerprint*))))
+        (when (and *captured-fingerprint* (equal name (car *captured-fingerprint*)))
+          (setf (cdr *captured-fingerprint*) fingerprint))
+        (register-definition-unit name form (reverse (rest *dependencies*))
+                                  (reverse (rest *unit-outputs*)) fingerprint)))))
 
 ;;; Redefinitions
 
+(defvar *update-notes* nil
+  "While UPDATE-DEFINITION evaluates a definition again: a cons whose cdr
+collects the keys that change.")
+
 (defun note-redefinition (key)
   "*REDEFINITION-HOOK*: the definition KEY changed."
-  (when (gethash key *dependents*)
-    (unless (member key *pending-redefinitions* :test #'equal)
-      (setf *pending-redefinitions* (append *pending-redefinitions* (list key))))
-    ;; Not in the middle of EVAL or of a compilation: now.
-    (unless (or *evaluating* (boundp '*client*))
-      (update-dependents))))
+  (let ((outputs *unit-outputs*))
+    (when (and outputs (not (member key (cdr outputs) :test #'equal)))
+      (push key (cdr outputs))))
+  (cond (*update-notes*
+         (pushnew key (cdr *update-notes*) :test #'equal))
+        ((gethash key *dependents*)
+         (unless (member key *pending-redefinitions* :test #'equal)
+           (setf *pending-redefinitions* (append *pending-redefinitions* (list key))))
+         ;; Not in the middle of EVAL or of a compilation: now.
+         (unless (or *evaluating* (boundp '*client*))
+           (update-dependents)))))
+
+;;; An update. The tables are by definition name: OUTDATED and POTENTIALLY
+;;; OUTDATED map a name to the number of definitions it waits for, DONE
+;;; holds those evaluated again in this update (at most once each).
+
+(defvar *outdated*)
+(defvar *potentially-outdated*)
+(defvar *done*)
+(defvar *changed-keys* '())             ; the keys that changed in this update
+
+(defun dependent-names (key)
+  (mapcar #'definition-unit-name (gethash key *dependents*)))
+
+(defun unit-outputs (name)
+  (let ((unit (gethash name *definition-units*)))
+    (and unit (definition-unit-outputs unit))))
+
+(defun mark-potentially-outdated (name)
+  "NAME has just become outdated or potentially outdated: so are the
+definitions that depend on what it defines, each waiting for one more."
+  (dolist (key (unit-outputs name))
+    (dolist (dependent (dependent-names key))
+      (cond ((gethash dependent *done*))
+            ((nth-value 1 (gethash dependent *outdated*))
+             (incf (gethash dependent *outdated*)))
+            ((nth-value 1 (gethash dependent *potentially-outdated*))
+             (incf (gethash dependent *potentially-outdated*)))
+            (t
+             (setf (gethash dependent *potentially-outdated*) 1)
+             (mark-potentially-outdated dependent))))))
+
+(defun mark-changed (key counted)
+  "KEY changed: the definitions that depend on it are outdated. COUNTED:
+they were waiting for the definition that changed it."
+  (push key *changed-keys*)
+  (dolist (dependent (dependent-names key))
+    (unless (gethash dependent *done*)
+      (multiple-value-bind (count outdatedp) (gethash dependent *outdated*)
+        (multiple-value-bind (po-count po-p) (gethash dependent *potentially-outdated*)
+          (cond (outdatedp
+                 (when counted (setf (gethash dependent *outdated*) (1- count))))
+                (po-p
+                 (remhash dependent *potentially-outdated*)
+                 (setf (gethash dependent *outdated*) (if counted (1- po-count) po-count)))
+                (t
+                 (setf (gethash dependent *outdated*) 0)
+                 (mark-potentially-outdated dependent))))))))
+
+(defun mark-unchanged (key)
+  "KEY's definition was evaluated again and came out the same: the
+definitions that depend on it wait for one less; a potentially outdated
+one that waits for none is up to date, and so is what it defines."
+  (dolist (dependent (dependent-names key))
+    (unless (gethash dependent *done*)
+      (multiple-value-bind (count outdatedp) (gethash dependent *outdated*)
+        (multiple-value-bind (po-count po-p) (gethash dependent *potentially-outdated*)
+          (cond (outdatedp
+                 (setf (gethash dependent *outdated*) (1- count)))
+                (po-p
+                 (if (> po-count 1)
+                     (setf (gethash dependent *potentially-outdated*) (1- po-count))
+                     (progn
+                       (remhash dependent *potentially-outdated*)
+                       (dolist (output (unit-outputs dependent))
+                         (mark-unchanged output)))))))))))
+
+(defun next-outdated ()
+  "The outdated definition to evaluate next: the first defined of those
+that wait for none; if all wait (a cycle), the first defined."
+  (let ((ready nil) (any nil))
+    (flet ((order (name)
+             (let ((unit (gethash name *definition-units*)))
+               (if unit (definition-unit-order unit) most-positive-fixnum))))
+      (maphash (lambda (name count)
+                 (when (or (null any) (< (order name) (order any)))
+                   (setf any name))
+                 (when (and (<= count 0) (or (null ready) (< (order name) (order ready))))
+                   (setf ready name)))
+               *outdated*))
+    (or ready any)))
 
 (defun update-dependents ()
-  "Evaluates again the definitions that depend on the pending keys, in
-the order they were defined, and so on for the definitions those define.
-A definition is evaluated at most once for each key."
+  "Evaluates again the definitions that depend on the pending keys, and
+so on for the definitions those change."
   (let ((*evaluating* t)
-        (done '()))
+        (*outdated* (make-hash-table :test 'equal))
+        (*potentially-outdated* (make-hash-table :test 'equal))
+        (*done* (make-hash-table :test 'equal))
+        (*changed-keys* '()))
     (loop while *pending-redefinitions*
-          do (let ((key (pop *pending-redefinitions*)))
-               (dolist (unit (reverse (gethash key *dependents*)))
-                 (let ((name (definition-unit-name unit)))
-                   (when (and (eq (gethash name *definition-units*) unit)
-                              (not (member (cons name key) done :test #'equal)))
-                     (push (cons name key) done)
-                     (update-definition unit key))))))))
+          do (mark-changed (pop *pending-redefinitions*) nil)
+             (loop for name = (next-outdated)
+                   while name
+                   do (remhash name *outdated*)
+                      (setf (gethash name *done*) t)
+                      (let ((unit (gethash name *definition-units*)))
+                        (when unit
+                          (update-definition unit)))))))
 
-(defun update-definition (unit key)
-  (let ((name (definition-unit-name unit))
-        (form (definition-unit-form unit)))
+(defun update-definition (unit)
+  "Evaluates UNIT again if it is one of the definitions that can be, or
+reports it; then tells the definitions that depend on what it defines
+whether that changed."
+  (let* ((name (definition-unit-name unit))
+         (form (definition-unit-form unit))
+         (previous (definition-unit-outputs unit))
+         (changed '()))
     (cond ((member (first form) *reevaluated-operators*)
            (when kiln.sys:*recompile-verbose*
              (format *error-output* "~&; compiling ~S again: ~A changed~%"
-                     name (describe-dependency key)))
-           (handler-case
-               (let ((*package* (definition-unit-package unit)))
-                 (eval form))
-             (error (e)
-               (warn 'kiln.sys:stale-definition :name name :key key :error e))))
+                     name (describe-dependency (stale-key unit))))
+           (let ((*update-notes* (list :notes))
+                 (*captured-fingerprint* (list name)))
+             (handler-case
+                 (let ((*package* (definition-unit-package unit)))
+                   (eval form)
+                   ;; A macro or SETF expander whose code is the same is
+                   ;; the same; constants and inline expansions are noted
+                   ;; only when they change.
+                   (let ((same-code (same-fingerprint-p (cdr *captured-fingerprint*)
+                                                        (definition-unit-fingerprint unit))))
+                     (setf changed
+                           (remove-if (lambda (key)
+                                        (and same-code (member (first key) '(:macro :setf))))
+                                      (cdr *update-notes*)))
+                     (when (and same-code kiln.sys:*recompile-verbose*)
+                       (format *error-output* "~&; ~S is the same~%" name))))
+               (error (e)
+                 (warn 'kiln.sys:stale-definition :name name
+                       :key (stale-key unit) :error e)))))
           (t
-           (warn 'kiln.sys:stale-definition :name name :key key)))))
+           (warn 'kiln.sys:stale-definition :name name :key (stale-key unit))))
+    (dolist (key previous)
+      (if (member key changed :test #'equal)
+          (mark-changed key t)
+          (mark-unchanged key)))
+    (dolist (key changed)
+      (unless (member key previous :test #'equal)
+        (mark-changed key nil)))))
+
+(defun stale-key (unit)
+  "A dependency of UNIT that changed, for a report."
+  (or (find-if (lambda (key) (member key *changed-keys* :test #'equal))
+               (definition-unit-keys unit))
+      (first (definition-unit-keys unit))))
 
 (defun kiln.sys:dependents (kind name)
   "The names of the definitions evaluated in the image whose code depends
 on the definition (KIND NAME): KIND is :MACRO, :INLINE, :SETF or
 :CONSTANT."
-  (mapcar #'definition-unit-name (reverse (gethash (list kind name) *dependents*))))
+  (dependent-names (list kind name)))
 
 (defun kiln.sys:dependencies (name)
   "The dependencies (KIND NAME) of the definition named NAME (as in a

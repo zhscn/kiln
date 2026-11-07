@@ -90,7 +90,9 @@ returns its values."
           (compile-module (front-end-forms `((setq *eval-values* (multiple-value-list ,form)))
                                            session)
                           name :session session :image t))
-      (let ((init (kiln.sys:%primop :jit (kiln.kir::module-string module) literals)))
+      (let* ((kir (kiln.kir::module-string module))
+             (init (progn (note-compiled-code name kir literals)
+                          (kiln.sys:%primop :jit kir literals))))
         (unless init
           (error "kiln-cg could not compile ~S." form))
         (let ((*eval-values* nil))
