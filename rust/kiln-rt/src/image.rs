@@ -37,11 +37,13 @@ const TRAILER_MAGIC: [u8; 8] = *b"KILNEXE1";
 
 /// End of the mapped image region (IMAGE_BASE if there is none).
 static IMAGE_END: AtomicUsize = AtomicUsize::new(IMAGE_BASE);
-/// Set when code is registered other than by an AOT executable's module
-/// info (kiln-cg's JIT, COMPILE): images cannot hold such code yet.
+/// Set when kiln-cg's JIT loads a program (not into the code region,
+/// code.rs): images cannot hold its code.
 static RUNTIME_CODE: AtomicBool = AtomicBool::new(false);
-/// Fingerprint of the executable's static data (see `fingerprint`).
 static MODULE_INFO: AtomicUsize = AtomicUsize::new(0);
+/// Fingerprint of the executable (see `fingerprint`), once its tables are
+/// registered.
+static FINGERPRINT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 pub(crate) fn note_runtime_code() {
     RUNTIME_CODE.store(true, Ordering::Relaxed);
@@ -49,6 +51,12 @@ pub(crate) fn note_runtime_code() {
 
 pub(crate) fn note_module_info(info: usize) {
     MODULE_INFO.store(info, Ordering::Relaxed);
+}
+
+/// Called once the executable's static roots are registered, before any
+/// code is compiled into the image.
+pub(crate) fn note_executable() {
+    FINGERPRINT.store(fingerprint(&crate::gc::static_roots()), Ordering::Relaxed);
 }
 
 /// Is ADDR in the mapped image region?
@@ -78,6 +86,11 @@ struct Header {
     /// (address, value) pairs of static words follow the objects (padded
     /// to a page).
     nstatic: u64,
+    /// End of the code region's pages (code.rs); their contents follow
+    /// the static words, then `code_words` words describing the segments
+    /// and tables of the code region.
+    code_top: u64,
+    code_words: u64,
 }
 
 const HEADER_WORDS: usize = std::mem::size_of::<Header>() / 8;
@@ -130,7 +143,78 @@ unsafe extern "C" {
 fn in_text(addr: usize) -> bool {
     let start = &raw const __executable_start as usize;
     let end = &raw const etext as usize;
-    addr >= start && addr < end
+    (addr >= start && addr < end) || crate::code::contains(addr)
+}
+
+/// The code region's segments and tables as words.
+fn code_words(r: &crate::code::Region) -> Vec<u64> {
+    let mut w = vec![r.segments.len() as u64];
+    for s in &r.segments {
+        w.extend([s.addr as u64, s.len as u64, s.prot as u64]);
+    }
+    w.push(r.tables.len() as u64);
+    for t in &r.tables {
+        w.push(t.callsites.len() as u64);
+        for c in &t.callsites {
+            w.extend([c.func as u64, c.ret_off as u64 | (c.handler_off as u64) << 32, c.frame_offset as u64]);
+        }
+        w.push(t.maps.len() as u64);
+        for (func, ret_off, offsets) in &t.maps {
+            w.extend([*func as u64, *ret_off as u64, offsets.len() as u64]);
+            w.extend(offsets.iter().map(|&o| o as u64));
+        }
+        w.push(t.roots.len() as u64);
+        w.extend(t.roots.iter().map(|&r| r as u64));
+    }
+    w
+}
+
+fn parse_code_words(w: &[u64]) -> (Vec<crate::code::Segment>, Vec<crate::code::Tables>) {
+    use crate::code::{Prot, Segment, Tables};
+    let mut i = 0;
+    let mut next = || {
+        i += 1;
+        w[i - 1]
+    };
+    let segments = (0..next())
+        .map(|_| Segment {
+            addr: next() as usize,
+            len: next() as usize,
+            prot: match next() {
+                0 => Prot::ReadWrite,
+                1 => Prot::ReadOnly,
+                _ => Prot::ReadExecute,
+            },
+        })
+        .collect();
+    let tables = (0..next())
+        .map(|_| {
+            let callsites = (0..next())
+                .map(|_| {
+                    let func = next() as usize;
+                    let offs = next();
+                    crate::unwind::CallSiteRecord {
+                        func,
+                        ret_off: offs as u32,
+                        handler_off: (offs >> 32) as u32,
+                        frame_offset: next() as u32,
+                        _pad: 0,
+                    }
+                })
+                .collect();
+            let maps = (0..next())
+                .map(|_| {
+                    let func = next() as usize;
+                    let ret_off = next() as u32;
+                    let n = next();
+                    (func, ret_off, (0..n).map(|_| next() as u32).collect())
+                })
+                .collect();
+            let roots = (0..next()).map(|_| next() as usize).collect();
+            Tables { callsites, maps, roots }
+        })
+        .collect();
+    (segments, tables)
 }
 
 // ---------------------------------------------------------------------------
@@ -209,7 +293,7 @@ fn as_bytes(words: &[u64]) -> &[u8] {
 /// `toplevel` must be a function.
 pub unsafe fn save(path: &std::path::Path, toplevel: u64, executable: bool) -> Result<(), String> {
     if RUNTIME_CODE.load(Ordering::Relaxed) {
-        return Err("only an AOT executable without code compiled at run time can save an image".into());
+        return Err("only an AOT executable can save an image".into());
     }
     let roots = crate::gc::static_roots();
     let mut s = Saver { out: Vec::new(), copied: HashMap::new() };
@@ -221,15 +305,21 @@ pub unsafe fn save(path: &std::path::Path, toplevel: u64, executable: bool) -> R
     }
     let toplevel = unsafe { s.translate(toplevel) };
     unsafe { s.scan()? };
+    let (code_top, code_tables) = {
+        let r = crate::code::REGION.lock().unwrap();
+        (r.top, code_words(&r))
+    };
     let header = Header {
         magic: MAGIC,
-        fingerprint: fingerprint(&roots),
+        fingerprint: FINGERPRINT.load(Ordering::Relaxed),
         base: IMAGE_BASE as u64,
         bytes: (s.out.len() * 8) as u64,
         toplevel,
         next_tls_index: crate::special::tls_used() as u64,
         next_identity_hash: crate::rtfun::next_identity_hash(),
         nstatic: roots.len() as u64,
+        code_top: code_top as u64,
+        code_words: code_tables.len() as u64,
     };
     let mut page = vec![0u64; PAGE / 8];
     page[..HEADER_WORDS].copy_from_slice(unsafe {
@@ -258,6 +348,11 @@ pub unsafe fn save(path: &std::path::Path, toplevel: u64, executable: bool) -> R
     f.write_all(as_bytes(&page)).map_err(err)?;
     f.write_all(as_bytes(&s.out)).map_err(err)?;
     f.write_all(as_bytes(&statics)).map_err(err)?;
+    f.write_all(unsafe {
+        std::slice::from_raw_parts(crate::code::CODE_BASE as *const u8, code_top - crate::code::CODE_BASE)
+    })
+    .map_err(err)?;
+    f.write_all(as_bytes(&code_tables)).map_err(err)?;
     if executable {
         f.write_all(&start.to_le_bytes()).map_err(err)?;
         f.write_all(&TRAILER_MAGIC).map_err(err)?;
@@ -337,8 +432,7 @@ pub fn load() -> Result<Option<u64>, String> {
     if h.magic != MAGIC {
         return Err("not a kiln image".into());
     }
-    let roots = crate::gc::static_roots();
-    if h.base as usize != IMAGE_BASE || h.fingerprint != fingerprint(&roots) || h.nstatic as usize != roots.len() {
+    if h.base as usize != IMAGE_BASE || h.fingerprint != FINGERPRINT.load(Ordering::Relaxed) {
         return Err("the image was saved by a different executable".into());
     }
     let bytes = h.bytes as usize;
@@ -364,8 +458,30 @@ pub fn load() -> Result<Option<u64>, String> {
         start + (PAGE + mapped) as u64,
     )
     .map_err(err)?;
-    for pair in statics.chunks_exact(2) {
-        unsafe { *(pair[0] as *mut u64) = pair[1] };
+    // The code region, whose tables add static roots.
+    let statics_end = start + (PAGE + mapped) as u64 + 16 * h.nstatic;
+    let code_len = h.code_top as usize - crate::code::CODE_BASE;
+    let mut cw = vec![0u64; h.code_words as usize];
+    f.read_exact_at(
+        unsafe { std::slice::from_raw_parts_mut(cw.as_mut_ptr() as *mut u8, cw.len() * 8) },
+        statics_end + code_len as u64,
+    )
+    .map_err(err)?;
+    let (segments, tables) = parse_code_words(&cw);
+    crate::code::restore(
+        |addr, len| {
+            f.read_exact_at(unsafe { std::slice::from_raw_parts_mut(addr as *mut u8, len) }, statics_end)
+                .map_err(err)
+        },
+        h.code_top as usize,
+        segments,
+        tables,
+    )?;
+    if crate::gc::static_roots().len() != h.nstatic as usize {
+        return Err("the image's static roots are not the executable's".into());
+    }
+    for [addr, value] in statics.as_chunks::<2>().0 {
+        unsafe { *(*addr as *mut u64) = *value };
     }
     crate::special::set_tls_used(h.next_tls_index);
     crate::rtfun::set_next_identity_hash(h.next_identity_hash);

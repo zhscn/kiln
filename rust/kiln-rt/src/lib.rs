@@ -1,6 +1,7 @@
 //! kiln runtime.
 
 pub mod bignum;
+pub mod code;
 pub mod context;
 pub mod gc;
 pub mod image;
@@ -83,7 +84,9 @@ pub fn exported(name: &str) -> Option<usize> {
 
 /// Registers the call sites, stack maps and static roots of code loaded
 /// into the running image.
-/// Code registered here is not an AOT executable's own (image.rs).
+/// Registers a program loaded by kiln-cg's JIT, which images cannot hold
+/// (image.rs). Code compiled into the running image is registered by
+/// `code::register`.
 pub fn register_code(callsites: &[CallSiteRecord], maps: &[gc::StackMapRecord], roots: &[usize]) {
     image::note_runtime_code();
     register_code_tables(callsites, maps, roots);
@@ -142,6 +145,7 @@ unsafe fn run_module_here(info: &ModuleInfo) -> i32 {
             std::slice::from_raw_parts(info.stackmaps, info.nstackmaps as usize),
             std::slice::from_raw_parts(info.roots, info.nroots as usize),
         );
+        image::note_executable();
         for e in std::slice::from_raw_parts(info.exports, info.nexports as usize) {
             let name = std::ffi::CStr::from_ptr(e.name as *const std::ffi::c_char);
             register_export(&name.to_string_lossy(), e.addr);

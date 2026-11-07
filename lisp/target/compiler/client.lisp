@@ -92,9 +92,26 @@
 (defmethod cb:eval-cst ((client image-client) cst environment)
   (maclina.compile:eval (cst:raw cst) (maclina-environment environment)))
 
+;;; MACROLET not at top level: Common-boot hands over the expander as an
+;;; AST, which only the HIR evaluator runs, in the cross client's
+;;; environment. Here the expander is compiled by Maclina from the
+;;; definition's source (the local function AST's origin, a CST), in the
+;;; environment of the enclosing local macros, as at top level.
+(defvar *local-macro*)                  ; (definition-form . environment)
+
+(defmethod cb::finalize-local-macro-ast :around
+    ((client image-client) (ast ico:local-function-ast) environment)
+  (let ((origin (ico:origin ast)))
+    (let ((*local-macro* (cons (if (typep origin 'cst:cst) (cst:raw origin) origin)
+                               environment)))
+      (call-next-method))))
+
 (defmethod cb:compile-local-macro-function-ast ((client image-client) lambda-ast environment)
   (declare (ignore lambda-ast environment))
-  (error "The compiler on kiln does not compile MACROLET not at top level yet (docs/11 §8)."))
+  (destructuring-bind ((name lambda-list &rest body) . env) *local-macro*
+    (let ((expander (maclina.compile:compile (ecclesia:parse-macro name lambda-list body)
+                                             (maclina-environment env))))
+      (lambda () expander))))
 
 ;;; Inline proclamations at compile time (DECLAIM) reach the front end
 ;;; through the kernel's PROCLAIM.

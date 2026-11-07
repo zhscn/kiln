@@ -559,7 +559,7 @@ frontend 模块不需要改动。其余的不一致和错误，大多是“在 S
 
 ### 11.3 内存和登记
 
-- 运行期编出的模块共用一块预留的 16 GiB 地址空间：只预留，用到时才提交，从低往高分配，从不释放。代码目前不回收。
+- 运行期编出的模块共用一块预留的 16 GiB 地址空间：只预留，用到时才提交，从低往高分配，从不释放。代码目前不回收。M6.1 起这块区域在固定地址 `0x3800_0000_0000`，由 kiln-rt 管理（`code.rs`），各模块的表也在那里留一份，堆快照可以连同这些代码一起保存（[15](15-heap-image.md) §3）。
 - 调用点表、栈图表、static root 表都按地址排序。新模块的地址在已有模块之上时，登记只需追加。原来每次都把整张表（image 的几十万项）重排一遍，一次登记要 1.2 ms。
 - kiln-cg 处理小模块时不再开线程，ISA 也只建一次。
 
@@ -575,7 +575,7 @@ frontend 模块不需要改动。其余的不一致和错误，大多是“在 S
 
 编译 `(lambda (x) (* x x))` 的 3.4 ms 中，前端 1.9 ms，降级 0.4 ms，打印 KIR 0.2 ms，kiln-cg 0.7 ms，新建 session 0.2 ms。原来 KIR 用字符串输出流逐字符写，光打印就要 15 ms；现在整个模块写进一个缓冲区（`module-string`）。
 
-所以 `eval` 仍用 Maclina：对只运行一次的代码，编译时间占主导。由于同样的原因，有两处只为展开宏或只运行几次而调用 `compile` 的地方，固定用 Maclina（把 `*compile-function*` 绑成 NIL，vendor/README.md）：
+M5.5 时 `eval` 仍用 Maclina：对只运行一次的代码，编译时间占主导。M6 起 `eval` 也改为原生（§12）。由于同样的原因，有两处只为展开宏或只运行几次而调用 `compile` 的地方，固定用 Maclina（把 `*compile-function*` 绑成 NIL，vendor/README.md）：
 - Common-boot 的 HIR 求值器：交叉编译时，每个宏的展开函数都要求值，求值器为每个函数编一个参数解析器。编 kernel 和 CLOS 时要编约 800 个，改成原生编译后，一个自举阶段从 321 秒变成 357 秒。
 - parser.packrat 的 `%uses?`：借编译来展开宏。原生编译器还不支持不在顶层的 `macrolet`，编译出错后退回保守的判断，结果和 SBCL 不同，自举因此不闭合。
 
@@ -585,5 +585,20 @@ frontend 模块不需要改动。其余的不一致和错误，大多是“在 S
 
 - 代码回收：函数对象不再被引用后，代码和它的表也不会释放。
 - `compile` 的前端开销：每次都新建 session，复制宿主 inline 表。
-- 不在顶层的 `macrolet`（§8.3）：image-client 还不能编译局部宏的展开函数，含有它的 lambda 表达式 `compile` 时会报错。Maclina 能编译，所以 parser.packrat 的 `%uses?` 仍用 Maclina（§11.4）。
 - `compile-file` 和 FASL：现在只有 `compile`。
+
+## 12. 原生 `eval` 和 `load`（M6）
+
+compiler 模块载入后，`eval` 也走原生编译（`lisp/target/compiler/native.lisp` 的 `native-eval`，挂在 `kiln.kernel::*eval-function*` 上；绑成 NIL 则用 Maclina）。`load` 和 REPL 都经过 `eval`，所以载入的源文件和 REPL 里定义的函数都是机器码。做法和 SBCL 的 `eval` 一样：
+- 不需要代码的形式直接求值：符号（经 Maclina，以便处理符号宏）、自求值对象、`quote`、`(function 符号)`。
+- `progn` 和 `eval-when`（含 `:execute` 时）逐个求值子形式。这样 `defmacro` 在下一个子形式编译之前就已生效。
+- 宏形式先展开一层再判断。
+- 其他形式编成无参函数 `(lambda () 形式)`，然后调用。
+
+一个形式至少多花约 3.4 ms 的编译时间（§11.4），交互时察觉不到。
+
+**不在顶层的 `macrolet`**：Common-boot 把局部宏的展开函数交成 AST，只有 HIR 求值器能运行，而 image-client 的编译期求值用 Maclina，Maclina 要的是形式。现在 image-client 在 `finalize-local-macro-ast` 外面包一层，取局部函数 AST 的 origin（定义的 CST）。展开函数由 Maclina 从这个形式编译，所在环境含外层的局部宏，和顶层 `macrolet` 的做法相同（`lisp/target/compiler/client.lisp`）。parser.packrat 的 `%uses?` 和 HIR 求值器仍固定用 Maclina：它们只为展开宏或只运行几次而编译，原生编译反而更慢（§11.4）。
+
+测试：`tests/m5/co-native` 覆盖不在顶层的 `macrolet`（内层展开函数用到外层局部宏），以及 `eval` 和 `load`。
+
+还没做：`compile-file` 和 FASL；运行期的 `defstruct`（§8.3）。

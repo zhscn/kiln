@@ -43,14 +43,39 @@ pub enum Memory {
     Shared,
 }
 
-/// The region for code compiled into a running image: one, so that
-/// later modules lie above earlier ones, and the runtime's tables of call
-/// sites and stack maps, sorted by address, grow at the end. Reserved, not
-/// committed; never freed.
-static SHARED_ARENA: std::sync::Mutex<Option<cranelift_jit::ArenaMemoryProvider>> =
-    std::sync::Mutex::new(None);
+/// Allocates the code and data of modules compiled into a running image
+/// from the runtime's code region (kiln_rt::code), at a fixed address, so
+/// that heap images can hold them (docs/15 §6). Later modules lie above
+/// earlier ones, so the runtime's tables of call sites and stack maps,
+/// sorted by address, grow at the end. Never freed.
+///
+/// Each kind of memory is allocated from a chunk of pages of its own;
+/// a module's finalization applies the chunks' protections, and the next
+/// module starts new chunks.
+static SHARED: std::sync::Mutex<SharedState> = std::sync::Mutex::new(SharedState { chunks: Vec::new() });
+
+struct Chunk {
+    prot: kiln_rt::code::Prot,
+    start: usize,
+    cursor: usize,
+    end: usize,
+}
+
+struct SharedState {
+    /// The chunks of the module being compiled.
+    chunks: Vec<Chunk>,
+}
 
 struct SharedArena;
+
+fn prot(kind: &cranelift_jit::JITMemoryKind) -> kiln_rt::code::Prot {
+    use cranelift_jit::JITMemoryKind;
+    match kind {
+        JITMemoryKind::Executable => kiln_rt::code::Prot::ReadExecute,
+        JITMemoryKind::ReadOnly => kiln_rt::code::Prot::ReadOnly,
+        JITMemoryKind::Writable => kiln_rt::code::Prot::ReadWrite,
+    }
+}
 
 impl cranelift_jit::JITMemoryProvider for SharedArena {
     fn allocate(
@@ -59,23 +84,35 @@ impl cranelift_jit::JITMemoryProvider for SharedArena {
         align: u64,
         kind: cranelift_jit::JITMemoryKind,
     ) -> std::io::Result<*mut u8> {
-        let mut arena = SHARED_ARENA.lock().unwrap();
-        if arena.is_none() {
-            *arena = Some(cranelift_jit::ArenaMemoryProvider::new_with_size(16 << 30).map_err(std::io::Error::other)?);
+        let align = align.max(1) as usize;
+        let prot = prot(&kind);
+        let mut state = SHARED.lock().unwrap();
+        if let Some(c) = state.chunks.iter_mut().rev().find(|c| c.prot == prot) {
+            let at = c.cursor.next_multiple_of(align);
+            if at + size <= c.end {
+                c.cursor = at + size;
+                return Ok(at as *mut u8);
+            }
         }
-        arena.as_mut().unwrap().allocate(size, align, kind)
+        let len = size.next_multiple_of(kiln_rt::code::PAGE).max(16 * kiln_rt::code::PAGE);
+        let start = kiln_rt::code::allocate_pages(len).map_err(std::io::Error::other)?;
+        state.chunks.push(Chunk { prot, start, cursor: start + size, end: start + len });
+        Ok(start as *mut u8)
     }
 
     unsafe fn free_memory(&mut self) {}
 
     fn finalize(
         &mut self,
-        branch_protection: cranelift_jit::BranchProtection,
+        _branch_protection: cranelift_jit::BranchProtection,
     ) -> cranelift_module::ModuleResult<()> {
-        match SHARED_ARENA.lock().unwrap().as_mut() {
-            Some(arena) => arena.finalize(branch_protection),
-            None => Ok(()),
+        let chunks = std::mem::take(&mut SHARED.lock().unwrap().chunks);
+        for c in chunks {
+            kiln_rt::code::add_segment(c.start, c.end - c.start, c.prot)
+                .map_err(|e| cranelift_module::ModuleError::Allocation { err: std::io::Error::other(e) })?;
         }
+        // x86-64 needs no instruction cache maintenance.
+        Ok(())
     }
 }
 
@@ -133,7 +170,10 @@ pub fn load(kir: &kir::Module, opts: &Options, memory: Memory) -> Result<Loaded,
         .iter()
         .map(|(id, off)| module.get_finalized_data(*id).0 as usize + *off as usize)
         .collect();
-    kiln_rt::register_code(&callsites, &maps, &roots);
+    match memory {
+        Memory::Own(_) => kiln_rt::register_code(&callsites, &maps, &roots),
+        Memory::Shared => kiln_rt::code::register(&callsites, &maps, &roots),
+    }
     for (name, r) in &out.exports {
         let addr = match r {
             Ref::Func(id) => module.get_finalized_function(*id) as usize,

@@ -77,9 +77,18 @@
 (defvar *load-pathname* nil)
 (defvar *load-truename* nil)
 
+(defvar *eval-function* nil
+  "The function EVAL evaluates a form with: the compiler module sets it to
+its native evaluator (docs/11 §12); NIL, Maclina's.")
+
+(defun eval (form)
+  (if *eval-function*
+      (funcall *eval-function* form)
+      (maclina-eval form)))
+
 ;;; Calls of unknown functions are reported after the form has run, if the
 ;;; functions are still undefined: not for a recursive DEFUN.
-(defun eval (form)
+(defun maclina-eval (form)
   (let ((unknown '()))
     (multiple-value-prog1
         (handler-bind ((maclina.compile:unknown-function

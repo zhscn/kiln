@@ -56,3 +56,29 @@
   (print (funcall f)))
 (print (loop repeat 50 collect (funcall (compile nil '(lambda (x) (1+ x))) 1) into l
              finally (return (reduce #'+ l))))
+
+;; MACROLET not at top level; the inner expander uses the outer local macro
+(print (funcall (compile nil '(lambda (x)
+                               (macrolet ((twice (form) `(* 2 ,form)))
+                                 (macrolet ((quad (form) `(twice (twice ,form)))
+                                            (const () (twice 5)))
+                                   (list (twice x) (quad x) (const))))))
+                7))
+
+;; EVAL is native: a DEFMACRO takes effect before the next form of a
+;; PROGN is compiled; DEFUN'd functions are native
+(print (eval '(progn
+               (defmacro ev-square (x) `(* ,x ,x))
+               (defun ev-f (n) (ev-square (+ n 1)))
+               (ev-f 3))))
+(print (eq (type-of (fdefinition 'ev-f)) (type-of #'car)))
+(print (eval '(eval-when (:execute) (defvar *ev-var* 41) (incf *ev-var*))))
+(print (eval ''quoted))
+(print (eval '*ev-var*))
+
+;; LOAD evaluates natively too
+(defvar *ld*)
+(with-open-file (out "build/test/co-native-load.lisp" :direction :output :if-exists :supersede)
+  (format out "(defmacro ld-twice (x) `(list ,x ,x))~%(defun ld-f (y) (ld-twice (1+ y)))~%(defparameter *ld* (ld-f 1))~%"))
+(load "build/test/co-native-load.lisp")
+(print (list *ld* (ld-f 10)))

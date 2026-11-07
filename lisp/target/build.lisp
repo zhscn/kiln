@@ -8,44 +8,73 @@
 ;;;; as KILN.COMPILER:FRONT-END takes them. Each module is written to
 ;;;; NAME.kir in that directory. Programs (tests, the build program itself)
 ;;;; are modules too, after the five (kiln:write-manifest).
+;;;;
+;;;; With the environment variable KILN_SAVE_IMAGE naming a file, the
+;;;; program saves a heap image there once it has compiled the five
+;;;; modules (docs/15 §5). Started from that image, it reads the manifest
+;;;; again and compiles the programs only: tools/test.sh does so when kiln
+;;;; compiles the tests.
 
-(let ((manifest (with-open-file (in "modules.lisp-expr") (read in)))
+(defparameter *build-modules* '("kernel" "clos" "frontend" "eval" "compiler"))
+
+(defun build-module (entry manifest session start)
+  (let ((name (first entry))
+        (files (rest entry))
+        (extra-symbols '()))
+    ;; As kiln:compile-kernel and kiln:compile-compiler.
+    (when (string= name "kernel")
+      (do-external-symbols (s '#:common-lisp) (push s extra-symbols)))
+    (when (string= name "compiler")
+      (kiln.compiler::prepare-compiler-session session)
+      ;; As kiln:compile-compiler: (KILN.COMPILER::MODULE-FILES NAME),
+      ;; for programs that compile modules (tests/m5/co-clos.lisp), is
+      ;; the source files of the module NAME, here from the manifest.
+      (let* ((client (kiln.compiler::session-client session))
+             (genv (trucler:global-environment
+                    client (kiln.compiler::session-environment session))))
+        (kiln.compiler::host-macro
+         client genv 'kiln.compiler::module-files
+         (lambda (form env)
+           (declare (ignore env))
+           `',(rest (assoc (second form) manifest :test #'string=))))))
+    (let ((module
+            ;; Undefined functions (accessors of DEFCLASS) are reported
+            ;; as warnings, on *STANDARD-OUTPUT*.
+            (handler-bind ((warning (lambda (w)
+                                      (let ((r (find-restart 'muffle-warning w)))
+                                        (when r (invoke-restart r))))))
+              (multiple-value-bind (asts packages)
+                  (kiln.compiler:front-end files session)
+                (kiln.compiler:compile-module asts name :session session
+                                                        :defined-packages packages
+                                                        :extra-symbols extra-symbols)))))
+      (with-open-file (out (concatenate 'string name ".kir")
+                           :direction :output :if-exists :supersede)
+        (kiln.kir:print-module module out)))
+    (format t "~A ~,1Fs~%" name
+            (/ (- (get-internal-real-time) start) internal-time-units-per-second))
+    (finish-output)))
+
+(defun read-build-manifest ()
+  (with-open-file (in "modules.lisp-expr") (read in)))
+
+(defun build-programs (session)
+  "Compiles the entries of the manifest after the five modules, which
+SESSION has compiled."
+  (let ((manifest (read-build-manifest))
+        (start (get-internal-real-time)))
+    (dolist (entry manifest)
+      (unless (member (first entry) *build-modules* :test #'string=)
+        (build-module entry manifest session start)))))
+
+(let ((manifest (read-build-manifest))
       (session (kiln.compiler:make-session :client-class 'kiln.compiler::cross-client))
-      (start (get-internal-real-time)))
+      (start (get-internal-real-time))
+      (image (kiln.kernel::sys-string 10 (kiln.kernel::string-octets "KILN_SAVE_IMAGE"))))
   (dolist (entry manifest)
-    (let ((name (first entry))
-          (files (rest entry))
-          (extra-symbols '()))
-      ;; As kiln:compile-kernel and kiln:compile-compiler.
-      (when (string= name "kernel")
-        (do-external-symbols (s '#:common-lisp) (push s extra-symbols)))
-      (when (string= name "compiler")
-        (kiln.compiler::prepare-compiler-session session)
-        ;; As kiln:compile-compiler: (KILN.COMPILER::MODULE-FILES NAME),
-        ;; for programs that compile modules (tests/m5/co-clos.lisp), is
-        ;; the source files of the module NAME, here from the manifest.
-        (let* ((client (kiln.compiler::session-client session))
-               (genv (trucler:global-environment
-                      client (kiln.compiler::session-environment session))))
-          (kiln.compiler::host-macro
-           client genv 'kiln.compiler::module-files
-           (lambda (form env)
-             (declare (ignore env))
-             `',(rest (assoc (second form) manifest :test #'string=))))))
-      (let ((module
-              ;; Undefined functions (accessors of DEFCLASS) are reported
-              ;; as warnings, on *STANDARD-OUTPUT*.
-              (handler-bind ((warning (lambda (w)
-                                        (let ((r (find-restart 'muffle-warning w)))
-                                          (when r (invoke-restart r))))))
-                (multiple-value-bind (asts packages)
-                    (kiln.compiler:front-end files session)
-                  (kiln.compiler:compile-module asts name :session session
-                                                          :defined-packages packages
-                                                          :extra-symbols extra-symbols)))))
-        (with-open-file (out (concatenate 'string name ".kir")
-                             :direction :output :if-exists :supersede)
-          (kiln.kir:print-module module out)))
-      (format t "~A ~,1Fs~%" name
-              (/ (- (get-internal-real-time) start) internal-time-units-per-second))
+    (build-module entry manifest session start)
+    (when (and (stringp image) (plusp (length image))
+               (string= (first entry) "compiler"))
+      (kiln.sys:save-image image :toplevel (lambda () (build-programs session)))
+      (format t "saved ~A~%" image)
       (finish-output))))

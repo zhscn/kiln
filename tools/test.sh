@@ -82,14 +82,33 @@ if [ -n "${KILN_COMPILER:-}" ]; then
   # test, in one session, as SBCL does above.
   compiler=$(realpath "$KILN_COMPILER")
   programs=""
-  for src in "${sources[@]}"; do programs+=" \"$src\""; done
+  # kiln runs in the build directory.
+  for src in "${sources[@]}"; do programs+=" \"$(realpath "$src")\""; done
   sbcl --noinform --non-interactive \
     --load "$root/tools/env.lisp" \
     --eval '(ql:quickload "kiln" :silent t)' \
     --eval "(kiln:write-manifest \"$build/modules.lisp-expr\" :programs '($programs))" \
     >"$build/compile.log" 2>&1 || { cat "$build/compile.log"; exit 1; }
-  (cd "$build" && MMTK_GC_TRIGGER=FixedHeapSize:${KILN_COMPILER_HEAP:-8589934592} "$compiler") \
+  # The five modules compiled are saved as a heap image (docs/15 §5),
+  # reused while the compiler and the modules' sources are the same.
+  image=$build/kiln-compiler.img
+  key=$( { sha256sum "$compiler"
+           sbcl --noinform --non-interactive --eval '(require :sb-md5)' --eval "
+             (with-open-file (in \"$build/modules.lisp-expr\")
+               (dolist (entry (subseq (read in) 0 5))
+                 (dolist (f (rest entry))
+                   (let ((f (if (consp f) (car (last f)) f)))
+                     (format t \"~a ~(~{~2,'0x~}~)~%\" f (coerce (sb-md5:md5sum-file f) 'list))))))"
+         } | sha256sum | cut -d' ' -f1)
+  if [ -f "$image" ] && [ "$(cat "$image.key" 2>/dev/null)" = "$key" ]; then
+    run=(env KILN_IMAGE="$image")
+  else
+    rm -f "$image" "$image.key"
+    run=(env KILN_SAVE_IMAGE="$image")
+  fi
+  (cd "$build" && "${run[@]}" MMTK_GC_TRIGGER=FixedHeapSize:${KILN_COMPILER_HEAP:-8589934592} "$compiler") \
     >>"$build/compile.log" 2>&1 || { cat "$build/compile.log"; exit 1; }
+  if [ -f "$image" ] && [ ! -f "$image.key" ]; then echo "$key" >"$image.key"; fi
 else
   sbcl --dynamic-space-size 4GB --noinform --non-interactive \
     --load "$root/tools/env.lisp" \
