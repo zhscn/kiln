@@ -65,6 +65,7 @@ fn mmtk() -> &'static MMTK<Kiln> {
                 assert!(builder.set_option(k, v), "bad MMTk option {k}={v}");
             }
         }
+        crate::gcstats::init();
         memory_manager::mmtk_init::<Kiln>(&builder)
     })
 }
@@ -270,6 +271,7 @@ impl ObjectModel<Kiln> for KilnObjectModel {
         }
         let to = ObjectReference::from_raw_address(dst).unwrap();
         copy_context.post_copy(to, bytes, semantics);
+        crate::gcstats::note_copy(from.to_raw_address().as_usize(), dst.as_usize(), bytes);
         to
     }
 
@@ -405,12 +407,20 @@ impl Collection<Kiln> for KilnCollection {
             blocked = MUTATORS_BLOCKED.wait(blocked).unwrap();
         }
         drop(blocked);
+        if crate::gcstats::enabled() {
+            let ages = matches!(*mmtk().get_options().plan, PlanSelector::SemiSpace).then(heap_range);
+            crate::gcstats::gc_start(used_bytes(), ages);
+        }
         for (_, m) in MUTATORS.lock().unwrap().iter() {
             mutator_visitor(unsafe { &mut *(*m as *mut KilnMutator) });
         }
     }
 
     fn resume_mutators(_tls: VMWorkerThread) {
+        if crate::gcstats::enabled() {
+            let live = memory_manager::live_bytes_in_last_gc(mmtk()).values().map(|s| s.live_bytes).sum();
+            crate::gcstats::gc_end(used_bytes(), live);
+        }
         *GC_COUNT.lock().unwrap() += 1;
         GC_DONE.notify_all();
     }
@@ -420,12 +430,14 @@ impl Collection<Kiln> for KilnCollection {
         // Taken before announcing that this mutator is blocked, so that the
         // collection cannot finish (and notify) before this thread waits.
         let mut n = GC_COUNT.lock().unwrap();
+        crate::gcstats::mutator_blocked();
         *BLOCKED_MUTATORS.lock().unwrap() += 1;
         MUTATORS_BLOCKED.notify_all();
         while *n == seen {
             n = GC_DONE.wait(n).unwrap();
         }
         *BLOCKED_MUTATORS.lock().unwrap() -= 1;
+        crate::gcstats::mutator_resumed();
         SEEN_GC_COUNT.with(|c| c.set(*n));
     }
 
@@ -642,6 +654,11 @@ pub extern "C" fn kiln_rt_gc_count(_ctx: *mut Context) -> u64 {
     *GC_COUNT.lock().unwrap() << 1
 }
 
+/// Bytes of MMTk's pages in use.
+pub fn used_bytes() -> usize {
+    memory_manager::used_bytes(mmtk())
+}
+
 /// Is the tagged heap pointer `v` an object in an MMTk space (as opposed
 /// to static data, which never moves)?
 pub fn in_mmtk_space(v: u64) -> bool {
@@ -662,10 +679,16 @@ pub fn in_heap(addr: usize) -> bool {
 /// allocates are, and kiln's static data never is.
 #[inline]
 fn in_heap_range(addr: usize) -> bool {
+    let (start, end) = heap_range();
+    addr >= start && addr < end
+}
+
+/// The address range of MMTk's spaces.
+#[inline]
+fn heap_range() -> (usize, usize) {
     static RANGE: OnceLock<(usize, usize)> = OnceLock::new();
-    let (start, end) = *RANGE.get_or_init(|| {
+    *RANGE.get_or_init(|| {
         let layout = mmtk::util::heap::vm_layout::vm_layout();
         (layout.heap_start.as_usize(), layout.heap_end.as_usize())
-    });
-    addr >= start && addr < end
+    })
 }
