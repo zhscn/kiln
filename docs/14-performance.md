@@ -117,3 +117,14 @@ SBCL 快在它的前端，即 Lisp 语义层的变换和类型推导，而不是
 
 - **浮点解码函数缺失（已修复）**：kiln 原来没有 CLHS 12.2 的 `integer-decode-float`、`decode-float`、`scale-float`、`float-sign`、`float-digits`、`float-precision`、`float-radix`。kiln 的 Quaviver 替身（`lisp/target/clos/quaviver.lisp`）也只支持以 10 为底。Invistra 的 `~F` 在舍入遇到恰好是 5 的那一位时，要用以 2 为底的精确表示来判断，于是报错。现在这些函数按位实现在 kernel 里，以 2 为底时用 `integer-decode-float`。测试 `tests/m4/clos-float-decode`，结果和 SBCL 一致。非规格化数 kiln 打印成最短的等价形式（`5.0d-324`），SBCL 打印成 `4.9406564584124654d-324`。
 - **Invistra 的舍入 bug（上游，未修）**：`(format nil "~,1f" 0.05f0)` 和 `(format nil "~,1f" 0.05d0)` 给出 `"0.0"`，应该是 `"0.1"`：两者的精确值都略大于 0.05。在 SBCL 上配原版 Quaviver 运行 Invistra，结果也一样，所以不是 kiln 的问题（vendor/README.md）。
+
+## 5. 内建的采样分析器（2026-11）
+
+实现了 [13](13-modern-practices.md) §8 的采样分析器和分配分析器（`rust/kiln-rt/src/profile.rs`、`lisp/target/clos/profile.lisp`）。
+
+- **CPU 模式**：一个定时器线程按间隔（默认 1 ms，实际时间）累加 tick，并设置被分析的 context 的 `poll_flag`。下一个 poll 点（函数入口、循环头）进入 `kiln_rt_poll`，沿帧指针链记下栈上各帧所在的函数（最多 256 帧，跨过 `%call-on-new-stack` 的栈段），权重是上次采样以来的 tick 数。所以一次很长的 runtime 调用（bignum 运算等）按它的时长计在调用它的 Lisp 帧上，不会因为中间没有 poll 点而少算。偏差是 safepoint 偏差：样本落在 poll 点，而不是精确的指令上。
+- **分配模式**：分配的慢路径（bump 分配器的缓冲用完，或者大对象）记录栈，权重是上次采样以来分配的字节数。编译出的代码内联分配，只在缓冲用完时进入 runtime，所以这是按缓冲大小（几十 KB）的采样。
+- 样本按栈聚合。函数名取自调试信息对象（[17](17-debugging.md)），读取经 `:frame` primop 的 PROFILE 操作（32–37），不分配。
+- **Lisp 接口**（`kiln.sys`）：`start-profiler`（`:mode :cpu`/`:alloc`，`:interval` 微秒）、`stop-profiler`、`profile-samples`（`(权重 . 函数名列表)`，最内层在前）、`profile-report`（按自身权重和按在栈上的总权重各列一张表）、`write-folded-stacks`（火焰图工具的 folded 格式）、`with-profiling`。
+- **整个程序**：环境变量 `KILN_PROFILE=cpu[:微秒]` 或 `alloc` 在启动时开始采样，程序结束（正常结束或 `exit`）时把 folded 栈写到 `KILN_PROFILE_OUT`（默认 `kiln-profile.folded`），并在标准错误上打印摘要。不用改程序，就能分析编译器自己（自举的各阶段）。程序自己调用 `start-profiler` 时，之前的样本被丢弃。
+- `tests/m4/clos-profile.lisp`。

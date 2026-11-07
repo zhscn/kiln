@@ -8,6 +8,7 @@ pub mod gc;
 pub mod image;
 pub mod number;
 pub mod object;
+pub mod profile;
 pub mod rtfun;
 pub mod special;
 pub mod stack;
@@ -177,6 +178,7 @@ unsafe fn run_module_here(info: &ModuleInfo) -> i32 {
         let here = &raw const ctx as usize;
         let size = lisp_stack_size();
         stack::set_stack_limits(&mut *ctx, here.saturating_sub(size) + (64 << 10), size);
+        profile::start_from_env(&mut *ctx);
         match toplevel {
             Some(f) => {
                 (info.enter)(&mut *ctx, f, function_entry(f), 0, 0);
@@ -187,6 +189,7 @@ unsafe fn run_module_here(info: &ModuleInfo) -> i32 {
                 }
             }
         }
+        profile::finish_from_env();
         use std::io::Write;
         let _ = std::io::stdout().flush();
         0

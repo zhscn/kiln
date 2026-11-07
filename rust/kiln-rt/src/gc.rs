@@ -527,6 +527,11 @@ pub unsafe fn alloc(ctx: *mut Context, bytes: u64, header: u64) -> u64 {
             }
         }
         note_gc_count();
+        let profiling = crate::profile::ALLOC_ACTIVE.load(std::sync::atomic::Ordering::Relaxed);
+        if profiling {
+            let bump = bump_allocator(mutator);
+            crate::profile::note_alloc(ctx, (*ctx).safepoint_fp, (*bump).cursor.as_usize(), bytes);
+        }
         // Large objects go to the plan's large object space.
         let semantics = if bytes > mmtk().get_plan().constraints().max_non_los_default_alloc_bytes {
             AllocationSemantics::Los
@@ -538,6 +543,9 @@ pub unsafe fn alloc(ctx: *mut Context, bytes: u64, header: u64) -> u64 {
         addr.store::<u64>(header);
         let obj = ObjectReference::from_raw_address(addr).unwrap();
         memory_manager::post_alloc(mutator, obj, bytes, semantics);
+        if profiling {
+            crate::profile::note_refill((*bump_allocator(mutator)).cursor.as_usize());
+        }
         addr.as_usize() as u64
     }
 }

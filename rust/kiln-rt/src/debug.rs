@@ -167,6 +167,9 @@ pub unsafe extern "C" fn kiln_rt_frame(ctx: *mut Context, op: u64, a: u64, b: u6
     if op == FRAME_LIST {
         return fixnum(unsafe { list_frames(&*ctx, a as usize, b) });
     }
+    if op >= crate::profile::PROFILE_START {
+        return crate::profile::op(ctx, op, a, b);
+    }
     let h = a as usize;
     let ret = unsafe { *((h + 8) as *const usize) };
     let Some(r) = lookup(ret) else { return nil };

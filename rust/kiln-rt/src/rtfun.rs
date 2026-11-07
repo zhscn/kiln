@@ -103,6 +103,7 @@ pub unsafe fn error_with(_ctx: *mut Context, code: u64, obj: u64) -> ! {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn kiln_rt_poll(ctx: *mut Context, fp: usize) -> u64 {
     unsafe { (*ctx).poll_flag = 0 };
+    crate::profile::poll(ctx, fp);
     // 1: the stack is exhausted; the caller signals it.
     crate::stack::check_stack(ctx, fp) as u64
 }
@@ -441,6 +442,7 @@ pub unsafe extern "C" fn kiln_rt_sys(_ctx: *mut Context, op: u64, a: u64, b: u64
             use std::io::Write;
             let _ = std::io::stdout().flush();
             {
+                crate::profile::finish_from_env();
                 std::process::exit(fixnum_value(a) as i32)
             }
         }

@@ -55,7 +55,10 @@
            ;; Dependency tracking (lisp/target/compiler/dependencies.lisp,
            ;; docs/18).
            #:dependents #:dependencies #:*recompile-verbose* #:stale-definition
-           #:stack-exhausted))
+           #:stack-exhausted
+           ;; The sampling profiler (lisp/target/clos/profile.lisp).
+           #:start-profiler #:stop-profiler #:profile-samples #:profile-report
+           #:write-folded-stacks #:with-profiling))
 
 (defpackage #:kiln.macros
   (:use #:cl)
