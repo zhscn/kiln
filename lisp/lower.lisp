@@ -85,7 +85,7 @@ so local names carry the module's name; shared ones (symbols) do not."
 
 (defun rt-print () (module-import-func "kiln_rt_print" 2 1))
 (defun rt-error () (module-import-func "kiln_rt_error" 3 0 :unwinds :noreturn))
-(defun rt-poll () (module-import-func "kiln_rt_poll" 1 0 :unwinds))
+(defun rt-poll () (module-import-func "kiln_rt_poll" 1 1 :unwinds))
 (defun rt-throw () (module-import-func "kiln_rt_throw" 4 0 :unwinds :noreturn))
 (defun rt-exit-to () (module-import-func "kiln_rt_exit_to" 4 0 :unwinds :noreturn))
 (defun rt-continue-unwind ()
@@ -311,6 +311,12 @@ name of its package as a string."
            (module-data label `(:words ,+kind-ratio+ ,(constant-word (numerator x))
                                        ,(constant-word (denominator x))))
            (setf (gethash x *constants*) `(:data ,label ,+tag-general+)))))
+    (complex
+     (or (gethash x *constants*)
+         (let ((label (fresh-label "kiln_complex_")))
+           (module-data label `(:words ,+kind-complex+ ,(constant-word (realpart x))
+                                       ,(constant-word (imagpart x))))
+           (setf (gethash x *constants*) `(:data ,label ,+tag-general+)))))
     (character
      (logior (ash (char-code x) +character-shift+) +character-tag+))
     (string
@@ -407,11 +413,23 @@ by ending the program."
     (start-block fatal)
     (emit-fatal-error code obj)))
 
-(defun emit-poll ()
-  (let ((slow (new-block)) (cont (new-block)))
-    (br `(:load :ctx ,+ctx-poll-flag+) slow cont)
+(defun emit-poll (&key stack)
+  "A poll point (docs/06 §7). With STACK (function entries), it also calls
+the slow path when the frame is below the context's stack limit; the slow
+path then returns true, and KILN.KERNEL::%STACK-EXHAUSTED signals the
+STORAGE-CONDITION."
+  (let ((slow (new-block)) (overflow (new-block)) (cont (new-block))
+        (exhausted (new-var :raw)))
+    (br (if stack
+            `(:or (:ne (:load :ctx ,+ctx-poll-flag+) 0)
+                  (:lt (:fp) (:load :ctx ,+ctx-stack-limit+)))
+            `(:load :ctx ,+ctx-poll-flag+))
+        slow cont)
     (start-block slow)
-    (emit `(:call-rt ,(rt-poll) () (:ctx) ,(handler)))
+    (emit `(:call-rt ,(rt-poll) (,exhausted) (:ctx) ,(handler)))
+    (br exhausted overflow cont)
+    (start-block overflow)
+    (emit-slow-call 'kiln.kernel::%stack-exhausted)
     (jump cont)
     (start-block cont)))
 
@@ -1332,7 +1350,7 @@ DEBUG-NAME and SOURCE (a source range) go into its debug info."
     (with-function (name)
       (let ((*self* (copy-to-var :self)))
         (emit-entry lambda-list)
-        (emit-poll)
+        (emit-poll :stack t)
         (multiple-value-bind (v n) (lower-progn-mv body)
           (emit `(:return ,v ,n))))
       (set-function-debug debug-name source))))
@@ -1527,12 +1545,12 @@ calls for the associative NCONC and APPEND."
 
 (defun eq-comparable-constant-p (ast)
   "True if AST is a constant that EQL compares as EQ: not a number that is
-a heap object (bignum, ratio, double float)."
+a heap object (bignum, ratio, double float, complex)."
   (multiple-value-bind (value constantp) (constant-value ast)
     (and constantp
          (not (and (integerp value)
                    (not (<= +most-negative-fixnum+ value +most-positive-fixnum+))))
-         (not (typep value '(or ratio double-float))))))
+         (not (typep value '(or ratio double-float complex))))))
 
 (defun simple-sequence-test (keyword-asts)
   "EQL or EQ if the keyword arguments KEYWORD-ASTS (of MEMBER or ASSOC)

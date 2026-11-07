@@ -41,15 +41,24 @@ pub struct Context {
     pub alloc_cursor: *mut usize,
     /// Offset 72. Address of the limit of the bump allocator.
     pub alloc_limit: *mut usize,
-    /// Offset 80, last so that its size does not move the other fields.
-    /// Transfer area: arguments beyond the register arguments, and return
-    /// values beyond the first.
+    /// Offset 80. Function entries call the poll slow path when their frame
+    /// pointer is below it: the stack is nearly exhausted (stack.rs). 0
+    /// when the stack's bounds are not known.
+    pub stack_limit: usize,
+    /// Offset 88, last of the fields compiled code uses, so that its size
+    /// does not move them. Transfer area: arguments beyond the register
+    /// arguments, and return values beyond the first.
     pub values: [u64; VALUES_MAX],
+    /// The soft and hard stack limits: `stack_limit` is the soft one,
+    /// lowered to the hard one while a stack exhaustion is signaled.
+    pub stack_soft_limit: usize,
+    pub stack_hard_limit: usize,
 }
 
 pub const CTX_STACK_BASE_FP: i32 = core::mem::offset_of!(Context, stack_base_fp) as i32;
 const _: () = assert!(core::mem::offset_of!(Context, tls) == 48);
-const _: () = assert!(core::mem::offset_of!(Context, values) == 80);
+const _: () = assert!(core::mem::offset_of!(Context, stack_limit) == 80);
+const _: () = assert!(core::mem::offset_of!(Context, values) == 88);
 const _: () = assert!(core::mem::offset_of!(Context, values_live) == 56);
 const _: () = assert!(core::mem::offset_of!(Context, alloc_cursor) == 64);
 const _: () = assert!(core::mem::offset_of!(Context, alloc_limit) == 72);
@@ -68,6 +77,9 @@ impl Context {
             values_live: 0,
             alloc_cursor: core::ptr::null_mut(),
             alloc_limit: core::ptr::null_mut(),
+            stack_limit: 0,
+            stack_soft_limit: 0,
+            stack_hard_limit: 0,
         });
         ctx.mutator = crate::gc::bind_mutator(&mut *ctx);
         let (cursor, limit) = unsafe { crate::gc::bump_pointer_fields(ctx.mutator) };

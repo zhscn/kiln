@@ -135,7 +135,4 @@ else NIL."
   (and (instancep object)
        (not (eql (stamp object) (%slot (class-of object) '%unique-number)))))
 
-(defun update-obsolete-instance (instance)
-  ;; Class redefinition is not supported yet, so no instance becomes
-  ;; obsolete; this keeps a stale stamp from looping.
-  (error "obsolete instance: class redefinition is not supported yet" instance))
+;;; UPDATE-OBSOLETE-INSTANCE: redefinition.lisp.

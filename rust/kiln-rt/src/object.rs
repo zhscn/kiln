@@ -36,6 +36,10 @@ pub const KIND_INSTANCE: u64 = 9;
 pub const KIND_FUNCALLABLE_INSTANCE: u64 = 10;
 /// Rack: [header (length << 8), class, stamp, slot list, slots...].
 pub const KIND_RACK: u64 = 11;
+/// Complex number: [header, real part, imaginary part], both rationals
+/// or both floats of the same format; a rational complex has a nonzero
+/// imaginary part.
+pub const KIND_COMPLEX: u64 = 12;
 
 /// Immediates: low 3 bits 0b011, bits 3..8 the immediate kind, payload
 /// from bit 8. See docs/09-m3-kernel.md §2.
@@ -227,7 +231,7 @@ pub fn object_bytes(header: u64) -> usize {
         KIND_SYMBOL => SYMBOL_BYTES,
         KIND_STRING => 8 + (4 * header_length(header)).next_multiple_of(8),
         KIND_BIGNUM => 8 + 8 * header_length(header),
-        KIND_RATIO => 24,
+        KIND_RATIO | KIND_COMPLEX => 24,
         KIND_DOUBLE => 16,
         KIND_INSTANCE => 16,
         KIND_FUNCALLABLE_INSTANCE => 32,
@@ -315,6 +319,14 @@ pub unsafe fn write_object(out: &mut String, v: u64) {
                 let _ = write!(out, "{}", unsafe { crate::bignum::to_bigint(v) });
             }
             KIND_RATIO | KIND_DOUBLE => unsafe { crate::number::write_number(out, v) },
+            KIND_COMPLEX => unsafe {
+                let p = untag(v);
+                out.push_str("#C(");
+                write_object(out, *((p + 8) as *const u64));
+                out.push(' ');
+                write_object(out, *((p + 16) as *const u64));
+                out.push(')');
+            },
             KIND_INSTANCE => {
                 let _ = write!(out, "#<STANDARD-OBJECT {:#x}>", v);
             }

@@ -1,0 +1,15 @@
+(#C(1 2) 1 #C(1.0 0.0) #C(1.0 0.0) #C(1/2 -3) #C(1.0d0 2.0d0) #C(3 4) #C(1.5 0.0) 1)
+(1 2 5 0 0.0 #C(1 -2) 3)
+(#C(4 -2) #C(-2 6) #C(11 2) #C(-1/5 2/5) #C(2 2) #C(2 4) #C(-1 -2) #C(1/2 1) #C(1/5 -2/5) #C(1.5 2.0) #C(1.0d0 2.0d0) 0 -1 #C(2 2) #C(-11 -2) #C(1/5 -2/5) 1)
+(T T NIL T T NIL T)
+TYPE-ERROR
+DIVISION-BY-ZERO
+(5.0 5.0d0 5.0 1.5707964 3.1415927 #C(0.6 0.8) -1.0 0 #C(1.0 0.0))
+(T NIL T T T)
+(A B 2)
+(T NIL T NIL T T T T NIL NIL (COMPLEX DOUBLE-FLOAT) (COMPLEX RATIONAL) COMPLEX T)
+(COMPLEX REAL)
+(#C(0.0 3.1415927) 0.0d0 0 #C(0.0 2.0) #C(0.0d0 2.0d0) #C(2.0 1.0) T T T T T T T T T T T T T T T T T T T T T T T T T T)
+(#C(1 2) #C(1.5 -2.5) 2 "#C(1 2) #C(1.0d0 -1.0d0)")
+5263
+#C(499500 500500)

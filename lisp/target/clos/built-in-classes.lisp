@@ -38,8 +38,8 @@
   (float real)
   (single-float float)
   (double-float float)
-  ;; Classes without instances yet: complex numbers, pathnames,
-  ;; readtables. (RANDOM-STATE is a structure, random.lisp.)
+  ;; Classes without instances yet: pathnames, readtables.
+  ;; (RANDOM-STATE is a structure, random.lisp.)
   (complex number)
   (pathname t)
   (logical-pathname pathname)

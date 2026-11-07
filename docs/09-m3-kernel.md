@@ -54,6 +54,7 @@ header 的低 8 位是 kind，第 8 位起是长度（含义随 kind 而定）�
 | 6 | bignum | `[header, 64 位数字...]`，二进制补码，小端，最短 | 数字个数 | 否 |
 | 7 | ratio | `[header, 分子, 分母]`，约分过，分母 > 1 | — | 分子、分母 |
 | 8 | double-float | `[header, IEEE 754 位模式]` | — | 否 |
+| 12 | complex | `[header, 实部, 虚部]`（2026-11，见 §9） | — | 实部、虚部 |
 
 以后的 kind（M3.4、M3.5）：simple-base-string、specialized vector（`(unsigned-byte 8)` 等）、bit-vector、bignum、ratio、double-float、complex、array header、标准对象和 rack（M4）。
 
@@ -123,7 +124,8 @@ kernel 的写法限制：
 - **kernel**：`two-arg-*` 一律交给 `kiln_rt_number_op`；`/`、`float`、`numerator`、`denominator`、`rational`、`rationalp`、`floatp`、`realp`、`sqrt`、`exp`、`log`、`sin`、`cos`、`tan`、`atan`、`ffloor`；`truncate` 等四种除法支持所有实数。位运算仍然只接受整数。
 - **常量**：single-float 编译成立即数，double-float 和 ratio 编译成静态对象。
 - **打印**：runtime 的打印器按 `*read-default-float-format*` = single-float 的规则输出：最短的、能读回原值的数字；`1e-3 <= |x| < 1e7` 用定点表示，否则用指数表示；double 用 `d`（`1.0d0`、`1.5d-5`）。以后由 Lisp 写的打印器和 Quaviver 取代。
-- **没做**：complex；浮点的 trap 和 `float-digits`、`integer-decode-float`、`scale-float` 等；NaN 和无穷的读写。
+- **complex**（2026-11）：kind 12，`[header, 实部, 虚部]`，只由 kernel 的 `complex` 构造，所以总是规范的（CLHS 12.1.5）：两部分都是有理数且虚部不为 0，或者是同一格式的两个浮点数。运算在 kernel 里按两部分做（`two-arg-+` 等先判断有没有 complex 参数），部分之间的类型传染由实数的传染得到。`eql` 的慢路径、`=`、`zerop`、`abs`（浮点按比例缩放）、`phase`、`signum`、`conjugate`、`cis`，以及 `sqrt`/`exp`/`log`/`expt` 和三角、双曲函数及其反函数的 complex 版本，负数的 `sqrt`/`log` 和负底数的非整数次幂得到 complex；分支切割按 CLHS 12.1.5.3，在实轴上的取值和 SBCL 一致。`typep` 认识 `complex` 和 `(complex 类型)`，`class-of` 是内建类 `complex`。编译期常量编译成静态对象。`tests/m4/clos-complex.lisp`。
+- **没做**：浮点的 trap 和 `float-digits`、`integer-decode-float`、`scale-float` 等；NaN 和无穷的读写。
 - `tests/m3/reals.lisp`：ratio 的约分和运算、类型传染、浮点打印、`=` 和 `eql` 对 `0.0`/`-0.0` 和不同格式的区别、有理数和浮点的精确比较、四种除法、初等函数、跨 GC 的 ratio 和 double。
 
 ## 10. M3.5：类型和序列
@@ -146,7 +148,7 @@ kernel 现在由 `lisp/target/` 下的三个文件组成（约 900 行 Lisp）�
 | 多维、特化、可调整的数组 | M4（Regalia） | 数组是 CLOS 类 |
 | 哈希表 | M4（Salmagundi） | 依赖 CLOS，还要补身份哈希 |
 | condition 系统 | M4（Predicament） | 依赖 CLOS；目前出错时 runtime 直接退出 |
-| complex | M4 之后 | 不阻塞 bootstrap |
+| complex | 2026-11 完成（§9） | 不阻塞 bootstrap |
 | `deftype`、`subtypep` | ctype（CLOS 之后） | |
 | 打印器、reader、`format` | Incless、Eclector、Invistra（CLOS 之后） | 目前由 runtime 的 Rust 打印器代替 |
 | Unicode 大小写表 | 以后 | 字符的大小写和分类目前只覆盖 Latin-1 |

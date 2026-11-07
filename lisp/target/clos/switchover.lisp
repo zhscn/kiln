@@ -46,8 +46,15 @@
                          &key (metaclass 'standard-class) direct-superclasses
                          &allow-other-keys)
   (let ((existing (find-class name nil)))
+    ;; A class that is defined again (redefinition.lisp).
     (when (and existing (not (typep existing 'forward-referenced-class)))
-      (error "redefining a class is not supported yet" name))
+      (return-from mop-ensure-class
+        (redefine-class existing
+                        (if (symbolp metaclass) (find-class metaclass) metaclass)
+                        (list* :direct-superclasses
+                               (loop for super in direct-superclasses
+                                     collect (if (symbolp super) (ensure-superclass super) super))
+                               (remove-keys initargs '(:name :metaclass :direct-superclasses))))))
     (let* ((metaclass (if (symbolp metaclass) (find-class metaclass) metaclass))
            (superclasses (loop for super in direct-superclasses
                                collect (if (symbolp super) (ensure-superclass super) super)))
@@ -92,6 +99,8 @@
                                 (list :argument-precedence-order argument-precedence-order)
                                 '()))))
              (setf (fdefinition name) gf)
+             ;; All the generic functions, for class redefinition.
+             (push gf *early-generic-functions*)
              gf)))))
 
 (defun mop-ensure-method (name &key lambda-list qualifiers specializers documentation function

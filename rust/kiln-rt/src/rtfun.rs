@@ -101,8 +101,10 @@ pub unsafe fn error_with(_ctx: *mut Context, code: u64, obj: u64) -> ! {
 /// # Safety
 /// `ctx` must be valid.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn kiln_rt_poll(ctx: *mut Context, _fp: usize) {
+pub unsafe extern "C" fn kiln_rt_poll(ctx: *mut Context, fp: usize) -> u64 {
     unsafe { (*ctx).poll_flag = 0 };
+    // 1: the stack is exhausted; the caller signals it.
+    crate::stack::check_stack(ctx, fp) as u64
 }
 
 static NEXT_IDENTITY_HASH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -438,7 +440,9 @@ pub unsafe extern "C" fn kiln_rt_sys(_ctx: *mut Context, op: u64, a: u64, b: u64
         18 => {
             use std::io::Write;
             let _ = std::io::stdout().flush();
-            std::process::exit(fixnum_value(a) as i32)
+            {
+                std::process::exit(fixnum_value(a) as i32)
+            }
         }
         _ => einval,
     };

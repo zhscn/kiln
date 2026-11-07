@@ -4,14 +4,14 @@
   (:export #:+fixnum-shift+ #:+tag-mask+ #:+tag-cons+ #:+tag-general+
            #:+kind-mask+ #:+kind-symbol+ #:+kind-function+ #:+kind-cons+
            #:+kind-simple-vector+ #:+kind-string+ #:+kind-bignum+
-           #:+kind-ratio+ #:+kind-double+ #:+single-float-tag+
+           #:+kind-ratio+ #:+kind-double+ #:+kind-complex+ #:+single-float-tag+
            #:+kind-instance+ #:+kind-funcallable-instance+ #:+kind-rack+ #:+function-kind-mask+
            #:+immediate-mask+ #:+character-tag+ #:+character-shift+ #:+char-code-limit+
            #:+symbol-name+ #:+symbol-package+ #:+symbol-plist+ #:+symbol-setf-function+ #:+vector-data+
            #:+symbol-function+ #:+symbol-value+ #:+symbol-tls-index+ #:+unbound+
            #:+length-shift+ #:+fobj-env+
            #:+cons-bytes+ #:+cons-car+ #:+cons-cdr+
-           #:+ctx-poll-flag+ #:+ctx-dynenv+ #:+ctx-values+ #:+values-max+ #:+ctx-values-live+ #:+ctx-alloc-cursor+ #:+ctx-alloc-limit+ #:+ctx-tls+ #:+no-tls-value+
+           #:+ctx-poll-flag+ #:+ctx-dynenv+ #:+ctx-values+ #:+values-max+ #:+ctx-values-live+ #:+ctx-alloc-cursor+ #:+ctx-alloc-limit+ #:+ctx-stack-limit+ #:+ctx-tls+ #:+no-tls-value+
            #:+dyn-catch+ #:+dyn-unwind-protect+ #:+dyn-exit-point+ #:+dyn-bind+ #:+dyn-progv+ #:+dynentry-size+
            #:+dyn-kind+ #:+dyn-prev+ #:+dyn-fp+ #:+dyn-tag+
            #:+dyn-pend-target+ #:+dyn-pend-value+
@@ -54,7 +54,8 @@
            #:serve
            ;; Dependency tracking (lisp/target/compiler/dependencies.lisp,
            ;; docs/18).
-           #:dependents #:dependencies #:*recompile-verbose* #:stale-definition))
+           #:dependents #:dependencies #:*recompile-verbose* #:stale-definition
+           #:stack-exhausted))
 
 (defpackage #:kiln.macros
   (:use #:cl)

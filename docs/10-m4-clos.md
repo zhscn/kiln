@@ -114,7 +114,7 @@ CLOS 是单独的模块（`kiln:compile-clos`，在 kernel 之后加载），源
 - **判别函数**：仍用 Clostrophilia 的调用历史和自动机（`add-path`、`extract-transition-information`、`make-transfer-groups`），然后解释执行，不生成 `tagbody`。内部状态是按 stamp 排好序的区间向量 `(start end 目标)`，每个特化的必需参数走一次转移，用二分查找；查不到就调用 `default-discriminating-function`。终态直接保存有效方法。
 - **有效方法**：`compute-effective-method` 仍返回形式，`effective-method-function` 把它变成闭包。支持 `call-method`、`make-method`、`progn`、`multiple-value-prog1`、`if`、`quote`、`and`、`or` 和全局函数调用，覆盖 standard 方法组合和所有短形式。长形式产生的其他代码要等 M5 的编译器。
 - **访问器方法**：`maybe-replace-method` 产生的方法，其函数直接是读写槽位置的闭包。
-- **过时实例**：`default-discriminating-function` 先检查特化参数里有没有 stamp 和它的类的 unique number 不一致的实例，有就先更新再重新分派。类重定义还不支持，所以目前的“更新”是报错，它保证 stamp 过时的实例不会让分派死循环。
+- **过时实例**：`default-discriminating-function` 先检查特化参数里有没有 stamp 和它的类的 unique number 不一致的实例，有就先更新再重新分派（类的重定义见 §28）。
 
 ## 9. M4.4 的实现记录：切换到 MOP
 
@@ -129,7 +129,7 @@ CLOS 是单独的模块（`kiln:compile-clos`，在 kernel 之后加载），源
    - `ensure-generic-function`：通过 `find-method-combination` 取方法组合；
    - `ensure-method`：`make-instance` 方法类，再 `add-method`。
 
-`make-instance` 现在是普通函数，还不是泛函。类和泛函的重定义也还不支持。
+`make-instance` 现在是普通函数，还不是泛函。类的重定义见 §28。
 
 其他改动：
 
@@ -354,7 +354,7 @@ kiln 的 client（`lisp/structures.lisp`）覆盖这几处：
 - `equalp` 不比较结构的槽；
 - 没有 `#S(...)` 的打印和读入；
 - ~~结构的访问器是泛函，不是普通函数，比较慢~~（M5.1 之后改成了 inline 函数）；
-- 重定义结构和重定义类一样，还不支持。
+- 重定义结构走类的重定义（§28），但访问器是 inline 函数，已编译的调用者不会跟着变。
 
 `tests/m4/clos-structures.lisp` 覆盖：
 - 默认构造函数、访问器、`setf`、谓词、复制；
@@ -495,7 +495,7 @@ Invistra vendor 在 `vendor/Invistra`，用的是 intrinsic 接口：`format` �
 **还没有的功能**：
 - 运行期的 `eval`/`compile`，REPL 的前提（reader 已有，§22）。
 - 标准流的输出缓冲（§21：文件流有缓冲，标准流没有）。
-- 类、泛函、结构的重定义（§7、§15）。
+- ~~类、泛函、结构的重定义（§7、§15）~~（类的重定义见 §28）。
 - 浮点的 `integer-decode-float` 等，以及真正的 Quaviver（§17）。
 - 位数组运算（`bit-and` 等），打印器以外对 Regalia 数组的完整支持（§14）。
 
@@ -783,3 +783,15 @@ kiln 编译自己时（docs/11 §10.2），CLOS 的通用机制占了大部分�
 lambda list 里有 `&optional`、`&rest`、`&key` 的泛函（`stream-write-string`、`shared-initialize`、builder protocol 的 `relate`），原来的判别闭包没有任何缓存，每次调用都在自动机里查找。只按一个参数分派时，现在也用同样的缓存表（`make-single-dispatch-list-closure`），有效方法仍然接收参数列表。
 
 kiln 编 CLOS 模块：148 秒 → 129 秒（加上 docs/11 §10.2 里其他改动之后是 88 秒）。
+
+## 28. 类的重定义（2026-11）
+
+cl-bench 的 CLOS 组反复执行同样的 `defclass`。`redefinition.lisp` 按 CLHS 4.3.6 实现重定义：
+
+- `mop-ensure-class` 遇到已有的类（不是前向引用）时调用 `redefine-class`：元类必须相同；先删掉旧的直接槽的读写方法，再用新的 initargs `reinitialize-instance` 这个类。`defclass` 没写的选项（`:direct-default-initargs`、`:documentation`、`:direct-slots`）取默认值，而不是沿用旧值。
+- 然后重新终结这个类和它所有已终结的子类（`refinalize`）。Clostrophilia 的 `finalize-inheritance` 每次都给类一个新的 unique number，所以之前创建的实例 stamp 都过时了。
+- **调用历史**：从所有泛函（`*early-generic-functions*`，switchover 之后 `ensure-generic-function` 新建的也加进去）的调用历史里删掉提到这些类的项，并让判别函数失效。这些项的可用方法可能已经变了（优先级列表变了），而且按旧 stamp 建的自动机只会匹配过时的实例。
+- **过时实例的更新**：判别函数的未命中路径发现过时实例时调用 `update-obsolete-instance`。实例的 rack 里还留着它创建时的槽列表，所以旧槽可以按旧位置读出。新建一个当前类的实例，同名的局部槽照搬，新类没有的局部槽把名字放进 discarded、值放进属性表，新增的局部槽放进 added；实例接管新实例的 rack（和 `change-class` 一样），然后调用 `update-instance-for-redefined-class`，默认方法用 added 调用 `shared-initialize`。
+- 另外补上了 `find-method`、`make-instances-obsolete`、`slot-exists-p`。
+- **限制**：只在泛函分派时检查过时实例。`slot-value` 直接按实例自己的槽列表找位置，所以过时实例在下次分派之前，用 `slot-value` 读到的仍是旧布局（值是对的，只是还没有更新）。类名 `typep` 的缓存以 stamp 为键，过时实例在更新之前得到的是旧类的结果。泛函的重定义（`defgeneric` 改 lambda list 等）还没有做。
+- `tests/m4/clos-redefine.lisp`：删槽、加槽、加超类、子类跟着更新、`update-instance-for-redefined-class` 的 :after 方法、`find-method`、`make-instances-obsolete`、反复重定义。

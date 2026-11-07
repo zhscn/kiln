@@ -142,6 +142,7 @@ unsafe fn unwind_to(
             }
             if top == target {
                 (*ctx).dynenv = (*top).prev;
+                crate::stack::restore_stack_limit(ctx, (*top).fp);
                 resume_in_frame(start_fp, (*top).fp, top as u64 | packed, value);
             }
             if (*top).kind == DYN_UNWIND_PROTECT {

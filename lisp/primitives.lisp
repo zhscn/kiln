@@ -166,7 +166,7 @@ are compared (no short circuit), which also checks every argument."
 ;;; Only fixnums, symbols and conses exist so far, so EQL is EQ.
 (define-primitive eql (a b)
   ;; Identical objects are EQL; otherwise only numbers that are heap
-  ;; objects (bignums, ratios, double floats) can be, which the kernel
+  ;; objects (bignums, ratios, double floats, complexes) can be, which the kernel
   ;; decides.
   (let ((r (copy-to-var (t-value))) (kind (new-var :raw))
         (no (new-block)) (general (new-block)) (slow (new-block)) (false (new-block))
@@ -176,7 +176,9 @@ are compared (no short circuit), which also checks every argument."
     (br `(:eq (:and ,a ,+tag-mask+) ,+tag-general+) general false)
     (start-block general)
     (emit `(:set ,kind (:and (:load ,a ,(- +tag-general+)) ,+kind-mask+)))
-    (br `(:and (:ge ,kind ,+kind-bignum+) (:le ,kind ,+kind-double+)) slow false)
+    (br `(:or (:and (:ge ,kind ,+kind-bignum+) (:le ,kind ,+kind-double+))
+              (:eq ,kind ,+kind-complex+))
+        slow false)
     (start-block slow)
     (emit `(:set ,r ,(emit-slow-call 'kiln.kernel::eql-slow a b)))
     (jump done)
@@ -217,7 +219,9 @@ are compared (no short circuit), which also checks every argument."
 (define-primitive numberp (a)
   (boolean-value `(:or ,(emit-integer-test a)
                        (:or (:eq (:and ,a ,+immediate-mask+) ,+single-float-tag+)
-                            (:or ,(emit-kind-test a +kind-ratio+) ,(emit-kind-test a +kind-double+))))))
+                            (:or (:or ,(emit-kind-test a +kind-ratio+)
+                                      ,(emit-kind-test a +kind-double+))
+                                 ,(emit-kind-test a +kind-complex+))))))
 (define-primitive zerop (a) (boolean-value (emit-compare-pair :eq a 0)))
 (define-primitive plusp (a) (boolean-value (emit-compare-pair :gt a 0)))
 (define-primitive minusp (a) (boolean-value (emit-compare-pair :lt a 0)))
@@ -701,6 +705,16 @@ cells (both by default)."
 
 (define-primop :ratiop (x) (boolean-value (emit-kind-test x +kind-ratio+)))
 (define-primop :double-float-p (x) (boolean-value (emit-kind-test x +kind-double+)))
+;;; Complex numbers (the kernel's COMPLEX makes them canonical).
+(define-primop :complexp (x) (boolean-value (emit-kind-test x +kind-complex+)))
+(define-primop :make-complex (r i)
+  (let* ((r (copy-to-var r)) (i (copy-to-var i))
+         (p (emit-alloc 24 +kind-complex+)))
+    (emit `(:store ,p 8 ,r))
+    (emit `(:store ,p 16 ,i))
+    (copy-to-var `(:add ,p ,+tag-general+))))
+(define-primop :realpart (x) (copy-to-var `(:load ,x ,+vector-data+)))
+(define-primop :imagpart (x) (copy-to-var `(:load ,x ,(+ +vector-data+ 8))))
 ;;; The bits of a float, as unsigned fixnums (lower.lisp writes float
 ;;; constants with them when it runs on kiln, docs/11 §8).
 (define-primop :single-float-bits (x) (copy-to-var `(:shl (:shr ,x 32) ,+fixnum-shift+)))

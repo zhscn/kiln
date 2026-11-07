@@ -6,6 +6,11 @@
 
 (define-condition kiln-simple-program-error (program-error simple-error) ())
 
+;;; As SBCL's: STORAGE-CONDITION is not an ERROR, so HANDLER-CASE of ERROR
+;;; does not catch it.
+(define-condition kiln.sys:stack-exhausted (storage-condition) ()
+  (:report "Control stack exhausted (no more room for function calls)."))
+
 (defun kiln.kernel::%runtime-error (code object)
   (flet ((type-error (expected-type)
            (error 'type-error :datum object :expected-type expected-type))
@@ -33,6 +38,7 @@
       (19 (error 'simple-error :format-control "~S is not a known type specifier"
                                :format-arguments (list object)))
       (21 (error 'undefined-function :name (list 'setf object)))
+      (22 (error 'kiln.sys:stack-exhausted))
       (t (kiln.sys:%primop :fatal-error code object)))))
 
 ;;; What the expansions of Common-macros' macros signal or call at run time.

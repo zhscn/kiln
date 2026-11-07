@@ -172,6 +172,11 @@ unsafe fn run_module_here(info: &ModuleInfo) -> i32 {
             }
         };
         let mut ctx = Context::new();
+        // The Lisp thread's stack: about lisp_stack_size() bytes below this
+        // frame.
+        let here = &raw const ctx as usize;
+        let size = lisp_stack_size();
+        stack::set_stack_limits(&mut *ctx, here.saturating_sub(size) + (64 << 10), size);
         match toplevel {
             Some(f) => {
                 (info.enter)(&mut *ctx, f, function_entry(f), 0, 0);

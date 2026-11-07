@@ -142,7 +142,7 @@ list, slots), the slots unbound."
 
 (defvar *built-in-class-names*
   #(fixnum character cons null symbol simple-string simple-vector bignum ratio
-    single-float double-float function t))
+    single-float double-float complex function t))
 
 ;;; The index in *BUILT-IN-CLASS-NAMES* of the class of OBJECT, which is not
 ;;; an instance; the most frequent kinds first.
@@ -158,8 +158,9 @@ list, slots), the slots unbound."
         ((kiln.kernel::ratiop object) 8)
         ((kiln.kernel::single-float-p object) 9)
         ((kiln.kernel::double-float-p object) 10)
-        ((functionp object) 11)
-        (t 12)))
+        ((complexp object) 11)
+        ((functionp object) 12)
+        (t 13)))
 
 (defun built-in-class-name-of (object)
   (svref *built-in-class-names* (built-in-class-index object)))
@@ -167,8 +168,8 @@ list, slots), the slots unbound."
 ;;; The classes and stamps of the built-in classes, by index, cached after
 ;;; the switchover to the MOP (switchover.lisp): built-in classes are not
 ;;; redefined.
-(defvar *built-in-classes* (kiln.kernel::make-simple-vector 13 nil))
-(defvar *built-in-stamps* (kiln.kernel::make-simple-vector 13 nil))
+(defvar *built-in-classes* (kiln.kernel::make-simple-vector 14 nil))
+(defvar *built-in-stamps* (kiln.kernel::make-simple-vector 14 nil))
 (defvar *switched-p* nil)
 
 (defun class-of (object)
@@ -381,7 +382,9 @@ list, slots), the slots unbound."
 
 (defvar *braid-built-p* nil)
 (defvar *early-generic-functions* '()
-  "The generic functions made before the switchover, most recent first.")
+  "The generic functions made before the switchover, most recent first;
+after it, ENSURE-GENERIC-FUNCTION adds the new ones (redefinition.lisp
+goes through them).")
 (defvar *switched-p* nil
   "True after the switchover to the MOP (switchover.lisp).")
 (defvar *class-records* '()

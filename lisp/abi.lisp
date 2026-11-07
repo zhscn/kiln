@@ -24,6 +24,7 @@
 (defconstant +kind-instance+ 9)        ; [header, rack]
 (defconstant +kind-funcallable-instance+ 10) ; [header, entry, rack, function]
 (defconstant +kind-rack+ 11)           ; [header, class, stamp, slot list, slots...]
+(defconstant +kind-complex+ 12)        ; [header, real part, imaginary part]
 ;;; Function objects and funcallable instances differ only in bit 3: a
 ;;; kind is a function kind when (logand kind +function-kind-mask+) = 2.
 (defconstant +function-kind-mask+ #xf7)
@@ -67,7 +68,10 @@
 (defconstant +ctx-dynenv+ 8)
 ;;; Transfer area: arguments beyond the register arguments, and (later)
 ;;; values beyond the first. VALUES_MAX words, at the end of the context.
-(defconstant +ctx-values+ 80)
+(defconstant +ctx-values+ 88)
+;;; Function entries call the poll slow path when their frame pointer is
+;;; below this (stack exhaustion, rust/kiln-rt/src/stack.rs).
+(defconstant +ctx-stack-limit+ 80)
 ;;; Pointer to the context's TLS table of special variable values.
 (defconstant +ctx-tls+ 48)
 ;;; Empty TLS slot: the symbol is not bound in this context.
@@ -121,7 +125,8 @@
 (defconstant +err-not-number+ 18)
 (defconstant +err-bad-type+ 19)
 (defconstant +err-lisp-error+ 20)
-(defconstant +err-undefined-setf-function+ 21)       ; ERROR before the condition system
+(defconstant +err-undefined-setf-function+ 21)
+(defconstant +err-stack-exhausted+ 22)        ; KILN.KERNEL::%STACK-EXHAUSTED       ; ERROR before the condition system
 
 ;;; Argument registers in the Lisp calling convention.
 (defconstant +reg-args+ 3)

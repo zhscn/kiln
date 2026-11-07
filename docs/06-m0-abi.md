@@ -64,7 +64,8 @@ Rust: kiln-launcher           staticlib，提供 C main，链接 kiln-rt
 | 56 | `values_live` | `values` 里有多少个字当前是 GC root，平时为 0（M2） |
 | 64 | `alloc_cursor` | bump 分配器 cursor 字段的地址：编译出的代码就地分配小对象（见 [07](07-m1-gc.md) §「内联分配」） |
 | 72 | `alloc_limit` | bump 分配器 limit 字段的地址 |
-| 80 | `values[1021]` | 传递区：第 4 个及之后的参数，第二个及之后的返回值（M2，见 [08 §4](08-m2-front-end.md#4-调用约定的补充超过-3-个参数)、[§5.3](08-m2-front-end.md#53-多值)）。放在最后，改大小不移动别的字段。`call-arguments-limit` 是 1024，`multiple-values-limit` 是 1022（M5.4：原来是 64 个字，Trinsic 的宏在编译期 `apply` 了 67 个以上的参数） |
+| 80 | `stack_limit` | 函数入口的帧指针低于它时进入 poll 慢路径：栈快用完了（§7）。0 表示不知道栈的范围 |
+| 88 | `values[1021]` | 传递区：第 4 个及之后的参数，第二个及之后的返回值（M2，见 [08 §4](08-m2-front-end.md#4-调用约定的补充超过-3-个参数)、[§5.3](08-m2-front-end.md#53-多值)）。放在最后，改大小不移动别的字段。`call-arguments-limit` 是 1024，`multiple-values-limit` 是 1022（M5.4：原来是 64 个字，Trinsic 的宏在编译期 `apply` 了 67 个以上的参数） |
 
 两侧的定义：`rust/kiln-rt/src/context.rs` 和 `lisp/abi.lisp`，修改时必须同步。
 
@@ -117,6 +118,8 @@ Rust: kiln-launcher           staticlib，提供 C main，链接 kiln-rt
 ## 7. Poll 点（C4）
 
 函数入口和每个 tagbody 标签（也就是循环头）都会插入 poll：读取 `ctx.poll_flag`，非零就调用 `kiln_rt_poll`。`kiln_rt_poll` 声明为 `unwinds`，所以经过 trampoline、按 `try_call` 编译，因为以后慢路径可能进入 debugger 并展开。M0 里慢路径只是把标志清零。
+
+**栈耗尽**（2026-11）：函数入口的 poll 同时比较帧指针和 `ctx.stack_limit`，低于它也进入慢路径，条件合成一次分支。`kiln_rt_poll` 返回 1 表示栈耗尽，入口随后调用 `kiln.kernel::%stack-exhausted`，它发出 `kiln.sys:stack-exhausted`（`storage-condition` 的子类，不是 `error`，和 SBCL 一样）。runtime 为每个栈设两个界限（`rust/kiln-rt/src/stack.rs`）：软界限在栈底之上栈大小的 1/8（256 KiB 到 4 MiB 之间），硬界限在栈底之上 64 KiB。越过软界限时 `stack_limit` 降到硬界限，handler 有空间运行；再越过硬界限就结束程序。展开落到比软界限高出一段距离的帧时，`stack_limit` 恢复为软界限，所以同一个栈可以反复耗尽、反复处理。`%call-on-new-stack` 的新栈有自己的界限，离开时（正常返回或展开经过边界）恢复原来的。检查只在函数入口做，代价是一次比较；Rust 代码自身的递归不在检查范围内。
 
 ## 8. KIR 语法
 

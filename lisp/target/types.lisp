@@ -59,6 +59,7 @@
         (float (floatp object))
         ((single-float short-float) (single-float-p object))
         ((double-float long-float) (double-float-p object))
+        (complex (complexp object))
         (bit (or (eql object 0) (eql object 1)))
         (unsigned-byte (and (integerp object) (>= object 0)))
         (signed-byte (integerp object))
@@ -98,6 +99,16 @@
     (signed-byte (and (integerp object)
                       (or (null args) (eq (car args) '*)
                           (< (integer-length object) (car args)))))
+    (complex (and (complexp object)
+                  (or (null args) (eq (car args) '*)
+                      (let ((type (if (member (car args) '(short-float long-float))
+                                      (if (eq (car args) 'long-float) 'double-float 'single-float)
+                                      (car args))))
+                        ;; The parts are upgraded (CLHS 12.1.5.3).
+                        (if (member type '(single-float double-float float))
+                            (typep (realpart object) type)
+                            (and (typep (realpart object) type)
+                                 (typep (imagpart object) type)))))))
     (cons (and (consp object)
                (or (null args) (eq (car args) '*) (typep (car object) (car args)))
                (or (null (cdr args)) (eq (cadr args) '*) (typep (cdr object) (cadr args)))))
@@ -183,9 +194,6 @@
 (defun unknown-type (type)
   (%primop :type-error-type type))
 
-;;; There are no complex numbers yet.
-(defun complexp (object) (declare (ignore object)) nil)
-
 (defvar *instance-type-of* nil)
 
 (defun type-of (object)
@@ -198,6 +206,11 @@
         ((bignump object) 'bignum)
         ((ratiop object) 'ratio)
         ((single-float-p object) 'single-float)
+        ((complexp object)
+         (list 'complex (let ((r (realpart object)))
+                          (cond ((single-float-p r) 'single-float)
+                                ((double-float-p r) 'double-float)
+                                (t 'rational)))))
         ((double-float-p object) 'double-float)
         ((characterp object) 'character)
         ((stringp object) (list 'simple-array 'character (list (length object))))

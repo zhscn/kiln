@@ -126,7 +126,7 @@ pub fn lisp_fields(h: u64) -> (usize, usize) {
         // setf function
         KIND_SYMBOL => (8, 7),
         KIND_STRING | KIND_BIGNUM | KIND_DOUBLE => (8, 0),
-        KIND_RATIO => (8, 2),
+        KIND_RATIO | KIND_COMPLEX => (8, 2),
         KIND_INSTANCE => (8, 1),
         // Skip the entry address: rack and installed function.
         KIND_FUNCALLABLE_INSTANCE => (16, 2),
