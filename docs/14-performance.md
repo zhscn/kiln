@@ -55,6 +55,53 @@
 
 自举时编译器主要在做 §2.2 后半部分的事：泛函分派、槽访问、`make-instance`、哈希表、`&rest`、`&key`（11 §10.2 的 profile）。kiln 编译自己比 SBCL 慢 6 倍左右，原因就在这里。GC 占的约 13%，也主要来自这些地方的分配：`&rest` 列表、浮点装箱、初始化时的 initarg 列表、堆上的 handler。所以只换 GC 解决不了根本问题。
 
+### 2.3 cl-bench（2026-11）
+
+`tools/bench.sh` 在 kiln（AOT，五个模块，release 版的 runtime）和 SBCL（`sbcl --script`，默认优化级别）上运行 cl-bench（`bench/README.md`），每项至多运行 2 秒；kiln 上每项单独一个进程，超时 120 秒。毫秒每次：
+
+| 组 | 项目 | kiln | SBCL | 倍数 |
+|---|---|---|---|---|
+| 调用和控制流 | tak / trtak / takl | 0.15 / 0.15 / 1.14 | 0.11 / 0.12 / 0.79 | 1.3–1.4× |
+| | fib | 0.60 | 0.76 | 0.8× |
+| | ackermann | 769 | 649 | 1.2× |
+| | richards | 52 | 38 | 1.4× |
+| | stak（特殊变量） | 0.69 | 0.38 | 1.8× |
+| | ctak（`catch`/`throw`） | 0.48 | 0.08 | 5.7× |
+| cons 和符号 | boyer / deriv / dderiv | 5.6 / 3.0 / 3.3 | 3.9 / 1.8 / 1.9 | 1.5–1.7× |
+| | destructive / div2 | 1.5 / 1.3–1.5 | 0.6 / 0.9–1.1 | 1.3–2.7× |
+| | traverse / triangle | 37 / 52 | 13 / 23 | 2.2–2.9× |
+| | sum-permutations | 267 | 31 | 8.7× |
+| 浮点 | fft | 110 | 0.13 | 826× |
+| | mandelbrot/dfloat | 6.9 | 0.010 | 691× |
+| | frpoly/float | 10.8 | 0.93 | 12× |
+| 数组 | puzzle | 120 | 0.71 | 168× |
+| | 1d / 2d / 3d-arrays | 556 / 21143 / 61517 | 7.5 / 92 / 256 | 74–240× |
+| bignum 和有理数 | bignum/elem-100-1000 / 1000-100 | 4325 / 66578 | 20 / 21 | 222× / 3216× |
+| | bignum/elem-10000-1 | 超时 | 12 | — |
+| | pari / pi-decimal / pi-atan | 95–2581 | 0.6–25 | 32–103× |
+| | fib-ratio / pi-ratios | 0.39 / 407 | 0.006 / 190 | 65× / 2.1× |
+| | crc40（40 位整数） | 191 | 78 | 2.5× |
+| 打印和流 | fprint/ugly / pretty | 50 / 107 | 0.38 / 1.7 | 133× / 62× |
+| | slurp-lines（`read-line`） | 5177 | 17 | 303× |
+| | deflate-file | 16 | 0.18 | 90× |
+| 字符串 | bench-strings / fill-strings/adjustable | 5532 / 17472 | 340 / 483 | 16× / 36× |
+| | string-concat（`with-output-to-string`） | 超时 | 4594 | — |
+| GC | boehm-gc | 3980 | 256 | 16× |
+| CLOS | simple-instantiate | 8.1 | 0.22 | 37× |
+| | eql-specialized-fib | 114 | 16 | 7× |
+
+结论：
+- **调用、控制流、cons、符号**和 SBCL 在同一个量级（1.3–2.9×），和 §2.1 一致。例外是 `catch`/`throw`（5.7×，和 §2.2 的 4.9× 相符）。
+- **数值是最大的差距**：浮点每次运算都装箱，再进 Rust（§2.2）；bignum 慢到两三千倍，乘除法的算法和实现要整个重看；多维数组走 Regalia 的通用路径。
+- **打印、读行、字符串流**慢一到两个数量级，原因同 §2.2。
+
+**没有运行起来的项目**（ANSI 的缺口，不是性能问题）：
+- `random`、`gentemp`、`complex`、`bit-xor` 没有定义：mrg32k3a、全部 hash 组、browse、mandelbrot/complex、bitvectors。
+- `search` 不接受 `:end2`：search-sequence。
+- 不支持重定义类（`redefining a class is not supported yet`）：CLOS/defclass，以及因此失败的 defmethod、instantiate、methodcalls、method+after、complex-methods。
+- 递归很深的 walk-list/mess 要 1 GiB 的栈，栈溢出时 kiln 直接段错误，没有发出 `storage-condition`。SBCL 跳过这一项。
+- compiler、load-fasl 需要 `compile-file`，harness 不运行。
+
 ## 3. 需要的优化
 
 SBCL 快在它的前端，即 Lisp 语义层的变换和类型推导，而不是通用中端。按收益排：
