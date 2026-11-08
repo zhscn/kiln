@@ -44,15 +44,28 @@
       (setf (find-class name)
             (make-instance 'forward-referenced-class :name name))))
 
+(defun same-structure-definition-p (class direct-superclasses initargs)
+  (and (equal (class-direct-superclasses class)
+              (loop for super in direct-superclasses
+                    collect (if (symbolp super) (find-class super nil) super)))
+       (equal (mapcar #'slot-definition-name (class-direct-slots class))
+              (loop for spec in (getf initargs :direct-slots)
+                    collect (if (consp spec) (getf spec :name) spec)))))
+
 (defun mop-ensure-class (name &rest initargs
                          &key (metaclass 'standard-class) direct-superclasses
                          &allow-other-keys)
   (let ((existing (find-class name nil)))
-    ;; A new structure definition gets a new class and layout. Old instances
-    ;; keep their class, stamp, and method applicability.
+    ;; A structure defined again with the same included structure and slot
+    ;; names (a file loaded again) keeps its class and layout, so that the
+    ;; existing instances still satisfy the accessors. A different
+    ;; definition gets a new class and layout; old instances keep the old
+    ;; class.
     (when (and existing
                (eq (class-of existing) (find-class 'structure-class nil)))
-      (setf existing nil))
+      (if (same-structure-definition-p existing direct-superclasses initargs)
+          (return-from mop-ensure-class existing)
+          (setf existing nil)))
     ;; A class that is defined again (redefinition.lisp).
     (when (and existing (not (typep existing 'forward-referenced-class)))
       (return-from mop-ensure-class

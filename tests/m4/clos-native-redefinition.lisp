@@ -13,3 +13,16 @@
 (print (changing-third (make-changing :second 8 :third 9)))
 (kiln.sys:%gc)
 (print (old-structure-value *old-structure*))
+
+;;; The same definition again (a file loaded again) keeps the class and
+;;; layout: existing instances still satisfy the redefined accessors.
+(defstruct same a b)
+(defstruct (same-child (:include same)) c)
+(defvar *same* (make-same :a 1 :b 2))
+(defvar *same-child* (make-same-child :a 3 :b 4 :c 5))
+(defvar *same-class* (find-class 'same))
+(defstruct same a b)
+(defstruct (same-child (:include same)) c)
+(print (eq (find-class 'same) *same-class*))
+(print (list (same-a *same*) (same-b *same*) (same-a *same-child*) (same-child-c *same-child*)))
+(print (list (same-p *same-child*) (typep *same* 'same) (typep *same-child* 'same)))

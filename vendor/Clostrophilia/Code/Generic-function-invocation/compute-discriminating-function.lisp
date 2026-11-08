@@ -708,10 +708,13 @@
 (defmacro argument-stamp (object-form)
   (let ((object (gensym)))
     `(let ((,object ,object-form))
-       (if (or (kiln.sys:%primop :standard-instance-p ,object)
-               (kiln.sys:%primop :funcallable-instance-p ,object))
-           (kiln.sys:%primop :standard-instance-access ,object -2)
-           (stamp+1 ,object)))))
+       (cond ((or (kiln.sys:%primop :standard-instance-p ,object)
+                  (kiln.sys:%primop :funcallable-instance-p ,object))
+              (kiln.sys:%primop :standard-instance-access ,object -2))
+             ;; kiln: a structure's stamp is in its layout (#(class stamp ...)).
+             ((kiln.sys:%primop :structure-instance-p ,object)
+              (svref (kiln.sys:%primop :structure-layout ,object) 1))
+             (t (stamp+1 ,object))))))
 
 (defun make-eql-dispatch-entry (effective-method-function objects arguments profile)
   (let ((entry (kiln.kernel::make-simple-vector (+ 1 (length profile)) nil)))

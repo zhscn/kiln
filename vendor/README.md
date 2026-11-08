@@ -120,6 +120,9 @@ Each patched place is marked with a `kiln:` comment.
   a default one) make a `multiple-value-prog1` form, so most calls of the
   compiler's generic functions consed their arguments and interpreted the
   form.
+- `argument-stamp` reads a native structure's stamp from its layout
+  inline, as it reads a standard instance's from its rack (it went
+  through `stamp` out of line).
 
 ## Predicament patches
 
