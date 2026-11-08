@@ -33,6 +33,11 @@ shows exactly what kiln changed. Changes are not sent upstream for now.
 
 ## Clostrophilia patches
 
+- A single-dispatch discriminating closure is a fast closure that probes
+  the cache for an instance's stamp and tail-calls the effective method
+  (`%primop :tail-funcall-function`), and a slow closure for everything
+  else; the closure wrapping a method's fast function tail-calls it.
+
 - Class `shared-initialize` preserves direct slots when the option is omitted,
   so reinitializing documentation or superclasses keeps the slot definitions.
 
