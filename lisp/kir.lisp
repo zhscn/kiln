@@ -157,7 +157,7 @@ INDEX in the function's debug info (lower.lisp)."
 (defun current-block-terminated-p ()
   (kblock-terminated (kfunc-current *func*)))
 
-(defparameter *terminators* '(:jump :br :switch :return :trap))
+(defparameter *terminators* '(:jump :br :switch :return :tail-call-lisp :trap))
 
 (defun emit (stmt)
   "Appends STMT to the current block. Statements after a terminator are

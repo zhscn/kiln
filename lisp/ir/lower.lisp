@@ -167,6 +167,52 @@
             (multiple-value-bind (right rest) (ir-switch-test (ir-node-c body))
               (when (eq left right) (values left (append keys rest) reference)))))))))
 
+(defun ir-or-test (node)
+  "For (LET ((TMP test)) (IF TMP TMP rest)), as OR expands into, with TMP
+used nowhere else: test and rest."
+  (when (and (= (ir-node-kind node) 11) (= (length (ir-node-a node)) 1))
+    (let ((var (svref (ir-node-a node) 0)) (body (ir-node-c node)))
+      (when (and (ir-var-p var) (= (ir-var-refs var) 2)
+                 (zerop (logand (ir-var-flags var) 3))
+                 (= (ir-node-kind body) 9)
+                 (ir-ref-to-p (ir-node-a body) var) (ir-ref-to-p (ir-node-b body) var))
+        (values (svref (ir-node-b node) 0) (ir-node-c body))))))
+
+(defun ir-lower-branch (node then else)
+  "Lowers NODE for its truth only: a jump to THEN or ELSE. A test that is
+itself a conditional (IF, AND, OR, NOT) becomes branches, so that a
+predicate inside it is branched on, not made into T or NIL and compared."
+  (let ((*call-source* (or (ir-source-range (ir-node-source node)) *call-source*)))
+    (ir-lower-branch-1 node then else)))
+
+(defun ir-lower-branch-1 (node then else)
+  (case (ir-node-kind node)
+    (0 (jump (if (ir-node-a node) then else)))
+    (9 (let ((yes (new-block)) (no (new-block)))
+         (ir-lower-branch (ir-node-a node) yes no)
+         (start-block yes)
+         (ir-lower-branch (ir-node-b node) then else)
+         (start-block no)
+         (ir-lower-branch (ir-node-c node) then else)))
+    (10 (let ((forms (ir-node-a node)))
+          (if (zerop (length forms))
+              (jump else)
+              (progn
+                (loop for i below (1- (length forms)) do (ir-lower (svref forms i)))
+                (ir-lower-branch (svref forms (1- (length forms))) then else)))))
+    (11 (multiple-value-bind (test rest) (ir-or-test node)
+          (if test
+              (let ((no (new-block)))
+                (ir-lower-branch test then no)
+                (start-block no)
+                (ir-lower-branch rest then else))
+              (branch-on-value (ir-lower node) then else))))
+    (7 (if (and (member (ir-node-a node) '(not null))
+                (= (length (ir-node-b node)) 1))
+           (ir-lower-branch (svref (ir-node-b node) 0) else then)
+           (branch-on-value (ir-lower node) then else)))
+    (otherwise (branch-on-value (ir-lower node) then else))))
+
 (defun ir-lower-if (node)
   (let ((tail node) (definition nil) (reference nil) (arms '()))
     (loop while (= (ir-node-kind tail) 9)
@@ -179,7 +225,7 @@
     (when (>= (length arms) 3)
       (return-from ir-lower-if (lower-switch-mv reference (nreverse arms) tail))))
   (let ((r (new-var)) (n (new-var :raw)) (yes (new-block)) (no (new-block)) (join (new-block)))
-    (branch-on-value (ir-lower (ir-node-a node)) yes no)
+    (ir-lower-branch (ir-node-a node) yes no)
     (start-block yes)
     (multiple-value-call #'set-mv r n (ir-lower-mv (ir-node-b node)))
     (jump join)

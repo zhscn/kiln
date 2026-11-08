@@ -167,6 +167,14 @@ pub enum Stmt {
         handler: Option<String>,
         loc: Option<Loc>,
     },
+    /// A call in tail position: the callee's values are this function's.
+    /// Only where nothing of this frame is needed after the call: no
+    /// dynamic-environment entry (catch, unwind-protect, special binding)
+    /// of the function may be active.
+    TailCallLisp {
+        entry: Expr,
+        args: Vec<Expr>,
+    },
     CallRt {
         name: String,
         results: Vec<String>,
@@ -537,6 +545,17 @@ fn parse_stmt(s: &Sexp) -> R<Stmt> {
                 args,
                 handler: handler(&r[4])?,
                 loc,
+            }
+        }
+        "tail-call-lisp" => {
+            arity(h, r, 2)?;
+            let args: Vec<Expr> = list(&r[1])?.iter().map(parse_expr).collect::<R<_>>()?;
+            if args.len() < 3 || args.len() > 3 + REG_ARGS {
+                return Err(format!("tail-call-lisp: bad argument count {}", args.len()));
+            }
+            Stmt::TailCallLisp {
+                entry: parse_expr(&r[0])?,
+                args,
             }
         }
         "call-rt" => {

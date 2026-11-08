@@ -523,6 +523,10 @@ operand N."
 (define-primop :svref (v i)
   (emit-check-index v i)
   (copy-to-var `(:load (:add ,v (:shl ,i 2)) ,+vector-data+)))
+(define-primop :svref-unchecked (v i)
+  ;; V is known to be a simple vector and I a valid index of it (CLOS's
+  ;; dispatch caches, whose indices are masked to their size).
+  (copy-to-var `(:load (:add ,v (:shl ,i 2)) ,+vector-data+)))
 (define-primop :set-svref (v i x)
   (emit-check-index v i)
   (emit `(:store (:add ,v (:shl ,i 2)) ,+vector-data+ ,x))
@@ -729,6 +733,8 @@ cells (both by default)."
 ;;; Fixnum-only bit operations, for the kernel's fast paths: on tagged
 ;;; fixnums (n << 1), AND, OR and XOR give the tagged result.
 (define-primop :fixnum-logand (a b) (copy-to-var `(:and ,a ,b)))
+;;; A sum known to be a fixnum (no overflow check).
+(define-primop :fixnum+ (a b) (copy-to-var `(:add ,a ,b)))
 (define-primop :fixnum-logior (a b) (copy-to-var `(:or ,a ,b)))
 (define-primop :fixnum-logxor (a b) (copy-to-var `(:xor ,a ,b)))
 (define-primop :type-error-integer (x) (emit-error +err-not-integer+ x) (nil-value))
@@ -803,20 +809,53 @@ cells (both by default)."
 ;;; -2 is the stamp and -1 the slot list (Clostrophilia's convention).
 
 (defun funcallable-trampoline ()
-  "Shared entry of funcallable instances: calls the installed function with
-the same arguments. No safepoint before the call, so arguments in the
-transfer area are passed on intact."
+  "Shared entry of funcallable instances: tail-calls the installed function
+with the same arguments, so that it leaves no frame of its own. No
+safepoint before the call, so arguments in the transfer area are passed on
+intact."
   (let ((name "kiln_funcallable_trampoline"))
     (unless (or (shared-entry name) (gethash name (kiln.kir::kmodule-defined *module*)))
       (setf (gethash name (kiln.kir::kmodule-defined *module*)) t)
       (module-shared name)
       (let ((*regions* '()))
         (with-function (name)
-          (let ((f (copy-to-var `(:load :self ,(- 24 +tag-general+))))
-                (v0 (new-var)) (nv (new-var :raw)))
-            (emit `(:call-lisp ,v0 ,nv (:load ,f ,+fobj-entry+) (:ctx ,f :nargs :a0 :a1 :a2) :nil))
-            (emit `(:return ,v0 ,nv))))))
+          (let ((f (copy-to-var `(:load :self ,(- 24 +tag-general+)))))
+            (emit `(:tail-call-lisp (:load ,f ,+fobj-entry+) (:ctx ,f :nargs :a0 :a1 :a2)))))))
     name))
+
+(defun emit-tail-call (fobj vals)
+  "Tail-calls FOBJ with the argument operands VALS: its values are the
+current function's. Nothing after it in the block is reached."
+  (when (> (length vals) (+ +reg-args+ +values-max+))
+    (fail "calls with more than ~D arguments are not supported"
+          (+ +reg-args+ +values-max+)))
+  (let ((entry (copy-to-var `(:load ,fobj ,+fobj-entry+) :raw)))
+    (loop for v in (nthcdr +reg-args+ vals)
+          for i from 0
+          do (emit `(:store :ctx ,(+ +ctx-values+ (* 8 i)) ,v)))
+    (emit `(:tail-call-lisp ,entry
+                            (:ctx ,fobj ,(length vals)
+                                  ,@(subseq vals 0 (min (length vals) +reg-args+)))))
+    (nil-value)))
+
+;;; (%PRIMOP :TAIL-FUNCALL F ARG...): calls the function F, leaving no
+;;; frame of the caller. For the dispatch code of CLOS only: it must be in
+;;; tail position, in a function with no special binding, CATCH or
+;;; UNWIND-PROTECT active, since the caller's frame is gone when F runs.
+(setf (gethash :tail-funcall *primops*)
+      (lambda (vals)
+        (when (null vals) (fail "primop :TAIL-FUNCALL needs a function"))
+        (let ((f (copy-to-var (first vals))))
+          (emit-check-function f)
+          (emit-tail-call f (mapcar (lambda (v) (copy-to-var v)) (rest vals))))))
+
+;;; (%PRIMOP :TAIL-FUNCALL-FUNCTION F ARG...): the same, F known to be a
+;;; function object (a dispatch cache's entry, a method's fast function).
+(setf (gethash :tail-funcall-function *primops*)
+      (lambda (vals)
+        (when (null vals) (fail "primop :TAIL-FUNCALL-FUNCTION needs a function"))
+        (emit-tail-call (copy-to-var (first vals))
+                        (mapcar (lambda (v) (copy-to-var v)) (rest vals)))))
 
 (defun funcallable-unset ()
   "Function object installed in a new funcallable instance: signals an

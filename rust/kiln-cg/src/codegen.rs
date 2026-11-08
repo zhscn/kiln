@@ -1090,6 +1090,21 @@ impl<M: Module> FuncLowering<'_, M> {
                 self.def(b, v0, rets[0])?;
                 self.def(b, nv, rets[1])?;
             }
+            Stmt::TailCallLisp { entry, args } => {
+                let callee = self.expr(b, entry)?;
+                let mut vals = args
+                    .iter()
+                    .map(|a| self.expr(b, a))
+                    .collect::<R<Vec<_>>>()?;
+                while vals.len() < 3 + kir::REG_ARGS {
+                    vals.push(b.ins().iconst(I64, 0));
+                }
+                let sig = *self
+                    .lisp_sigref
+                    .get_or_insert_with(|| b.import_signature(self.lisp_sig.clone()));
+                b.ins().return_call_indirect(sig, callee, &vals);
+                return Ok(true);
+            }
             Stmt::CallRt {
                 name,
                 results,

@@ -899,7 +899,11 @@ fast function when its form has a spread closure (CALL-NEXT-METHOD in an
            (let ((fast (kiln.sys:%method-fast-function method)))
              (and fast
                   (spread-case arity
-                    (lambda (%arguments) (funcall fast next-methods %arguments)))))))))
+                    (lambda (%arguments)
+                      ;; kiln: a jump, so that the method runs without
+                      ;; this closure's frame.
+                      (kiln.sys:%primop :tail-funcall-function
+                                        fast next-methods %arguments)))))))))
 
 (defun make-spread-discriminating-closure
     (generic-function arity profile initial eql-cache)
@@ -1005,24 +1009,60 @@ FUSE-READERS, a slot reader's closure is entered as its slot's location."
           (cdr state))
         nil)))
 
+(defmacro instance-stamp-or-nil (object)
+  "OBJECT's stamp if it is a standard instance, a funcallable instance or a
+structure (inline, no call); NIL for other objects."
+  `(cond ((or (kiln.sys:%primop :standard-instance-p ,object)
+              (kiln.sys:%primop :funcallable-instance-p ,object))
+          (kiln.sys:%primop :standard-instance-access ,object -2))
+         ((kiln.sys:%primop :structure-instance-p ,object)
+          (svref (kiln.sys:%primop :structure-layout ,object) 1))
+         (t nil)))
+
+;;; kiln: the discriminating closure of a single-dispatch generic function
+;;; is two closures. The fast one only probes the cache for an instance's
+;;; stamp and tail-calls what it finds: it makes no other call, so it needs
+;;; no frame of its own beyond the entry check, and the effective method
+;;; runs as if called by the generic function's caller (as PCL's
+;;; discriminating functions jump to the method). Everything else, other
+;;; objects than instances (whose stamp takes a call), a miss and an
+;;; unbound slot of a fused reader, is the slow closure, tail-called too.
 (defun make-single-dispatch-closure
     (generic-function arity position profile initial history-length)
   (let* ((size (dispatch-cache-size history-length))
          (mask (- size 1))
          (cache (kiln.kernel::make-simple-vector (+ size size) nil)))
-    (macrolet ((dispatcher (n k)
+    (macrolet ((slow-dispatcher (n k)
                  (let ((parameters (spread-parameters n)))
                    `(lambda ,parameters
                       (let* ((stamp (argument-stamp ,(nth k parameters)))
                              (index (let ((i (kiln.sys:%primop :fixnum-logand stamp mask)))
                                       (+ i i))))
                         (if (eq (svref cache index) stamp)
-                            (funcall (svref cache (+ index 1)) ,@parameters)
+                            (kiln.sys:%primop :tail-funcall-function
+                                              (svref cache (+ index 1)) ,@parameters)
                             (let ((function (single-dispatch-miss cache index stamp initial)))
                               (if function
-                                  (funcall function ,@parameters)
+                                  (kiln.sys:%primop :tail-funcall-function function ,@parameters)
                                   (default-discriminating-function
                                    generic-function (list ,@parameters) profile))))))))
+               (dispatcher (n k)
+                 (let ((parameters (spread-parameters n)))
+                   `(let ((slow (slow-dispatcher ,n ,k)))
+                      (lambda ,parameters
+                        (let ((stamp (instance-stamp-or-nil ,(nth k parameters))))
+                          (if stamp
+                              (let ((index (kiln.sys:%primop
+                                            :fixnum-logand
+                                            (kiln.sys:%primop :fixnum+ stamp stamp) mask2)))
+                                (if (eq (kiln.sys:%primop :svref-unchecked cache index) stamp)
+                                    (kiln.sys:%primop
+                                     :tail-funcall-function
+                                     (kiln.sys:%primop :svref-unchecked cache
+                                                       (kiln.sys:%primop :fixnum+ index 1))
+                                     ,@parameters)
+                                    (kiln.sys:%primop :tail-funcall-function slow ,@parameters)))
+                              (kiln.sys:%primop :tail-funcall-function slow ,@parameters)))))))
                (dispatchers ()
                  `(ecase arity
                     ,@(loop for n from 1 to 6
@@ -1031,26 +1071,49 @@ FUSE-READERS, a slot reader's closure is entered as its slot's location."
                                                    collect `(,k (dispatcher ,n ,k))))))))
                ;; One parameter: an entry may be a slot reader's location.
                (reader-dispatcher ()
-                 `(lambda (a0)
-                    (let* ((stamp (argument-stamp a0))
-                           (index (let ((i (kiln.sys:%primop :fixnum-logand stamp mask)))
-                                    (+ i i))))
-                      (if (eq (svref cache index) stamp)
-                          (let ((entry (svref cache (+ index 1))))
-                            (if (kiln.sys:%primop :fixnump entry)
-                                (let ((value (kiln.sys:%primop :standard-instance-access a0 entry)))
-                                  (if (eq value +unbound-slot-value+)
-                                      (funcall (cdr (automaton-transition initial stamp)) a0)
-                                      value))
-                                (funcall entry a0)))
-                          (let ((function (single-dispatch-miss cache index stamp initial t)))
-                            (if function
-                                (funcall function a0)
-                                (default-discriminating-function
-                                 generic-function (list a0) profile))))))))
-      (if (eql arity 1)
-          (reader-dispatcher)
-          (dispatchers)))))
+                 `(let ((slow
+                          (lambda (a0)
+                            (let* ((stamp (argument-stamp a0))
+                                   (index (let ((i (kiln.sys:%primop :fixnum-logand stamp mask)))
+                                            (+ i i))))
+                              (if (eq (svref cache index) stamp)
+                                  (let ((entry (svref cache (+ index 1))))
+                                    (if (kiln.sys:%primop :fixnump entry)
+                                        (let ((value (kiln.sys:%primop :standard-instance-access a0 entry)))
+                                          (if (eq value +unbound-slot-value+)
+                                              (kiln.sys:%primop
+                                               :tail-funcall-function
+                                               (cdr (automaton-transition initial stamp)) a0)
+                                              value))
+                                        (kiln.sys:%primop :tail-funcall-function entry a0)))
+                                  (let ((function (single-dispatch-miss cache index stamp initial t)))
+                                    (if function
+                                        (kiln.sys:%primop :tail-funcall-function function a0)
+                                        (default-discriminating-function
+                                         generic-function (list a0) profile))))))))
+                    (lambda (a0)
+                      (let ((stamp (instance-stamp-or-nil a0)))
+                        (if stamp
+                            (let ((index (kiln.sys:%primop
+                                          :fixnum-logand
+                                          (kiln.sys:%primop :fixnum+ stamp stamp) mask2)))
+                              (if (eq (kiln.sys:%primop :svref-unchecked cache index) stamp)
+                                  (let ((entry (kiln.sys:%primop
+                                                :svref-unchecked cache
+                                                (kiln.sys:%primop :fixnum+ index 1))))
+                                    (if (kiln.sys:%primop :fixnump entry)
+                                        (let ((value (kiln.sys:%primop
+                                                      :standard-instance-access a0 entry)))
+                                          (if (eq value +unbound-slot-value+)
+                                              (kiln.sys:%primop :tail-funcall-function slow a0)
+                                              value))
+                                        (kiln.sys:%primop :tail-funcall-function entry a0)))
+                                  (kiln.sys:%primop :tail-funcall-function slow a0)))
+                            (kiln.sys:%primop :tail-funcall-function slow a0)))))))
+      (let ((mask2 (+ mask mask)))
+        (if (eql arity 1)
+            (reader-dispatcher)
+            (dispatchers))))))
 
 (defun double-dispatch-miss (cache index s1 s2 initial)
   "As SINGLE-DISPATCH-MISS, for two stamps: entries are (S1 S2 function)."

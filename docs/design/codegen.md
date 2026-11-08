@@ -53,6 +53,7 @@ kiln-launcher               staticlib，提供 C main，链接 kiln-rt 和 kiln-
 | `(switch E 默认块 ((整数 块)...))` | 按 64 位整数分派；没有匹配时走默认块，重复键非法；密集区间生成跳转表 |
 | `(return V0 NV)` | 返回 |
 | `(call-lisp v0 nv ENTRY (ctx self nargs a...) H [(loc 起始 结束)])` | 调用 Lisp 函数；H 是 handler block 名，或 `nil`；`loc` 是调用形式的源码范围 |
+| `(tail-call-lisp ENTRY (ctx self nargs a...))` | 尾调用 Lisp 函数（Cranelift 的 `return_call_indirect`），被调函数的值就是本函数的值；是终结语句。只能用在本函数没有活动的动态环境条目（`catch`、`unwind-protect`、special 绑定）的地方：funcallable instance 的跳板和 CLOS 的分派代码（`%primop :tail-funcall`、`:tail-funcall-function`） |
 | `(call-rt "名字" (结果...) (参数...) H [(loc 起始 结束)])` | 调用 runtime 函数；只有 `unwinds` 的函数才使用 H |
 | `(add-ovf r o A B)` / `sub-ovf` / `mul-ovf` | 带溢出标志的有符号运算 |
 | `(trap)` | 不可达 |
