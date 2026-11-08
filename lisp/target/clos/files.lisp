@@ -15,7 +15,25 @@
    (%out-end :initform 0 :accessor out-end)
    ;; Input read but not consumed: the octets from IN-START to IN-END.
    (%in-start :initform 0 :accessor in-start)
-   (%in-end :initform 0 :accessor in-end)))
+   (%in-end :initform 0 :accessor in-end)
+   ;; The descriptor's file offset, kept by the reads, writes and seeks
+   ;; below, so that FILE-POSITION (asked at every form the reader makes
+   ;; a CST of) needs no system call; NIL until first asked.
+   (%os-position :initform nil :accessor os-position)
+   (%octets-per-element :initform nil :accessor %octets-per-element)
+   (%utf-8-characters :initform :unknown :accessor %utf-8-characters)
+   ;; Opened with O_APPEND: each write moves the offset to the end, so it
+   ;; is not kept across writes.
+   (%append :initform nil :initarg :append :reader file-append-p)))
+
+(defun note-written (stream count)
+  (cond ((file-append-p stream) (setf (os-position stream) nil))
+        ((os-position stream) (incf (os-position stream) count))))
+
+(defun known-os-position (stream)
+  (or (os-position stream)
+      (setf (os-position stream)
+            (check-sys stream (kiln.kernel::sys 2 (descriptor stream) 0 1)))))
 
 (defun check-sys (stream result)
   (when (minusp result)
@@ -31,7 +49,8 @@
               do (incf written
                        (check-sys stream
                                   (kiln.sys:%primop :fd-write (descriptor stream)
-                                                    (file-buffer stream) written end))))))))
+                                                    (file-buffer stream) written end)))))
+      (note-written stream end))))
 
 ;;; The compiler writes its KIR files form by form: the runtime prints a
 ;;; form straight to the file (kiln_rt_write_kir), after the buffered
@@ -48,14 +67,16 @@
     (let ((result (kiln.sys:%primop :write-kir form (descriptor stream))))
       (when (eql result -1000)
         (error "~S is not a KIR form." form))
-      (check-sys stream result))
+      (check-sys stream result)
+      (note-written stream result))
     t))
 
 (defun discard-file-input (stream)
   "Moves the file position back over the input read ahead."
   (let ((ahead (- (in-end stream) (in-start stream))))
     (when (plusp ahead)
-      (check-sys stream (kiln.kernel::sys 2 (descriptor stream) (- ahead) 1)))
+      (setf (os-position stream)
+            (check-sys stream (kiln.kernel::sys 2 (descriptor stream) (- ahead) 1))))
     (setf (in-start stream) 0 (in-end stream) 0)))
 
 (defmethod stream-write-octet ((stream kiln-file-stream) octet)
@@ -96,11 +117,38 @@
     (let ((n (check-sys stream
                         (kiln.sys:%primop :fd-read (descriptor stream) (file-buffer stream)
                                           0 +file-buffer-size+))))
-      (setf (in-start stream) 0 (in-end stream) n)))
+      (setf (in-start stream) 0 (in-end stream) n)
+      (when (os-position stream)
+        (incf (os-position stream) n))))
   (if (= (in-start stream) (in-end stream))
       :eof
       (prog1 (svref (file-buffer stream) (in-start stream))
         (incf (in-start stream)))))
+
+;;; A character that is one ASCII octet already in the buffer is taken
+;;; from it directly; anything else (a multi-octet character, an empty
+;;; buffer, pending output, another external format) goes through the
+;;; transcoder as before. The reader reads source files this way, and they
+;;; are nearly all ASCII. CHARACTER-INPUT-MIXIN's :AROUND method still
+;;; handles UNREAD-CHAR and the cursor.
+(defmethod stream-read-char ((stream kiln-file-stream))
+  (let ((start (in-start stream)))
+    (if (and (< start (in-end stream))
+             (zerop (out-end stream))
+             (utf-8-characters-p stream)
+             (< (svref (file-buffer stream) start) #x80))
+        (progn (setf (in-start stream) (+ start 1))
+               (code-char (svref (file-buffer stream) start)))
+        (call-next-method))))
+
+(defun utf-8-characters-p (stream)
+  "Is STREAM a character stream decoding UTF-8? Kept once known."
+  (let ((known (%utf-8-characters stream)))
+    (if (eq known :unknown)
+        (setf (%utf-8-characters stream)
+              (and (not (subtypep (stream-element-type stream) 'integer))
+                   (typep (octet-transcoder stream) 'utf-8-transcoder)))
+        known)))
 
 (defmethod stream-read-octets ((stream kiln-file-stream) octets &optional (start 0) end)
   (let ((end (or end (length octets))))
@@ -124,10 +172,15 @@
   nil)
 
 (defun octets-per-element (stream)
-  ;; Character streams are positioned in octets.
-  (if (subtypep (stream-element-type stream) 'integer)
-      (element-length (octet-transcoder stream))
-      1))
+  ;; Character streams are positioned in octets. The element type of a
+  ;; file stream does not change: kept once computed.
+  (or (and (typep stream 'kiln-file-stream) (%octets-per-element stream))
+      (let ((n (if (subtypep (stream-element-type stream) 'integer)
+                   (element-length (octet-transcoder stream))
+                   1)))
+        (when (typep stream 'kiln-file-stream)
+          (setf (%octets-per-element stream) n))
+        n)))
 
 (defun unread-octets (stream)
   "The octets of the character UNREAD-CHAR gave back to STREAM, in UTF-8:
@@ -139,7 +192,7 @@ they have been read from the file, but the character has not."
         0)))
 
 (defmethod stream-file-position ((stream kiln-file-stream))
-  (let ((position (check-sys stream (kiln.kernel::sys 2 (descriptor stream) 0 1))))
+  (let ((position (known-os-position stream)))
     (/ (- (+ position (out-end stream) (- (in-start stream) (in-end stream)))
           (unread-octets stream))
        (octets-per-element stream))))
@@ -153,6 +206,7 @@ they have been read from the file, but the character has not."
              (:end (kiln.kernel::sys 2 (descriptor stream) 0 2))
              (t (kiln.kernel::sys 2 (descriptor stream)
                                   (* position (octets-per-element stream)) 0)))))
+    (setf (os-position stream) (if (minusp r) nil r))
     (not (minusp r))))
 
 (defmethod stream-file-length ((stream kiln-file-stream))
@@ -216,12 +270,17 @@ they have been read from the file, but the character has not."
                                      :descriptor fd
                                      :pathname path
                                      :created created
+                                     :append (logtest flags 16)
                                      :input (and (member direction '(:input :io)) t)
                                      :output (and (member direction '(:output :io)) t)
                                      :element-type (if (eq element-type :default)
                                                        'character
                                                        element-type)
                                      :external-format external-format)))
+          ;; :APPEND starts at the end of the file (O_APPEND only moves
+          ;; the offset there at the first write).
+          (when (logtest flags 16)
+            (setf (os-position stream) (check-sys stream (kiln.kernel::sys 2 fd 0 2))))
           (when (eq direction :probe)
             (close stream))
           stream)))))
