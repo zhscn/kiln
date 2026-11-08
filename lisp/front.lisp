@@ -491,8 +491,16 @@ the second value."
         while (cst:consp c)
         collect (cst:first c)))
 
+(defgeneric evaluate-at-compile-time (client input environment)
+  (:documentation "Evaluates INPUT, a CST or a form, at compile time in the
+Trucler ENVIRONMENT, for CLIENT. The cross client uses the IR evaluator
+(lisp/ir/eval.lisp); the default is Common-boot's EVAL-CST.")
+  (:method (client input environment)
+    (cb:eval-cst client (if (typep input 'cst:cst) input (cst:cst-from-expression input))
+                 environment)))
+
 (defun compile-time-eval (cst)
-  (cb:eval-cst *client* cst *environment*))
+  (evaluate-at-compile-time *client* cst *environment*))
 
 (defun simplify (ast)
   (cbah::simplify-ast ast))
@@ -578,10 +586,9 @@ whole instead (the declarations would otherwise be lost)."
                        (destructuring-bind (name lambda-list &rest body) definition
                          ;; The expander is evaluated in the environment so
                          ;; far, which holds the enclosing local macros.
-                         (let ((expander (cb:eval-cst
+                         (let ((expander (evaluate-at-compile-time
                                           *client*
-                                          (cst:cst-from-expression
-                                           (ecclesia:parse-macro name lambda-list body))
+                                          `(function ,(ecclesia:parse-macro name lambda-list body))
                                           env)))
                            (setf env (trucler:add-local-macro *client* env name expander)))))))
                   (symbol-macrolet

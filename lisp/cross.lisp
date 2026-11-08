@@ -181,7 +181,7 @@ at compile time (USE-HOST-MACROS).")
     ;; definitions.
     (def 'eval
       (lambda (form)
-        (cb:eval-cst client (cst:cst-from-expression form) *toplevel-environment*)))
+        (evaluate-at-compile-time client form *toplevel-environment*)))
     (def 'funcall (lambda (f &rest args) (apply (resolve f) args)))
     (def 'apply (lambda (f &rest args) (apply #'apply (resolve f) args)))))
 

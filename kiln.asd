@@ -25,5 +25,6 @@
                (:file "ir/environment")
                (:file "ir/convert")
                (:file "ir/analyze")
+               (:file "ir/eval")
                (:file "ir/lower")
                (:file "driver")))
