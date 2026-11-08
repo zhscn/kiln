@@ -6,7 +6,7 @@
 
 编译会话可以使用两条输入路径：默认的 Iconoclast 路径，以及 `lisp/ir/` 中的直接 CST → IR → KIR 路径。`KILN_FRONTEND=ir` 在加载编译器时选择新路径；`KILN_FRONTEND=iconoclast` 选择旧路径。Lisp 调用者也可以动态绑定 `kiln.compiler:*front-end*` 为 `:ir` 或 `:iconoclast`。快照保存加载时的选择。
 
-两条路径共享读入、顶层处理、编译期环境、内联源码表和 KIR 发射工具。新 IR 的词法绑定、自由变量、赋值、退出点和闭包布局直接记录在结构中，不调用 Iconoclast 的简化和 AST 分析。宏展开结果直接转换，不重建 CST；编译期求值仍由 client 的 HIR 或 Maclina 求值器处理。数据结构、源码位置和分析规则见 [ir.md](ir.md)。
+两条路径共享读入、顶层处理、编译期环境、内联源码表和 KIR 发射工具。新 IR 的词法绑定、自由变量、赋值、退出点和闭包布局直接记录在结构中，不调用 Iconoclast 的简化和 AST 分析。宏展开结果直接转换，不重建 CST。编译期求值按 client 分派（`evaluate-at-compile-time`）：cross-client 用 IR 求值器（`lisp/ir/eval.lisp`），image-client 用 Maclina。数据结构、源码位置和分析规则见 [ir.md](ir.md)。
 
 下面描述默认的 Iconoclast 路径。
 
@@ -53,10 +53,10 @@ KIR
 编译 kiln 自己的模块用它，在 SBCL 上和在 kiln 上都一样（kiln 编译自己时不能改掉正在运行编译器的 image，而且两边必须从同一个空的编译期环境开始）。
 
 - **编译期环境是一个 Clostrum 环境**，和运行编译器的 image 隔离。目标里重定义 `car`、`defclass` 都不会碰到宿主。
-- **编译期求值用 Common-boot 的 HIR 求值器**（`cb:eval-cst`）。它和 kiln 的前端一致，SICL 也这样做。宏函数会调用目标环境里定义的辅助函数，所以不能直接交给宿主的 `compile`。
+- **编译期求值用 IR 求值器**（`lisp/ir/eval.lisp`，[ir.md](ir.md) 的“编译期求值”）：形式用 IR 前端的转换器转成 IR，再编成宿主闭包执行，全局函数和特殊变量都经过 Clostrum 环境的 cell，动态绑定是浅绑定。宏函数会调用目标环境里定义的辅助函数，所以不能直接交给宿主的 `compile`。原来用的 Common-boot HIR 求值器（`cb:eval-cst`，SICL 也这样做）还可以用 `KILN_EVALUATOR=hir` 选择，等删除。
 - 宿主 CL 包里所有的函数导入编译期环境，宏展开函数可以直接调用它们。和全局环境打交道的函数换成访问 Clostrum 环境的版本：`macro-function`、`(setf macro-function)`、`fdefinition`、`(setf fdefinition)`、`fboundp`、`symbol-value`、`(setf symbol-value)`、`boundp`、`proclaim`、`macroexpand`、`macroexpand-1`，以及接受符号作为函数标识的 `funcall`、`apply`。
 - **编译期的 CLOS**：被交叉编译的库在编译期需要 `defclass`、`defgeneric`、`define-condition` 的副作用，这部分用宿主 CLOS（通过 closer-mop），并且和目标 image 里的 metaobject 严格分开（SICL 的 E1 也是这样）。
-- 在 kiln 上，“宿主”就是 kiln 自己：编译期环境同样是 Clostrum 环境，HIR 求值器的三个系统编进了 compiler 模块，导入的函数和宿主宏是 image 里的。
+- 在 kiln 上，“宿主”就是 kiln 自己：编译期环境同样是 Clostrum 环境，IR 求值器构造的闭包是 kiln 的闭包，导入的函数和宿主宏是 image 里的。HIR 求值器的三个系统仍编在 compiler 模块里（`KILN_EVALUATOR=hir`、旧前端用到的 `simplify-ast`）。
 
 **宿主宏**：有些宏在编译期用宿主自己的展开函数，编译期的 `(setf macro-function)` 不覆盖它们：
 

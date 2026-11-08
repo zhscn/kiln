@@ -49,7 +49,7 @@
 
 按收益排。SBCL 快在 Lisp 语义层的变换和类型推导，不在通用中端，所以这里没有“加一层通用 SSA 优化”。
 
-1. **kiln 自己的 IR**（[ir.md](design/ir.md)）：原生结构对象（单个对象、O(1) 的类型检查、内联构造）和 KIR 的 `:switch` 已接入。CST → IR → KIR 路径可通过 `KILN_FRONTEND=ir` 选择，包含词法转换、闭包分析和降级；接下来切换默认路径，再移除旧编译路径及其依赖（自编译时这一段占一半以上）。
+1. **kiln 自己的 IR**（[ir.md](design/ir.md)）：原生结构对象（单个对象、O(1) 的类型检查、内联构造）和 KIR 的 `:switch` 已接入。CST → IR → KIR 路径可通过 `KILN_FRONTEND=ir` 选择，包含词法转换、闭包分析和降级；IR 前端已是默认，cross-client 的编译期求值也换成了 IR 求值器（`KILN_EVALUATOR=hir` 选旧的 HIR 求值器）；接下来移除旧编译路径、HIR 求值器及其依赖（Common-boot、Iconoclast、s-expression-syntax、parser.packrat、builder 协议）。
 2. **调用点上的变换**：`find`、`position`、`member`、`assoc`、`typep` 等在参数和类型已知时，于编译期展开成循环或比较（相当于 SBCL 的 `deftransform` 和编译器宏）；对已知函数的 `&key` 调用，在编译期解析关键字。需要先让编译器调用编译器宏。`typep` 的复合类型（如 `(integer 0 10)`）在编译期展开成比较。
 3. **CLOS 运行时编译化**：用原生 `compile` 把判别函数、有效方法、`make-instance` 的构造器编成机器码，替代解释执行的闭包。泛函调用本身在 cl-bench 上已和 SBCL 持平；`make-instance`（快路径之外）、`call-next-method`、定义类和方法（运行期编译）仍慢 9–40 倍，靠这一项。解释执行的路径保留。
 4. **库的快速路径**：打印 fixnum 和字符串、`format` 的常见指令（编译期编译控制串，`formatter` 也随之正确）、字符串流的批量写入，绕开逐字符的泛函调用；`intern` 绕开 Parcl 的协议层；Salmagundi 剩下的协议开销。

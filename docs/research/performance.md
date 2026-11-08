@@ -159,6 +159,8 @@ kiln 编译自己的五个模块（一个阶段，见 [bootstrap.md](../design/b
 
 之后两项：KIR 文本由运行时直接从列表结构写到文件（`kiln_rt_write_kir`，原来在 Lisp 里逐个字符经流输出，profile 里约 20%），Parcl 的 `map-symbols` 改用哈希表去重（原来是平方级，约 5%）。自举每个阶段 **44 秒**（原来约 51 秒），峰值 RSS 8.8 GB。
 
+再之后，cross-client 的编译期求值从 Common-boot 的 HIR 求值器换成 IR 求值器（[ir.md](../design/ir.md) 的“编译期求值”）。改动前的 profile 里编译期求值约占 15%（HIR 求值器要走 s-expression-syntax、builder 协议、Iconoclast AST、AST-to-HIR 和 thunk 构造），换成 IR 求值器后约 1%。和分支点的 kiln0 背靠背交替各测两次（2026-11-08，load 约 1–3）：**45.3 → 36.2 秒**（−20%；各模块累计：kernel 1.1、CLOS 14.0、frontend 14.6、eval 18.1、compiler 35.0 秒），峰值 RSS 8.8 → 8.7 GB，KIR 不变。完整自举闭合，每个阶段约 36 秒。
+
 845 秒那次的 profile（按模块统计自身时间）：
 
 | 部分 | 占比 |

@@ -1,12 +1,12 @@
 # kiln 的 IR：从 CST 直接到可分析的中间表示（草案）
 
-状态：**IR 是默认前端**。原生结构对象、KIR `:switch` 和 CST → IR → KIR 路径都已接入；旧的 Iconoclast 前端暂时保留，用 `KILN_FRONTEND=iconoclast` 选择，等删除。编译期求值仍使用 client 的原有求值器。宏展开结果里原样传下来的用户子形式，按顶层形式 CST 里记下的位置取源码位置（每个顶层形式一张 eq 表），和旧前端的 `cst:reconstruct` 效果相同。调试信息上和旧前端的差别：没有 `let` 改写出的多余 lambda，只调用一次的局部函数内联后不再单独成帧。现在的流水线见 [front-end.md](front-end.md) 和 [lowering.md](lowering.md)。
+状态：**IR 是默认前端**。原生结构对象、KIR `:switch` 和 CST → IR → KIR 路径都已接入；旧的 Iconoclast 前端暂时保留，用 `KILN_FRONTEND=iconoclast` 选择，等删除。cross-client 的编译期求值改用 IR 求值器（`lisp/ir/eval.lisp`，见下面“编译期求值”）；Common-boot 的 HIR 求值器用 `KILN_EVALUATOR=hir` 选择，等删除。image-client 仍用 Maclina。宏展开结果里原样传下来的用户子形式，按顶层形式 CST 里记下的位置取源码位置（每个顶层形式一张 eq 表），和旧前端的 `cst:reconstruct` 效果相同。调试信息上和旧前端的差别：没有 `let` 改写出的多余 lambda，只调用一次的局部函数内联后不再单独成帧。现在的流水线见 [front-end.md](front-end.md) 和 [lowering.md](lowering.md)。
 
 ## 当前实现
 
 `lisp/ir/data.lisp` 定义节点、变量、函数、退出点和可增长向量。节点是统一的结构，保存整数 kind、源码位置、四个操作数、类型提示和遍历标记。调用和序列的子节点使用 simple-vector；引用保存定义对象，遍历不沿定义边走。
 
-`environment.lisp` 的词法环境由结构组成，实现 Trucler 查询。`convert.lisp` 按特殊形式的名字选择手写转换器，直接处理 CST 子节点；宏展开结果作为普通形式转换，继承最近的源码位置。词法和特殊绑定、FLET/LABELS 的作用域、symbol macro、局部宏及声明都在这里解析。宏展开函数继续通过 client 运行，局部宏的展开函数由保留的编译期求值器构造。
+`environment.lisp` 的词法环境由结构组成，实现 Trucler 查询。`convert.lisp` 按特殊形式的名字选择手写转换器，直接处理 CST 子节点；宏展开结果作为普通形式转换，继承最近的源码位置。词法和特殊绑定、FLET/LABELS 的作用域、symbol macro、局部宏及声明都在这里解析。宏展开函数继续通过 client 运行，局部宏的展开函数由 client 的编译期求值器构造（`ir-local-macro-expander`）。
 
 `analyze.lisp` 在一次树遍历中完成局部内联、传递捕获、cell 和退出令牌分析。只含必需参数、未作为值使用、且在定义函数中只有一个已知调用点的局部函数，可以移到调用点；参数数量必须匹配。已经分析的函数保留，避免移动后重复遍历函数体或重复登记 `load-time-value`。内联不复制节点，变量和退出点的 owner 随作用域调整。
 
@@ -24,7 +24,7 @@ KILN_FRONTEND=iconoclast tools/test.sh
 KILN_FRONTEND=ir tools/bootstrap.sh
 ```
 
-模型检查覆盖 use-def、传递捕获、cell、退出令牌、内联后的 owner、树的独占子节点和语法错误；端到端验证比较程序行为。新前端的 KIR 不要求与旧前端相同，自举要求同一前端下的各阶段闭合。删除旧编译路径、IR 求值器和内存 KIR 交接仍是后续步骤。
+模型检查覆盖 use-def、传递捕获、cell、退出令牌、内联后的 owner、树的独占子节点和语法错误；端到端验证比较程序行为。新前端的 KIR 不要求与旧前端相同，自举要求同一前端下的各阶段闭合。删除旧编译路径和内存 KIR 交接仍是后续步骤。模型检查里还有一组 IR 求值器的用例，逐个和宿主的 `eval` 比较结果。
 
 ## 为什么要换
 
@@ -57,7 +57,7 @@ CST ─ s-expression-syntax（运行期的 packrat 语法引擎，逐个特殊�
 - 编译期环境：cross-client 的 Clostrum 环境、image-client 的运行期环境；宏函数的 `&environment` 仍然是 Trucler 协议的对象；
 - KIR 和其后的一切。降级的输出不变，只换输入。
 
-编译期求值：cross-client 现在用 Common-boot 的 HIR 求值器（`cb:eval-cst`），它依赖 Common-boot 的 `cst-to-ast` 和 Iconoclast。第一步先保留它，等新 IR 有了自己的求值器再去掉（见“实施步骤”）。
+编译期求值：cross-client 原来用 Common-boot 的 HIR 求值器（`cb:eval-cst`），它依赖 Common-boot 的 `cst-to-ast` 和 Iconoclast。现在由 IR 求值器取代（见“编译期求值”一节），HIR 求值器只在 `KILN_EVALUATOR=hir` 时使用。
 
 ## 数据结构基础（先做）
 
@@ -181,12 +181,28 @@ IR 的遍历按节点种类分派。三种做法：
 
 有了 `fun` 的“可以直接调用”标志，降级可以把对已知局部函数的调用编成直接调用（不经过函数对象），这是旧前端做不到的（局部函数是持有函数对象的变量）。
 
+## 编译期求值
+
+cross-client 在编译期求值的形式（`eval-when` 的 `:compile-toplevel`、宏定义的编译期部分、`#.`、编译期环境里的 `eval`）和局部宏的展开函数，都由 `lisp/ir/eval.lisp` 执行。入口是 front.lisp 的泛函 `evaluate-at-compile-time` 和 convert.lisp 的 `ir-local-macro-expander`，按 client 分派：cross-client 走 IR 求值器，其他 client 走 `cb:eval-cst`（image-client 的方法是 Maclina）。
+
+做法是闭包编译：形式先用同一个转换器和分析（`ir-convert`、`analyze-ir`，关闭 inline 展开和编译器宏）变成 IR，再按节点构造宿主闭包，每个节点一个，`kind` 只在构造时分派一次。运行时没有解释循环，也不再分派。
+
+- **帧**：每次调用一个 simple-vector，0 号槽是函数的闭包环境，其余槽按 `fun` 的变量编号。分析标了 cell 的变量（被捕获且被赋值）在槽里放一个 cons，绑定时新建，所以循环里的 `let` 每次都是新的绑定。
+- **闭包**：环境是一个 simple-vector，按 `free` 的顺序在创建函数对象时复制自由变量的值（cell 变量复制 cell）。`flet`/`labels` 先建好所有函数对象并绑定，再填环境，互相引用没有问题。函数对象就是宿主函数，宏展开函数之类的由宿主直接调用；只有必需参数（至多三个）的函数直接用宿主的参数表，其他的用 `&rest` 解析 `&optional`、`&key`（含 `:allow-other-keys` 和参数错误），默认值形式按顺序求值，特殊参数的绑定包住后面的部分，和降级的顺序相同。
+- **全局定义**：都在编译期环境里，和 HIR 求值器一样在构造时取 Clostrum 的 cell：函数调用读 operator cell 的 car，特殊变量读写 variable cell 的 car（cdr 是未绑定标记）。`funcall`、`multiple-value-call` 收到符号时在编译期环境里查函数。`%primop` 在编译期执行时报错。
+- **动态绑定**：浅绑定，新值写进 cell，`unwind-protect` 退出时恢复（`progv` 同样，值不够的符号变成未绑定）。HIR 求值器用的是自己的深绑定链表，编译期环境里的 `symbol-value`、`boundp` 看不到其中的绑定；浅绑定下它们看到的是当前值。
+- **退出**：`catch`、`throw`、`unwind-protect` 直接用宿主的。`block` 和 `tagbody` 在构造时记下有没有不在尾位置的退出：`return-from` 在其 `block` 主体的尾位置时只是返回值；`go` 在其 `tagbody` 某个语句的尾位置时返回目标的标记（`tagbody` 私有的 cons，带目标语句的序号），由语句循环识别。尾位置经过 `if`、`progn` 的最后一个形式、`let`、动态绑定、`block`、`catch` 和 `unwind-protect` 的主体传递，进入函数、实参、`tagbody` 时清空。其他退出（嵌套函数里的、非尾位置的）需要每次进入时新建一个 catch 标签，存在退出点的令牌变量里，`return-from` 和 `go` 对它 `throw`。
+- **`load-time-value`**：构造闭包时求值一次。
+- **局部宏**：展开函数在只含外层局部宏、symbol macro 和特殊声明的环境里求值（`ir-macrolet-environment`），看不到词法变量、局部函数、block 和 tag。
+
+和 HIR 求值器相比还少了一层：HIR 求值器要经过 Common-boot 的 `cst-to-ast`（s-expression-syntax 解析、builder 协议、Iconoclast AST）、AST-to-HIR 和 thunk 构造，每个函数还要编一个参数解析器。kiln0 自编译时，编译期求值（转换、构造和执行，不含它调用的宏展开）在 profile 里从约 15% 降到约 1%，一个阶段从 45 秒降到 36 秒（[performance.md](../research/performance.md)）。
+
 ## 为以后留的位置
 
 - **类型推导**：节点留一个“推导出的类型”槽，变量有声明的类型。`typep` 展开、`aref` 按已知类型内联、浮点拆箱都建在这上面。
 - **内联**：现在 inline 记录的是函数的源码形式，调用处重新转换。以后可以记录 IR，在 IR 上复制。
 - **局部函数**：直接调用、lambda lifting、逃逸分析和 `dynamic-extent`，都只需要 `fun` 上已有的标志。
-- **编译期求值**：在 IR 上写一个求值器（把 IR 编译成闭包的那种），取代 cross-client 的 HIR 求值器。这样编译期和运行期用同一个前端，同一文件里定义的宏函数也不必再走 Maclina 字节码。
+- **image-client 的编译期求值**：IR 求值器现在只用于 cross-client。image-client 换成它（全局定义改用 image 本身，动态绑定用宿主的 `progv`）以后，运行期 `compile`/`eval` 定义的宏函数也不必再走 Maclina 字节码。
 - **交接**：降级直接通过 `kiln_rt_*` 调用在 Rust 侧构建 KIR，不再打印成文本（[specialization.md](specialization.md) 的“编译结果的缓存”也以 KIR 为单位）。
 
 ## 实施步骤
@@ -196,7 +212,7 @@ IR 的遍历按节点种类分派。三种做法：
 3. **IR 和转换**：新文件（`lisp/ir/`），定义结构、转换函数、构造后的那一遍。和旧前端并存，用一个开关选择。
 4. **新的降级**：从 IR 生成 KIR。新前端下 KIR 的命名和顺序可以和旧前端不同；验证方式是全量测试，以及新前端下的自举闭合（stage1 和 stage2 逐字节相同，kiln0 和 kiln1 相同）。
 5. **切换并删除旧路径**：编译路径不再载入 s-expression-syntax 和 builder 协议。
-6. **IR 求值器**：取代 HIR 求值器，之后 Common-boot、Iconoclast、parser.packrat 都不再需要，compiler 模块也会小很多。
+6. **IR 求值器**（已完成，cross-client）：取代 HIR 求值器。Common-boot、Iconoclast、s-expression-syntax、parser.packrat 现在只剩旧前端（`KILN_FRONTEND=iconoclast`）、`KILN_EVALUATOR=hir` 和 image-client 不在顶层的 `macrolet`（Iconoclast 前端下）在用；删掉旧前端和这个开关之后，compiler 模块就不必再带它们。
 7. **在内存里交接 KIR**。
 
 每一步都测量自编译时间，记进 [performance.md](../research/performance.md)。
