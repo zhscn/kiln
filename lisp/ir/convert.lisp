@@ -468,19 +468,27 @@ found here, as Common-boot found them with CST:RECONSTRUCT.")
         (ir-error "Cannot declare a symbol macro SPECIAL"))
       (ir-convert-body body (ir-declare (ir-env environment :vars entries) declarations)))))
 
+(defgeneric ir-local-macro-expander (client name lambda-list body environment)
+  (:documentation "The expander of the local macro NAME defined by MACROLET
+in the IR environment ENVIRONMENT. The cross client evaluates it with the
+IR evaluator (eval.lisp); the default uses Common-boot's EVAL-CST, which
+sees only the local macros and symbol macros of ENVIRONMENT.")
+  (:method (client name lambda-list body environment)
+    (let ((*inline-enabled* nil))
+      (cb:eval-cst client
+                   (cst:cst-from-expression (ecclesia:parse-macro name lambda-list body))
+                   (ir-evaluation-environment environment)))))
+
 (define-ir-converter macrolet (parts environment)
   (ir-arity 'macrolet parts 1 nil)
-  (let ((entries '()) (evaluation (ir-evaluation-environment environment)))
+  (let ((entries '()))
     (dolist (input (ir-parts (first parts)))
       (let* ((def (mapcar #'ir-raw (ir-parts input))) (name (first def)))
         (ir-arity 'macrolet-definition def 2 nil)
         (unless (and (symbolp name) name) (ir-error "Invalid local macro name ~S" name))
         (when (assoc name entries) (ir-error "Duplicate local macro ~S" name))
-        (let ((expander (let ((*inline-enabled* nil))
-                          (cb:eval-cst *client*
-                                       (cst:cst-from-expression
-                                        (ecclesia:parse-macro name (second def) (cddr def)))
-                                       evaluation))))
+        (let ((expander (ir-local-macro-expander *client* name (second def) (cddr def)
+                                                 environment)))
           (push (cons name (list :macro expander)) entries))))
     (ir-convert-body (rest parts) (ir-env environment :funcs entries))))
 

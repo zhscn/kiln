@@ -14,7 +14,7 @@
 SBCL 宿主
  ├─ 载入 kiln 系统（kiln.asd）：Eclector、CST、Trucler、Common-boot、Iconoclast、
  │   Clostrum、Common-macros、Khazern、Anatomicl，加上 lisp/*.lisp
- ├─ cross-client：Clostrum 编译期环境，编译期求值用 Common-boot 的 HIR 求值器
+ ├─ cross-client：Clostrum 编译期环境，编译期求值用 IR 求值器
  └─ stage0：五个模块和构建程序的 KIR，加上清单 modules.lisp-expr
         ↓ kiln-cg obj，和 launcher 链接
 kiln0 ──运行构建程序──▶ stage1 ──kiln-cg──▶ kiln1 ──▶ stage2

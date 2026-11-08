@@ -80,7 +80,7 @@ Khazern 同时用于宿主和目标端：
 
 ## 其他小库
 
-- **alexandria**：Eclector 要用，alexandria-1 编进 CLOS 模块。宿主 alexandria 的宏不能直接当作编译期的展开函数（`once-only` 的展开结果里含有 SBCL 的反引号对象），所以除 `conditions`、`features`、`io`、`numbers` 之外的文件都以 `:compile-time-too` 加载，宏在编译期由 HIR 求值器执行。
+- **alexandria**：Eclector 要用，alexandria-1 编进 CLOS 模块。宿主 alexandria 的宏不能直接当作编译期的展开函数（`once-only` 的展开结果里含有 SBCL 的反引号对象），所以除 `conditions`、`features`、`io`、`numbers` 之外的文件都以 `:compile-time-too` 加载，宏在编译期由编译期求值器执行。
 - **Trinsic**：Cyclosis 和打印器模块用它的 `make-define-interface` 生成 CL 层的接口，作为目标端代码编译进 CLOS 模块。
 - **trivial-package-locks**：`with-unlocked-packages` 定义成 `progn`。
 - **trivial-with-current-source-form**：kiln 的条件还不记源码形式，`with-current-source-form` 展开成 `progn`。
