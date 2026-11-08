@@ -2,6 +2,12 @@
 
 `lisp/lower.lisp` 的 `lower` 是按 AST 类分派的泛函，返回保存结果的 KIR 操作数。输入是前端的输出（[front-end.md](front-end.md)），输出的 KIR 见 [codegen.md](codegen.md)，ABI 见 [abi.md](abi.md)。
 
+## IR 输入
+
+选择 IR 前端时，顶层形式保存 `ir-fun`；`lisp/ir/lower.lisp` 以整数 kind 分派，不执行 `ast-facts`。变量的 lowering 字段记录所属函数中的 KIR 变量，跨函数引用按照 free 向量的下标读取 self 的环境。需要 cell 的变量在绑定时装箱，函数入口先保护所有实参，再分配参数的 cell。
+
+新路径复用下面的多值、动态环境、常量和原语工具。退出点自己的 lowering 字段保存目标块及动态作用域；只有跨函数退出才分配令牌。`load-time-value` 的形式在空词法环境中转换为独立函数，在模块初始化时调用一次并存入 GC root cell。已知局部函数通过代码标签直接调用，同时传递承载闭包环境的 self。
+
 ## 函数、变量和闭包
 
 - **函数**：每个 `local-function-ast` 编译成一个 KIR 函数。`labels` 为每个绑定的函数建立函数对象：没有自由变量的函数用静态函数对象（大多数顶层 `defun` 都是这种），闭包按 env 长度在堆上分配，再由 `set-static-environment` 填写 env。env 长度从对应的 `set-static-environment-ast` 得到。

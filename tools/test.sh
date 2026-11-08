@@ -93,9 +93,10 @@ if [ -n "${KILN_COMPILER:-}" ]; then
     --eval "(kiln:write-manifest \"$build/modules.lisp-expr\" :programs '($programs))" \
     >"$build/compile.log" 2>&1 || { cat "$build/compile.log"; exit 1; }
   # The five modules compiled are saved as a heap image,
-  # reused while the compiler and the modules' sources are the same.
+  # reused while the compiler, module sources, and selected front end match.
   image=$build/kiln-compiler.img
   key=$( { sha256sum "$compiler"
+           printf '%s\n' "frontend=${KILN_FRONTEND:-iconoclast}"
            sbcl --noinform --non-interactive --eval '(require :sb-md5)' --eval "
              (with-open-file (in \"$build/modules.lisp-expr\")
                (dolist (entry (subseq (read in) 0 5))

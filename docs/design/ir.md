@@ -1,6 +1,30 @@
 # kiln 的 IR：从 CST 直接到可分析的中间表示（草案）
 
-状态：**分阶段实现**。原生结构对象和 KIR 的 `:switch` 已接入；CST 到新 IR 的转换、分析和降级仍待实现，编译路径继续使用 Iconoclast。现在的流水线见 [front-end.md](front-end.md) 和 [lowering.md](lowering.md)。
+状态：**双前端并存**。原生结构对象、KIR `:switch`，以及 CST → IR → KIR 路径已接入。默认仍使用 Iconoclast；设置 `KILN_FRONTEND=ir`，或动态绑定 `kiln.compiler:*front-end*` 为 `:ir`，选择新路径。编译期求值仍使用 client 的原有求值器。现在的流水线见 [front-end.md](front-end.md) 和 [lowering.md](lowering.md)。
+
+## 当前实现
+
+`lisp/ir/data.lisp` 定义节点、变量、函数、退出点和可增长向量。节点是统一的结构，保存整数 kind、源码位置、四个操作数、类型提示和遍历标记。调用和序列的子节点使用 simple-vector；引用保存定义对象，遍历不沿定义边走。
+
+`environment.lisp` 的词法环境由结构组成，实现 Trucler 查询。`convert.lisp` 按特殊形式的名字选择手写转换器，直接处理 CST 子节点；宏展开结果作为普通形式转换，继承最近的源码位置。词法和特殊绑定、FLET/LABELS 的作用域、symbol macro、局部宏及声明都在这里解析。宏展开函数继续通过 client 运行，局部宏的展开函数由保留的编译期求值器构造。
+
+`analyze.lisp` 在一次树遍历中完成局部内联、传递捕获、cell 和退出令牌分析。只含必需参数、未作为值使用、且在定义函数中只有一个已知调用点的局部函数，可以移到调用点；参数数量必须匹配。已经分析的函数保留，避免移动后重复遍历函数体或重复登记 `load-time-value`。内联不复制节点，变量和退出点的 owner 随作用域调整。
+
+`lower.lisp` 按 kind 降级，复用已有的 KIR 分配、多值和展开工具。自由变量向量确定闭包的 env 下标；互递归函数先分配全部函数对象，再填写 env。已知局部调用使用代码标签直接调用，self 函数对象仍传递闭包环境。可选及关键字参数的初始化按参数顺序进行，特殊参数的动态绑定覆盖后续初始化形式。
+
+源码位置使用 62 位非负 fixnum：文件编号 12 位、起止偏移各 25 位。文件表属于编译会话，最多 4096 个文件，起止字符偏移分别小于 2^25；超出范围时报错，不截断位置。IR 不保存 CST 对象。
+
+可重复的验证命令：
+
+```sh
+sbcl --noinform --non-interactive --load tools/env.lisp \
+  --eval '(ql:quickload "kiln" :silent t)' --load tools/test-ir.lisp
+KILN_FRONTEND=ir tools/test.sh
+KILN_FRONTEND=iconoclast tools/test.sh
+KILN_FRONTEND=ir tools/bootstrap.sh
+```
+
+模型检查覆盖 use-def、传递捕获、cell、退出令牌、内联后的 owner、树的独占子节点和语法错误；端到端验证比较程序行为。新前端的 KIR 不要求与旧前端相同，自举要求同一前端下的各阶段闭合。删除旧编译路径、IR 求值器和内存 KIR 交接仍是后续步骤。
 
 ## 为什么要换
 

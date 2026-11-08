@@ -2,6 +2,14 @@
 
 前端把源码变成简化后的 AST，降级见 [lowering.md](lowering.md)。同一份前端既在 SBCL 上运行（交叉编译出 stage0），也在 kiln 上运行（自举、运行期 `compile`/`eval`）。
 
+## 选择前端
+
+编译会话可以使用两条输入路径：默认的 Iconoclast 路径，以及 `lisp/ir/` 中的直接 CST → IR → KIR 路径。`KILN_FRONTEND=ir` 在加载编译器时选择新路径；`KILN_FRONTEND=iconoclast` 选择旧路径。Lisp 调用者也可以动态绑定 `kiln.compiler:*front-end*` 为 `:ir` 或 `:iconoclast`。快照保存加载时的选择。
+
+两条路径共享读入、顶层处理、编译期环境、内联源码表和 KIR 发射工具。新 IR 的词法绑定、自由变量、赋值、退出点和闭包布局直接记录在结构中，不调用 Iconoclast 的简化和 AST 分析。宏展开结果直接转换，不重建 CST；编译期求值仍由 client 的 HIR 或 Maclina 求值器处理。数据结构、源码位置和分析规则见 [ir.md](ir.md)。
+
+下面描述默认的 Iconoclast 路径。
+
 ## 流水线
 
 ```

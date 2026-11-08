@@ -103,8 +103,10 @@ at compile time (USE-HOST-MACROS).")
            (if (functionp f) f (clo:fdefinition client genv f))))
     (def 'macro-function
       (lambda (name &optional env)
-        (declare (ignore env))
-        (clo:macro-function client genv name)))
+        (if env
+            (let ((description (trucler:describe-function client env name)))
+              (and (typep description 'trucler:macro-description) (trucler:expander description)))
+            (clo:macro-function client genv name))))
     ;; A macro whose compile-time expander is the host's (HOST-MACRO) keeps
     ;; it: the target's definition (Khazern's LOOP, Eclector's QUASIQUOTE,
     ;; alexandria's macros) takes effect at load time only. Its expander

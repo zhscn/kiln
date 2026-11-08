@@ -497,11 +497,23 @@ the second value."
 (defun simplify (ast)
   (cbah::simplify-ast ast))
 
+(defvar *front-end*
+  (let ((selection #-kiln (uiop:getenv "KILN_FRONTEND")
+                   #+kiln (kiln.kernel::sys-string 10 (kiln.kernel::string-octets "KILN_FRONTEND"))))
+    (cond ((or (not (stringp selection)) (string= selection "")
+               (string-equal selection "iconoclast")) :iconoclast)
+          ((string-equal selection "ir") :ir)
+          (t (error "Unknown KILN_FRONTEND value ~S" selection))))
+  "The compilation front end: :ICONOCLAST or :IR. Compile-time evaluation
+continues to use the client's evaluator.")
+
 (defun compile-toplevel-form (cst compile-time-too)
   (when compile-time-too
     (compile-time-eval cst))
-  (push (make-toplevel-form (simplify (let ((*inline-enabled* t))
-                                        (cb:cst-to-ast *client* cst *environment*)))
+  (push (make-toplevel-form (ecase *front-end*
+                              (:iconoclast (simplify (let ((*inline-enabled* t))
+                                                       (cb:cst-to-ast *client* cst *environment*))))
+                              (:ir (let ((*inline-enabled* t)) (cst-to-ir cst *environment*))))
                             *source-file* *toplevel-source* *definition-name*
                             *toplevel-raw*)
         *toplevel-asts*))
@@ -516,7 +528,8 @@ the second value."
                          #-kiln (not (eq op 'defmacro)))
                     (values (funcall (trucler:expander description) form *environment*) t))
                    #-kiln
-                   ((cmd:macro-function-exists-p op)
+                   ((and (not (typep description 'trucler:local-function-description))
+                         (cmd:macro-function-exists-p op))
                     (values (cmd:macroexpand-1 form *environment*) t))
                    (t (values nil nil))))))))
 
@@ -661,7 +674,8 @@ programs compiled after it."
   (packages '())
   ;; Inline proclamations and expansions (*INLINE-FUNCTIONS*).
   ;; Keys are function names: symbols and (SETF symbol).
-  (inline-functions (make-hash-table :test 'equal)))
+  (inline-functions (make-hash-table :test 'equal))
+  (ir-source-files (make-ir-buffer)))
 
 (defun make-session (&key (client-class #-kiln 'cross-client #+kiln 'image-client))
   "A session whose client is an instance of CLIENT-CLASS: CROSS-CLIENT, or
@@ -794,7 +808,9 @@ order, and the host packages that DEFPACKAGE forms created."
          (*defined-packages* '())
          (*structures* (session-structures session))
          (*inline-functions* (session-inline-functions session))
-         (*toplevel-environment* *environment*))
+         (*toplevel-environment* *environment*)
+         (*ir-source-files* (session-ir-source-files session))
+         (*ir-current-source-file* :uninitialized) (*ir-file-id* 0))
     ;; Calls to functions defined later in the file are fine: report
     ;; undefined functions at the end (CLHS 3.2.2.3).
     (handler-bind ((cb:no-function-description

@@ -623,18 +623,23 @@ in the function being compiled."
 in the source: it occurs in the top-level form. Variables that macros
 introduce do not; their names are of no use, and differ between the host
 and kiln, where some macro packages have other names."
-  (let ((name (and definition (ico:name definition))))
+  (let ((name (and definition (if (ir-var-p definition) (ir-var-name definition) (ico:name definition)))))
     (and name (symbolp name) (symbol-package name) *toplevel*
          (gethash name (toplevel-symbols *toplevel*))
          name)))
+
+(defvar *ir-entry-p* nil)
 
 (defun bind-var (definition operand &key (name (source-variable-name definition)) cell)
   "Binds the variable DEFINITION to a new KIR variable holding OPERAND.
 NAME is the source variable's name for the debug info, NIL for none; CELL
 true if the variable holds the cell of the variable NAME."
   (let ((v (copy-to-var operand)))
-    (setf (gethash definition *vars*) (cons *func* v))
-    (note-debug-var v name cell)
+    (if (ir-var-p definition)
+        (setf (ir-var-lowering definition) v)
+        (setf (gethash definition *vars*) (cons *func* v)))
+    (unless (and (ir-var-p definition) *ir-entry-p*)
+      (note-debug-var v name cell))
     v))
 
 (defun var-of (definition)
@@ -913,6 +918,13 @@ NAME) from DEFUN sees the name."
   "The value of AST if it is a constant (QUOTE, a literal, or a variable
 known to hold one), and true; else NIL and NIL."
   (typecase ast
+    (ir-node
+     (case (ir-node-kind ast)
+       (0 (values (ir-node-a ast) t))
+       (1 (let ((var (ir-node-a ast)))
+            (values (ir-var-constant var)
+                    (and (ir-var-constant-p var) (not (logtest 1 (ir-var-flags var)))))))
+       (otherwise (values nil nil))))
     (ico:quote-ast
      (let ((object (ico:object-ast ast)))
        (if (typep object 'ico:unparsed-form-ast)
@@ -1688,18 +1700,20 @@ safepoint."
   "Atomic types whose TYPEP is a call to a predicate.")
 
 (defun call-ast (name arg-asts)
-  (make-instance 'ico:application-ast
-                 :function-name-ast (make-instance 'ico:global-function-name-reference-ast
-                                                   :name name)
-                 :argument-asts arg-asts))
+  (if (some #'ir-node-p arg-asts)
+      (ir-node 7 nil name (coerce arg-asts 'simple-vector))
+      (make-instance 'ico:application-ast
+                     :function-name-ast (make-instance 'ico:global-function-name-reference-ast :name name)
+                     :argument-asts arg-asts)))
 
 (defun long-call-ast (name arg-asts)
   "An AST equivalent to the call of NAME (LIST, LIST*, VECTOR, NCONC or
 APPEND) with ARG-ASTS, whose calls have few enough arguments: (LIST* a1
 ... an REST) in chunks, (COERCE list 'SIMPLE-VECTOR) for VECTOR, nested
 calls for the associative NCONC and APPEND."
-  (let ((chunk 60))
-    (labels ((list-ast (asts tail-ast)
+  (let ((chunk 60) (ir (some #'ir-node-p arg-asts)))
+    (labels ((literal (value) (if ir (ir-node 0 nil value) (make-instance 'ico:literal-ast :literal value)))
+             (list-ast (asts tail-ast)
                ;; The list of ASTS's values followed by TAIL-AST's value.
                (if (<= (length asts) chunk)
                    (call-ast 'list* (append asts (list tail-ast)))
@@ -1710,11 +1724,11 @@ calls for the associative NCONC and APPEND."
          ;; Associative: (F (F a1 ... a60) (F a61 ...)).
          (call-ast name (list (call-ast name (subseq arg-asts 0 chunk))
                               (call-ast name (nthcdr chunk arg-asts)))))
-        (list (list-ast arg-asts (make-instance 'ico:literal-ast :literal nil)))
+        (list (list-ast arg-asts (literal nil)))
         (list* (list-ast (butlast arg-asts) (car (last arg-asts))))
         (vector (call-ast 'coerce
-                          (list (list-ast arg-asts (make-instance 'ico:literal-ast :literal nil))
-                                (make-instance 'ico:literal-ast :literal 'simple-vector))))))))
+                          (list (list-ast arg-asts (literal nil))
+                                (literal 'simple-vector))))))))
 
 (defun eq-comparable-constant-p (ast)
   "True if AST is a constant that EQL compares as EQ: not a number that is
@@ -1733,10 +1747,10 @@ make that the test, with no key: none, or :TEST #'EQL, #'EQ, 'EQL or
         ((and (= (length keyword-asts) 2)
               (eq (constant-value (first keyword-asts)) :test))
          (let* ((test (second keyword-asts))
-                (name (if (typep test 'ico:global-function-name-reference-ast)
-                          (ico:name test)
-                          (multiple-value-bind (value constantp) (constant-value test)
-                            (and constantp value)))))
+                (name (cond ((typep test 'ico:global-function-name-reference-ast) (ico:name test))
+                            ((and (ir-node-p test) (= (ir-node-kind test) 5)) (ir-node-a test))
+                            (t (multiple-value-bind (value constantp) (constant-value test)
+                                 (and constantp value))))))
            (and (member name '(eq eql)) name)))
         (t nil)))
 
@@ -2093,10 +2107,12 @@ returns the operand of its (static) function object."
       (let ((*self* (copy-to-var :self)))
         (emit-poll)
         (dolist (form asts)
-          (let ((*toplevel* form)
-                (*facts* (ast-facts (toplevel-form-ast form))))
-            (emit-load-time-values)
-            (lower (toplevel-form-ast form))))
+          (let* ((*toplevel* form) (ast (toplevel-form-ast form)))
+            (if (ir-fun-p ast)
+                (ir-lower-toplevel ast)
+                (let ((*facts* (ast-facts ast)))
+                  (emit-load-time-values)
+                  (lower ast)))))
         (emit `(:return ,(nil-value) 1)))
       (let ((*toplevel* (and (= (length files) 1) (first files)
                              (make-toplevel-form nil (first files) nil nil nil))))
@@ -2197,6 +2213,7 @@ IMAGE true: the module is to be loaded into the running image; its
 literals are the image's objects, and it has no symbol table.
 Returns the module and the vector of its literals."
   (let ((*module* (make-kmodule module-name))
+        (*ir-lowering-epoch* (list nil))
         (*image-literals* (and image (make-hash-table :test 'eq)))
         (*image-literal-objects* '())
         (*module-label* (mangle module-name))
