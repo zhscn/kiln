@@ -89,6 +89,13 @@ list, slots), the slots unbound."
 
 ;;; Class names. The class of a name is on the symbol's plist.
 
+;;; One more each time an existing class changes: it is finalized again
+;;; (redefinition.lisp), or its name is given to another class. Defining a
+;;; new class does not change it. Call-site caches (specialization.lisp)
+;;; check it: an entry made for the old class, or for an obsolete
+;;; instance's old stamp, is not used after it changes.
+(defvar *class-change-version* 0)
+
 (defun find-class (name &optional (errorp t) environment)
   (declare (ignore environment))
   (or (get name '%class)
@@ -97,6 +104,9 @@ list, slots), the slots unbound."
 (defun (setf find-class) (class name &optional errorp environment)
   (declare (ignore errorp environment))
   ;; The name maps to CLASS (or to another class than before): a type fact.
+  (let ((old (get name '%class)))
+    (when (and old (not (eq old class)))
+      (setf *class-change-version* (+ *class-change-version* 1))))
   (setf (get name '%class) class)
   (kiln.kernel::change-assumption :type name)
   class)

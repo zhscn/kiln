@@ -55,6 +55,7 @@
            ;; Assumptions and dependency tracking (lisp/target/assumptions.lisp,
            ;; lisp/target/compiler/dependencies.lisp).
            #:assumption-version #:assumptions
+           #:*compilation-cache-limit* #:clear-compilation-cache #:compilation-cache-statistics
            #:dependents #:dependencies #:*recompile-verbose* #:stale-definition
            #:stack-exhausted
            ;; The sampling profiler (lisp/target/clos/profile.lisp).

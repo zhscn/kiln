@@ -1324,6 +1324,7 @@ if needed (not a safepoint)."
 (defun emit-load-time-values ()
   "Evaluates the LOAD-TIME-VALUE forms of the top-level form."
   (dolist (ltv (facts-load-time-values *facts*))
+    (setf (kiln.kir::kmodule-replayable-p *module*) nil)
     (let ((cell (fresh-label "kiln_ltv_")))
       (module-data cell `(:words 0))
       (module-root cell 0)
@@ -1798,7 +1799,53 @@ LOWER-CACHED-SLOT-VALUE."
                     (list value object (constant-object slot-name)
                           `(:addr ,label ,+tag-cons+)))))
 
+(defun call-site-root ()
+  "A mutable cache cons whose object-valued car is a static GC root."
+  (let ((label (fresh-label "kiln_call_site_")))
+    (module-data label `(:words ,+kind-cons+ ,(nil-word) ,(nil-word)))
+    (module-root label 1)
+    `(:addr ,label ,+tag-cons+)))
+
+(defun call-site-specialization-p ()
+  ;; The construction protocol itself (kernel, CLOS) calls MAKE-INSTANCE plainly.
+  (not (member (kmodule-name *module*) '("kernel" "clos") :test #'string=)))
+
+(defun lower-constructor-call (name arg-asts class-name keys)
+  (let* ((vals (lower-args arg-asts))
+         (helper (function-cell-value 'kiln.kernel::%constructor-target))
+         (entry (copy-to-var `(:load ,helper ,+fobj-entry+) :raw))
+         (fallback (new-block)) (specialized (new-block)) (done (new-block))
+         (result (new-var)) (count (new-var :raw)))
+    (br `(:eq ,entry (:addr ,(undefined-function-entry))) fallback specialized)
+    (start-block fallback)
+    (multiple-value-call #'set-mv result count
+      (emit-lisp-call (function-cell-value name) vals))
+    (jump done)
+    (start-block specialized)
+    (let ((function (copy-to-var
+                     (emit-lisp-call helper (list (call-site-root)
+                                                  (constant-object class-name)
+                                                  (constant-object keys))))))
+      (multiple-value-call #'set-mv result count
+        (emit-lisp-call function
+                        (loop for value in (cddr vals) by #'cddr collect value))))
+    (jump done)
+    (start-block done)
+    (values result count)))
+
 (defun lower-global-call (name arg-asts)
+  (when (and (eq name 'make-instance) (call-site-specialization-p)
+             (oddp (length arg-asts))
+             (<= (length arg-asts) (+ +reg-args+ +values-max+)))
+    (multiple-value-bind (class-name constantp) (constant-value (first arg-asts))
+      (when (and constantp (symbolp class-name) class-name)
+        (let ((keys '()) (valid t))
+          (loop for key-ast in (rest arg-asts) by #'cddr
+                do (multiple-value-bind (key constantp) (constant-value key-ast)
+                     (if (and constantp (symbolp key)) (push key keys) (setf valid nil))))
+          (when valid
+            (return-from lower-global-call
+              (lower-constructor-call name arg-asts class-name (reverse keys))))))))
   ;; (EQL x constant), as CASE expands into, is EQ for most constants.
   (when (and (eq name 'eql) (= (length arg-asts) 2)
              (or (eq-comparable-constant-p (first arg-asts))

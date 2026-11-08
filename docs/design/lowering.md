@@ -80,4 +80,4 @@
 
 见 [roadmap.md](../roadmap.md) 的“性能”：`&optional`、`&key` 函数的 inline、编译器宏和调用点上的变换（`member`、`assoc`、`find` 等带常量 `:test`）、不逃逸局部函数的 lambda lifting、逃逸分析和拆箱、`dynamic-extent`。kiln 不做常量传播，`(funcall test ...)` 仍是间接调用。
 
-CLOS 的其余调用点特化（泛函调用的内联缓存、常量类名的 `make-instance`）还没有做，它们用 [specialization.md](specialization.md) 的假设和检查式守卫。
+常量类名及 initarg 名的 `make-instance` 调用通过带静态 GC root 的调用点描述符选择构造器，再传递求值后的值；细节见 [specialization.md](specialization.md)。泛函调用仍是普通的函数格调用（调用点缓存试过，比判别函数慢）。

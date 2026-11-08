@@ -16,6 +16,8 @@ kiln-launcher               staticlib，提供 C main，链接 kiln-rt 和 kiln-
 
 `target/debug/kiln-cg jit kernel.kir prog.kir` 运行程序，加 `--dump-clif` 查看生成的 CLIF；`kiln-cg obj ... -o prog.o` 生成目标文件。
 
+编译器中的模块对象还记录 `replayable-p`，供顶层原生产物缓存判断初始化函数是否可重复执行。引入 `load-time-value` 单元的降级会清除此标志，保持不同编译结果的静态 cell 独立；该元数据不写入 KIR 文本。
+
 ## 决定：交换格式用 KIR，不用 CLIF 文本
 
 最初计划用 CLIF 文本做 Lisp 编译器和代码生成之间的交换格式，后来改成了 KIR：

@@ -87,12 +87,18 @@
        (kiln.kernel::change-assumption :class class)
     (kiln.kernel::change-assumption :type (or (class-name class) class))))
 
+;;; Only a finalization again is a change. A class finalized for the first
+;;; time has had no instances, so no call cache, stamp or TYPEP answer can
+;;; mention it, and announcing it would empty every cache of the image
+;;; each time a class is first used.
 (defmethod finalize-inheritance :around ((class real-class))
-  (kiln.kernel::defer-assumption-changes
-   (lambda ()
-     (unwind-protect (call-next-method)
-       ;; Finalization can modify the precedence list before signaling.
-       (note-class-change class)))))
+  (if (class-finalized-p class)
+      (kiln.kernel::defer-assumption-changes
+       (lambda ()
+         (unwind-protect (call-next-method)
+           ;; Finalization can modify the precedence list before signaling.
+           (note-class-change class))))
+      (call-next-method)))
 
 (defun refinalize (class)
   "Finalizes CLASS again if finalized, then its subclasses; returns all of them."
@@ -144,6 +150,7 @@ the automaton built from them matches the old stamps."
 
 (defun class-assumptions-changed (classes)
   "The watcher of the class assumptions: CLASSES changed."
+  (setf *class-change-version* (+ *class-change-version* 1))
   (forget-call-caches classes))
 
 (kiln.kernel::register-assumption-watcher :class #'class-assumptions-changed)

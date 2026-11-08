@@ -12,6 +12,8 @@
 
 (defstruct (kmodule (:constructor %make-kmodule (name)))
   name
+  ;; Executing a module with load-time cells again would change old closures.
+  (replayable-p t)
   (init nil)
   (imports '())
   (import-data '())

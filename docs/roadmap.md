@@ -32,8 +32,8 @@
 | 1 构建期初始化和堆快照 | 堆快照已做；seal 时写进目标文件 | 决定 seal 的语义和目标文件格式 |
 | 2 依赖追踪 | image 里求值的部分已做；AOT 模块和定义表一起做 | 影响编译器的数据结构，越早定越好 |
 | 内存模型 | 写多线程的 Lisp 代码之前 | 影响 runtime 和库的接口 |
-| 5 并行编译和缓存 | 自举时间成为瓶颈时 | 机器码缓存只依赖确定性，现在就能做 |
-| 3 内联缓存 | 性能优化阶段 | 不依赖 seal，开发期即可受益 |
+| 5 并行编译和缓存 | 顶层原生产物缓存已接入；并行编译待做 | 前端和降级仍重放编译期效果，原生产物按 KIR、literal 和依赖版本匹配 |
+| 3 内联缓存 | 常量槽名、常量类名构造器的调用点已接入 | 原生编译器载入后，热点构造器可晋升为机器码；泛函按 PCL 的路线优化判别函数本身；见 [specialization.md](design/specialization.md) |
 | 3 PGO、4 逃逸分析和拆箱 | seal 和 WPO 实现时 | 需要中端 |
 | 6 诊断、LSP、DWARF | ANSI 覆盖基本完成后 | 面向用户 |
 | 7 测试方法 | 随时，按需加 | 差分测试的基础设施已经有了 |
@@ -59,7 +59,8 @@
 8. inline 支持 `&optional`、`&key` 参数。
 9. **分代 GC**：这一轮优化之后，自编译的分配量从约 250 GB 降到 99 GB，GC 停顿只占墙钟的 5.8%（7.3 秒），对编译器自身的收益缩到几秒，价值主要在降低峰值内存（GenImmix 不需要半个堆的复制预留）和分配密集的用户程序。下面是优化之前量的：已量过（[performance.md](research/performance.md) 的“GC”）：自举时 GC 停顿约占墙钟的 9%、worker 占 CPU 的 22%，复制的字节 93% 是反复复制的老对象，新对象只有约 1.1% 活过下一次回收（nursery 从 4 GiB 缩到 256 MiB 也不变）。估计分代后 GC 停顿从 31–39 秒降到 6–9 秒，扣掉写屏障净省墙钟的 4–6%。设计和实施步骤见 [gc.md](design/gc.md) 的“Generational GC plan”：先 GenCopy 验证屏障，再换 GenImmix；快照区同时改成 card table。另外两项不依赖分代、要改 MMTk 的：MMTk 写死的清零（约 2.5% 的 CPU），GC 并行度低（8 个线程平均只有约 3 个在干活，线程数不影响停顿）。
 10. **无 header 的 cons**：cons 现在 24 字节，SBCL 是 16 字节。做法：所有 header 的低 3 位用保留的 tag `111`，任何 Lisp 值都不会长成 header，于是对象的第一个字不是 header 就是 cons（SBCL 遍历堆也是这样区分的）；forwarding bits 已在 side metadata，forwarding 指针写在偏移 0 覆盖 car 也没问题。难点是身份哈希：cons 没有 header 就没有地方存，改为按地址哈希，GC 确实移动了某张表的键时才标记这张表需要重新哈希（SBCL 的做法）。SemiSpace 下每次 GC 都移动全部对象，所以排在分代 GC 之后。先量 cons 在分配量里的占比（按 kind 统计分配字节数）。NIL 同时带 list tag 的技巧收益很小，不做。
-11. **CLOS 调用点的内联缓存**，以及 `&rest` 泛函、方法组合不再分配参数列表。统一的假设登记和失效框架（[specialization.md](design/specialization.md)）已经就位：现有的缓存（分派、`make-instance`、`typep` 表）都经过它，调用点 `typep` 缓存的过时问题已修掉，常量槽名的 `slot-value` 已经按对象 stamp 在调用点缓存槽位置（24.7 → 9.9 ns，和访问器方法相当）。剩下的是 `make-instance` 的构造器对象、泛函调用的内联缓存和生成代码；编译结果按顶层形式缓存也用同一套依赖。
+11. **CLOS 调用点的内联缓存**，以及 `&rest` 泛函、方法组合不再分配参数列表。统一的假设登记和失效框架（[specialization.md](design/specialization.md)）已经就位：现有的缓存（分派、`make-instance`、`typep` 表）都经过它，调用点 `typep` 缓存的过时问题已修掉，常量槽名的 `slot-value` 已经按对象 stamp 在调用点缓存槽位置（24.7 → 9.9 ns，和访问器方法相当）。常量类名 `make-instance` 的构造器对象和热点构造器的生成代码也已接入（未晋升的闭包路径 437 → 359 ns）。接下来按 PCL 的路线优化判别函数本身：按状态（单类、双类、caching）生成专门的判别函数，失效时整个换掉（`install-discriminating-function`），命中路径不检查任何版本。泛函调用点缓存试过一版：要先调选择器、再调有效方法，还要检查方法版本、判别函数身份和类变化版本，`bench/compare.lisp` 上单态 13.7 → 28.6 ns、多态 18.9 → 25.7 ns，已去掉。
+    - 以后的方向：SICL 式的调用点内联（Strandh，*Call-site optimization for Common Lisp*：每个调用点有一段由 runtime 按被调函数状态重新生成的 snippet）。kiln 不改写机器码，对应做法是静态 cons 的 car 加上降级时生成在调用点里的守卫：读 car，比较被特化参数的 stamp，直接调用有效方法；失效改成推送式，由登记在 `(:methods gf)` 和类变化上的依赖者把 car 清成 NIL，命中路径不再检查版本。比 PCL 少一次调用，代价是降级和失效登记都要做细。等判别函数接近 SBCL 之后，再量它还能省多少。
 12. **kiln-cg**：并行构造 CLIF（现在需要 `&mut Module`），减少整个程序的 KIR 和 CLIF 同时在内存里（kiln0 链接时峰值约 9.5 GB）；以 KIR 哈希为键的机器码缓存。
 13. **其他库的快路径**：`sxhash`、字符串键的哈希表、`search`、位数组运算、`read-line` 和字符串流。
 14. **自举**：模块之间存快照，后面的阶段从快照开始。

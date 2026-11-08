@@ -299,6 +299,7 @@
          (kiln-clos-file "change-class")
          (kiln-clos-file "redefinition")
          (kiln-clos-file "constructors")
+         (kiln-clos-file "specialization")
          (kiln-clos-file "trivial-package-locks")
          ;; Trinsic, for the interfaces of Cyclosis and the printer modules.
          (asdf:system-relative-pathname "trinsic" "code/interface.lisp"))
@@ -555,7 +556,7 @@ those whose names are in EXCLUDE."
              '("abi" "kir" "ir/data" "lower" "values" "primitives" "structures" "front" "cross"
                "ir/environment" "ir/convert" "ir/analyze" "ir/eval" "ir/lower"
                "target/compiler/client" "target/compiler/session"
-               "target/compiler/dependencies" "target/compiler/native")))))
+               "target/compiler/dependencies" "target/compiler/cache" "target/compiler/native")))))
 
 (defun compile-compiler (output &key (session (kiln.compiler:make-session)))
   "Compiles the compiler module to OUTPUT, loaded after the front-end and

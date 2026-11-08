@@ -37,7 +37,7 @@ running image, in the null lexical environment."
   (let ((outermost (not *evaluating*)))
     (multiple-value-prog1
         (let ((*evaluating* t)
-              (*dependencies* nil)
+              (*dependencies* (list :dependencies))
               (*eval-definition* nil)
               (*eval-form* form))
           (native-eval-1 form))
@@ -91,8 +91,8 @@ returns its values."
                                            session)
                           name :session session :image t))
       (let* ((kir (kiln.kir::module-string module))
-             (init (progn (note-compiled-code name kir literals)
-                          (kiln.sys:%primop :jit kir literals))))
+             (init (cached-toplevel-init name kir literals (compilation-debug-literals module)
+                                        (kiln.kir::kmodule-replayable-p module))))
         (unless init
           (error "kiln-cg could not compile ~S." form))
         (let ((*eval-values* nil))
@@ -110,3 +110,5 @@ returns its values."
 
 (setf kiln.kernel::*compile-function* 'native-compile)
 (setf kiln.kernel::*eval-function* 'native-eval)
+
+(setf clostrophilia::*specialization-compiler* 'native-compile)

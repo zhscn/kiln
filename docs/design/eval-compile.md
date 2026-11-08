@@ -69,6 +69,10 @@ compiler 模块载入后，`eval` 也走原生编译（`native-eval`，挂在 `k
 - Common-boot 的 HIR 求值器：交叉编译时每个宏的展开函数都要求值，求值器为每个函数编一个参数解析器（编 kernel 和 CLOS 时约 800 个），原生编译会让自举变慢。
 - parser.packrat 的 `%uses?`：借编译来展开宏，判断规则是否用到 `:fail`、`:fatal`、`position`（上游用 `sb-cltl2:macroexpand-all`）。结果必须和 SBCL 相同，否则自举不闭合。
 
+## 顶层编译缓存
+
+原生 `eval` 和 `load` 保留最近使用的顶层原生产物。每次重放宏展开、前端和降级，只在 KIR、literal 身份及依赖版本相同时复用机器码；命中后仍执行该顶层形式。缓存默认至多 64 项，可通过 `kiln.sys:*compilation-cache-limit*`、`clear-compilation-cache` 和 `compilation-cache-statistics` 管理。调试元数据按结构比较，程序 literal 保持身份。详细协议见 [specialization.md](specialization.md)。
+
 ## 已知限制
 
 - `compile-file` 和 FASL：只有 `compile`、`eval`、`load` 源文件。

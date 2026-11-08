@@ -32,7 +32,7 @@ MMTk 收到请求后立刻开始回收，而发起请求的 mutator 这时还在
    - 调用方在这个调用点的 SP 是 `fp + 16`。这一点成立，是因为 Lisp 调用约定的所有参数都放在寄存器里（[abi.md](abi.md)）；
    - 用返回地址查栈图，得到存放 Lisp 对象的槽位（相对 SP 的偏移）。
 2. **动态环境链上每个条目的 `tag` 和 `pend_value` 字段。**
-3. **静态 root**：模块登记的静态字（symbol 的包、函数、值、TLS 下标、plist、setf 函数槽，`load-time-value` 的格子，运行期编出的模块的字面量字，NIL 和 T 的几个字）。
+3. **静态 root**：模块登记的静态字（symbol 的包、函数、值、TLS 下标、plist、setf 函数槽，`load-time-value` 的格子、`make-instance` 调用点缓存 cons 的 car，运行期编出的模块的字面量字，NIL 和 T 的几个字）。
 4. **每个 context 的 TLS 表**里已分配的项。
 5. **传递区的前 `ctx.values_live` 个字**。
 6. **堆快照区里指向堆的字**（[heap-image.md](heap-image.md)）。

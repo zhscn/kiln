@@ -1,0 +1,14 @@
+(3 2)
+(6 5)
+18
+T
+((:INTEGER 3) (:INTEGER 4) (:STRING "s"))
+((:NEW 3) (:NEW 4))
+((:THREE) (:NEW 4))
+(:NEW 3)
+(:ORDINARY 3)
+(:CHILD :CHILD)
+:NO-METHOD
+11
+(2 3 4)
+(101 102)

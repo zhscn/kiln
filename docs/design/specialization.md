@@ -2,7 +2,7 @@
 
 开发期的 kiln 保留 CL 的全部动态性：类可以重定义，方法随时增删，函数和类型可以重新定义，实例可以 `change-class`。性能靠的是在这些动态性之上加快路径。这些快路径原来是各自手写的，每个都自己决定缓存什么、自己负责失效；现在它们都经过同一个模型：有名字、带版本的**假设**，用**守卫**确认仍然成立，假设变化时**失效**。
 
-状态：模型和第一步、第二步已实现（`lisp/target/assumptions.lisp`），第三步的常量槽名 `slot-value` 调用点特化已实现并有测量；泛函调用的内联缓存、`make-instance` 的构造器对象、生成代码、编译结果缓存和 seal 时折叠是计划。
+状态：统一假设、调用点缓存和热点代码生成已接入。常量槽名的 `slot-value`、常量类名及 initarg 名的 `make-instance` 有调用点路径；原生编译器载入后，热点构造器可编成机器码。泛函调用不做调用点缓存（见“调用点特化”）。顶层 `eval` / `load` 有有界的原生产物缓存。seal 时的守卫折叠依赖 seal 本体。
 
 ## 假设
 
@@ -56,7 +56,7 @@
 |---|---|---|
 | 判别闭包的缓存（单分派、双分派） | 参数的 stamp | `(:class C)` 的观察者 → `forget-call-caches`（把提到这些类的调用缓存从所有泛函的调用历史里删掉，让判别函数失效） |
 | 读函数融合：缓存项是槽的位置 | stamp | 同上（类的重新 finalize 换掉 stamp，旧项不再命中） |
-| `make-instance` 的快路径 | 类的 unique number 和 `(:initialization ...)` 的版本 | 增删初始化协议的方法时 `note-method-change` 改变初始化假设；判断结果按（unique number，版本）缓存 |
+| 常量类名 `make-instance` 的构造器对象 | 类的 unique number、类变化版本（`*class-change-version*`）和初始化版本 | 按类和 initarg 形状共享描述符；类名映射、布局或初始化协议变化后重新填入 |
 | `typep` 的全局表 | 按 stamp 直接映射，表在类型假设改变时清空 | `(:type NAME)` 的观察者 → `invalidate-type-caches` |
 | ctype 的解析结果和 `subtypep` 答案 | `(:type ...)` 的版本 | 同上（原来是自己检查 `*type-caches-valid*` 和 `*type-cache-epoch*`） |
 | 调用点上的单项 `typep` 缓存 | `(:type ...)` 的版本（检查式） | 数据段里的缓存 cons：car 是全局表的项，cdr 是填入时的版本；版本不同就重新查全局表。这修掉了原来“被淘汰的实例在这个调用点上拿到旧类的答案”的问题 |
@@ -68,29 +68,21 @@
 
 类终结和重初始化的通知在协议方法上完成，覆盖直接 MOP 调用。泛函重初始化会清空调用历史、重算特化参数的位置并使判别函数失效；初始化协议泛函的变更同时改变初始化假设；它们使用非标准方法组合时，构造器走通用协议。函数绑定通过 `(setf fdefinition)`、`(setf symbol-function)` 和 `fmakunbound` 通知；编译器直接写函数格的路径也执行通知，启动早期则检查通知函数是否已定义。
 
-## 用生成的代码代替手写的闭包（计划）
+## 热点代码生成
 
-现在的分派用宏展开出一族闭包（1–6 个参数、每个特化位置一份），有效方法用闭包组合起来。这能工作，但每种新形态都要手写一组闭包，而且闭包之间无法内联。
+`lisp/target/clos/specialization.lisp` 的调用点先使用闭包。原生 compiler 模块载入后设置编译钩子；命中次数达到阈值时，使用 `native-compile` 晋升。默认阈值是 1000，`*specialization-threshold*` 控制它：编译一次要几毫秒，省下的是每次调用几十纳秒，调用次数少的形状不值得编。构造器对象按类和参数形状共享，挂在以类为键的表里，和类同生命周期，所以晋升过的形状对所有调用点一直有效（阈值是 32、按最近使用只留 64 项时，淘汰和失效带来的反复重编占了自编译的约 15%）。生成期间动态绑定 `*generating-specialization*`，编译器自身的调用不能递归触发生成。`kiln.kernel::*compile-function*` 动态绑定为 NIL 的字节码求值上下文也延迟晋升，恢复原生编译后可继续尝试。
 
-有了统一的假设和失效之后，判别函数、有效方法、`make-instance` 的构造器都可以**生成代码**：
+- **构造器**：生成固定 lambda list，按定义顺序求缺失的 default initargs，分配实例，并按固定位置展开槽初始化。类分配槽仍通过共享位置访问，只在未绑定时运行 initform。适用的方法和方法组合必须满足原有构造快路径的条件；其他情况调用通用 `make-instance`。
 
-- 用原生 `compile` 在运行期编译；或者像 SBCL 的 PCL（`dlisp.lisp` 加构建期预编译）那样，把常见形态做成模板，构建时预先编译好，运行期只需填参数。
-- 生成的代码把各个假设当常量用（槽的位置、下一个方法、initarg 的处理），并把这些假设登记为依赖。
-- 编译太慢的场合（只调用几次的泛函）仍用闭包，靠调用计数决定何时生成代码，也就是分层编译。
+生成前后的假设必须相同，才会发布生成结果。编译失败保留闭包，在该调用点的假设变化之前不重复尝试；诊断保存在有界的 `*specialization-last-error*` 字符串中。构造器不检查共享的类型版本：它在每次 `defclass`、`deftype` 时都变，用它做守卫会让所有构造器一起失效。它检查 `*class-change-version*`，这个数只在已有的类变化时（重新终结，或类名指向另一个类）才加一，定义新类不变。同理，类第一次终结不算变化，不通知 `(:class C)` 和 `(:type NAME)`：之前没有实例，没有缓存会提到它。生成临时变量用独立的未 intern 符号，不消耗用户的 gensym 计数。
 
-## 编译结果的缓存（计划）
+## 顶层编译产物缓存
 
-同一套依赖也适用于编译器本身：一个顶层形式的编译结果，取决于形式本身、当时的包，以及它在编译期用到的定义（宏、内联函数、setf 展开器、常量、类型、类）。依赖追踪已经记下了后者，假设的版本格给了它们可比较的键。
+`lisp/target/compiler/cache.lisp` 缓存原生 `eval` / `load` 中每个顶层编译单元的初始化函数。每次仍执行宏展开、前端和降级，重放编译期效果，再判断是否能复用已生成的机器码；每次命中仍运行初始化函数，求值的副作用和返回值照常发生。
 
-- 键：形式内容的哈希、包、所依赖的各个假设的版本。
-- 值：KIR，或者机器码。
-- 用途：重新 `load` 一个只改了一处的文件，或者重新构建模块时，只重编内容变了、或依赖变了的形式。
-- 前提：编译是确定的（前端已经保证了这一点，见 [front-end.md](front-end.md)），宏展开没有副作用。编译期有副作用的形式（`eval-when` 的编译期部分、定义宏）要把副作用作为输出记下来，命中缓存时照样重放，和依赖追踪记录“输出”的做法一样。
+匹配条件是当前包、readtable、去掉编号模块名的 KIR、literal 和已记录的依赖版本格。程序 literal 按 `eql` 保留身份，不能把两个内容相同而身份不同的引用对象混用；编译器新建的调试记录按结构比较。依赖格必须保持身份和版本，退役或重定义会使旧条目失效。宏根据外部状态产生不同代码时，KIR 或 literal 的差异也会导致未命中。含 `load-time-value` 单元的模块每次独立编译，保持旧函数所引用的 load-time cell 独立。
 
-参考：
-
-- Zig 的增量编译，见 [zig-incremental.md](../research/zig-incremental.md)。
-- Kirisame 等人的 shortcut memoization（*Incremental Live Programming via Shortcut Memoization*，2026，arXiv 2603.19560）。它在解释器的重写步骤上做记忆化，不适合原生代码和有副作用的 CL 程序；但“从旧版本的执行中学习可复用的片段，结构相似也能命中”的思路可以用在形式一级的缓存上。
+缓存按最近使用顺序保留至多 `kiln.sys:*compilation-cache-limit*` 项，默认 64；0 表示禁用并清除缓存引用。`kiln.sys:clear-compilation-cache` 清空条目和统计，`kiln.sys:compilation-cache-statistics` 返回命中数、未命中数和条目数。淘汰只释放缓存持有的引用，运行时注册的代码和 literal root 仍遵循现有代码生命周期。前端和降级的结果尚未跨调用复用。
 
 ## 调用点特化
 
@@ -98,12 +90,13 @@
 
 `bench/compare.lisp` 的 AOT 输出（同一台机器，改动前后各三次）：`slot-value` 24.7 → 9.9 ns，和访问器方法（10.4 ns）相当。数字见 [performance.md](../research/performance.md)。
 
-还没有做：
+常量类名和 initarg 名的 `(make-instance 'class :key value ...)` 被改写为先获取构造器对象的 callable，再传递已求值的值。每个调用点的静态 cons 的 car 是构造器描述符，登记为 GC root。描述符保存类对象、布局 stamp、类变化版本和初始化版本、关键字形状及 callable；变化时整个替换。所有原参数在查询构造器之前按原顺序求值，initarg 的重复、默认值和类名重新映射由原有构造协议处理。
 
-- 泛函调用点的内联缓存：调用点上记住上一次的判别函数（或有效方法）和参数的 stamp，命中时直接调用。判别闭包自己已经有按 stamp 的直接映射缓存，调用点这一层只有在能省掉一次间接跳转和一次函数格读取时才值得做。
-- 类名和 initarg 名都是常量的 `make-instance`：改写成调用构造器对象，由它做分配、initarg 默认值和槽的填充；真正的收益要等第四步把构造器编成机器码。
-- 方法体里对特化参数的槽访问可以省掉 stamp 比较的候选（方法的特化符给出类的上界），但这要靠方法体内的类型推导，和 [roadmap.md](../roadmap.md) 的“调用点上的变换”一起做。
+kernel 和 CLOS 模块里的 `make-instance` 保持普通调用：构造协议本身不能经过构造器对象。
 
+泛函调用没有调用点缓存。试过一版（已知泛函的 1–6 参数调用先调选择器 `%generic-target-N`，检查函数和判别函数身份、方法版本、类变化版本和参数 stamp，再调有效方法），`bench/compare.lisp` 上单态调用 13.7 → 28.6 ns、多态 18.9 → 25.7 ns：多一层调用，还多三组版本检查，结构上就不会比泛函自己的判别函数快，于是去掉了。PCL 的缓存也挂在泛函上，不在调用点：判别函数按状态生成，失效时整个换掉，命中路径不检查版本。kiln 先走这条路；SICL 式的调用点内联（守卫生成在调用点的代码里、推送式失效）是以后的方向，见 [roadmap.md](../roadmap.md) 第 11 项。
+
+后续可以结合类型推导，对方法特化参数的槽访问进一步减少 stamp 检查。
 
 ## seal：把假设固定下来（计划）
 
@@ -127,6 +120,8 @@ seal（[positioning.md](positioning.md)）之后，被 seal 的定义不再改�
 - `kiln.kernel::defer-assumption-changes (thunk)`：把 THUNK 里的改变攒成一批。
 - `(kiln.sys:assumption-version kind name)`：版本，新假设是 0。
 - `(kiln.sys:assumptions)`：所有有版本格的假设，`(KIND NAME VERSION)` 的列表。
+
+`tests/m4/clos-call-sites` 覆盖构造器调用点在类、方法和类名变化时的行为，`tests/m5/co-specialization` 覆盖原生晋升，`tests/m6/co-compilation-cache` 覆盖产物复用、宏副作用和缓存淘汰。
 
 `tests/m4/clos-assumption-protocol` 覆盖协议入口、异常退出、重入通知、登记撤销、版本格退役和表扩容后的删除。定向验证可运行 `tools/test.sh tests/m4/clos-assumption-protocol.lisp tests/m4/clos-assumptions.lisp tests/m4/clos-slot-value-cache.lisp`。
 

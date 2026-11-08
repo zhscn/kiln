@@ -116,7 +116,7 @@ AMOP 的方法函数接收参数列表和后续方法，有效方法接收一个
 
 - 泛函的重定义不支持；过时实例只在分派时更新（见“类的重定义”）。
 - `slot-value` 在过时实例更新之前读的是旧布局（值是对的，只是还没更新）；类名 `typep` 的调用点缓存已经不是限制（它检查类型假设的版本）。
-- `make-instance` 是普通函数，不是泛函；快路径之外没有预编译的构造器，也不把构造编成机器码。
+- `make-instance` 是普通函数，不是泛函；快路径之外通过通用构造协议；常量类名调用点的构造器可在原生编译器载入后晋升为机器码（[specialization.md](specialization.md)）。
 - `change-class` 不调用 `update-instance-for-different-class`。
 - 用户写的长形式 `define-method-combination`，产生的代码里有解释器不认识的运算符时不能用。
 - 方法组合（`call-next-method`、`:before`、`:around`）的有效方法仍要构造参数列表，用到 `call-next-method` 的方法每次调用仍要分配两个局部函数闭包。

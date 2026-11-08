@@ -79,6 +79,10 @@
 (defclass protocol-class () ((a :initform 1)))
 (defvar *class* (find-class 'protocol-class))
 (defvar *class-version* (version :class *class*))
+;; A first finalization is not a change (no instance, so no cache, can
+;; mention the class yet); finalizing again is.
+(clostrophilia:finalize-inheritance *class*)
+(show (= *class-version* (version :class *class*)))
 (clostrophilia:finalize-inheritance *class*)
 (show (< *class-version* (version :class *class*)))
 (setq *class-version* (version :class *class*))
