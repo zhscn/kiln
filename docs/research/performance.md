@@ -155,6 +155,8 @@ kiln 编译自己的五个模块（一个阶段，见 [bootstrap.md](../design/b
 
 2026-11-08，机器空闲时前后交替各测两次（同一份源码分别用两个前端构建 kiln0）：旧前端（s-expression-syntax、builder 协议、Iconoclast、simplify-ast）自编译 **128.0 秒**（其中 CLOS 模块 43.0 秒），新的 IR 前端（`KILN_FRONTEND=ir`，[ir.md](../design/ir.md)）**50.9 秒**（CLOS 模块 19.0 秒），快 2.5 倍。IR 前端下的完整自举闭合，每个阶段约 51 秒，峰值 RSS 约 9.2 GB。原生结构对象和 KIR `:switch` 两项前置改动在旧前端下看不出差别（128 秒前后）。这之前的一条记录（stage1 218.55 秒、stage2 169.49 秒）是和端到端测试同时跑的，不作数。
 
+同一天在同一份代码上测 SBCL（跑的是同一个编译器，只是由 SBCL 执行）：旧前端 32.1 秒，IR 前端 **14.2 秒**（kernel 0.4、CLOS 3.9、frontend 0.0、eval 1.4、compiler 8.5）。kiln 的 IR 前端 50.6 秒（kernel 1.5、CLOS 17.9、frontend 0.6、eval 5.0、compiler 25.6），是 SBCL 的 **3.6 倍**；旧前端是 4.0 倍（128.0 / 32.1）。表里“SBCL 编同样的五个模块约 47.5 秒、差距约 2.6 倍”那一行，用的是本轮开始前测的 SBCL 时间：SBCL 执行的也是 kiln 的编译器代码，本轮对编译器算法的改进（一次遍历、少建表等）它同样受益，所以那个倍数偏低，应以这里的同代码对比为准。
+
 845 秒那次的 profile（按模块统计自身时间）：
 
 | 部分 | 占比 |
