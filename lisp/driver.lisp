@@ -364,7 +364,11 @@ kernel module first: kiln-cg jit kernel.kir OUTPUT."
   "Compiles CLOS (Clostrophilia and kiln's bootstrap) to the KIR module
 OUTPUT, to be loaded after the kernel. SESSION must have compiled the
 kernel."
-  (write-module (compile-files *clos-files* session "clos") output))
+  (write-module (compile-files *clos-files* session "clos"
+                              ;; Named by Anatomicl, compiled later, and by
+                              ;; nothing before it.
+                              :extra-symbols '(closer-mop:ensure-class))
+                output))
 
 (defparameter *frontend-files*
   ;; The parts of the front end compiled for the target so far:
@@ -480,75 +484,16 @@ those whose names are in EXCLUDE."
           collect (asdf:component-pathname c)))
 
 (defparameter *compiler-files*
-  ;; The compiler module: the front end's remaining
-  ;; dependencies, Common-boot, then kiln's compiler (M5.3).
-  (flet ((files (system &rest names)
-           (mapcar (lambda (name)
-                     (asdf:system-relative-pathname system (format nil "~A.lisp" name)))
-                   names)))
-    (append
-     (files "utilities.print-items" "code/package" "code/util" "code/protocol")
-     (files "anaphora" "packages" "early" "symbolic" "anaphora")
-     (files "let-plus" "package" "let-plus" "extensions")
-     (files "more-conditions" "src/package" "src/types" "src/variables" "src/protocol"
-            "src/conditions" "src/macros")
-     (files "architecture.builder-protocol" "code/package" "code/util" "code/variables"
-            "code/protocol" "code/macros" "code/mixins" "code/list-builder"
-            "code/top-down-forcing-builder")
-     (files "parser.packrat.cache" "src/cache/package" "src/cache/chunk-cache"
-            "src/cache/stream-cache" "src/cache/packrat-cache")
-     (files "parser.packrat" "src/base/package" "src/base/types"
-            "src/expression/package" "src/expression/protocol" "src/expression/mixins"
-            "src/expression/macros" "src/environment/package" "src/environment/protocol"
-            "src/environment/macros" "src/environment/environment"
-            "src/compiler/package" "src/compiler/conditions" "src/compiler/util"
-            "src/compiler/protocol" "src/grammar/package" "src/grammar/protocol"
-            "src/grammar/conditions" "src/grammar/mixins" "src/grammar/rule"
-            "src/grammar/base/package" "src/grammar/base/expressions"
-            "src/grammar/base/base-grammar" "src/grammar/base/debug"
-            "src/grammar/base/compiler" "src/grammar/sequence/package"
-            "src/grammar/sequence/expressions" "src/grammar/sequence/mixins"
-            "src/grammar/sequence/environment" "src/grammar/sequence/sequence-grammar"
-            "src/grammar/sequence/prepare" "src/grammar/sequence/compiler"
-            "src/grammar/sexp/package" "src/grammar/sexp/expressions"
-            "src/grammar/sexp/sexp-grammar" "src/grammar/sexp/prepare"
-            "src/grammar/sexp/compiler" "src/bootstrap/package" "src/bootstrap/parse"
-            "src/interface/package" "src/interface/variables" "src/interface/protocol"
-            "src/interface/macros" "src/interface/inline-cache"
-            "src/interface/compilation" "src/grammar/base/concrete-syntax"
-            "src/grammar/sequence/concrete-syntax" "src/grammar/sexp/concrete-syntax")
-     (list (asdf:system-relative-pathname "kiln" "lisp/target/compiler/parser-packrat.lisp"))
-     (files "s-expression-syntax" "code/expression-grammar/package"
-            "code/expression-grammar/protocol" "code/expression-grammar/stubs"
-            "code/expression-grammar/meta-grammar" "code/expression-grammar/grammar"
-            "code/package" "code/conditions" "code/protocol" "code/semantics"
-            "code/database" "code/macros" "code/definitions/names"
-            "code/definitions/types" "code/definitions/declarations"
-            "code/definitions/forms" "code/definitions/lambda-lists"
-            "code/definitions/grammar" "code/definitions/bindings"
-            "code/definitions/pseudo-operators" "code/definitions/special-operators"
-            "code/definitions/definition-macros" "code/definitions/control-macros"
-            "code/definitions/debug-macros" "code/definitions/iteration-macros"
-            "code/definitions/io-macros" "code/definitions/modify-macros"
-            "code/classify" "code/concrete-syntax-tree/package"
-            "code/concrete-syntax-tree/client")
-     (system-files "iconoclast")
-     (system-files "iconoclast-builder")
+  ;; The compiler module: the front end's remaining dependencies
+  ;; (Trucler's reference environments, Clostrum,
+  ;; Anatomicl), then kiln's compiler (M5.3).
+  (append
      (system-files "trucler-reference")
      (list (asdf:system-relative-pathname "kiln" "lisp/target/compiler/environment.lisp"))
      ;; Not the documentation strings (documentation-utils).
      (system-files "clostrum" :exclude '("documentation"))
      (system-files "clostrum-basic")
      (system-files "clostrum-trucler")
-     (system-files "iconoclast-ast-walker")
-     (system-files "iconoclast-ast-transformations")
-     (system-files "common-macros")
-     (mapcar (lambda (path) (list :renames '(("COMMON-MACRO-DEFINITIONS" . "KILN.CMD")) path))
-             (system-files "common-boot"))
-     ;; Common-boot's HIR evaluator, for cross compilation (lisp/cross.lisp).
-     (system-files "common-boot-hir")
-     (system-files "common-boot-ast-to-hir")
-     (system-files "common-boot-hir-evaluator")
      ;; Anatomicl, which expands DEFSTRUCT in cross compilation (lisp/structures.lisp).
      (system-files "anatomicl")
      ;; kiln's compiler (M5.3): its packages are the host's.
@@ -556,7 +501,7 @@ those whose names are in EXCLUDE."
              '("abi" "kir" "ir/data" "lower" "values" "primitives" "structures" "front" "cross"
                "ir/environment" "ir/convert" "ir/analyze" "ir/eval" "ir/lower"
                "target/compiler/client" "target/compiler/session"
-               "target/compiler/dependencies" "target/compiler/cache" "target/compiler/native")))))
+               "target/compiler/dependencies" "target/compiler/cache" "target/compiler/native"))))
 
 (defun compile-compiler (output &key (session (kiln.compiler:make-session)))
   "Compiles the compiler module to OUTPUT, loaded after the front-end and

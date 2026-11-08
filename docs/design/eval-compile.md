@@ -4,12 +4,12 @@
 
 ## 为什么先有 Maclina
 
-目标端在载入前端之前就需要 `compile`：s-expression-syntax 载入时为每个特殊形式的语法编译一个解析器（`compile-parser`），parser.packrat 在运行期为 inline cache 调用 `compile`，而 Common-boot 用 s-expression-syntax 解析特殊形式。所以 `compile` 不能等前端自己编译自己。
+原生编译器是最后载入的模块，而在它之前，REPL、`load` 和载入期间的 `eval`、`compile` 就要能用；编译器在 image 里编译时，编译期求值也需要一个不依赖它自己的求值器。所以 `eval` 和 `compile` 不能等编译器。
 
-**决定：eval 模块用 Maclina。** Maclina 是用可移植 CL 写的字节码编译器、VM 和 FASL 加载器。字节码函数是 funcallable instance，能和原生函数互相调用。它依赖少（closer-mop、alexandria、Trucler、Ecclesia），不依赖 s-expression-syntax，所以没有循环依赖。它同时提供：
+**决定：eval 模块用 Maclina。** Maclina 是用可移植 CL 写的字节码编译器、VM 和 FASL 加载器。字节码函数是 funcallable instance，能和原生函数互相调用。它依赖少（closer-mop、alexandria、Trucler、Ecclesia），不依赖编译器，所以没有循环依赖。它同时提供：
 
 - 一个能用的 REPL 和 `eval`；
-- 前端和 packrat 在运行期需要的 `compile`；
+- compiler 模块载入之前的 `compile`；
 - image-client 的编译期求值（[front-end.md](front-end.md)）；
 - 交付期可选的轻量求值器（不带 Cranelift 的发行版里执行扩展，[editor.md](editor.md)）。
 
@@ -34,7 +34,7 @@
 
 ## 原生 `compile`
 
-compiler 模块的最后一个文件 `lisp/target/compiler/native.lisp` 把 `kiln.kernel::*compile-function*` 设成 `native-compile`，此后的 `compile` 都编成机器码。这个变量为 NIL 时用 Maclina。compiler 模块自己载入时（s-expression-syntax 的解析器）仍是字节码。
+compiler 模块的最后一个文件 `lisp/target/compiler/native.lisp` 把 `kiln.kernel::*compile-function*` 设成 `native-compile`，此后的 `compile` 都编成机器码。这个变量为 NIL 时用 Maclina。compiler 模块自己载入时调用的 `compile` 仍是字节码。
 
 1. `native-compile` 新建一个 session（`image-client`），然后：
    - 用 `front-end-forms` 处理 `(setq *compiled-function* (function LAMBDA))`（和 `front-end` 一样，只是直接处理形式，不读文件）；
@@ -64,10 +64,7 @@ compiler 模块载入后，`eval` 也走原生编译（`native-eval`，挂在 `k
 - 宏形式先展开一层再判断。展开定义宏之前记下定义的名字（`definition-name`），交给前端（`*eval-definition*`），调试信息和依赖追踪按它命名（[debugging.md](debugging.md)、[dependencies.md](dependencies.md)）。
 - 其他形式作为顶层形式编译，然后调用。
 
-每个形式至少多花几毫秒的编译时间，交互时察觉不到。对只为展开宏或只运行几次的代码，编译时间占主导，所以有两处固定用 Maclina（把 `*compile-function*` 绑成 NIL）：
-
-- Common-boot 的 HIR 求值器：交叉编译时每个宏的展开函数都要求值，求值器为每个函数编一个参数解析器（编 kernel 和 CLOS 时约 800 个），原生编译会让自举变慢。
-- parser.packrat 的 `%uses?`：借编译来展开宏，判断规则是否用到 `:fail`、`:fatal`、`position`（上游用 `sb-cltl2:macroexpand-all`）。结果必须和 SBCL 相同，否则自举不闭合。
+每个形式至少多花几毫秒的编译时间，交互时察觉不到。对只为展开宏或只运行几次的代码，编译时间占主导：这样的 `compile` 要把 `*compile-function*` 绑成 NIL，改用 Maclina。交叉编译的编译期求值用 IR 求值器（构造宿主闭包），不经过 `compile`。
 
 ## 顶层编译缓存
 

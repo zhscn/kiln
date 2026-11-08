@@ -1,6 +1,7 @@
 ;;;; Cross compilation: the compile-time environment is a
 ;;;; Clostrum environment, separate from the image that compiles, in which
-;;;; Common-boot's HIR evaluator runs the code evaluated at compile time.
+;;;; the IR evaluator (lisp/ir/eval.lisp) runs the code evaluated at
+;;;; compile time.
 ;;;; The functions of the compiling image ("the host") are imported into
 ;;;; it, so macro expanders can call them. SBCL compiles kiln this way, and
 ;;;; so does kiln (M5.4): there the host is kiln itself. Loaded after
@@ -8,15 +9,8 @@
 
 (in-package #:kiln.compiler)
 
-(defclass cross-client (client cbe:client)
+(defclass cross-client (client)
   ())
-
-(defmethod cb:convert-with-ordinary-macro-p ((client cross-client) operator)
-  #-kiln (cmd:macro-function-exists-p operator)
-  ;; kiln: the compile-time environment has Common-macros' macros
-  ;; (MAKE-COMPILE-ENVIRONMENT).
-  #+kiln (declare (ignore operator))
-  #+kiln nil)
 
 (defun common-macro-p (name)
   "True if Common-macros defines the standard macro NAME."
@@ -123,9 +117,8 @@ at compile time (USE-HOST-MACROS).")
           (setf (clo:macro-function client genv name) function))
         function))
     ;; DEFINE-COMPILER-MACRO at compile time: ignored (the host's would
-    ;; change the host's functions; Common-boot would call its unfinished
-    ;; EXPAND-COMPILER-MACRO on those in the environment). The compiler
-    ;; does not use compiler macros yet.
+    ;; change the host's functions). The compiler uses only the host's
+    ;; compiler macros of host libraries (USE-HOST-MACROS).
     (def 'compiler-macro-function
       (lambda (name &optional env)
         (declare (ignore name env))
@@ -247,11 +240,11 @@ at compile time (USE-HOST-MACROS).")
             (if (eq expansion form) form (walk expansion))))))))
 
 (defmethod make-compile-environment ((client cross-client))
-  (let* ((env (cb:create-environment))
-         (genv (trucler:global-environment client env)))
-    ;; Common-macros' macros: CREATE-ENVIRONMENT takes them from the host's
-    ;; COMMON-MACRO-DEFINITIONS package; on kiln they are the ones the eval
-    ;; module saved (lisp/target/eval/macros.lisp).
+  (let* ((genv (make-instance 'clostrum-basic:run-time-environment))
+         (env (make-instance 'trucler-reference:environment :global-environment genv)))
+    ;; Common-macros' macros: in the host, those of the
+    ;; COMMON-MACRO-DEFINITIONS package; on kiln the ones the eval module
+    ;; saved (lisp/target/eval/macros.lisp).
     #-kiln (do-external-symbols (s '#:common-lisp)
              (let ((expander (and (not (special-operator-p s)) (cmd:macro-function s))))
                (when expander
@@ -301,16 +294,14 @@ at compile time (USE-HOST-MACROS).")
 
     (setf (clo:macro-function client genv 'kiln.sys::closer-mop-aliases)
           #'expand-closer-mop-aliases)
-    (setf (clo:macro-function client genv 'load-time-only) #'expand-load-time-only)
     env))
 
 ;;; Libraries that the host has loaded too (the front end's dependencies)
 ;;; have their macros expanded by the host's definitions at
 ;;; compile time, as LOOP is. Their expanders call functions and use data
-;;; (parser.packrat's grammars, let-plus's generic functions) that exist at
-;;; compile time only in the host; some of their macros are defined by
-;;; forms that are not at top level (anaphora's ANAPHORIC). An expansion
-;;; must not contain host objects, which could not be compiled.
+;;; that exist at compile time only in the host; some of their macros may
+;;; be defined by forms that are not at top level. An expansion must not
+;;; contain host objects, which could not be compiled.
 
 (defun host-object-p (object)
   (not (typep object '(or symbol number character string))))
@@ -376,16 +367,6 @@ at compile time (USE-HOST-MACROS).")
            (make-instance 'trucler:constant-variable-description
              :name name :value (symbol-value name)))))
 
-;;; (LOAD-TIME-ONLY form...) in a host expansion, at top level: the forms
-;;; are compiled but not evaluated at compile time, even in an EVAL-WHEN
-;;; with :COMPILE-TOPLEVEL (they would change the host's state:
-;;; parser.packrat's DEFRULE there would replace the host's rule by one
-;;; that the compile-time evaluator runs). Not at top level, the forms are
-;;; dropped.
-(defun expand-load-time-only (form env)
-  (declare (ignore env))
-  `(eval-when (:load-toplevel) ,@(rest form)))
-
 (defvar *host-compiler-macros* (make-hash-table :test 'eq)
   "Function names -> the host's compiler macros, wrapped (USE-HOST-MACROS).")
 
@@ -396,7 +377,7 @@ at compile time (USE-HOST-MACROS).")
   "The macros whose home is one of the packages PACKAGE-NAMES are expanded
 by the host's expanders at compile time in SESSION, and code evaluated at
 compile time calls the host's functions of those packages (the expansions
-evaluate some at compile time: parser.packrat's DEFGRAMMAR)."
+evaluate some at compile time)."
   (let* ((client (session-client session))
          (genv (trucler:global-environment client (session-environment session))))
     (dolist (package-name package-names)
@@ -437,35 +418,8 @@ evaluate some at compile time: parser.packrat's DEFGRAMMAR)."
 
 (defparameter *compiler-host-macro-packages*
   ;; Expanded by the host at compile time (USE-HOST-MACROS).
-  '("ANAPHORA" "LET-PLUS" "MORE-CONDITIONS" "UTILITIES.PRINT-ITEMS"
-    "ARCHITECTURE.BUILDER-PROTOCOL" "PARSER.PACKRAT.CACHE" "PARSER.PACKRAT.BASE"
-    "PARSER.PACKRAT.EXPRESSION" "PARSER.PACKRAT.ENVIRONMENT" "PARSER.PACKRAT.COMPILER"
-    "PARSER.PACKRAT.GRAMMAR" "PARSER.PACKRAT.GRAMMAR.BASE"
-    "PARSER.PACKRAT.GRAMMAR.SEQUENCE" "PARSER.PACKRAT.GRAMMAR.SEXP"
-    "PARSER.PACKRAT.BOOTSTRAP" "PARSER.PACKRAT" "S-EXPRESSION-SYNTAX.EXPRESSION-GRAMMAR"
-    "S-EXPRESSION-SYNTAX" "S-EXPRESSION-SYNTAX.CONCRETE-SYNTAX-TREE" "ICONOCLAST"
-    "ICONOCLAST-BUILDER" "TRUCLER-REFERENCE" "CLOSTRUM-SYS" "CLOSTRUM"
-    "CLOSTRUM-IMPLEMENTATION" "CLOSTRUM-BASIC" "CLOSTRUM-TRUCLER" "ICONOCLAST-AST-WALKER"
-    "ICONOCLAST-AST-TRANSFORMATIONS" "COMMON-MACROS" "COMMON-BOOT" "COMMON-BOOT-HIR"
-    "COMMON-BOOT-AST-TO-HIR" "COMMON-BOOT-HIR-EVALUATOR"))
-
-(defun load-time-only-definitions (expansion)
-  "EXPANSION of a parser.packrat or s-expression-syntax definition macro
-with its compile-time definitions removed and its load-time ones wrapped
-in LOAD-TIME-ONLY."
-  (labels ((walk (form)
-             (cond ((atom form) form)
-                   ((and (eq (first form) 'eval-when)
-                         (equal (second form) '(:compile-toplevel)))
-                    nil)
-                   ((member (first form) '(parser.packrat.grammar:ensure-grammar
-                                           parser.packrat.grammar:ensure-rule
-                                           s-expression-syntax::ensure-syntax))
-                    `(load-time-only ,form))
-                   ((eq (first form) 'progn)
-                    (cons 'progn (mapcar #'walk (rest form))))
-                   (t form))))
-    (walk expansion)))
+  '("TRUCLER-REFERENCE" "CLOSTRUM-SYS" "CLOSTRUM" "CLOSTRUM-IMPLEMENTATION"
+    "CLOSTRUM-BASIC" "CLOSTRUM-TRUCLER"))
 
 (defun prepare-compiler-session (session)
   "Makes SESSION, which has compiled the kernel, CLOS, the front end and
@@ -474,24 +428,6 @@ the compile-time definitions that the module needs."
   (use-host-macros session *compiler-host-macro-packages*)
   (let* ((client (session-client session))
          (genv (trucler:global-environment client (session-environment session))))
-    ;; The host's DEFRULE compiles a rule in the host's current grammar.
-    (host-macro
-     client genv 'parser.packrat:in-grammar
-     (lambda (form env)
-       (declare (ignore env))
-       (setf parser.packrat::*grammar* (parser.packrat.grammar:find-grammar (second form)))
-       `(eval-when (:load-toplevel :execute)
-          (setf parser.packrat::*grammar*
-                (parser.packrat.grammar:find-grammar ',(second form))))))
-    ;; The host has the grammars, rules and syntax descriptions already;
-    ;; defining them at compile time would replace the host's.
-    (dolist (name '(parser.packrat:defgrammar parser.packrat:defrule
-                    s-expression-syntax::define-syntax))
-      (let ((expander (clo:macro-function client genv name)))
-        (host-macro
-         client genv name
-         (lambda (form env)
-           (load-time-only-definitions (funcall expander form env))))))
     ;; The inline functions of the modules compiled so far
     ;; (lisp/target/compiler/session.lisp).
     (host-macro

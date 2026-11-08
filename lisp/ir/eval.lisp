@@ -39,16 +39,6 @@ TAGBODY statement the node being built is in tail position.")
 (defvar *ir-eval-client*)
 (defvar *ir-eval-global*)                ; the Clostrum environment
 
-(defvar *compile-time-evaluator*
-  (let ((selection #-kiln (uiop:getenv "KILN_EVALUATOR")
-                   #+kiln (kiln.kernel::sys-string 10 (kiln.kernel::string-octets "KILN_EVALUATOR"))))
-    (cond ((or (not (stringp selection)) (string= selection "")
-               (string-equal selection "ir")) :ir)
-          ((string-equal selection "hir") :hir)
-          (t (error "Unknown KILN_EVALUATOR value ~S" selection))))
-  "The cross client's compile-time evaluator: :IR (the default) or :HIR,
-Common-boot's HIR evaluator, kept until it is removed.")
-
 ;;; Exit information, in IR-EXIT-LOWERING while the closures are built.
 ;;; A BLOCK exit or a TAGBODY group: CATCH-P is set when some exit to it
 ;;; must throw. A TAGBODY tag: MARKER is what a GO in tail position returns.
@@ -544,12 +534,8 @@ never its variables, functions, blocks or tags."
             :vars (nreverse variables) :funcs (nreverse functions))))
 
 (defmethod evaluate-at-compile-time ((client cross-client) input environment)
-  (if (eq *compile-time-evaluator* :ir)
-      (ir-eval input environment)
-      (call-next-method)))
+  (ir-eval input environment))
 
 (defmethod ir-local-macro-expander ((client cross-client) name lambda-list body environment)
-  (if (eq *compile-time-evaluator* :ir)
-      (ir-eval `(function ,(ecclesia:parse-macro name lambda-list body))
-               (ir-macrolet-environment environment))
-      (call-next-method)))
+  (ir-eval `(function ,(ecclesia:parse-macro name lambda-list body))
+           (ir-macrolet-environment environment)))

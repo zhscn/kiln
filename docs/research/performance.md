@@ -169,6 +169,8 @@ kiln 编译自己的五个模块（一个阶段，见 [bootstrap.md](../design/b
 
 然后按 PCL 的路线改判别函数：单分派的判别闭包拆成快、慢两个，快闭包只就地取实例的 stamp、探表，命中时尾调用有效方法（KIR 新增 `tail-call-lisp`，即 Cranelift 的 `return_call_indirect`），因此没有普通调用，不保存 callee-saved 寄存器；包装方法快函数的闭包和 funcallable instance 的跳板也改成尾调用；IR 降级的测试位置不再把 `or`、`and`、`not` 里的谓词物化成 T/NIL。`bench/compare.lisp`（AOT，各三次取中位数，和 96052cf 比）：泛函单态 **13.7 → 7.4 ns**，多态 18.9 → 11.9，`call-next-method` 51.9 → 39.4，读取器 10.4 → 5.4，写入器 11.1 → 7.8；流和打印器内部也是泛函调用，`format nil ~a` 8738 → 7531，`read-from-string` 41043 → 32923，`intern` 303 → 227。自编译一个阶段 33.8 → **32.2 / 32.4 秒**。
 
+删掉旧前端（Iconoclast 的降级、`simplify-ast`、Common-boot 和 HIR 求值器，以及只有它们用的 s-expression-syntax、parser.packrat、builder 协议、let-plus、anaphora 等）以后，compiler 模块只剩 Trucler reference、Clostrum、Anatomicl 和 kiln 自己的编译器：完整自举每个阶段 32.4 → **18.4 秒**（2026-11-09），其中编 compiler 模块从约 17.2 秒降到 2.8 秒，其余模块不变。
+
 845 秒那次的 profile（按模块统计自身时间）：
 
 | 部分 | 占比 |

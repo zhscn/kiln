@@ -1,18 +1,19 @@
 (in-package #:kiln.compiler)
 
 ;;;; Front end (M2): Eclector reads CSTs; top-level forms are processed
-;;;; here as in COMPILE-FILE (CLHS 3.2.3.1); Common-boot turns each form to
-;;;; be compiled into an Iconoclast AST, which SIMPLIFY-AST reduces to the
-;;;; subset that lower.lisp translates to KIR.
+;;;; here as in COMPILE-FILE (CLHS 3.2.3.1); each form to be compiled is
+;;;; converted to IR (lisp/ir/convert.lisp), which lisp/ir/lower.lisp
+;;;; translates to KIR.
 ;;;;
 ;;;; This file is the compiler's in the host (SBCL) and on kiln (the
-;;;; compiler module): what differs is in host.lisp and
+;;;; compiler module): what differs is in cross.lisp and
 ;;;; lisp/target/compiler/client.lisp, loaded after it, and in a few #+KILN
-;;;; branches here. In the host, compile-time evaluation (EVAL-WHEN
-;;;; :COMPILE-TOPLEVEL, macro definitions, DEFVAR proclamations) runs
-;;;; through Common-boot's HIR evaluator, in a Clostrum environment that
-;;;; holds the compile-time definitions; on kiln, the compile-time
-;;;; environment is the run-time one, and Maclina evaluates.
+;;;; branches here. In cross compilation, compile-time evaluation
+;;;; (EVAL-WHEN :COMPILE-TOPLEVEL, macro definitions, DEFVAR proclamations)
+;;;; runs through the IR evaluator (lisp/ir/eval.lisp), in a Clostrum
+;;;; environment that holds the compile-time definitions; compiling into
+;;;; the image on kiln, the compile-time environment is the run-time one,
+;;;; and Maclina evaluates.
 
 (defclass client (#-kiln kiln.macros:macro-client
                   #+kiln kiln.macros-target:macro-client
@@ -31,12 +32,9 @@ COMPILE-FILE does."))
     (declare (ignore client))
     session))
 
-(defmethod cb:convert-with-parser-p ((client client) operator)
-  (special-operator-p operator))
-
 (defvar *client*)
 (defvar *defined-functions*)            ; names defined by DEFUN in this file
-(defvar *referenced-functions*)         ; undefined names seen by Common-boot
+(defvar *referenced-functions*)         ; undefined names seen by the converter
 (defvar *toplevel-environment*)          ; Trucler environment of the top level
 (defvar *package-renames* '()
   "Alist (NAME . NEW-NAME) of package names (strings): the file being
@@ -125,37 +123,11 @@ in the image that depends on it is out of date."
   "The inline functions whose expansions are being converted.")
 (defvar *inline-enabled* nil
   "True while forms are converted for the target. Calls are not expanded
-in code that runs at compile time (EVAL-CST, the expanders of local
-macros): an expansion can use the kernel's internals.")
-
-(defmethod cb:eval-cst :around ((client client) cst environment)
-  (declare (ignore cst environment))
-  (let ((*inline-enabled* nil))
-    (call-next-method)))
-
-(defmethod cb::finalize-local-macro-ast :around ((client client) ast environment)
-  (declare (ignore ast environment))
-  (let ((*inline-enabled* nil))
-    (call-next-method)))
+in code that runs at compile time (compile-time evaluation, the expanders
+of local macros): an expansion can use the kernel's internals.")
 
 (defvar *local-notinline* '()
   "Names declared NOTINLINE by the forms being converted.")
-
-(defun local-notinline-names (form)
-  "The names that the declarations at the head of the body of FORM (a
-LAMBDA, LET, LOCALLY ... form) declare NOTINLINE. Such a declaration is
-taken to cover the whole form: not expanding a call is always correct."
-  (and (consp form)
-       (member (first form) '(lambda let let* locally flet labels macrolet symbol-macrolet
-                              multiple-value-bind destructuring-bind))
-       (let ((body (if (eq (first form) 'locally) (rest form) (and (consp (rest form))
-                                                                     (cddr form)))))
-         (loop for item in (if (listp body) body '())
-               while (or (stringp item) (and (consp item) (eq (first item) 'declare)))
-               when (consp item)
-                 append (loop for spec in (rest item)
-                              when (and (consp spec) (eq (first spec) 'notinline))
-                                append (remove-if-not #'symbolp (rest spec)))))))
 
 (defun note-inline-proclamation (kind names)
   (when (boundp '*inline-functions*)
@@ -266,10 +238,6 @@ expands into; else NIL."
          ,@declarations
          ,body))))
 
-;;; SETQ of a symbol macro is SETF of its expansion (CLHS 3.1.2.1.1);
-;;; Common-boot has no method for it, so the form is rewritten before
-;;; conversion. WITH-SLOTS and WITH-ACCESSORS rely on this.
-
 (defun symbol-macro-expansion (client environment name)
   "The expansion of NAME if it names a symbol macro in ENVIRONMENT, and
 true; else NIL and NIL."
@@ -280,81 +248,9 @@ true; else NIL and NIL."
             (values nil nil)))
       (values nil nil)))
 
-;;; Before Common-boot converts a form: calls of inline functions are
-;;; expanded (unless a NOTINLINE declaration of the form covers them);
-;;; the READ-ONLY-P argument of LOAD-TIME-VALUE is dropped (it is only a
-;;; permission): Common-boot cannot convert it; SETQ of symbol macros
-;;; becomes SETF.
-(defmethod cb::convert :around ((client client) cst environment)
-  (let ((form (cst:raw cst)))
-    (let ((names (local-notinline-names form)))
-      (when names
-        (return-from cb::convert
-          (let ((*local-notinline* (append names *local-notinline*)))
-            (convert-maybe-inline client cst environment form #'call-next-method)))))
-    (convert-maybe-inline client cst environment form #'call-next-method)))
-
-(defun convert-maybe-inline (client cst environment form next)
-  (when (inline-call-p client environment form)
-    (note-dependency :inline (inline-call form))
-    (return-from convert-maybe-inline
-      (let ((*inline-expanding* (cons (inline-call form) *inline-expanding*)))
-        (funcall next client (cst:reconstruct client (inline-expansion form) cst) environment))))
-  (let ((expansion (compiler-macro-expansion client environment form)))
-    (when expansion
-      (return-from convert-maybe-inline
-        (funcall next client (cst:reconstruct client expansion cst) environment))))
-  (let ((rewritten (parallel-special-let client environment form)))
-    (when rewritten
-      (return-from convert-maybe-inline
-        (funcall next client (cst:reconstruct client rewritten cst) environment))))
-  (convert-load-time-value client cst environment form next))
-
-;;; LET binds in parallel, but Iconoclast's SPLIT-LET-OR-LET* (in
-;;; SIMPLIFY-AST) nests the bindings one in another. For lexical variables
-;;; that is the same (references are resolved already); for a special
-;;; variable it is not: the init forms after it would be evaluated with it
-;;; bound. So a LET of several variables, one of them special, first
-;;; evaluates the init forms into temporaries.
-(defun parallel-special-let (client environment form)
-  (when (and (consp form) (eq (first form) 'let)
-             (consp (rest form)) (consp (second form)) (consp (rest (second form)))
-             (every (lambda (b) (or (symbolp b) (and (consp b) (symbolp (first b)))))
-                    (second form)))
-    (let* ((bindings (second form))
-           (names (mapcar (lambda (b) (if (consp b) (first b) b)) bindings))
-           (declared (loop for item in (cddr form)
-                           while (and (consp item) (eq (first item) 'declare))
-                           append (loop for spec in (rest item)
-                                        when (and (consp spec) (eq (first spec) 'special))
-                                          append (rest spec)))))
-      (when (and (some (lambda (name)
-                         (or (member name declared)
-                             (typep (trucler:describe-variable client environment name)
-                                    'trucler:special-variable-description)))
-                       names)
-                 ;; Init forms that are constants or lexical variables
-                 ;; (the temporaries) are the same whenever evaluated.
-                 (notevery (lambda (b)
-                             (let ((init (and (consp b) (consp (rest b)) (second b))))
-                               (or (and (atom init) (not (symbolp init)))
-                                   (null init) (keywordp init)
-                                   (and (symbolp init)
-                                        (typep (trucler:describe-variable client environment init)
-                                               'trucler:lexical-variable-description)))))
-                           bindings))
-        (let ((temps (loop for name in names
-                           collect (gensym (symbol-name name)))))
-          `(let ,(loop for b in bindings
-                       for temp in temps
-                       collect (list temp (if (and (consp b) (consp (rest b))) (second b) nil)))
-             (let ,(loop for name in names for temp in temps collect (list name temp))
-               ,@(cddr form))))))))
-
 ;;; Compiler macros: kiln has none of its own yet, but the host's of the
 ;;; libraries whose macros are the host's (USE-HOST-MACROS, cross.lisp)
-;;; apply to the code compiled for the target (parser.packrat's PARSE
-;;; compiles constant grammar expressions when it expands).
+;;; apply to the code compiled for the target.
 (defgeneric client-compiler-macro (client name)
   (:method (client name)
     (declare (ignore client name))
@@ -371,43 +267,6 @@ macro, or NIL (none, or the compiler macro declines)."
                      '(or null trucler:global-function-description))
               (let ((expansion (funcall expander form environment)))
                 (and (not (eq expansion form)) expansion))))))
-
-(defun convert-load-time-value (client cst environment form next)
-  (cond ((and (consp form) (eq (first form) 'load-time-value)
-              (consp (rest form)) (consp (cddr form)))
-         (funcall next client
-                  (cst:reconstruct client (list 'load-time-value (second form)) cst)
-                  environment))
-        ;; (THE (VALUES ...) X) and (THE (FUNCTION ...) X): Iconoclast has
-        ;; no ASTs for these types (SIMPLIFY-DECLARATION-SPECIFIER).
-        ((and (consp form) (eq (first form) 'the) (consp (rest form))
-              (compound-function-type-p (second form)) (consp (cddr form)))
-         (funcall next client
-                  (cst:reconstruct client
-                                   (list 'the
-                                         (if (eq (first (second form)) 'function) 'function t)
-                                         (third form))
-                                   cst)
-                  environment))
-        (t
-         (convert-setq-of-symbol-macros client cst environment next))))
-
-(defun convert-setq-of-symbol-macros (client cst environment next)
-  (let ((form (cst:raw cst)))
-    (if (and (consp form)
-             (eq (first form) 'setq)
-             (loop for (var) on (rest form) by #'cddr
-                   thereis (nth-value 1 (symbol-macro-expansion client environment var))))
-        (let ((rewritten
-                `(progn
-                   ,@(loop for (var value) on (rest form) by #'cddr
-                           collect (multiple-value-bind (expansion macrop)
-                                       (symbol-macro-expansion client environment var)
-                                     (if macrop
-                                         `(setf ,expansion ,value)
-                                         `(setq ,var ,value)))))))
-          (funcall next client (cst:reconstruct client rewritten cst) environment))
-        (funcall next))))
 
 ;;; Reading
 
@@ -494,35 +353,15 @@ the second value."
 (defgeneric evaluate-at-compile-time (client input environment)
   (:documentation "Evaluates INPUT, a CST or a form, at compile time in the
 Trucler ENVIRONMENT, for CLIENT. The cross client uses the IR evaluator
-(lisp/ir/eval.lisp); the default is Common-boot's EVAL-CST.")
-  (:method (client input environment)
-    (cb:eval-cst client (if (typep input 'cst:cst) input (cst:cst-from-expression input))
-                 environment)))
+(lisp/ir/eval.lisp), the image client Maclina."))
 
 (defun compile-time-eval (cst)
   (evaluate-at-compile-time *client* cst *environment*))
 
-(defun simplify (ast)
-  (cbah::simplify-ast ast))
-
-(defvar *front-end*
-  (let ((selection #-kiln (uiop:getenv "KILN_FRONTEND")
-                   #+kiln (kiln.kernel::sys-string 10 (kiln.kernel::string-octets "KILN_FRONTEND"))))
-    (cond ((or (not (stringp selection)) (string= selection "")
-               (string-equal selection "ir")) :ir)
-          ((string-equal selection "iconoclast") :iconoclast)
-          (t (error "Unknown KILN_FRONTEND value ~S" selection))))
-  "The compilation front end: :IR (the default) or :ICONOCLAST, the old
-one, kept until it is removed. Compile-time evaluation continues to use
-the client's evaluator.")
-
 (defun compile-toplevel-form (cst compile-time-too)
   (when compile-time-too
     (compile-time-eval cst))
-  (push (make-toplevel-form (ecase *front-end*
-                              (:iconoclast (simplify (let ((*inline-enabled* t))
-                                                       (cb:cst-to-ast *client* cst *environment*))))
-                              (:ir (let ((*inline-enabled* t)) (cst-to-ir cst *environment*))))
+  (push (make-toplevel-form (let ((*inline-enabled* t)) (cst-to-ir cst *environment*))
                             *source-file* *toplevel-source* *definition-name*
                             *toplevel-raw*)
         *toplevel-asts*))
@@ -634,7 +473,7 @@ module).")
           ;; The host reader reads the rest of the file in the package.
           ;; Once the package system exists at run time, *PACKAGE* is
           ;; set at load time too, as LOAD would (code run at load time
-          ;; uses it: Iconoclast EXPORTs), and reset to CL-USER at the end
+          ;; uses it), and reset to CL-USER at the end
           ;; of the file (FRONT-END).
           (in-package
            (setf *package* (or (find-package (renamed-package-name (second form)))
@@ -693,41 +532,6 @@ on kiln IMAGE-CLIENT (the default there)."
                                  :environment (make-compile-environment client))))
     (initialize-session client session)))
 
-;;; Iconoclast has no ASTs for FUNCTION and VALUES type specifiers with
-;;; arguments, so Common-boot cannot convert declarations that use them.
-;;; They are only hints for now: in DECLARE forms, such a type becomes
-;;; FUNCTION (or T), and FTYPE declarations are dropped.
-
-(defun compound-function-type-p (type)
-  (and (consp type) (member (first type) '(function values))))
-
-(defun simplify-declaration-specifier (spec)
-  "SPEC with compound FUNCTION and VALUES types replaced, or NIL to drop it."
-  (cond ((atom spec) spec)
-        ((eq (first spec) 'ftype) nil)
-        ((and (eq (first spec) 'type) (compound-function-type-p (second spec)))
-         (list* 'type (if (eq (first (second spec)) 'function) 'function t) (cddr spec)))
-        ((compound-function-type-p (first spec))
-         (list* 'type (if (eq (first (first spec)) 'function) 'function t) (rest spec)))
-        (t spec)))
-
-(defun simplify-declarations (form depth)
-  "FORM with its DECLARE forms simplified, or FORM itself if nothing
-changes. DEPTH bounds the walk (forms are trees, but data may be cyclic)."
-  (cond ((or (atom form) (zerop depth)) form)
-        ((and (eq (first form) 'declare) (listp (rest form)))
-         (let ((specs (loop for spec in (rest form)
-                            for new = (simplify-declaration-specifier spec)
-                            when new collect new)))
-           (if (equal specs (rest form)) form (cons 'declare specs))))
-        ((eq (first form) 'quote) form)
-        (t
-         (let ((car (simplify-declarations (car form) (1- depth)))
-               (cdr (simplify-declarations (cdr form) (1- depth))))
-           (if (and (eq car (car form)) (eq cdr (cdr form)))
-               form
-               (cons car cdr))))))
-
 (defun forget-global-descriptions (environment)
   "Trucler's reference environment caches the descriptions of global
 functions and variables it has looked up. The session's environment lives
@@ -744,7 +548,7 @@ to *ERROR-OUTPUT*, for finding the form that an error comes from.")
 (defun front-end (paths &optional (session (make-session)))
   "Reads and processes the top-level forms of the files PATHS (or
 (:COMPILE-TIME-TOO path) elements), in order,
-as one compilation unit, in SESSION. Returns the simplified ASTs of the
+as one compilation unit, in SESSION. Returns the TOPLEVEL-FORMs (lower.lisp) of the
 forms to compile, in order, and the host packages that DEFPACKAGE forms
 created."
   (call-with-front-end
@@ -790,10 +594,6 @@ created."
               (if (consp raw) (first raw) raw)
               (and (consp raw) (consp (rest raw))
                    (atom (second raw)) (second raw)))))
-  (let* ((raw (cst:raw cst))
-         (simplified (simplify-declarations raw 10000)))
-    (unless (eq simplified raw)
-      (setf cst (cst:reconstruct *client* simplified cst))))
   ;; As SBCL's COMPILE-FILE: gensyms are numbered from 0 in each
   ;; top-level form. COMPILE-MODULE names those in constants by their
   ;; order in the module (MODULE-SYMBOL-NAME).
@@ -805,7 +605,7 @@ created."
 
 (defun call-with-front-end (session thunk)
   "Calls THUNK, which processes top-level forms, with the front end's state
-bound for SESSION. Returns the simplified ASTs of the forms to compile, in
+bound for SESSION. Returns the TOPLEVEL-FORMs of the forms to compile, in
 order, and the host packages that DEFPACKAGE forms created."
   (let* ((*client* (session-client session))
          (#-kiln cmd:*client* #+kiln kiln.cmd:*client* *client*)
@@ -821,11 +621,7 @@ order, and the host packages that DEFPACKAGE forms created."
          (*ir-current-source-file* :uninitialized) (*ir-file-id* 0))
     ;; Calls to functions defined later in the file are fine: report
     ;; undefined functions at the end (CLHS 3.2.2.3).
-    (handler-bind ((cb:no-function-description
-                     (lambda (w)
-                       (setf (gethash (cb::name w) *referenced-functions*) t)
-                       (muffle-warning w))))
-      (funcall thunk))
+    (funcall thunk)
     (let ((undefined (loop for name being the hash-keys of *referenced-functions*
                            unless (or (gethash name *defined-functions*)
                                       (gethash name *primitives*)

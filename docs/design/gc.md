@@ -62,7 +62,7 @@ MMTk 收到请求后立刻开始回收，而发起请求的 mutator 这时还在
 
 `rust/kiln-rt/src/stack.rs`。
 
-- **Lisp 线程**：Lisp 程序不在主线程上跑（主线程只有 8 MiB，以后还要交给 GUI 的平台层，[rust-interop.md](rust-interop.md)）。`run_module` 起一个名为 `lisp` 的线程，栈默认 64 MiB，环境变量 `KILN_STACK_SIZE`（字节数）可调。kiln 编译自己时 Common-boot 的 HIR 求值器给长指令链建 thunk，递归约 3500 层，每层要经过泛函分派、`:around` 方法和 `call-next-method`，约 14 个帧、2.4 KB 栈。
+- **Lisp 线程**：Lisp 程序不在主线程上跑（主线程只有 8 MiB，以后还要交给 GUI 的平台层，[rust-interop.md](rust-interop.md)）。`run_module` 起一个名为 `lisp` 的线程，栈默认 64 MiB，环境变量 `KILN_STACK_SIZE`（字节数）可调。深递归的程序（例如编译器处理很长的嵌套形式）需要的栈远超 8 MiB。
 - **栈对象**：用 mmap 分配，下方带一个 guard page，默认 1 MiB，`MAP_NORESERVE`，按需提交物理页（[async.md](async.md) 里“初期方案”的做法）。
 - **栈段**：一个 context 的 Lisp 帧分成若干段。每段从一个 trampoline 帧（段顶）延伸到一个 `kiln_enter` 帧（段底）。当前段的两端记在 context 里，挂起的段链接在 `ctx.segments` 上。GC、unwinder、调试信息的走栈都遍历所有段。
 - **`(kiln.sys:%call-on-new-stack f arg)`**（只用于测试）：
@@ -196,7 +196,7 @@ KIR 只有 `:store` 和 `:store32` 两条写内存的语句（kiln-cg 的 `Stmt:
 ### 屏障的代价
 
 - 每个 A 类写多出约 8 条指令和两个几乎不会预测失败的分支，加一次 side metadata 的字节读（每 64 字节堆共享一个元数据字节，局部性好）。Java 上的测量（Blackburn 和 Hosking 等人的 barrier 研究）中 object-remembering barrier 的 mutator 开销在 1–2% 左右。
-- kiln 的写比 Java 程序更集中在 CLOS 的槽写入（Iconoclast 遍历 AST 时的 `set-slot`、实例初始化）和哈希表的向量：估计 mutator 开销 1–3%。编译期省掉初始化写和非指针值的写，能去掉相当一部分。
+- kiln 的写比 Java 程序更集中在 CLOS 的槽写入（实例初始化）和哈希表的向量：估计 mutator 开销 1–3%。编译期省掉初始化写和非指针值的写，能去掉相当一部分。
 - 代码体积：每个屏障约 30 字节，冷路径另外算；A 类写在 kernel 和 CLOS 里有几千处。
 - 收益见 performance.md：GC 约占自举 CPU 时间的六分之一，其中绝大部分是反复复制老对象。
 

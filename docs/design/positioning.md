@@ -11,7 +11,7 @@ kiln 开发时是一个完整的、可以随时修改的 CL 活环境，交付�
 | 方面 | 选择 |
 |---|---|
 | 语言 | Common Lisp，以 ANSI 为主；可以额外提供一个 staging 库 |
-| 复用 | SICL 生态的独立模块（Eclector、Clostrum、Common-boot 等），详见 [modules.md](modules.md) |
+| 复用 | SICL 生态的独立模块（Eclector、Clostrum、Clostrophilia 等），详见 [modules.md](modules.md) |
 | 开发期代码生成 | cranelift-jit |
 | 交付期代码生成 | cranelift-object，AOT |
 | Runtime | Rust 写的小 runtime，静态链接 |

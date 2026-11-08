@@ -1,13 +1,10 @@
 (in-package #:kiln.compiler)
 
-;;;; Lowering simplified Iconoclast ASTs to KIR.
-;;;;
-;;;; The input comes from SIMPLIFY-AST: closures are converted (LABELS plus
-;;;; SET-STATIC-ENVIRONMENT, READ-STATIC-ENVIRONMENT), assigned captured
-;;;; variables live in cells (MAKE-CELL, READ-CELL, WRITE-CELL), and every
-;;;; BLOCK and TAGBODY has a variable naming its exit point. Each
-;;;; LOCAL-FUNCTION-AST becomes one KIR function; the top-level forms of a
-;;;; file run in order from the module's init function.
+;;;; Lowering to KIR: the module, functions, calls, special variables,
+;;;; non-local exits, allocation and constants. lisp/ir/lower.lisp walks
+;;;; the IR of each top-level form and emits its nodes with these; the
+;;;; top-level forms of a file run in order from the module's init
+;;;; function.
 
 (define-condition kiln-compile-error (error)
   ((message :initarg :message :reader kiln-compile-error-message))
@@ -92,7 +89,6 @@ shift the counter, so the numbers differ between hosts."
   "Keyword -> function of the list of argument operands (primitives.lisp).")
 
 (defvar *regions* '())                  ; dynamic-extent regions (REGION below)
-
 
 (defvar *module-label*)                 ; mangled module name
 
@@ -534,7 +530,6 @@ word is a list of them and the flag is 1."
 ;;; Variables. Closure conversion guarantees that a variable is only
 ;;; referenced in the function that defines it.
 
-(defvar *vars*)                         ; definition AST -> (kfunc . var or operand)
 (defvar *self*)                         ; variable holding the function object
 
 ;;; Debug information. Each function has a debug info object,
@@ -547,7 +542,7 @@ word is a list of them and the flag is 1."
 ;;; form: kiln-cg records where the variables are during each call.
 
 (defstruct (toplevel-form (:constructor make-toplevel-form (ast file source definition form)))
-  "A top-level form to compile (front.lisp): its simplified AST, the name
+  "A top-level form to compile (front.lisp): its IR, the name
 of its file, its source range (START . END), the definition it belongs
 to, (NAME . FUNCTION-P) as DEFINITION-NAME returns them, or NIL, and the
 outermost form as written (before macro expansion)."
@@ -573,13 +568,6 @@ outermost form as written (before macro expansion)."
 (defvar *debug-vars* '())               ; names of its variables, newest first
 (defvar *debug-var-count* 0)
 (defvar *call-source* nil)              ; source range of the innermost call form
-
-(defun ast-source (ast)
-  "The source range (START . END) of AST's origin, if it has one."
-  (let ((origin (ico:origin ast)))
-    (and (typep origin 'cst:cst)
-         (let ((source (cst:source origin)))
-           (and (consp source) (integerp (car source)) (integerp (cdr source)) source)))))
 
 (defun call-loc ()
   "The (LOC START END) part of the call being emitted, as a list."
@@ -623,7 +611,7 @@ in the function being compiled."
 in the source: it occurs in the top-level form. Variables that macros
 introduce do not; their names are of no use, and differ between the host
 and kiln, where some macro packages have other names."
-  (let ((name (and definition (if (ir-var-p definition) (ir-var-name definition) (ico:name definition)))))
+  (let ((name (and definition (ir-var-name definition))))
     (and name (symbolp name) (symbol-package name) *toplevel*
          (gethash name (toplevel-symbols *toplevel*))
          name)))
@@ -635,160 +623,10 @@ and kiln, where some macro packages have other names."
 NAME is the source variable's name for the debug info, NIL for none; CELL
 true if the variable holds the cell of the variable NAME."
   (let ((v (copy-to-var operand)))
-    (if (ir-var-p definition)
-        (setf (ir-var-lowering definition) v)
-        (setf (gethash definition *vars*) (cons *func* v)))
-    (unless (and (ir-var-p definition) *ir-entry-p*)
+    (setf (ir-var-lowering definition) v)
+    (unless *ir-entry-p*
       (note-debug-var v name cell))
     v))
-
-(defun var-of (definition)
-  (let ((entry (gethash definition *vars*)))
-    (unless entry
-      (fail "variable ~S is not bound" (ico:name definition)))
-    (unless (eq (car entry) *func*)
-      (fail "variable ~S referenced outside its function (not closure converted?)"
-            (ico:name definition)))
-    (cdr entry)))
-
-;;; AST walking
-
-;;; The children of an AST are the ASTs in the slots that its
-;;; SLOT-DESIGNATORS name, except for two kinds of slots that link to ASTs
-;;; elsewhere: those of name ASTs (names of variables, functions, blocks
-;;; and tags), which link definitions and references to each other, and
-;;; the TAGBODY-AST slot of a segment, which links it back to its
-;;; tagbody. Every other slot holds ASTs of its own: the front end makes a
-;;; new AST for each place, and Iconoclast's transformations move ASTs
-;;; rather than copy references to them (inlining a local function moves
-;;; its body to its only call). So the children make a tree, and a walk
-;;; needs no table of the nodes it has seen.
-
-(defvar *children-plans* (make-hash-table :test 'eq))
-                                        ; class -> (NIL reader...)
-
-(defun children-plan (ast)
-  "The readers of the child slots of AST's class, after a NIL."
-  (let ((class (class-of ast)))
-    (or (gethash class *children-plans*)
-        (let ((plan (cons nil
-                          (unless (typep ast '(or ico:function-name-ast ico:variable-name-ast
-                                               ico:block-name-ast ico:tag-ast))
-                            (loop for (cardinality reader) in (ico:slot-designators ast)
-                                  when (and (member cardinality '(ico:? 1 *))
-                                            (not (and (eq reader 'ico:tagbody-ast)
-                                                      (typep ast 'ico:tagbody-segment-ast))))
-                                    collect (fdefinition reader))))))
-          (setf (gethash class *children-plans*) plan)
-          ;; The plan rests on the AST classes not being redefined; a
-          ;; redefinition of one drops its plan.
-          #+kiln (kiln.kernel::register-assumption-dependent
-                  :class class
-                  (lambda () (remhash class *children-plans*)))
-          plan))))
-
-(defun map-children (function ast)
-  "Calls FUNCTION on each child of AST, in order."
-  (dolist (reader (cdr (children-plan ast)))
-    (let ((v (funcall reader ast)))
-      (cond ((null v))
-            ((consp v)
-             (dolist (x v)
-               (when (typep x 'ico:ast)
-                 (funcall function x))))
-            ((typep v 'ico:ast)
-             (funcall function v))))))
-
-(defun ast-children (ast)
-  (let ((children '()))
-    (map-children (lambda (child) (push child children)) ast)
-    (nreverse children)))
-
-(defun walk (function ast)
-  "Calls FUNCTION on AST and its descendants, in preorder, with the
-innermost LOCAL-FUNCTION-AST containing the node below the starting point
-(the starting point included), or NIL if there is none."
-  (labels ((visit (ast owner)
-             (funcall function ast owner)
-             (let ((owner (if (typep ast 'ico:local-function-ast) ast owner)))
-               (map-children (lambda (child) (visit child owner)) ast))))
-    (visit ast nil)))
-
-;;; What lowering asks about a top-level form, found in one walk of the
-;;; form before it is lowered (lowering does not change the AST; the ASTs
-;;; it makes, calls of global functions, are lowered at once and asked
-;;; nothing). Each answer rests on lexical scope: a variable is assigned
-;;; only in the body of its binding, a RETURN-FROM is inside its BLOCK, a
-;;; GO inside its TAGBODY, and the SET-STATIC-ENVIRONMENT-AST of a local
-;;; function is in the body of its LABELS; asking the whole form is asking
-;;; that part of it.
-
-(defstruct (ast-facts (:conc-name facts-) (:constructor make-ast-facts ()))
-  ;; Variable definitions that a SIMPLE-SETQ-AST assigns.
-  (assigned (make-hash-table :test 'eq))
-  ;; Block name definitions and TAGBODY-WITH-VARIABLE-ASTs that a function
-  ;; nested in them exits to.
-  (nonlocal (make-hash-table :test 'eq))
-  ;; Local function definition -> number of words of its static
-  ;; environment, from the first SET-STATIC-ENVIRONMENT-AST for it.
-  (env-sizes (make-hash-table :test 'eq))
-  ;; LOAD-TIME-VALUE-ASTs, in preorder.
-  (load-time-values '()))
-
-(defvar *facts*)                        ; AST-FACTS of the top-level form
-
-(defun ast-facts (toplevel-ast)
-  (let ((facts (make-ast-facts))
-        ;; Block name or tag definition -> (owner . key in NONLOCAL): the
-        ;; innermost local function containing the BLOCK or TAGBODY. An
-        ;; exit from a node with another owner is from a nested function.
-        (targets (make-hash-table :test 'eq)))
-    (flet ((note-exit (def owner)
-             (let ((target (gethash def targets)))
-               (when (and target (not (eq (car target) owner)))
-                 (setf (gethash (cdr target) (facts-nonlocal facts)) t)))))
-      (walk (lambda (node owner)
-              (typecase node
-                (ico:simple-setq-ast
-                 (setf (gethash (ico:definition-ast (ico:variable-name-ast node))
-                                (facts-assigned facts))
-                       t))
-                (ico:block-with-variable-ast
-                 (let ((def (ico:name-ast node)))
-                   (setf (gethash def targets) (cons owner def))))
-                (ico:tagbody-with-variable-ast
-                 (dolist (segment (ico:segment-asts node))
-                   (let ((tag (ico:tag-ast segment)))
-                     (when tag
-                       (setf (gethash tag targets) (cons owner node))))))
-                (ico:return-from-with-variable-ast
-                 (note-exit (ico:block-name-definition-ast (ico:name-ast node)) owner))
-                (ico:go-with-variable-ast
-                 (note-exit (ico:tag-definition-ast (ico:tag-ast node)) owner))
-                (ico:set-static-environment-ast
-                 (let ((def (ico:definition-ast (ico:function-reference-ast node)))
-                       (sizes (facts-env-sizes facts)))
-                   (unless (nth-value 1 (gethash def sizes))
-                     (setf (gethash def sizes) (length (ico:form-asts node))))))
-                (ico:load-time-value-ast
-                 (push node (facts-load-time-values facts)))))
-            toplevel-ast))
-    (setf (facts-load-time-values facts) (nreverse (facts-load-time-values facts)))
-    facts))
-
-(defun assigned-p (definition)
-  "Is the variable DEFINITION the target of a SETQ?"
-  (values (gethash definition (facts-assigned *facts*))))
-
-(defun static-env-size (definition)
-  "Number of env words of the local function named by DEFINITION (0 if it
-has no static environment)."
-  (values (gethash definition (facts-env-sizes *facts*) 0)))
-
-(defun exited-from-closure-p (key)
-  "Does a function nested in the BLOCK (KEY its name definition) or the
-TAGBODY-WITH-VARIABLE-AST KEY exit to it?"
-  (values (gethash key (facts-nonlocal *facts*))))
 
 ;;; Lowering
 
@@ -809,11 +647,6 @@ TAGBODY-WITH-VARIABLE-AST KEY exit to it?"
 (defmethod lower-mv ((ast t))
   (values (lower ast) 1))
 
-(defmacro define-mv-lowering (class (var) &body body)
-  `(progn
-     (defmethod lower-mv ((,var ,class)) ,@body)
-     (defmethod lower ((,var ,class)) (values (lower-mv ,var)))))
-
 (defun lower-progn-mv (asts)
   (if (null asts)
       (values (nil-value) 1)
@@ -831,94 +664,10 @@ TAGBODY-WITH-VARIABLE-AST KEY exit to it?"
 (defun lower-or-nil-mv (ast)
   (if ast (lower-mv ast) (values (nil-value) 1)))
 
-(define-mv-lowering ico:progn-ast (ast) (lower-progn-mv (ico:form-asts ast)))
-(define-mv-lowering ico:locally-ast (ast) (lower-progn-mv (ico:form-asts ast)))
-(define-mv-lowering ico:the-ast (ast) (lower-mv (ico:form-ast ast)))
-;;; The expansions have already replaced the symbol macros.
-(define-mv-lowering ico:symbol-macrolet-ast (ast) (lower-progn-mv (ico:form-asts ast)))
-
-(define-mv-lowering ico:eval-when-ast (ast)
-  ;; Not at top level: only :EXECUTE matters.
-  (if (intersection (mapcar (lambda (s)
-                              (let ((n (ico:name s))) (if (typep n 'cst:cst) (cst:raw n) n)))
-                            (ico:situation-asts ast))
-                    '(:execute eval))
-      (lower-progn-mv (ico:form-asts ast))
-      (values (nil-value) 1)))
-
 (defun set-mv (r n v nv)
   "Assigns the values (V, NV) to the variables R and N."
   (emit `(:set ,r ,v))
   (emit `(:set ,n ,nv)))
-
-(defmethod lower ((ast ico:literal-ast))
-  (constant-object (ico:literal ast)))
-
-(defun quoted-object (ast)
-  (let ((object (ico:object-ast ast)))
-    (if (typep object 'ico:unparsed-form-ast)
-        (let ((form (ico:form object)))
-          (if (typep form 'cst:cst) (cst:raw form) form))
-        (fail "unexpected QUOTE object ~S" object))))
-
-(defmethod lower ((ast ico:quote-ast))
-  (constant-object (quoted-object ast)))
-
-(defmethod lower ((ast ico:variable-reference-ast))
-  (copy-to-var (var-of (ico:definition-ast ast))))
-
-(defvar *constant-vars*)                ; variable definition -> constant
-
-(define-mv-lowering ico:let-temporary-ast (ast)
-  (bind-temporary ast)
-  (lower-progn-mv (ico:form-asts ast)))
-
-(defun bind-temporary (ast)
-  "Binds the variable of the LET-TEMPORARY-AST AST. A variable bound to an
-entry of the function's static environment (a closed-over variable,
-never assigned: assigned ones live in cells) is not loaded here: each
-reference loads the entry from the function object, which stays live
-anyway. Loading every entry at the entry of the function kept them all
-live across calls, and they were spilled."
-  (note-constant-temporary ast)
-  (let* ((binding (ico:binding-ast ast))
-         (def (ico:variable-name-ast binding))
-         (form (ico:form-ast binding)))
-    (cond ((and (typep form 'ico:static-environment-ast)
-                (not (assigned-p def)))
-           ;; The static environment is the function object itself.
-           (setf (gethash def *vars*) (cons *func* *self*)))
-          ((and (typep form 'ico:read-static-environment-ast)
-                (self-reference-p (ico:static-environment-ast form))
-                (not (assigned-p def)))
-           (setf (gethash def *vars*)
-                 (cons *func* `(:load ,*self* ,(+ +fobj-env+
-                                                  (* 8 (ico:literal (ico:index-ast form))))))))
-          ((and (typep form 'ico:make-cell-ast)
-                (typep (ico:form-ast form) 'ico:variable-reference-ast))
-           ;; Closure conversion: the cell of a variable that a closure
-           ;; assigns, made from the variable.
-           (bind-var def (lower form)
-                     :name (source-variable-name (ico:definition-ast (ico:form-ast form)))
-                     :cell t))
-          (t
-           (bind-var def (lower form))))))
-
-(defun self-reference-p (ast)
-  "Is AST the function's own static environment?"
-  (or (typep ast 'ico:static-environment-ast)
-      (and (typep ast 'ico:variable-reference-ast)
-           (eq (var-of (ico:definition-ast ast)) *self*))))
-
-(defun note-constant-temporary (ast)
-  "Remembers the temporary of the LET-TEMPORARY-AST AST if it is bound to
-a constant and never assigned, so that (FUNCALL #'(SETF FDEFINITION) F
-NAME) from DEFUN sees the name."
-  (let* ((binding (ico:binding-ast ast))
-         (def (ico:variable-name-ast binding)))
-    (multiple-value-bind (constant constantp) (constant-value (ico:form-ast binding))
-      (when (and constantp (not (assigned-p def)))
-        (setf (gethash def *constant-vars*) constant)))))
 
 (defun constant-value (ast)
   "The value of AST if it is a constant (QUOTE, a literal, or a variable
@@ -931,73 +680,7 @@ known to hold one), and true; else NIL and NIL."
             (values (ir-var-constant var)
                     (and (ir-var-constant-p var) (not (logtest 1 (ir-var-flags var)))))))
        (otherwise (values nil nil))))
-    (ico:quote-ast
-     (let ((object (ico:object-ast ast)))
-       (if (typep object 'ico:unparsed-form-ast)
-           (let ((form (ico:form object)))
-             (values (if (typep form 'cst:cst) (cst:raw form) form) t))
-           (values nil nil))))
-    (ico:literal-ast (values (ico:literal ast) t))
-    (ico:variable-reference-ast
-     (multiple-value-bind (value found) (gethash (ico:definition-ast ast) *constant-vars*)
-       (values value found)))
     (t (values nil nil))))
-
-(defmethod lower ((ast ico:simple-setq-ast))
-  (let ((v (lower (ico:value-ast ast)))
-        (var (var-of (ico:definition-ast (ico:variable-name-ast ast)))))
-    (emit `(:set ,var ,v))
-    (copy-to-var var)))
-
-(defun switch-eql-comparison (test)
-  "The lexical definition and fixnum compared by a side-effect-free EQL test."
-  (when (typep test 'ico:application-ast)
-    (let ((fn (ico:function-name-ast test))
-          (args (ico:argument-asts test)))
-      (when (and (typep fn 'ico:global-function-name-reference-ast)
-                 (eq (ico:name fn) 'eql) (= (length args) 2))
-        (loop for (variable constant) in (list args (reverse args))
-              when (typep variable 'ico:variable-reference-ast)
-                do (multiple-value-bind (value present) (constant-value constant)
-                     (when (and present (typep value '(signed-byte 63)))
-                       (return-from switch-eql-comparison
-                         (values (ico:definition-ast variable) value variable)))))))))
-
-(defun switch-comparison (test)
-  "The definition, keys, and reference in an EQL test or its OR expansion."
-  (multiple-value-bind (definition key reference) (switch-eql-comparison test)
-    (when definition
-      (return-from switch-comparison (values definition (list key) reference))))
-  (when (typep test 'ico:let-temporary-ast)
-    (let* ((binding (ico:binding-ast test))
-           (temporary (ico:variable-name-ast binding))
-           (body (ico:form-asts test))
-           (branch (and (= (length body) 1) (first body))))
-      (when (and (typep branch 'ico:if-ast)
-                 (variable-reference-to-p (ico:test-ast branch) temporary)
-                 (variable-reference-to-p (ico:then-ast branch) temporary))
-        (multiple-value-bind (left keys reference)
-            (switch-comparison (ico:form-ast binding))
-          (when left
-            (multiple-value-bind (right rest)
-                (switch-comparison (ico:else-ast branch))
-              (when (eq left right)
-                (values left (append keys rest) reference)))))))))
-
-(defun switch-chain (ast)
-  "Collect a chain of comparisons of one lexical variable, in source order."
-  (let ((definition nil) (reference nil) (arms '()) (tail ast))
-    (loop while (typep tail 'ico:if-ast)
-          do (multiple-value-bind (def keys ref) (switch-comparison (ico:test-ast tail))
-               (unless (and def (or (null definition) (eq def definition))) (return))
-               (setf definition def reference ref)
-               ;; An earlier test wins when keys repeat.
-               (dolist (key keys)
-                 (unless (assoc key arms)
-                   (push (cons key (ico:then-ast tail)) arms)))
-               (setf tail (ico:else-ast tail))))
-    (when (>= (length arms) 3)
-      (values reference (nreverse arms) tail))))
 
 (defun lower-switch-mv (reference arms default)
   (let ((value (lower reference))
@@ -1024,30 +707,10 @@ known to hold one), and true; else NIL and NIL."
     (start-block join)
     (values r n)))
 
-(define-mv-lowering ico:if-ast (ast)
-  (multiple-value-bind (reference arms default) (switch-chain ast)
-    (if reference
-        (lower-switch-mv reference arms default)
-        (let ((r (new-var)) (n (new-var :raw))
-              (then-b (new-block)) (else-b (new-block)) (join (new-block)))
-          (lower-branch (ico:test-ast ast) then-b else-b)
-          (start-block then-b)
-          (multiple-value-call #'set-mv r n (lower-mv (ico:then-ast ast)))
-          (jump join)
-          (start-block else-b)
-          (multiple-value-call #'set-mv r n (lower-or-nil-mv (ico:else-ast ast)))
-          (jump join)
-          (start-block join)
-          (values r n)))))
 
-;;; Tests (the test of an IF): LOWER-BRANCH jumps to THEN if AST's value
-;;; is true, else to ELSE, without making the value when it need not. A
-;;; predicate's (:SELECT condition T NIL) becomes a branch on the
-;;; condition; IFs in the test (AND, WHEN, COND), OR's expansion, NOT and
-;;; constants become branches. The unused SELECT is left to kiln-cg's dead
-;;; code elimination.
-
-(defgeneric lower-branch (ast then else))
+;;; Tests (the test of an IF, IR-LOWER-BRANCH): a predicate's (:SELECT
+;;; condition T NIL) becomes a branch on the condition. The unused SELECT
+;;; is left to kiln-cg's dead code elimination.
 
 (defun boolean-condition (v)
   "The condition C if the last statement of the current block is
@@ -1067,81 +730,6 @@ known to hold one), and true; else NIL and NIL."
 (defun branch-on-value (v then else)
   (br (or (boolean-condition v) `(:ne ,v ,(nil-value))) then else))
 
-(defmethod lower-branch ((ast t) then else)
-  (branch-on-value (lower ast) then else))
-
-(defmethod lower-branch ((ast ico:if-ast) then else)
-  (let ((then1 (new-block)) (else1 (new-block)))
-    (lower-branch (ico:test-ast ast) then1 else1)
-    (start-block then1)
-    (lower-branch (ico:then-ast ast) then else)
-    (start-block else1)
-    (if (ico:else-ast ast)
-        (lower-branch (ico:else-ast ast) then else)
-        (jump else))))
-
-(defun lower-progn-branch (asts then else)
-  (if (null asts)
-      (jump else)
-      (progn
-        (dolist (a (butlast asts))
-          (lower a))
-        (lower-branch (car (last asts)) then else))))
-
-(defmethod lower-branch ((ast ico:progn-ast) then else)
-  (lower-progn-branch (ico:form-asts ast) then else))
-
-(defmethod lower-branch ((ast ico:the-ast) then else)
-  (lower-branch (ico:form-ast ast) then else))
-
-(defun variable-reference-to-p (ast definition)
-  (and (typep ast 'ico:variable-reference-ast)
-       (eq (ico:definition-ast ast) definition)))
-
-(defmethod lower-branch ((ast ico:let-temporary-ast) then else)
-  (let* ((binding (ico:binding-ast ast))
-         (def (ico:variable-name-ast binding))
-         (form (ico:form-ast binding))
-         (body (ico:form-asts ast))
-         (if-ast (and (= (length body) 1) (first body))))
-    (if (and (typep if-ast 'ico:if-ast)
-             (variable-reference-to-p (ico:test-ast if-ast) def)
-             (variable-reference-to-p (ico:then-ast if-ast) def)
-             (not (variable-occurs-p def (ico:else-ast if-ast))))
-        ;; (OR X Y): (LET ((G X)) (IF G G Y)), where only the truth of G
-        ;; matters.
-        (let ((else1 (new-block)))
-          (lower-branch form then else1)
-          (start-block else1)
-          (if (ico:else-ast if-ast)
-              (lower-branch (ico:else-ast if-ast) then else)
-              (jump else)))
-        (progn
-          (bind-temporary ast)
-          (lower-progn-branch body then else)))))
-
-(defun variable-occurs-p (definition ast)
-  (and ast
-       (walk (lambda (node inside)
-               (declare (ignore inside))
-               (when (variable-reference-to-p node definition)
-                 (return-from variable-occurs-p t)))
-             ast)))
-
-(defmethod lower-branch ((ast ico:application-ast) then else)
-  (let ((fn (ico:function-name-ast ast))
-        (args (ico:argument-asts ast)))
-    (if (and (typep fn 'ico:global-function-name-reference-ast)
-             (member (ico:name fn) '(not null))
-             (= (length args) 1))
-        (lower-branch (first args) else then)
-        (branch-on-value (lower ast) then else))))
-
-(defmethod lower-branch ((ast ico:literal-ast) then else)
-  (jump (if (ico:literal ast) then else)))
-
-(defmethod lower-branch ((ast ico:quote-ast) then else)
-  (jump (if (quoted-object ast) then else)))
 
 ;;; Special variables: TLS-index scheme (C1, rust/kiln-rt/src/special.rs).
 ;;; Symbols store their TLS index as a fixnum (index << 1), so the address
@@ -1201,47 +789,11 @@ has never been bound). The table does not move."
 (defun constant-symbol-p (name)
   (or (null name) (eq name t) (keywordp name)))
 
-(defmethod lower ((ast ico:special-variable-reference-ast))
-  (let ((name (ico:name ast)))
-    (if (constant-symbol-p name)
-        (constant-object name)
-        (let* ((sym (constant-object name))
-               (v (emit-symbol-value sym)))
-          (emit-check-bound v sym)
-          v))))
-
-(defmethod lower ((ast ico:special-variable-setq-ast))
-  (let ((name (ico:name (ico:variable-name-ast ast)))
-        (v (copy-to-var (lower (ico:value-ast ast)))))
-    (emit-set-symbol-value (constant-object name) v)
-    v))
-
 (defun emit-unbind (region)
   "Restores the value saved in the binding entry of REGION."
   (let ((s `(:slot ,(region-slot region))))
     (emit `(:store (:add (:load :ctx ,+ctx-tls+) (:shl (:load ,s ,+dyn-pend-target+) 2))
                    0 (:load ,s ,+dyn-pend-value+)))))
-
-(define-mv-lowering ico:special-variable-bind-ast (ast)
-  (let* ((binding (ico:binding-ast ast))
-         (name (ico:name (ico:variable-name-ast binding)))
-         (v (copy-to-var (lower (ico:form-ast binding))))
-         (sym (constant-object name))
-         (index (emit-tls-index sym)))
-    (let* ((addr (copy-to-var `(:add (:load :ctx ,+ctx-tls+) (:shl ,index 2)) :raw))
-           (region (establish-entry :bind sym))
-           (s `(:slot ,(region-slot region)))
-           (r (new-var)) (n (new-var :raw)))
-      ;; No safepoint between linking the entry and filling it in.
-      (emit `(:store ,s ,+dyn-pend-target+ ,index))
-      (emit `(:store ,s ,+dyn-pend-value+ (:load ,addr 0)))
-      (emit `(:store ,addr 0 ,v))
-      (let ((*regions* (cons region *regions*)))
-        (multiple-value-call #'set-mv r n (lower-progn-mv (ico:form-asts ast))))
-      ;; Unbinding makes no calls, so the values in ctx.values survive.
-      (emit-unbind region)
-      (pop-entry region)
-      (values r n))))
 
 (defun emit-tls-index (sym)
   "Raw variable holding the TLS index of the symbol operand SYM, assigned
@@ -1271,70 +823,6 @@ if needed (not a safepoint)."
     (jump head)
     (start-block done)))
 
-(define-mv-lowering ico:progv-ast (ast)
-  (let* ((symbols (copy-to-var (lower (ico:symbols-ast ast))))
-         (vals (copy-to-var (lower (ico:values-ast ast))))
-         (saved (copy-to-var (nil-value))))
-    (emit-check-proper-list symbols)
-    (emit-check-proper-list vals)
-    ;; Save the old values first, then link the entry, then bind: an
-    ;; unwind then always finds the complete list.
-    (let ((cur (copy-to-var symbols))
-          (head (new-block)) (body (new-block)) (done (new-block)))
-      (jump head)
-      (start-block head)
-      (br `(:eq ,cur ,(nil-value)) done body)
-      (start-block body)
-      (let* ((sym (copy-to-var `(:load ,cur ,+cons-car+)))
-             (index (progn (emit-check-symbol sym) (emit-tls-index sym)))
-             (old (copy-to-var `(:load (:add (:load :ctx ,+ctx-tls+) (:shl ,index 2)) 0))))
-        (emit `(:set ,saved ,(emit-cons (emit-cons sym old) saved))))
-      (emit `(:set ,cur (:load ,cur ,+cons-cdr+)))
-      (jump head)
-      (start-block done))
-    (let ((region (establish-entry :progv saved))
-          (cur (copy-to-var symbols)) (vcur (copy-to-var vals))
-          (head (new-block)) (body (new-block)) (done (new-block))
-          (r (new-var)) (n (new-var :raw)))
-      (jump head)
-      (start-block head)
-      (br `(:eq ,cur ,(nil-value)) done body)
-      (start-block body)
-      ;; Symbols without a value become unbound.
-      (let ((v (copy-to-var `(:select (:eq ,vcur ,(nil-value)) ,+unbound+ (:load ,vcur ,+cons-car+)))))
-        (emit `(:store (:add (:load :ctx ,+ctx-tls+)
-                             (:shl (:load (:load ,cur ,+cons-car+) ,+symbol-tls-index+) 2))
-                       0 ,v)))
-      (emit `(:set ,cur (:load ,cur ,+cons-cdr+)))
-      (emit `(:set ,vcur (:select (:eq ,vcur ,(nil-value)) ,vcur (:load ,vcur ,+cons-cdr+))))
-      (jump head)
-      (start-block done)
-      (let ((*regions* (cons region *regions*)))
-        (multiple-value-call #'set-mv r n (lower-progn-mv (ico:form-asts ast))))
-      (emit-unbind-progv region)
-      (pop-entry region)
-      (values r n))))
-
-;;; LOAD-TIME-VALUE: the forms are evaluated by the module's init function
-;;; just before the top-level form that contains them, and kept in static
-;;; root cells.
-
-(defvar *load-time-values*)             ; load-time-value AST -> cell data name
-
-(defun emit-load-time-values ()
-  "Evaluates the LOAD-TIME-VALUE forms of the top-level form."
-  (dolist (ltv (facts-load-time-values *facts*))
-    (setf (kiln.kir::kmodule-replayable-p *module*) nil)
-    (let ((cell (fresh-label "kiln_ltv_")))
-      (module-data cell `(:words 0))
-      (module-root cell 0)
-      (emit `(:store (:addr ,cell) 0 ,(lower (ico:form-ast ltv))))
-      (setf (gethash ltv *load-time-values*) cell))))
-
-(defmethod lower ((ast ico:load-time-value-ast))
-  (let ((cell (or (gethash ast *load-time-values*)
-                  (fail "LOAD-TIME-VALUE not seen at top level"))))
-    (copy-to-var `(:load (:addr ,cell) 0))))
 
 ;;; Allocation
 
@@ -1379,17 +867,6 @@ is tagged and stored in an obj variable."
 
 ;;; Cells (assignment conversion): a cell is a cons whose car is the value.
 
-(defmethod lower ((ast ico:make-cell-ast))
-  (emit-cons (lower (ico:form-ast ast)) (nil-value)))
-
-(defmethod lower ((ast ico:read-cell-ast))
-  (copy-to-var `(:load ,(lower (ico:cell-ast ast)) ,+cons-car+)))
-
-(defmethod lower ((ast ico:write-cell-ast))
-  (let ((cell (lower (ico:cell-ast ast)))
-        (v (copy-to-var (lower (ico:form-ast ast)))))
-    (emit `(:store ,cell ,+cons-car+ ,v))
-    v))
 
 ;;; Functions
 
@@ -1400,35 +877,6 @@ is tagged and stored in an obj variable."
   (keys '())       ; (variable supplied-p keyword)
   (key-p nil)
   (allow-other-keys nil))
-
-(defun parse-lambda-list (lambda-list)
-  "Parameters of a lambda list after LEXIFY-LAMBDA-LIST: every optional
-and key parameter has a supplied-p variable, and default forms are
-evaluated in the body, so the init forms here are all NIL."
-  (let ((ll (make-parsed-lambda-list)))
-    (when lambda-list
-      (dolist (section (ast-children lambda-list))
-        (typecase section
-          (ico:required-section-ast
-           (setf (ll-required ll) (mapcar #'ico:name-ast (ico:parameter-asts section))))
-          (ico:optional-section-ast
-           (setf (ll-optional ll)
-                 (mapcar (lambda (p) (list (ico:name-ast p) (ico:supplied-p-parameter-ast p)))
-                         (ico:parameter-asts section))))
-          (ico:rest-section-ast
-           (setf (ll-rest ll) (ico:name-ast (ico:parameter-ast section))))
-          (ico:key-section-ast
-           (setf (ll-key-p ll) t
-                 (ll-allow-other-keys ll) (and (ico:allow-other-keys-ast section) t)
-                 (ll-keys ll)
-                 (mapcar (lambda (p)
-                           (let ((k (ico:keyword-ast p)))
-                             (list (ico:name-ast p) (ico:supplied-p-parameter-ast p)
-                                   (if (typep k 'ico:literal-ast) (ico:literal k) (ico:name k)))))
-                         (ico:parameter-asts section))))
-          (t (fail "~S in lambda lists is not supported yet"
-                   (class-name (class-of section)))))))
-    ll))
 
 (defun arg-operand (args i)
   "Argument I (an integer) on function entry: ARGS hold the register
@@ -1560,25 +1008,6 @@ DEBUG-NAME and SOURCE (a source range) go into its debug info."
           (emit `(:return ,v ,n))))
       (set-function-debug debug-name source))))
 
-(defvar *name-hint* nil
-  "The name hint of the function being compiled: local functions without
-a name of their own (closures) show it in their labels.")
-
-(defun function-name-hint (asts)
-  "The name of the first block among the first nodes of ASTS (a DEFUN's or
-DEFMETHOD's name), mangled, for the function's label: profiles show it."
-  (let ((queue (copy-list asts)) (budget 200))
-    (loop while (and queue (plusp (decf budget)))
-          do (let ((node (pop queue)))
-               (cond ((typep node 'ico:block-ast)
-                      (let ((name (ico:name (ico:name-ast node))))
-                        (return-from function-name-hint
-                          (and name (symbolp name) (symbol-package name)
-                               (let ((m (mangle (symbol-name name))))
-                                 (subseq m 0 (min 40 (length m))))))))
-                     ((not (typep node 'ico:local-function-ast))
-                      (setf queue (append queue (ast-children node)))))))))
-
 (defun local-function-label-name (name)
   "NAME's part of the label of a local function: a gensym's without its
 number, so that the labels do not depend on the image that compiles (the
@@ -1587,49 +1016,6 @@ host or kiln)."
                 ((symbolp name) (string-right-trim "0123456789" (symbol-name name)))
                 (t (princ-to-string name)))))
 
-(define-mv-lowering ico:labels-ast (ast)
-  (let ((functions
-          (loop for lf in (ico:binding-asts ast)
-                for def = (ico:name-ast lf)
-                for hint = (or (function-name-hint (ico:form-asts lf)) *name-hint*)
-                for label = (fresh-label (kiln.kir::kir-name
-                                     "kiln_f_" (local-function-label-name (ico:name def)) "_"
-                                     (if hint (kiln.kir::kir-name hint "_") "")))
-                for debug-name = (local-function-debug-name (ico:name def))
-                do (let ((*name-hint* hint)
-                         (*function-name* debug-name))
-                     (compile-function label
-                                       (parse-lambda-list (ico:lambda-list-ast lf))
-                                       (ico:form-asts lf)
-                                       :debug-name debug-name
-                                       :source nil))
-                collect (list def label (static-env-size def)))))
-    (loop for (def label n) in functions
-          do (if (zerop n)
-                 (let ((data (kiln.kir::kir-name label "_fobj")))
-                   (module-data data `(:words ,+kind-function+ (:func ,label)))
-                   (bind-var def `(:addr ,data ,+tag-general+) :name nil))
-                 (let ((p (emit-alloc (+ 16 (* 8 n))
-                                      (logior +kind-function+ (ash n +length-shift+)))))
-                   (emit `(:store ,p 8 (:addr ,label)))
-                   (bind-var def `(:add ,p ,+tag-general+) :name nil))))
-    (lower-progn-mv (ico:form-asts ast))))
-
-(defmethod lower ((ast ico:set-static-environment-ast))
-  (let ((values (mapcar (lambda (a) (copy-to-var (lower a))) (ico:form-asts ast)))
-        (f (lower (ico:function-reference-ast ast))))
-    (loop for v in values
-          for i from 0
-          do (emit `(:store ,f ,(+ +fobj-env+ (* 8 i)) ,v)))
-    (nil-value)))
-
-(defmethod lower ((ast ico:static-environment-ast))
-  (copy-to-var *self*))
-
-(defmethod lower ((ast ico:read-static-environment-ast))
-  (let ((env (lower (ico:static-environment-ast ast)))
-        (index (ico:literal (ico:index-ast ast))))
-    (copy-to-var `(:load ,env ,(+ +fobj-env+ (* 8 index))))))
 
 ;;; Calls
 
@@ -1708,19 +1094,15 @@ safepoint."
   "Atomic types whose TYPEP is a call to a predicate.")
 
 (defun call-ast (name arg-asts)
-  (if (some #'ir-node-p arg-asts)
-      (ir-node 7 nil name (coerce arg-asts 'simple-vector))
-      (make-instance 'ico:application-ast
-                     :function-name-ast (make-instance 'ico:global-function-name-reference-ast :name name)
-                     :argument-asts arg-asts)))
+  (ir-node 7 nil name (coerce arg-asts 'simple-vector)))
 
 (defun long-call-ast (name arg-asts)
   "An AST equivalent to the call of NAME (LIST, LIST*, VECTOR, NCONC or
 APPEND) with ARG-ASTS, whose calls have few enough arguments: (LIST* a1
 ... an REST) in chunks, (COERCE list 'SIMPLE-VECTOR) for VECTOR, nested
 calls for the associative NCONC and APPEND."
-  (let ((chunk 60) (ir (some #'ir-node-p arg-asts)))
-    (labels ((literal (value) (if ir (ir-node 0 nil value) (make-instance 'ico:literal-ast :literal value)))
+  (let ((chunk 60))
+    (labels ((literal (value) (ir-node 0 nil value))
              (list-ast (asts tail-ast)
                ;; The list of ASTS's values followed by TAIL-AST's value.
                (if (<= (length asts) chunk)
@@ -1755,8 +1137,7 @@ make that the test, with no key: none, or :TEST #'EQL, #'EQ, 'EQL or
         ((and (= (length keyword-asts) 2)
               (eq (constant-value (first keyword-asts)) :test))
          (let* ((test (second keyword-asts))
-                (name (cond ((typep test 'ico:global-function-name-reference-ast) (ico:name test))
-                            ((and (ir-node-p test) (= (ir-node-kind test) 5)) (ir-node-a test))
+                (name (cond ((and (ir-node-p test) (= (ir-node-kind test) 5)) (ir-node-a test))
                             (t (multiple-value-bind (value constantp) (constant-value test)
                                  (and constantp value))))))
            (and (member name '(eq eql)) name)))
@@ -1893,13 +1274,9 @@ LOWER-CACHED-SLOT-VALUE."
                                            ((assoc eq) . kiln.kernel::%assoc-eq))
                                          :test #'equal))
                              (subseq arg-asts 0 2))))))
-  (if (and (eq name 'funcall)
-           arg-asts
-           (typep (first arg-asts) 'ico:global-function-name-reference-ast))
-      ;; (FUNCALL #'F ...) is a call to F.
-      (lower-global-call (ico:name (first arg-asts)) (rest arg-asts))
-      (let ((primop (and (eq name 'kiln.sys:%primop) (primop-name arg-asts)))
-            (constant-name (and (equal name '(setf fdefinition))
+  ;; (FUNCALL #'F ...) and %PRIMOP are converted before (lisp/ir/convert.lisp).
+  (progn
+      (let ((constant-name (and (equal name '(setf fdefinition))
                                 (= (length arg-asts) 2)
                                 (quoted-constant (second arg-asts)))))
         (cond
@@ -1924,8 +1301,6 @@ LOWER-CACHED-SLOT-VALUE."
                (jump done)
                (start-block done))
              f))
-          (primop
-           (funcall primop (lower-args (rest arg-asts))))
           ((and (> (length arg-asts) (+ +reg-args+ +values-max+))
                 (member name '(list list* vector nconc append)))
            ;; Calls are limited to +REG-ARGS+ + +VALUES-MAX+ arguments:
@@ -1950,30 +1325,6 @@ LOWER-CACHED-SLOT-VALUE."
 (defun quoted-constant (ast)
   (values (constant-value ast)))
 
-(defun primop-name (arg-asts)
-  "The primop of a %PRIMOP call: its first argument must be a keyword."
-  (let ((op (first arg-asts)))
-    (unless (and (typep op 'ico:literal-ast) (keywordp (ico:literal op)))
-      (fail "%PRIMOP needs a keyword as its first argument"))
-    (or (gethash (ico:literal op) *primops*)
-        (fail "unknown primop ~S" (ico:literal op)))))
-
-(define-mv-lowering ico:application-ast (ast)
-  (let ((fn (ico:function-name-ast ast))
-        (*call-source* (or (ast-source ast) *call-source*)))
-    (multiple-value-bind (v n)
-        (etypecase fn
-          (ico:global-function-name-reference-ast
-           (lower-global-call (ico:name fn) (ico:argument-asts ast)))
-          ;; A local function: the variable holds its function object (LABELS).
-          (ico:variable-reference-ast
-           (let ((vals (lower-args (ico:argument-asts ast))))
-             (emit-lisp-call (lower fn) vals))))
-      ;; Primitives that return one value return no count.
-      (values v (or n 1)))))
-
-(defmethod lower ((ast ico:global-function-name-reference-ast))
-  (function-cell-value (ico:name ast)))
 
 ;;; BLOCK and RETURN-FROM
 
@@ -1985,8 +1336,6 @@ LOWER-CACHED-SLOT-VALUE."
   count           ; BLOCK: raw variable, number of values
   block)          ; TAGBODY: KIR block of the tag
 
-(defvar *exits*)                        ; block/tag definition AST -> exit-info
-
 (defun emit-exit-token ()
   "A fresh object identifying one activation of a block or tagbody that a
 closure may exit to. The closure holds it rather than the entry's stack
@@ -1994,173 +1343,12 @@ address: heap objects must not point into frames (C5), and a token cannot
 be confused with a later activation at the same address."
   (emit-cons (nil-value) (nil-value)))
 
-(define-mv-lowering ico:block-with-variable-ast (ast)
-  (let* ((def (ico:name-ast ast))
-         (body (ico:form-asts ast))
-         (nonlocal (exited-from-closure-p def))
-         (exit (new-block)) (r (new-var)) (n (new-var :raw)))
-    (setf (gethash def *exits*)
-          (make-exit-info :func *func* :regions *regions* :exit exit :result r :count n))
-    (if (not nonlocal)
-        (progn
-          (bind-var (ico:variable-definition-ast ast) 0 :name nil)
-          (multiple-value-call #'set-mv r n (lower-progn-mv body))
-          (jump exit))
-        (let* ((token (emit-exit-token))
-               (region (establish-entry :exit-point token))
-               (land (new-block)))
-          (bind-var (ico:variable-definition-ast ast) token :name nil)
-          (let ((*regions* (cons region *regions*)))
-            (multiple-value-call #'set-mv r n (lower-progn-mv body)))
-          (pop-entry region)
-          (jump exit)
-          (start-dispatch region land)
-          ;; The runtime has unlinked the entry.
-          (start-block land)
-          (multiple-value-call #'set-mv r n (emit-landed-values))
-          (jump exit)))
-    (start-block exit)
-    (values r n)))
-
-(defmethod lower ((ast ico:return-from-with-variable-ast))
-  (let ((info (gethash (ico:block-name-definition-ast (ico:name-ast ast)) *exits*)))
-    (if (eq (exit-info-func info) *func*)
-        (multiple-value-bind (v n) (lower-or-nil-mv (ico:form-ast ast))
-          (let ((r (exit-info-result info)) (rn (exit-info-count info))
-                (target (exit-info-regions info)))
-            (if (loop for rs on *regions*
-                      until (eq rs target)
-                      thereis (eq (region-kind (first rs)) :unwind-protect))
-                ;; Cleanups run on the way out: keep the values safe.
-                (let ((saved (emit-save-values v n)))
-                  (emit-local-exit target)
-                  (multiple-value-call #'set-mv r rn (emit-restore-values saved n)))
-                (progn
-                  (set-mv r rn v n)
-                  (emit-local-exit target)))
-            (jump (exit-info-exit info))))
-        (multiple-value-bind (v packed)
-            (multiple-value-call #'emit-unwind-values (lower-or-nil-mv (ico:form-ast ast)))
-          (let ((token (lower (ico:variable-reference-ast ast))))
-            (emit `(:call-rt ,(rt-exit-to) () (:ctx ,token ,v ,packed) ,(handler))))
-          (emit '(:trap))))
-    (nil-value)))
 
 ;;; TAGBODY and GO
 
-(defmethod lower ((ast ico:tagbody-with-variable-ast))
-  (let* ((segments (ico:segment-asts ast))
-         (defs (mapcar #'ico:tag-ast segments)) ; NIL for an untagged first segment
-         (nonlocal (exited-from-closure-p ast))
-         (blocks (mapcar (lambda (s) (declare (ignore s)) (new-block)) segments))
-         (exit (new-block))
-         (token (and nonlocal (emit-exit-token)))
-         (region (and nonlocal (establish-entry :exit-point token)))
-         (inner (if region (cons region *regions*) *regions*)))
-    (bind-var (ico:variable-definition-ast ast) (or token 0) :name nil)
-    (loop for def in defs
-          for b in blocks
-          when def
-            do (setf (gethash def *exits*)
-                     (make-exit-info :func *func* :regions inner :block b)))
-    (let ((*regions* inner))
-      (when blocks (jump (first blocks)))
-      (loop for segment in segments
-            for (b . rest) on blocks
-            do (start-block b)
-               (when (ico:tag-ast segment) (emit-poll))
-               (dolist (s (ico:statement-asts segment)) (lower s))
-               (jump (if rest (first rest) exit))))
-    (unless blocks (jump exit))
-    (when region
-      (let ((land (new-block)))
-        (start-dispatch region land)
-        ;; A GO from a closure: the runtime has unlinked the entry, but
-        ;; control stays inside the tagbody, so link it again. The payload
-        ;; is the index of the tag's segment, as a fixnum.
-        (start-block land)
-        (emit `(:store :ctx ,+ctx-dynenv+ (:slot ,(region-slot region))))
-        (loop for b in blocks
-              for i from 0
-              do (let ((next (new-block)))
-                   (br `(:eq :exn1 ,(ash i +fixnum-shift+)) b next)
-                   (start-block next)))
-        (emit '(:trap))))
-    (start-block exit)
-    (when region (pop-entry region))
-    (nil-value)))
-
-(defmethod lower ((ast ico:go-with-variable-ast))
-  (let* ((def (ico:tag-definition-ast (ico:tag-ast ast)))
-         (info (gethash def *exits*)))
-    (if (eq (exit-info-func info) *func*)
-        (progn
-          (emit-local-exit (exit-info-regions info))
-          (jump (exit-info-block info)))
-        (let* ((segments (ico:segment-asts (ico:tagbody-ast (ico:segment-ast def))))
-               (index (position (ico:segment-ast def) segments))
-               (token (lower (ico:variable-reference-ast ast))))
-          (emit `(:call-rt ,(rt-exit-to) () (:ctx ,token ,(ash index +fixnum-shift+) 0) ,(handler)))
-          (emit '(:trap))))
-    (nil-value)))
 
 ;;; CATCH, THROW, UNWIND-PROTECT
 
-(define-mv-lowering ico:catch-ast (ast)
-  (let* ((tv (lower (ico:tag-form-ast ast)))
-         (r (new-var)) (n (new-var :raw)) (exit (new-block)) (land (new-block))
-         (region (establish-entry :catch tv)))
-    (let ((*regions* (cons region *regions*)))
-      (multiple-value-call #'set-mv r n (lower-progn-mv (ico:form-asts ast))))
-    (pop-entry region)
-    (jump exit)
-    (start-dispatch region land)
-    ;; The runtime has unlinked the entry.
-    (start-block land)
-    (multiple-value-call #'set-mv r n (emit-landed-values))
-    (jump exit)
-    (start-block exit)
-    (values r n)))
-
-(defmethod lower ((ast ico:throw-ast))
-  (let ((tv (copy-to-var (lower (ico:tag-form-ast ast)))))
-    (multiple-value-bind (vv packed)
-        (multiple-value-call #'emit-unwind-values (lower-mv (ico:form-ast ast)))
-      (emit `(:call-rt ,(rt-throw) () (:ctx ,tv ,vv ,packed) ,(handler))))
-    (emit '(:trap))
-    (nil-value)))
-
-(define-mv-lowering ico:unwind-protect-ast (ast)
-  (let* ((cleanup (ico:form-asts ast))
-         (r (new-var)) (n (new-var :raw)) (cont (new-block)) (land (new-block))
-         (region (establish-entry :unwind-protect)))
-    (setf (region-cleanup region) cleanup)
-    (multiple-value-bind (v nv)
-        (let ((*regions* (cons region *regions*)))
-          (lower-mv (ico:protected-form-ast ast)))
-      (pop-entry region)
-      (if cleanup
-          (let ((saved (emit-save-values v nv)))
-            (lower-progn cleanup)
-            (multiple-value-call #'set-mv r n (emit-restore-values saved nv)))
-          (set-mv r n v nv)))
-    (jump cont)
-    (start-dispatch region land)
-    ;; Entered by an unwind passing through: the entry stays linked, marked
-    ;; as running its cleanup, with the pending target in it. The cleanup
-    ;; runs in a region that only unlinks it on a local exit; calls in it
-    ;; use the outer handler.
-    (start-block land)
-    (let ((*regions* (cons (make-region :kind :cleanup-running :slot (region-slot region)
-                                        :handler (let ((outer (find-if #'region-handler *regions*)))
-                                                   (and outer (region-handler outer)))
-                                        :outer *regions*)
-                           *regions*)))
-      (lower-progn cleanup))
-    (emit `(:call-rt ,(rt-continue-unwind) () (:ctx (:slot ,(region-slot region))) ,(handler)))
-    (emit '(:trap))
-    (start-block cont)
-    (values r n)))
 
 ;;; Module
 
@@ -2209,12 +1397,8 @@ returns the operand of its (static) function object."
       (let ((*self* (copy-to-var :self)))
         (emit-poll)
         (dolist (form asts)
-          (let* ((*toplevel* form) (ast (toplevel-form-ast form)))
-            (if (ir-fun-p ast)
-                (ir-lower-toplevel ast)
-                (let ((*facts* (ast-facts ast)))
-                  (emit-load-time-values)
-                  (lower ast)))))
+          (let ((*toplevel* form))
+            (ir-lower-toplevel (toplevel-form-ast form))))
         (emit `(:return ,(nil-value) 1)))
       (let ((*toplevel* (and (= (length files) 1) (first files)
                              (make-toplevel-form nil (first files) nil nil nil))))
@@ -2307,7 +1491,7 @@ use list only names packages that exist at run time."
               'simple-vector))))
 
 (defun compile-module (asts module-name &key session defined-packages extra-symbols image)
-  "Compiles the simplified top-level ASTS into a KIR module. The module's
+  "Compiles the top-level forms ASTS (TOPLEVEL-FORMs) into a KIR module. The module's
 symbol table describes its symbols, the EXTRA-SYMBOLS and the symbols of
 the DEFINED-PACKAGES (host packages its DEFPACKAGE forms created) for the
 package system.
@@ -2320,18 +1504,14 @@ Returns the module and the vector of its literals."
         (*image-literal-objects* '())
         (*module-label* (mangle module-name))
         (*counter* 0)
-        (*vars* (make-hash-table :test 'eq))
-        (*exits* (make-hash-table :test 'eq))
         (*constants* (make-hash-table :test 'eql))
         (*cons-words* (make-hash-table :test 'equal))
         (*pending-conses* (make-hash-table :test 'eq))
-        (*constant-vars* (make-hash-table :test 'eq))
         (*module-symbols* '())
         (*symbol-data-names* (make-hash-table :test 'eq))
         (*uninterned-symbols* (make-hash-table :test 'eq))
         (*uninterned-count* 0))
-    (let ((*load-time-values* (make-hash-table :test 'eq)))
-      (compile-toplevel-function asts))
+    (compile-toplevel-function asts)
     (when image
       (let ((literals (emit-literal-words))
             (init (kiln.kir::kir-name "kiln_toplevel_" *module-label*)))

@@ -2,7 +2,7 @@
 (in-package #:kiln.compiler)
 
 (defun ir-test-form (form)
-  (let ((*front-end* :ir) (*source-file* "ir-test") (*toplevel-source* nil))
+  (let ((*source-file* "ir-test") (*toplevel-source* nil))
     (let ((forms (front-end-forms (list form))))
       (assert (= (length forms) 1))
       (toplevel-form-ast (first forms)))))

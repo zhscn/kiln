@@ -5,9 +5,12 @@
   :license "BSD-2-Clause"
   :depends-on ("eclector-concrete-syntax-tree"
                "khazern-extrinsic"
-               "common-boot"
-               "common-boot-ast-to-hir"
-               "common-boot-hir-evaluator"
+               "common-macro-definitions"
+               "concrete-syntax-tree"
+               "clostrum-basic"
+               "clostrum-trucler"
+               "trucler-reference"
+               "ecclesia"
                "anatomicl")
   :pathname "lisp/"
   :serial t

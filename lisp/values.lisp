@@ -159,20 +159,6 @@ proper list LIST as arguments. Returns the primary value and the count."
       (emit `(:call-lisp ,v0 ,nv ,entry (:ctx ,f ,i ,@args) ,(handler)))
       (values v0 nv))))
 
-(define-mv-lowering ico:multiple-value-prog1-ast (ast)
-  (multiple-value-bind (v n) (lower-mv (ico:values-ast ast))
-    (let ((saved (emit-save-values v n)))
-      (lower-progn (ico:form-asts ast))
-      (emit-restore-values saved n))))
-
-(define-mv-lowering ico:multiple-value-call-ast (ast)
-  (let ((f (copy-to-var (lower (ico:function-ast ast))))
-        (acc (nil-value)))
-    (dolist (form (ico:form-asts ast))
-      (multiple-value-bind (v n) (lower-mv form)
-        (setf acc (emit-push-values v n acc))))
-    (let ((list (emit-nreverse acc)))
-      (emit-apply (emit-function-designator f) list))))
 
 (defun emit-rest-list (args start)
   "In a function entry, before any safepoint: returns a list of the

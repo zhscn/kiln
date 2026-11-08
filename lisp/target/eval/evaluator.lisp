@@ -54,7 +54,8 @@
 ;;; The macro functions of lexical environments, for MACRO-FUNCTION and
 ;;; MACROEXPAND with an environment (the kernel). Environments are Trucler
 ;;; environments, queried with the client of the evaluator or compiler
-;;; that made them: Maclina's (here), Common-boot's (the compiler module).
+;;; that made them: Maclina's (here), the reference client (the compiler
+;;; module).
 (defgeneric environment-client (environment)
   (:method (environment)
     (declare (ignore environment))

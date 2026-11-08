@@ -61,7 +61,6 @@
 | ctype 的解析结果和 `subtypep` 答案 | `(:type ...)` 的版本 | 同上（原来是自己检查 `*type-caches-valid*` 和 `*type-cache-epoch*`） |
 | 调用点上的单项 `typep` 缓存 | `(:type ...)` 的版本（检查式） | 数据段里的缓存 cons：car 是全局表的项，cdr 是填入时的版本；版本不同就重新查全局表。这修掉了原来“被淘汰的实例在这个调用点上拿到旧类的答案”的问题 |
 | 常量槽名的 `slot-value`、`(setf (slot-value ...))` 调用点 | 对象的 stamp（检查式） | 数据段里的缓存 cons：car 是对象类的 stamp，cdr 是槽的位置。stamp 属于一次类终结，位置在它下面不会变；类重定义、`change-class`、实例更新都换 stamp，缓存自然失效。见“调用点特化” |
-| AST 的计划（Iconoclast 的 `walk-plan`、`lower.lisp` 的子节点计划） | —（推送式） | 计划造成时登记 `(:class AST类)` 的过渡依赖者：AST 类重定义时丢掉计划（隐含的假设写成了显式的） |
 | 内联函数、宏、setf 展开器、常量 | — | 依赖追踪：重定义钩子让依赖者重新求值 |
 
 原来的 `*construction-epoch*`、`invalidate-type-caches` 的计数器、`forget-call-caches` 的调用点都不再是各自独立的入口：增删方法、类重新 finalize、`deftype`、`(setf find-class)` 都只调用 `change-assumption`。

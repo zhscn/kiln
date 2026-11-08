@@ -200,7 +200,7 @@ satiated; their call histories fill as they are called.")
 
 (switch-to-mop)
 
-;;; CL:ENSURE-GENERIC-FUNCTION (Iconoclast calls it at load time).
+;;; CL:ENSURE-GENERIC-FUNCTION.
 (defun cl:ensure-generic-function
     (name &rest initargs &key environment declare method-combination
            (method-class nil method-class-p) &allow-other-keys)

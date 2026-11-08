@@ -17,13 +17,9 @@
   (asdf:initialize-source-registry
    `(:source-registry
      (:directory ,(truename root))
-     (:tree ,(merge-pathnames "vendor/Common-boot/" (truename root)))
      (:tree ,(merge-pathnames "vendor/Khazern/" (truename root)))
      (:tree ,(merge-pathnames "vendor/Common-macros/" (truename root)))
      (:tree ,(merge-pathnames "vendor/Eclector/" (truename root)))
-     (:tree ,(merge-pathnames "vendor/parser.packrat/" (truename root)))
-     (:tree ,(merge-pathnames "vendor/s-expression-syntax/" (truename root)))
      (:tree ,(merge-pathnames "vendor/Maclina/" (truename root)))
-     (:tree ,(merge-pathnames "vendor/Iconoclast/" (truename root)))
      (:tree ,deps)
      :inherit-configuration)))

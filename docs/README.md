@@ -20,7 +20,7 @@ kiln 是一个现代 Common Lisp 实现：开发时是完整的活 image，交�
 | [gc.md](design/gc.md) | MMTk binding、root、栈图、编译器的 GC 规则、内联分配、栈和栈段 |
 | [front-end.md](design/front-end.md) | Eclector 到简化后的 AST、顶层形式处理、编译期环境（cross-client、image-client）、inline、确定性 |
 | [lowering.md](design/lowering.md) | AST 到 KIR：闭包、退出点、多值、原语和 `%primop`、降级时的改写 |
-| [ir.md](design/ir.md) | kiln 自己的 IR（草案）：替换 s-expression-syntax、builder 协议、Iconoclast 和 simplify-ast；原生结构对象、按种类分派、实施步骤 |
+| [ir.md](design/ir.md) | kiln 自己的 IR：CST → IR → KIR 前端、IR 求值器、原生结构对象、按种类分派 |
 | [kernel.md](design/kernel.md) | kernel 模块：钩子、数、字符串、类型、序列、运行期的宏环境和错误 |
 | [clos.md](design/clos.md) | CLOS：vendor Clostrophilia、目标端引导、分派和缓存、类的重定义、实例初始化和 `make-instance` 的快路径、类名 `typep` |
 | [stdlib.md](design/stdlib.md) | condition、哈希表、包、ctype、数组、结构、LOOP |

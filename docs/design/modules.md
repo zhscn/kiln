@@ -14,7 +14,7 @@
 | 语法树 | Concrete-Syntax-Tree | 带源码位置，debugger 和报错都需要 |
 | 全局环境 | Clostrum | 交叉编译的编译期环境，隔离宿主和目标 |
 | 词法环境查询 | Trucler | |
-| 前端（CST 到 AST） | Common-boot（vendor）的 cst-to-ast，AST 用 Iconoclast（vendor） | 交接点是 `simplify-ast` 的输出（[front-end.md](front-end.md)）；HIR 求值器用于交叉编译时的编译期求值 |
+| 前端（CST 到 IR）、编译期求值 | 自研（`lisp/ir/`，[ir.md](ir.md)） | 原来用 Common-boot 的 cst-to-ast、Iconoclast 的 AST 和 HIR 求值器，已换掉 |
 | 标准宏 | Common-macros（vendor） | 编译期展开；运行期由 eval 模块提供 |
 | 代码解析工具 | Ecclesia | lambda list 解析等 |
 | 类型 | ctype（vendor） | kiln 自己的 client，否则会默认使用 SBCL 的 fixnum 范围和 UAET |
@@ -33,9 +33,9 @@
 | 序列、cons 字典 | Consecution、Constrictor | 还没有接入，现在是 kernel 的简单实现 |
 | 数值塔 | 自研 | Rust runtime 原语，Lisp 包一层（SICL 也没有 bignum） |
 | 符号、字符、字符串、pathname、文件、时间 | 自研 | 没有现成的模块 |
-| AST 以下的 IR、降级、代码生成、runtime | 自研 | |
+| 降级、代码生成、runtime | 自研 | |
 
-**许可证**：Iconoclast 和 Common-boot 的仓库里没有许可证文件，builder-protocol 是 LGPLv3。它们属于编译器，seal 之后不带编译器的交付物里没有它们，但带编译器的 image 有。要向作者确认，并评估 LGPL 对静态链接的影响。
+**许可证**：部分 SICL 模块的仓库里没有许可证文件（[sicl-survey.md](../research/sicl-survey.md)）；kiln 用到的模块都要确认。
 
 ## kiln 的五个模块
 
@@ -47,7 +47,7 @@ kiln 的 Lisp 代码编成五个模块，按顺序载入，每个模块只编译
 | clos | Clostrophilia 和 CLOS 引导，Predicament、Salmagundi、Parcl、ctype、Regalia、Anatomicl 的目标端部分、Trinsic、Cyclosis、文件和 pathname、Acclimation、Incless、Inravina、Invistra、Khazern、alexandria、Eclector 的 reader，以及调试接口 | `clos-` |
 | frontend | Concrete-Syntax-Tree、Eclector 的 parse-result 和 CST 读取器 | `fe-` |
 | eval | Ecclesia、Common-macros（运行期标准宏）、Trucler、Maclina、`lisp/target/eval/`（evaluator、REPL、后端协议） | `ev-` |
-| compiler | builder-protocol、parser.packrat、s-expression-syntax、Iconoclast、Trucler reference、Clostrum、Common-macros 的 AST 展开器、Common-boot（含 HIR 求值器）、Anatomicl，以及 kiln 自己的 `lisp/*.lisp` 和 `lisp/target/compiler/` | `co-` |
+| compiler | Trucler reference、Clostrum、Anatomicl，以及 kiln 自己的 `lisp/*.lisp`、`lisp/ir/` 和 `lisp/target/compiler/` | `co-` |
 
 frontend 不进 CLOS 模块，以免拖慢所有 CLOS 测试的启动。
 
@@ -88,6 +88,5 @@ SICL 的库有 intrinsic（库就是实现自己的版本，直接定义 `CL` �
 ## Lisp 依赖
 
 - SICL 生态的模块和 Quicklisp 里没有的传递依赖，按 URL、分支、commit 固定在仓库根目录的 `deps.lock` 里。`tools/fetch-deps.sh` 把它们 clone 到 `deps/`（不提交；`KILN_DEPS_DIR` 可以指向别处），`--check` 只检查 commit 是否一致。
-- 其余依赖（closer-mop、let-plus、more-conditions 等）从 Quicklisp 获取。`tools/env.lisp` 设置 ASDF 的 source registry，`vendor/` 先于 `deps/` 被找到。
+- 其余依赖（closer-mop 等）从 Quicklisp 获取。`tools/env.lisp` 设置 ASDF 的 source registry，`vendor/` 先于 `deps/` 被找到。
 - 不用 submodule。没改的模块也不 vendor：部分模块没有许可证文件。
-- **s-expression-syntax 必须用 `beach` 分支**：Common-macros 和 Common-boot 用到的 `ses:unparse` 只在这个分支上，默认分支 `builder-protocol` 没有。parser.packrat 不在 Quicklisp 里，s-expression-syntax 依赖它。

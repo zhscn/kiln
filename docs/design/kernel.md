@@ -60,14 +60,14 @@ kernel 先给出简单的版本，后面的模块替换或扩充。钩子是 `ki
 
 - `sequences.lisp` 是 bootstrap 用的简单实现：`find`、`position`、`count`、`remove`、`remove-duplicates`、`substitute`、`some`/`every`、`map`、`map-into`、`reduce`、`sort`/`stable-sort`（稳定的归并排序）、`fill`、`replace`、`search`、`mismatch`，以及 `member`/`assoc`/`adjoin`/`union` 等带 `:test`/`:test-not`/`:key` 的列表函数。很多函数先把序列转成列表再处理；对非 simple 向量返回 simple 向量。Consecution 还没有接入。
 - 快路径：`member`、`assoc`、`find`、`position` 在 test 是 `eq`/`eql`、又没有 key 时直接循环比较；不带关键字或 `:test` 是 `#'eq`、`#'eql` 时调用两个参数的 `%member-eql` 等，不解析关键字参数；列表上的 `find`/`position` 不复制列表。
-- `map`、`map-into` 不复制列表参数，在最短的序列处停止（builder-protocol 会传入循环列表）。
+- `map`、`map-into` 不复制列表参数，在最短的序列处停止（调用者可能传入循环列表）。
 - `search`、`mismatch` 接受全部关键字（`:from-end`、`:start1`、`:end1`、`:end2`），但实现很朴素（`search` 逐个 `elt`）。
 - `replace` 对两个向量直接逐个复制，不经过列表；对列表也不用 `(setf nth)`。
 - 特化向量的复制（`subseq`、`copy-seq`、`reverse`、`remove`）保留元素类型。
 
 ## 运行期的宏环境
 
-- `(setf macro-function)` 把展开函数记在符号 plist 的 `macro-function` 下；`macro-function`、`macroexpand-1`、`macroexpand`、`*macroexpand-hook*`、`constantp` 都在 kernel 里。带 Maclina 或 Common-boot 环境时，由造出这个环境的 client 查询局部宏（`kiln.eval:environment-client`）。
+- `(setf macro-function)` 把展开函数记在符号 plist 的 `macro-function` 下；`macro-function`、`macroexpand-1`、`macroexpand`、`*macroexpand-hook*`、`constantp` 都在 kernel 里。带 Maclina 或编译器前端的 Trucler 环境时，由造出这个环境的 client 查询局部宏（`kiln.eval:environment-client`）。
 - `defconstant` 在加载期给符号做常量标记；`define-setf-expander` 和 `defsetf` 的展开函数也记在 plist 上（eval 模块之后）。
 - 编译期仍然用前端自己的环境（[front-end.md](front-end.md)），两者互不影响。
 

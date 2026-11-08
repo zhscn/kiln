@@ -1,18 +1,18 @@
-# 降级：简化后的 AST 到 KIR
+# 降级：IR 到 KIR
 
-`lisp/lower.lisp` 的 `lower` 是按 AST 类分派的泛函，返回保存结果的 KIR 操作数。输入是前端的输出（[front-end.md](front-end.md)），输出的 KIR 见 [codegen.md](codegen.md)，ABI 见 [abi.md](abi.md)。
+`lisp/ir/lower.lisp` 按 IR 节点的整数 kind 分派（`ir-lower-mv`），返回保存结果的 KIR 操作数；模块、函数、调用、特殊变量、非局部退出、分配和常量的发射工具在 `lisp/lower.lisp`、`lisp/values.lisp` 和 `lisp/primitives.lisp`。输入是前端的输出（[front-end.md](front-end.md)、[ir.md](ir.md)），输出的 KIR 见 [codegen.md](codegen.md)，ABI 见 [abi.md](abi.md)。
 
 ## IR 输入
 
-选择 IR 前端时，顶层形式保存 `ir-fun`；`lisp/ir/lower.lisp` 以整数 kind 分派，不执行 `ast-facts`。变量的 lowering 字段记录所属函数中的 KIR 变量，跨函数引用按照 free 向量的下标读取 self 的环境。需要 cell 的变量在绑定时装箱，函数入口先保护所有实参，再分配参数的 cell。
+顶层形式保存 `ir-fun`。变量的 lowering 字段记录所属函数中的 KIR 变量，跨函数引用按照 free 向量的下标读取 self 的环境。需要 cell 的变量在绑定时装箱，函数入口先保护所有实参，再分配参数的 cell。
 
-新路径复用下面的多值、动态环境、常量和原语工具。退出点自己的 lowering 字段保存目标块及动态作用域；只有跨函数退出才分配令牌。`load-time-value` 的形式在空词法环境中转换为独立函数，在模块初始化时调用一次并存入 GC root cell。已知局部函数通过代码标签直接调用，同时传递承载闭包环境的 self。
+降级用下面的多值、动态环境、常量和原语工具。退出点自己的 lowering 字段保存目标块及动态作用域；只有跨函数退出才分配令牌。`load-time-value` 的形式在空词法环境中转换为独立函数，在模块初始化时调用一次并存入 GC root cell。已知局部函数通过代码标签直接调用，同时传递承载闭包环境的 self。
 
 ## 函数、变量和闭包
 
-- **函数**：每个 `local-function-ast` 编译成一个 KIR 函数。`labels` 为每个绑定的函数建立函数对象：没有自由变量的函数用静态函数对象（大多数顶层 `defun` 都是这种），闭包按 env 长度在堆上分配，再由 `set-static-environment` 填写 env。env 长度从对应的 `set-static-environment-ast` 得到。
-- **变量**：每个变量定义对应当前 KIR 函数里的一个 `obj` 变量。闭包转换保证变量只在定义它的函数里被引用，降级时会检查这一点。
-- **闭包变量用到时再读**：Common-boot 的闭包转换在函数入口读出全部捕获变量，它们跨调用存活，会被溢出到栈上。闭包环境不可变（被赋值的变量在 cell 里），所以每次引用时直接从函数对象读。
+- **函数**：每个 `ir-fun` 编译成一个 KIR 函数。没有自由变量的函数用静态函数对象（大多数顶层 `defun` 都是这种），闭包按 free 向量的长度在堆上分配，再填写 env。一组局部函数（`flet`、`labels`）先全部分配，再逐个填写，所以互相递归的函数能捕获彼此。
+- **变量**：每个变量对应它所属 KIR 函数里的一个 `obj` 变量；别的函数引用它时，从 self 的 env 里按 free 向量的下标读。
+- **闭包变量用到时再读**：如果在函数入口读出全部捕获变量，它们跨调用存活，会被溢出到栈上。闭包环境不可变（被赋值的变量在 cell 里），所以每次引用时直接从函数对象读。
 - **cell**：用一个 cons，car 存值。
 - **函数的标签**：取函数体里第一个 block 的名字，没有 block 的局部函数沿用外层函数的名字，例如 `kiln_f_G10660_AUTOMATON_2D_TRANSITION_clos_1466`。profile 和 perf map 里能看出是哪个函数。函数的调试信息另见 [debugging.md](debugging.md)。
 
@@ -29,7 +29,7 @@
 
 ## 多值
 
-`lower-mv` 返回主值的操作数和值的个数（整数或 raw 变量）。会把值传递出去的形式（`progn`、`if`、`let`、`labels`、`block`、`catch`、`unwind-protect`、绑定、函数调用等）实现 `lower-mv`，它们的 `lower` 只取主值。函数体用 `lower-mv`，所以函数返回它最后一个形式的全部值。`multiple-value-call` 把所有值收集成一个列表，再按 `apply` 的方式调用。保留和传递多值的约定见 [abi.md](abi.md)。
+`lower-mv` 返回主值的操作数和值的个数（整数或 raw 变量）。会把值传递出去的节点（`progn`、`if`、`let`、局部函数、`block`、`catch`、`unwind-protect`、绑定、函数调用等）在 `ir-lower-mv` 里传出全部值，`ir-lower` 只取主值。函数体用 `lower-mv`，所以函数返回它最后一个形式的全部值。`multiple-value-call` 把所有值收集成一个列表，再按 `apply` 的方式调用。保留和传递多值的约定见 [abi.md](abi.md)。
 
 ## 分支
 

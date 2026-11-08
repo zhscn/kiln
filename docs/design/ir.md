@@ -1,6 +1,6 @@
 # kiln 的 IR：从 CST 直接到可分析的中间表示（草案）
 
-状态：**IR 是默认前端**。原生结构对象、KIR `:switch` 和 CST → IR → KIR 路径都已接入；旧的 Iconoclast 前端暂时保留，用 `KILN_FRONTEND=iconoclast` 选择，等删除。cross-client 的编译期求值改用 IR 求值器（`lisp/ir/eval.lisp`，见下面“编译期求值”）；Common-boot 的 HIR 求值器用 `KILN_EVALUATOR=hir` 选择，等删除。image-client 仍用 Maclina。宏展开结果里原样传下来的用户子形式，按顶层形式 CST 里记下的位置取源码位置（每个顶层形式一张 eq 表），和旧前端的 `cst:reconstruct` 效果相同。调试信息上和旧前端的差别：没有 `let` 改写出的多余 lambda，只调用一次的局部函数内联后不再单独成帧。现在的流水线见 [front-end.md](front-end.md) 和 [lowering.md](lowering.md)。
+状态：**IR 是唯一的前端**。原生结构对象、KIR `:switch` 和 CST → IR → KIR 路径都已接入；旧的 Iconoclast 前端、Common-boot 的 HIR 求值器以及它们的依赖（Common-boot、Iconoclast、s-expression-syntax、parser.packrat、builder 协议）已经删除。cross-client 的编译期求值用 IR 求值器（`lisp/ir/eval.lisp`，见下面“编译期求值”），image-client 用 Maclina。宏展开结果里原样传下来的用户子形式，按顶层形式 CST 里记下的位置取源码位置（每个顶层形式一张 eq 表），和旧前端的 `cst:reconstruct` 效果相同。调试信息上和旧前端的差别：没有 `let` 改写出的多余 lambda，只调用一次的局部函数内联后不再单独成帧。现在的流水线见 [front-end.md](front-end.md) 和 [lowering.md](lowering.md)。
 
 ## 当前实现
 
@@ -19,16 +19,15 @@
 ```sh
 sbcl --noinform --non-interactive --load tools/env.lisp \
   --eval '(ql:quickload "kiln" :silent t)' --load tools/test-ir.lisp
-KILN_FRONTEND=ir tools/test.sh
-KILN_FRONTEND=iconoclast tools/test.sh
-KILN_FRONTEND=ir tools/bootstrap.sh
+tools/test.sh
+tools/bootstrap.sh
 ```
 
-模型检查覆盖 use-def、传递捕获、cell、退出令牌、内联后的 owner、树的独占子节点和语法错误；端到端验证比较程序行为。新前端的 KIR 不要求与旧前端相同，自举要求同一前端下的各阶段闭合。删除旧编译路径和内存 KIR 交接仍是后续步骤。模型检查里还有一组 IR 求值器的用例，逐个和宿主的 `eval` 比较结果。
+模型检查覆盖 use-def、传递捕获、cell、退出令牌、内联后的 owner、树的独占子节点和语法错误；端到端验证比较程序行为，自举要求各阶段闭合。内存 KIR 交接仍是后续步骤。模型检查里还有一组 IR 求值器的用例，逐个和宿主的 `eval` 比较结果。
 
 ## 为什么要换
 
-现在从 CST 到 KIR 要经过：
+（2026-11 换掉之前）从 CST 到 KIR 要经过：
 
 ```
 CST ─ s-expression-syntax（运行期的 packrat 语法引擎，逐个特殊形式解析）
@@ -57,7 +56,7 @@ CST ─ s-expression-syntax（运行期的 packrat 语法引擎，逐个特殊�
 - 编译期环境：cross-client 的 Clostrum 环境、image-client 的运行期环境；宏函数的 `&environment` 仍然是 Trucler 协议的对象；
 - KIR 和其后的一切。降级的输出不变，只换输入。
 
-编译期求值：cross-client 原来用 Common-boot 的 HIR 求值器（`cb:eval-cst`），它依赖 Common-boot 的 `cst-to-ast` 和 Iconoclast。现在由 IR 求值器取代（见“编译期求值”一节），HIR 求值器只在 `KILN_EVALUATOR=hir` 时使用。
+编译期求值：cross-client 原来用 Common-boot 的 HIR 求值器（`cb:eval-cst`），它依赖 Common-boot 的 `cst-to-ast` 和 Iconoclast。现在由 IR 求值器取代（见“编译期求值”一节）。
 
 ## 数据结构基础（先做）
 
@@ -209,10 +208,10 @@ cross-client 在编译期求值的形式（`eval-when` 的 `:compile-toplevel`�
 
 1. **原生结构对象**：新 kind、layout、O(1) 类型检查、内联构造，以及 CLOS、打印、GC、堆快照的支持。用现有的测试和自举验证，测量自编译时间（编译器自己的结构会受益）。
 2. **KIR 的 `:switch`**：kiln-cg 支持 `br_table`，降级识别 `case`。
-3. **IR 和转换**：新文件（`lisp/ir/`），定义结构、转换函数、构造后的那一遍。和旧前端并存，用一个开关选择。
-4. **新的降级**：从 IR 生成 KIR。新前端下 KIR 的命名和顺序可以和旧前端不同；验证方式是全量测试，以及新前端下的自举闭合（stage1 和 stage2 逐字节相同，kiln0 和 kiln1 相同）。
-5. **切换并删除旧路径**：编译路径不再载入 s-expression-syntax 和 builder 协议。
-6. **IR 求值器**（已完成，cross-client）：取代 HIR 求值器。Common-boot、Iconoclast、s-expression-syntax、parser.packrat 现在只剩旧前端（`KILN_FRONTEND=iconoclast`）、`KILN_EVALUATOR=hir` 和 image-client 不在顶层的 `macrolet`（Iconoclast 前端下）在用；删掉旧前端和这个开关之后，compiler 模块就不必再带它们。
+3. **IR 和转换**（已完成）：`lisp/ir/`，定义结构、转换函数、构造后的那一遍。
+4. **新的降级**（已完成）：从 IR 生成 KIR，验证方式是全量测试和自举闭合（stage1 和 stage2 逐字节相同，kiln0 和 kiln1 相同）。
+5. **切换并删除旧路径**（已完成）：IR 成为唯一的前端，Iconoclast 的降级、`simplify-ast` 和 Common-boot 的钩子都已删除。
+6. **IR 求值器**（已完成，cross-client）：取代 HIR 求值器。image-client 不在顶层的 `macrolet` 由 Maclina 从定义形式求值。compiler 模块不再带 Common-boot、Iconoclast、s-expression-syntax、parser.packrat 和 builder 协议。
 7. **在内存里交接 KIR**。
 
 每一步都测量自编译时间，记进 [performance.md](../research/performance.md)。
@@ -221,5 +220,4 @@ cross-client 在编译期求值的形式（`eval-when` 的 `:compile-toplevel`�
 
 - **inline 函数的跨模块表示**：记源码形式（现在）还是 IR（需要序列化进模块）。
 - **调试信息**：变量的源码名字和作用域由 `var` 提供，帧里变量的位置由降级记录，和现在 [debugging.md](debugging.md) 的格式兼容。
-- **依赖追踪**：转换时对全局定义的查询（宏、内联函数、常量、setf 展开器、类型）要像现在一样记录（[dependencies.md](dependencies.md)），记录点要从 Common-boot 的 client 方法移到新的转换函数里。
-- **错误信息的质量**：手写的语法检查要覆盖 s-expression-syntax 现在给出的诊断。
+- **错误信息的质量**：手写的语法检查还没有覆盖 s-expression-syntax 原来给出的全部诊断。

@@ -61,7 +61,7 @@ AMOP 的方法函数接收参数列表和后续方法，有效方法接收一个
 ### 缓存
 
 - **判别闭包的缓存表**：只按一个或两个参数分派的泛函，判别闭包带一张直接映射表，以 stamp 的低位（两个 stamp 时是 `3·s1 xor s2`）为下标，大小是不小于调用历史长度的 2 的幂（4 到 256）。stamp 是连续分配的类编号，低位分布均匀。lambda list 里有 `&optional`、`&rest`、`&key` 的泛函，只按一个参数分派时也用同样的表（`make-single-dispatch-list-closure`），有效方法仍然接收参数列表。未命中的路径（查自动机、填表）放在单独的函数里：放在闭包里时，命中路径也要为它保存 callee-saved 寄存器、开一个大栈帧。
-- **EQL 特化**：参数的类不能确定适用方法时，Clostrophilia 每次调用都重新计算适用方法和有效方法。kiln 的缓存条目是 `#(有效方法 spec0 spec1 ...)`，每个参数的 spec 是 NIL（不特化）、`(对象)`（等于某个 EQL 对象）或类的 stamp（参数不是任何 EQL 对象）。判别函数在自动机未命中时先逐条比较，比较时不分配内存；命中的条目移到表头（`eql-dispatch-lookup`：builder protocol 的 `relate` 在几十种关系上有 EQL 特化，原来每次都扫完整个表）。缓存跟着泛函走（`*eql-dispatch-caches*`），判别函数重算时保留，方法改变时清空；每个泛函至多 256 条。
+- **EQL 特化**：参数的类不能确定适用方法时，Clostrophilia 每次调用都重新计算适用方法和有效方法。kiln 的缓存条目是 `#(有效方法 spec0 spec1 ...)`，每个参数的 spec 是 NIL（不特化）、`(对象)`（等于某个 EQL 对象）或类的 stamp（参数不是任何 EQL 对象）。判别函数在自动机未命中时先逐条比较，比较时不分配内存；命中的条目移到表头（`eql-dispatch-lookup`：有几十个 EQL 方法的泛函原来每次都扫完整个表）。缓存跟着泛函走（`*eql-dispatch-caches*`），判别函数重算时保留，方法改变时清空；每个泛函至多 256 条。
 - **单分派的判别闭包是两个闭包，命中时尾调用**（PCL 的判别函数也是比较之后直接跳到方法）：快闭包只为标准实例、funcallable instance 和结构就地取 stamp（其他对象的 stamp 要调用 `stamp+1`），用不检查边界的 `svref` 探表，命中就尾调用有效方法（`%primop :tail-funcall-function`，KIR 的 `tail-call-lisp`）；其余情况（其他对象、未命中、融合读取器的槽未绑定）尾调用慢闭包，慢闭包做完整的查表、填表，最后同样尾调用。快闭包里因此没有普通调用，不保存 callee-saved 寄存器，帧只有入口检查用的一点；`spread-method-call` 包装方法快函数的闭包也是尾调用，funcallable instance 的跳板也是。一次单态调用从“调用者 → 跳板 → 判别闭包 → 有效方法闭包 → 方法”四层调用变成一层调用加三次跳转：`bench/compare.lisp` 上单态 13.7 → 7.4 ns，多态（3 类）18.9 → 11.9 ns，读取器 10.4 → 5.4 ns。代价是 backtrace 里看不到分派代码的帧，方法的帧直接接在调用者下面（未命中时是 `default-discriminating-function`）。
 - **读取器融进缓存**：`spread-method-call` 把读局部槽的闭包和槽的位置记在一张直接映射表里。只有一个参数的泛函，判别闭包的缓存项存的是槽的位置而不是闭包，命中时自己读槽；槽未绑定时仍经闭包，由它调用 `slot-unbound`。
 
@@ -105,7 +105,7 @@ AMOP 的方法函数接收参数列表和后续方法，有效方法接收一个
 
 - 编译器把类型是常量符号、又不在 CL 和 KEYWORD 包里的 `typep` 改成调用 `%typep-cached`，每个调用点带一个缓存（[lowering.md](lowering.md)）。CLOS 模块（`conditions.lisp`）的版本：类型名是类、又不是 deftype 时，结果只取决于对象的类，所以缓存的 car 存“上一个对象的 stamp 乘 2，结果为真再加 1”，是一个 fixnum，一次写入，GC 不需要扫描。缓存的 cdr 存填入时的类型假设版本：类型或类定义变了以后，过时实例还带着旧 stamp，调用点不能再用旧项，必须重新查全局表。
 - 多态的调用点（AST walker 里的 `(typep node 'some-ast)`）总是不命中只有一项的调用点缓存，所以后面再加一个所有调用点共用的直接映射缓存，每项是 `(键 类型)`，下标由 stamp 和类型符号的 identity hash 异或得到。
-- **全局缓存**（`*typep-cache*`，`%cached-typep`）：类型只取决于对象的类时，答案按 stamp 缓存，下标和调用点缓存的全局部分相同，两者共用一张表。kernel 的 `typep` 遇到 `or`、`and`、`not` 和不是标准类型名的 symbol 都先查它；类型不是常量、或者是复合类型（Iconoclast 的 walker 里 `(typep ast '(or ico:function-name-ast ...))`）时，调用点缓存帮不上忙，原来每次都要展开 `deftype`、`find-class`、再沿优先级列表找，这一处曾占自举时间的约 11%。
+- **全局缓存**（`*typep-cache*`，`%cached-typep`）：类型只取决于对象的类时，答案按 stamp 缓存，下标和调用点缓存的全局部分相同，两者共用一张表。kernel 的 `typep` 遇到 `or`、`and`、`not` 和不是标准类型名的 symbol 都先查它；类型不是常量、或者是复合类型（`(typep x '(or a-class b-class ...))`）时，调用点缓存帮不上忙，原来每次都要展开 `deftype`、`find-class`、再沿优先级列表找，这一处曾占自举时间的约 11%。
   - 哪些类型只取决于类（`class-determined-type-p`）：`typep` 用谓词判断、而谓词对一个内建类的对象全真或全假的 symbol（`null`、`cons`、`integer`、`character`、`function` 等）；其余命名了类又不是 deftype 的 symbol（`typep` 就是查优先级列表）；以及它们的 `or`、`and`、`not`。`keyword`、`bit` 这类不是类，字符串和向量类型只覆盖原生对象，都不缓存；`(integer 0 10)`、`satisfies`、`member` 也不缓存。判断过不能缓存的类型记在一张按 identity hash 直接映射的小表里，下次不再判断。
   - 以类型说明符本身（`eq`）为键，常量说明符因此每个调用点一项；运行期新构造的说明符只会不命中，结果仍然对。程序修改已经用过的类型说明符时缓存会过时（和修改常量一样不被允许）。
   - **失效**：`deftype`、`(setf find-class)` 和类的重新 finalize 都改变类型假设（`(:type name)`，[specialization.md](specialization.md)）；`:type` 的观察者清空这张表、不能缓存的记录和 ctype 的缓存。重定义要清空，是因为过时实例的 stamp 仍是旧的 unique number，清空之后它们按 `class-of` 得到新类的答案。新类第一次终结时拿到新的 unique number，不会碰上旧项。`change-class` 换掉实例的 rack，stamp 随之变成新类的。

@@ -1,10 +1,9 @@
 # Pinned Lisp dependencies not taken from Quicklisp: NAME URL BRANCH COMMIT.
-# Everything else (closer-mop, let-plus, more-conditions, ...) comes from the Quicklisp dist.
+# Everything else (closer-mop, ...) comes from the Quicklisp dist.
 # Fetch with tools/fetch-deps.sh.
 Acclimation https://github.com/robert-strandh/Acclimation master 9339b92e16e6a6784488f8bac82c189ae4bab4aa
 alexandria https://gitlab.common-lisp.net/alexandria/alexandria master f283e25efbe9f4323419a138b22ad2fc027f6641
 Anatomicl https://github.com/s-expressionists/Anatomicl main f8279fb9dc303e12abe5a4e63a9e7bc7df586b98
-architecture.builder-protocol https://github.com/scymtym/architecture.builder-protocol.git master 61774fab3c86a30370211967dd524ee711f9f923
 Buoy https://github.com/s-expressionists/Buoy master 548ce48a504937517f35d2b6450c325a42c144c7
 Clonedijk https://github.com/robert-strandh/Clonedijk main e4be22b2841d673597e16ae1a08a69e1c08162f7
 Clordane https://github.com/robert-strandh/Clordane master efa01a56d1609330609c847bf1f491c6fefa32ab
@@ -16,15 +15,11 @@ documentation-utils https://github.com/Shinmera/documentation-utils master fcbd9
 Ecclesia https://github.com/s-expressionists/Ecclesia main 74027d0cedba9b98dce9611bf3ae2793e8819449
 fast-generic-functions https://github.com/marcoheisig/fast-generic-functions master 6e9d690ec08dacf9ab4e14aa39a084ef7c7edabb
 Hirundine https://github.com/robert-strandh/Hirundine main 8bf9a60532e456174374ea1a0cd22289c133c1f4
-Iconoclast https://github.com/robert-strandh/Iconoclast.git master 1ec145e113c3f0342823816b5fd8644ae9c23222
 Maclina https://github.com/s-expressionists/Maclina main a46ba99620ceb51f05f14e31d34fe77e1cfa96c1
 nontrivial-gray-streams https://github.com/yitzchak/nontrivial-gray-streams main 1413a06dcff7d47bb1cb65decde95ac063c27bd4
-parser.packrat https://github.com/scymtym/parser.packrat future 835090176480e68a8af87ba550b6c9639f94f542
 Quaviver https://github.com/s-expressionists/Quaviver main d11d95e5f42873c89ee4d3fde4333d256f9bf571
-s-expression-syntax https://github.com/scymtym/s-expression-syntax.git beach 1ecd399a671eeb34a50e573a38d74c4dab3663b1
 Trinsic https://github.com/s-expressionists/Trinsic main 3a370f91982fba03987ae71d5b75e8527508b3c4
 trivial-features https://github.com/trivial-features/trivial-features master 828246a1c1efdcad94c1ba2f2a210bb9cb4cde3e
 trivial-package-locks https://github.com/yitzchak/trivial-package-locks main c2dd381200df2547c50762954c2f9c0546946cfc
 trivial-with-current-source-form https://github.com/scymtym/trivial-with-current-source-form master d00f7abcbb127969884ea639a334827c3b5a0ad2
 Trucler https://github.com/s-expressionists/Trucler master 39d4ba1a44f6998a961ed19b9cd8d19ea48d43ba
-utilities.print-items https://github.com/scymtym/utilities.print-items master 1a09f56a832680e83a720c7a58bcbfcb81ba5a46

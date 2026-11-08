@@ -70,14 +70,10 @@
 
 (defpackage #:kiln.compiler
   (:use #:cl #:kiln.abi #:kiln.kir)
-  (:local-nicknames (#:ico #:iconoclast)
-                    (#:cb #:common-boot)
-                    (#:cbe #:common-boot-hir-evaluator)
-                    (#:cbah #:common-boot-ast-to-hir)
-                    (#:cmd #:common-macro-definitions)
+  (:local-nicknames (#:cmd #:common-macro-definitions)
                     (#:clo #:clostrum))
-  (:documentation "The compiler: Common-boot front end, lowering to KIR.")
-  (:export #:front-end #:*front-end* #:make-session #:compile-module #:kiln-compile-error
+  (:documentation "The compiler: front end, IR, lowering to KIR.")
+  (:export #:front-end #:make-session #:compile-module #:kiln-compile-error
            #:use-host-macros))
 
 (defpackage #:kiln

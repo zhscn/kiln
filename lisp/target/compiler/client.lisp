@@ -11,10 +11,6 @@
 
 (defclass image-client (client) ())
 
-(defmethod cb:convert-with-ordinary-macro-p ((client image-client) operator)
-  (declare (ignore operator))
-  nil)
-
 (defmethod run-time-packages-p ((client image-client))
   t)
 
@@ -36,7 +32,7 @@
 
 ;;; The global environment, for Trucler: described as Maclina's client
 ;;; describes it (lisp/target/eval/evaluator.lisp), whatever the client.
-;;; MACRO-FUNCTION with a Common-boot environment queries it with a
+;;; MACRO-FUNCTION with the front end's environment queries it with a
 ;;; reference client (environment.lisp).
 
 (defclass run-time-environment () ())
@@ -105,29 +101,13 @@
                                                     (trucler:name d) (trucler:expansion d))))))
     env))
 
-(defmethod cb:eval-cst ((client image-client) cst environment)
-  (maclina.compile:eval (cst:raw cst) (maclina-environment environment)))
+(defmethod evaluate-at-compile-time ((client image-client) input environment)
+  (maclina.compile:eval (if (typep input 'cst:cst) (cst:raw input) input)
+                        (maclina-environment environment)))
 
-;;; MACROLET not at top level: Common-boot hands over the expander as an
-;;; AST, which only the HIR evaluator runs, in the cross client's
-;;; environment. Here the expander is compiled by Maclina from the
-;;; definition's source (the local function AST's origin, a CST), in the
-;;; environment of the enclosing local macros, as at top level.
-(defvar *local-macro*)                  ; (definition-form . environment)
-
-(defmethod cb::finalize-local-macro-ast :around
-    ((client image-client) (ast ico:local-function-ast) environment)
-  (let ((origin (ico:origin ast)))
-    (let ((*local-macro* (cons (if (typep origin 'cst:cst) (cst:raw origin) origin)
-                               environment)))
-      (call-next-method))))
-
-(defmethod cb:compile-local-macro-function-ast ((client image-client) lambda-ast environment)
-  (declare (ignore lambda-ast environment))
-  (destructuring-bind ((name lambda-list &rest body) . env) *local-macro*
-    (let ((expander (maclina.compile:compile (ecclesia:parse-macro name lambda-list body)
-                                             (maclina-environment env))))
-      (lambda () expander))))
+(defmethod ir-local-macro-expander ((client image-client) name lambda-list body environment)
+  (maclina.compile:eval (ecclesia:parse-macro name lambda-list body)
+                        (maclina-environment (ir-evaluation-environment environment))))
 
 ;;; Inline proclamations at compile time (DECLAIM) reach the front end
 ;;; through the kernel's PROCLAIM.

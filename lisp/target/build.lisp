@@ -21,9 +21,11 @@
   (let ((name (first entry))
         (files (rest entry))
         (extra-symbols '()))
-    ;; As kiln:compile-kernel and kiln:compile-compiler.
+    ;; As kiln:compile-kernel, kiln:compile-clos and kiln:compile-compiler.
     (when (string= name "kernel")
       (do-external-symbols (s '#:common-lisp) (push s extra-symbols)))
+    (when (string= name "clos")
+      (push 'closer-mop:ensure-class extra-symbols))
     (when (string= name "compiler")
       (kiln.compiler::prepare-compiler-session session)
       ;; As kiln:compile-compiler: (KILN.COMPILER::MODULE-FILES NAME),

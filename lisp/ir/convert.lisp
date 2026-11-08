@@ -62,7 +62,7 @@
   "Cons subforms of the top-level form being converted -> their source
 position. A macro's expansion is a plain form, but the subforms that the
 macro passes through are the ones the reader made: their positions are
-found here, as Common-boot found them with CST:RECONSTRUCT.")
+found here.")
 
 (defun ir-note-form-sources (cst)
   (let ((table (make-hash-table :test 'eq)))
@@ -471,13 +471,8 @@ found here, as Common-boot found them with CST:RECONSTRUCT.")
 (defgeneric ir-local-macro-expander (client name lambda-list body environment)
   (:documentation "The expander of the local macro NAME defined by MACROLET
 in the IR environment ENVIRONMENT. The cross client evaluates it with the
-IR evaluator (eval.lisp); the default uses Common-boot's EVAL-CST, which
-sees only the local macros and symbol macros of ENVIRONMENT.")
-  (:method (client name lambda-list body environment)
-    (let ((*inline-enabled* nil))
-      (cb:eval-cst client
-                   (cst:cst-from-expression (ecclesia:parse-macro name lambda-list body))
-                   (ir-evaluation-environment environment)))))
+IR evaluator (eval.lisp), the image client with Maclina; either sees only
+the local macros and symbol macros of ENVIRONMENT."))
 
 (define-ir-converter macrolet (parts environment)
   (ir-arity 'macrolet parts 1 nil)
@@ -491,9 +486,6 @@ sees only the local macros and symbol macros of ENVIRONMENT.")
                                                  environment)))
           (push (cons name (list :macro expander)) entries))))
     (ir-convert-body (rest parts) (ir-env environment :funcs entries))))
-
-(define-ir-converter load-time-only (parts environment)
-  (declare (ignore parts environment)) (ir-node 0 *ir-source* nil))
 
 (defun cst-to-ir (cst environment)
   (let* ((root (make-ir-fun :name '(:top-level-form) :source nil

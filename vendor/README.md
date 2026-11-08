@@ -1,11 +1,10 @@
 # Vendored modules
 
 Copies of SICL-ecosystem modules that kiln patches. Most are target code,
-compiled into kiln's modules; Common-boot and Common-macros are host
-libraries (kiln's front end) and Khazern and Eclector are both (the
-host's LOOP and reader, and the image's), as are parser.packrat,
-s-expression-syntax and Iconoclast (the front end's, in the host and in the compiler
-module). Host libraries are found by ASDF before `deps/` (`tools/env.lisp`). Each is imported
+compiled into kiln's modules; Common-macros is a host library (kiln's
+front end, in the host and in the compiler module) and Khazern and
+Eclector are both (the host's LOOP and reader, and the image's). Host
+libraries are found by ASDF before `deps/` (`tools/env.lisp`). Each is imported
 unmodified in its own commit (the upstream commit is recorded below), and
 kiln's changes follow in separate commits, so `git log -- vendor/NAME`
 shows exactly what kiln changed. Changes are not sent upstream for now.
@@ -21,15 +20,11 @@ shows exactly what kiln changed. Changes are not sent upstream for now.
 | Cyclosis | https://github.com/s-expressionists/Cyclosis | c918406b78a6e450d4543fe7bff0ff443f4c6641 (2026-06-22) | BSD (`Cyclosis/LICENSE-BSD`) |
 | Incless | https://github.com/s-expressionists/Incless | 28587a456142ef16c1e6d71297fc681387186953 (2026-07-11) | BSD (`Incless/LICENSE.md`) |
 | Invistra | https://github.com/s-expressionists/Invistra | 1585d04b1b1fc3b6e042de30b7785fe877ae4e2e (2026-06-22) | BSD (`Invistra/LICENSE.md`) |
-| Common-boot | https://github.com/robert-strandh/Common-boot | d4270d0fe1c8e8d5708f7f8980c5454d7d35ee95 (2025-10-13) | no license file |
 | Khazern | https://github.com/s-expressionists/Khazern | b657262946bfba0e17ee930c58c8fcd6fa6be774 (2026-09-17) | BSD (`Khazern/LICENSE.md`) |
 | Eclector | https://github.com/s-expressionists/Eclector | 1088a7998f0d205da12ff48de7238b1008a31792 (2026-08-29) | BSD (`Eclector/LICENSE`) |
 | Common-macros | https://github.com/robert-strandh/Common-macros | 4596ddf32357fa793ece25cecb6e8661259b51ac (2026-02-10) | no license file |
 | Inravina | https://github.com/s-expressionists/Inravina | e28b107b025b2efdd4f16ed71fbdc0e1af62e478 (2026-07-11) | MIT (`Inravina/LICENSE.md`) |
-| parser.packrat | https://github.com/scymtym/parser.packrat (branch `future`) | 835090176480e68a8af87ba550b6c9639f94f542 (2023-04-04) | MIT (`parser.packrat/COPYING`) |
-| s-expression-syntax | https://github.com/scymtym/s-expression-syntax (branch `beach`) | 1ecd399a671eeb34a50e573a38d74c4dab3663b1 (2024-04-10) | MIT (`s-expression-syntax/COPYING`) |
 | Maclina | https://github.com/s-expressionists/Maclina | a46ba99620ceb51f05f14e31d34fe77e1cfa96c1 (2026-09-15) | BSD (`Maclina/LICENSE`) |
-| Iconoclast | https://github.com/robert-strandh/Iconoclast | 1ec145e113c3f0342823816b5fd8644ae9c23222 (2025-07-20) | no license file |
 
 ## Clostrophilia patches
 
@@ -77,7 +72,7 @@ Each patched place is marked with a `kiln:` comment.
   `slot-boundp-using-class` and `slot-definition-initfunction`, and reads a
   slot's initargs only when there are initargs: `reinitialize-instance`
   (`slot-names` NIL) with one initarg made three generic function calls per
-  slot (Iconoclast's AST walker sets slots that way).
+  slot (an AST walker of the old front end set slots that way).
 - A generic function that dispatches on one or two of its spread
   parameters, without EQL specializers, has a discriminating closure that
   remembers the stamps of the last call's arguments and its effective
@@ -280,26 +275,6 @@ Under `#+kiln`:
   (by its contents); `format` interprets control strings at run time, and
   parsing was most of its cost.
 
-## Common-boot patches
-
-- The HIR evaluator compiles the argument parser of each function it
-  evaluates (`HIR-evaluator/parse-arguments-instruction.lisp`) with
-  Maclina on kiln, not the native `compile` (`kiln.kernel::*compile-function*`
-  bound to `nil`): cross compilation evaluates a function for
-  every macro, about 800 of them for the kernel and CLOS, and the native
-  compiler took longer for each than the parser ever runs.
-- The form of `load-time-value` is converted in a lexical environment
-  with only the global environment (upstream: the global environment
-  itself, in which a `lambda` form cannot add its local functions and
-  variables).
-- The names in the declarations of a function body with a lambda list
-  are finalized into references, as `let`'s are (upstream leaves them
-  names, which Iconoclast's splitting of `let*` rejects when a lambda
-  list with `&optional` is lexified).
-- `augment-environment-with-binding-variable` returns the environment
-  unchanged for a globally special variable (upstream: NIL, which `let*`
-  then used as the environment of the following bindings and the body).
-
 ## Khazern patches
 
 - No complexes or pathnames among the initial values of accumulation
@@ -357,34 +332,12 @@ Under `#+kiln`:
   `unquote-splicing`) are the quasiquote and unquote forms (`#+kiln`), in
   the types and in the standard dispatch table.
 
-## parser.packrat patches
-
-- `%uses?` and `%uses-position?` (`src/grammar/base/compiler.lisp`) use
-  `sb-cltl2:macroexpand-all`; on kiln (`#+kiln`) they compile the form
-  with `compile` (Maclina's), which expands its macros as
-  `macroexpand-all` does, and so decide as SBCL does (the generated parser,
-  and so the KIR of the compiler module compiled on kiln, are SBCL's). A
-  form that does not compile counts as using a name that occurs anywhere
-  in it. They compile with Maclina even after the
-  compiler module makes `compile` native (`kiln.kernel::*compile-function*`
-  bound to `nil`): the native compiler does not compile
-  `macrolet` that is not at top level, and the fallback decided
-  differently from SBCL.
-
-## s-expression-syntax patches
-
-- `constant?` (`code/definitions/names.lisp`) uses `constantp` on kiln
-  instead of `sb-cltl2:variable-information`.
-- `pprint-logical-block`'s syntax (`code/definitions/io-macros.lisp`) spelled
-  `suffix` with the ligature ﬃ (U+FB03) where it binds the variable, so
-  the node referred to an unbound `suffix` (SBCL only warns).
-
 ## Maclina patches
 
 - The VM's `throw` throws the values in its register (`vm-native.lisp`), not
   no values: a `catch` in native code (not the VM's) received `nil`
-  (`%uses?` of parser.packrat on kiln throws from a macro function compiled
-  by Maclina to a `catch` in native code).
+  (a macro function compiled by Maclina that throws to a `catch` in native
+  code).
 - `bytecode-call` tears down its frame in an `unwind-protect`: a non-local
   exit from the VM to native code (a `throw` or `return-from`) left the
   VM's stack, frame pointer and pc in the callee's frame, and later calls
@@ -392,31 +345,3 @@ Under `#+kiln`:
   For that, an exit to a block or tag of the VM (`exit-8`...) passes its
   target to the entry's function, which sets the pc (and the stack and
   frame pointers) once the `go` has unwound, after those cleanups.
-
-## Iconoclast patches
-
-- The AST walker's `set-slot` (`Code/AST-walker/ast-walker.lisp`) sets the
-  slot whose initarg is the reader's keyword with `slot-value`, the slot's
-  name found once for each class and reader (closer-mop, now a dependency
-  of the system), instead of interning the keyword and calling
-  `reinitialize-instance` on every call. That is what
-  `reinitialize-instance` does, no AST class having methods on it or on
-  `shared-initialize`; on kiln, which runs `set-slot` for every slot of
-  every node in each pass of the AST transformations, it took a third of
-  the time of compiling.
-- The walk of a node follows a plan made once per class (`walk-plan`): the
-  cardinality, reader and slot name of each slot designator.
-  `slot-designators` has the `append` method combination, so every call
-  made a new list; a slot is now written only when its child changed. On
-  kiln the plan registers a dependent of the AST class's assumption
-  (kiln.kernel::register-assumption-dependent), so that a redefined AST
-  class drops its plan instead of keeping one made for the old layout.
-- `compute-ast-info` (`Code/AST-transformations/compute-ast-info.lisp`)
-  finds the parents, owners and function tree in one walk, which also
-  lists the local functions in the order the walk finishes them, then
-  computes the escaped functions and the call graph from that list,
-  instead of five walks (one each in `compute-parent-asts`,
-  `compute-owner-asts`, `compute-function-tree`,
-  `compute-escaped-functions` and `compute-call-graph`, which are still
-  defined). The result is the same, entry for entry and in the same
-  order. It runs three times for each top-level form.
