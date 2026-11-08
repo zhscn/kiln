@@ -501,11 +501,12 @@ the second value."
   (let ((selection #-kiln (uiop:getenv "KILN_FRONTEND")
                    #+kiln (kiln.kernel::sys-string 10 (kiln.kernel::string-octets "KILN_FRONTEND"))))
     (cond ((or (not (stringp selection)) (string= selection "")
-               (string-equal selection "iconoclast")) :iconoclast)
-          ((string-equal selection "ir") :ir)
+               (string-equal selection "ir")) :ir)
+          ((string-equal selection "iconoclast") :iconoclast)
           (t (error "Unknown KILN_FRONTEND value ~S" selection))))
-  "The compilation front end: :ICONOCLAST or :IR. Compile-time evaluation
-continues to use the client's evaluator.")
+  "The compilation front end: :IR (the default) or :ICONOCLAST, the old
+one, kept until it is removed. Compile-time evaluation continues to use
+the client's evaluator.")
 
 (defun compile-toplevel-form (cst compile-time-too)
   (when compile-time-too

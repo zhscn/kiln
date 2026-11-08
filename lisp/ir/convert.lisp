@@ -58,13 +58,40 @@
                    ((or (null name) (eq name t) (keywordp name)) (ir-node 0 *ir-source* name))
                    (t (ir-node 3 *ir-source* name))))))))
 
+(defvar *ir-form-sources* nil
+  "Cons subforms of the top-level form being converted -> their source
+position. A macro's expansion is a plain form, but the subforms that the
+macro passes through are the ones the reader made: their positions are
+found here, as Common-boot found them with CST:RECONSTRUCT.")
+
+(defun ir-note-form-sources (cst)
+  (let ((table (make-hash-table :test 'eq)))
+    (labels ((walk (cst)
+               (when (cst:consp cst)
+                 (let ((source (cst:source cst)) (raw (cst:raw cst)))
+                   (when (and (consp source) (integerp (car source)) (integerp (cdr source))
+                              (not (gethash raw table)))
+                     (setf (gethash raw table)
+                           (ir-source-position *ir-file-id* (car source) (cdr source)))))
+                 (loop for tail = cst then (cst:rest tail)
+                       while (cst:consp tail)
+                       do (walk (cst:first tail))))))
+      (walk cst))
+    table))
+
+(defun ir-input-source (input)
+  "The source position of INPUT, a CST or a plain form; else the enclosing one."
+  (let ((source (and (typep input 'cst:cst) (cst:source input))))
+    (cond ((and (consp source) (integerp (car source)) (integerp (cdr source)))
+           (ir-source-position *ir-file-id* (car source) (cdr source)))
+          ((and *ir-form-sources* (consp (ir-raw input)))
+           (or (gethash (ir-raw input) *ir-form-sources*) *ir-source*))
+          (t *ir-source*))))
+
 (defun ir-convert (input environment)
   (let* ((*ir-conversion-depth* (1+ *ir-conversion-depth*))
          (*environment* environment)
-         (*ir-source* (let ((source (and (typep input 'cst:cst) (cst:source input))))
-                        (if (and (consp source) (integerp (car source)) (integerp (cdr source)))
-                            (ir-source-position *ir-file-id* (car source) (cdr source))
-                            *ir-source*)))
+         (*ir-source* (ir-input-source input))
          (form (ir-raw input)))
     (when (> *ir-conversion-depth* 10000) (ir-error "Excessive form or macro expansion nesting"))
     (cond ((symbolp form) (ir-convert-symbol form environment))
@@ -464,6 +491,7 @@
   (let* ((root (make-ir-fun :name '(:top-level-form) :source nil
                            :lambda-list (make-ir-lambda-list)))
          (*ir-function* root) (*ir-source* nil) (*ir-conversion-depth* 0)
-         (*ir-file-id* (ir-source-file-number *source-file*)))
+         (*ir-file-id* (ir-source-file-number *source-file*))
+         (*ir-form-sources* (and (typep cst 'cst:cst) (ir-note-form-sources cst))))
     (setf (ir-fun-body root) (ir-convert cst (ir-env environment)))
     (analyze-ir root)))

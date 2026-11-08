@@ -96,7 +96,7 @@ if [ -n "${KILN_COMPILER:-}" ]; then
   # reused while the compiler, module sources, and selected front end match.
   image=$build/kiln-compiler.img
   key=$( { sha256sum "$compiler"
-           printf '%s\n' "frontend=${KILN_FRONTEND:-iconoclast}"
+           printf '%s\n' "frontend=${KILN_FRONTEND:-ir}"
            sbcl --noinform --non-interactive --eval '(require :sb-md5)' --eval "
              (with-open-file (in \"$build/modules.lisp-expr\")
                (dolist (entry (subseq (read in) 0 5))

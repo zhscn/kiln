@@ -1,6 +1,6 @@
 # kiln 的 IR：从 CST 直接到可分析的中间表示（草案）
 
-状态：**双前端并存**。原生结构对象、KIR `:switch`，以及 CST → IR → KIR 路径已接入。默认仍使用 Iconoclast；设置 `KILN_FRONTEND=ir`，或动态绑定 `kiln.compiler:*front-end*` 为 `:ir`，选择新路径。编译期求值仍使用 client 的原有求值器。现在的流水线见 [front-end.md](front-end.md) 和 [lowering.md](lowering.md)。
+状态：**IR 是默认前端**。原生结构对象、KIR `:switch` 和 CST → IR → KIR 路径都已接入；旧的 Iconoclast 前端暂时保留，用 `KILN_FRONTEND=iconoclast` 选择，等删除。编译期求值仍使用 client 的原有求值器。宏展开结果里原样传下来的用户子形式，按顶层形式 CST 里记下的位置取源码位置（每个顶层形式一张 eq 表），和旧前端的 `cst:reconstruct` 效果相同。调试信息上和旧前端的差别：没有 `let` 改写出的多余 lambda，只调用一次的局部函数内联后不再单独成帧。现在的流水线见 [front-end.md](front-end.md) 和 [lowering.md](lowering.md)。
 
 ## 当前实现
 
