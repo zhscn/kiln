@@ -67,9 +67,16 @@
 (defun walk-plan (ast)
   (let ((class (class-of ast)))
     (or (gethash class *walk-plans*)
-        (setf (gethash class *walk-plans*)
-              (loop for (cardinality reader) in (iconoclast:slot-designators ast)
-                    collect (list cardinality reader (slot-name-for-reader class reader)))))))
+        (let ((plan (loop for (cardinality reader) in (iconoclast:slot-designators ast)
+                          collect (list cardinality reader
+                                        (slot-name-for-reader class reader)))))
+          (setf (gethash class *walk-plans*) plan)
+          ;; kiln: the plan rests on the AST classes not being redefined; a
+          ;; redefinition of one drops its plan.
+          #+kiln (kiln.kernel::register-assumption-dependent
+                  :class class
+                  (lambda () (remhash class *walk-plans*)))
+          plan))))
 
 (defun set-slot (ast reader-name slot-name value)
   (if slot-name

@@ -7,6 +7,11 @@
 ;;;; dispatching: its rack still holds the slot list it was made with, so
 ;;;; its slots can be read by their old locations. Also FIND-METHOD,
 ;;;; MAKE-INSTANCES-OBSOLETE and SLOT-EXISTS-P.
+;;;;
+;;;; The classes that are finalized again have changed (assumptions.lisp):
+;;;; their :CLASS assumptions say so, and so do the :TYPE assumptions of
+;;;; their names. The call caches that mention them are emptied by the
+;;;; :CLASS watcher below.
 
 (in-package #:clostrophilia)
 
@@ -38,8 +43,7 @@
 (defmethod make-instances-obsolete ((class class))
   (when (and (class-finalized-p class)
              (not (eq (class-of class) (find-class 'structure-class))))
-    (let ((classes (refinalize class)))
-      (forget-call-caches classes)))
+    (refinalize class))
   class)
 
 (defgeneric update-instance-for-redefined-class
@@ -62,7 +66,6 @@
          (append initargs
                  (list :direct-default-initargs '() :documentation nil
                        :direct-slots '())))
-  (forget-call-caches (refinalize class))
   class)
 
 (defun remove-accessor-methods (class)
@@ -79,22 +82,49 @@
       (dolist (writer (slot-definition-writers slot))
         (remove-from writer (list (find-class t) class))))))
 
+(defun note-class-change (class)
+  (unwind-protect
+       (kiln.kernel::change-assumption :class class)
+    (kiln.kernel::change-assumption :type (or (class-name class) class))))
+
+(defmethod finalize-inheritance :around ((class real-class))
+  (kiln.kernel::defer-assumption-changes
+   (lambda ()
+     (unwind-protect (call-next-method)
+       ;; Finalization can modify the precedence list before signaling.
+       (note-class-change class)))))
+
 (defun refinalize (class)
-  "Finalizes CLASS again if it was finalized, then its subclasses; returns
-CLASS and its subclasses."
+  "Finalizes CLASS again if finalized, then its subclasses; returns all of them."
   (let ((classes '()))
-    (labels ((walk (class)
-               (unless (member class classes)
-                 (push class classes)
-                 (when (class-finalized-p class)
-                   (finalize-inheritance class))
-                 (mapc #'walk (class-direct-subclasses class)))))
-      (walk class))
-    ;; The class precedence lists changed; TYPEP and SUBTYPEP answers
-    ;; cached for the classes' stamps (also the old ones, still the stamps
-    ;; of obsolete instances) no longer hold.
-    (kiln.kernel::invalidate-type-caches)
+    (kiln.kernel::defer-assumption-changes
+     (lambda ()
+       (labels ((walk (class)
+                  (unless (member class classes)
+                    (push class classes)
+                    (when (class-finalized-p class)
+                      (finalize-inheritance class))
+                    (mapc #'walk (class-direct-subclasses class)))))
+         (walk class))))
     classes))
+
+;;; Replaces the bootstrap method while preserving its superclass binding.
+(defmethod reinitialize-instance :around
+    ((class class) &rest initargs
+     &key (direct-superclasses nil superclasses-p) &allow-other-keys)
+  (let ((*existing-superclasses* (class-direct-superclasses class)))
+    (kiln.kernel::defer-assumption-changes
+     (lambda ()
+       (unwind-protect
+            (multiple-value-prog1
+                (apply #'call-next-method class
+                       :direct-superclasses
+                       (if superclasses-p
+                           (or direct-superclasses (default-superclasses class))
+                           *existing-superclasses*)
+                       initargs)
+              (refinalize class))
+         (note-class-change class))))))
 
 (defun forget-call-caches (classes)
   "Removes the call caches that mention one of CLASSES from every generic
@@ -111,6 +141,12 @@ the automaton built from them matches the old stamps."
                                  thereis (member class classes))
                       collect cache))
         (invalidate-discriminating-function gf)))))
+
+(defun class-assumptions-changed (classes)
+  "The watcher of the class assumptions: CLASSES changed."
+  (forget-call-caches classes))
+
+(kiln.kernel::register-assumption-watcher :class #'class-assumptions-changed)
 
 (defun update-obsolete-instance (instance)
   "Brings INSTANCE, whose class was redefined after it was made, up to

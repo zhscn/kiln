@@ -52,7 +52,7 @@ kernel 先给出简单的版本，后面的模块替换或扩充。钩子是 `ki
 
 ## 类型
 
-- **`typep`**（`types.lisp`）认识内建的原子类型和常用的复合类型（`or`、`and`、`not`、`member`、`eql`、`satisfies`、带范围的 `integer`/`rational`/`real`/`float`、`mod`、`unsigned-byte`、`signed-byte`、`cons`、带长度的字符串和向量、数组类型的维度）。其余的先用 `typexpand-1` 展开 `deftype` 定义的名字（展开函数在 plist 上）；展开不了的，symbol 交给 `*class-typep*`，复合类型交给 `*ctype-typep*`。`or`、`and`、`not` 和不是标准类型名的 symbol 先经过 `%cached-typep`：CLOS 载入后，只取决于对象的类的答案按 stamp 缓存（[clos.md](clos.md) 的“类名的 `typep`”）。缓存在 `*typep-cache*` 里，`invalidate-type-caches`（`deftype`、`(setf find-class)`、类的重定义）清空它。
+- **`typep`**（`types.lisp`）认识内建的原子类型和常用的复合类型（`or`、`and`、`not`、`member`、`eql`、`satisfies`、带范围的 `integer`/`rational`/`real`/`float`、`mod`、`unsigned-byte`、`signed-byte`、`cons`、带长度的字符串和向量、数组类型的维度）。其余的先用 `typexpand-1` 展开 `deftype` 定义的名字（展开函数在 plist 上）；展开不了的，symbol 交给 `*class-typep*`，复合类型交给 `*ctype-typep*`。`or`、`and`、`not` 和不是标准类型名的 symbol 先经过 `%cached-typep`：CLOS 载入后，只取决于对象的类的答案按 stamp 缓存（[clos.md](clos.md) 的“类名的 `typep`”）。缓存在 `*typep-cache*` 里；类型假设（`deftype`、`(setf find-class)`、类的重新 finalize）改变时，观察者调用 `invalidate-type-caches` 清空它（[specialization.md](specialization.md)）。
 - 编译期把常量原子类型的 `typep` 换成谓词调用，把类名的 `typep` 换成 `%typep-cached`（[lowering.md](lowering.md)）。
 - `type-of`、`coerce`、`equalp` 覆盖已有的类型。`typep` 也认识 `complex`、`(complex 类型)` 和 `simple-bit-vector`。`deftype` 和 `subtypep` 由 ctype 提供（[stdlib.md](stdlib.md)）。
 

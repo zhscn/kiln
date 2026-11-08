@@ -33,6 +33,9 @@ shows exactly what kiln changed. Changes are not sent upstream for now.
 
 ## Clostrophilia patches
 
+- Class `shared-initialize` preserves direct slots when the option is omitted,
+  so reinitializing documentation or superclasses keeps the slot definitions.
+
 Each patched place is marked with a `kiln:` comment.
 
 - When the classes of the arguments do not determine the applicable
@@ -399,7 +402,10 @@ Under `#+kiln`:
 - The walk of a node follows a plan made once per class (`walk-plan`): the
   cardinality, reader and slot name of each slot designator.
   `slot-designators` has the `append` method combination, so every call
-  made a new list; a slot is now written only when its child changed.
+  made a new list; a slot is now written only when its child changed. On
+  kiln the plan registers a dependent of the AST class's assumption
+  (kiln.kernel::register-assumption-dependent), so that a redefined AST
+  class drops its plan instead of keeping one made for the old layout.
 - `compute-ast-info` (`Code/AST-transformations/compute-ast-info.lisp`)
   finds the parents, owners and function tree in one walk, which also
   lists the local functions in the order the walk finishes them, then

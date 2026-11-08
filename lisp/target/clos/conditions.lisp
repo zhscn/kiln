@@ -135,22 +135,32 @@ or T or NIL for a type that is not cached."
 ;;; LOWER-CACHED-TYPEP), TYPE a symbol: when it names a class (and is not a
 ;;; DEFTYPE), the result depends only on the object's class, so the car of
 ;;; CACHE keeps the entry of KILN.KERNEL::*TYPEP-CACHE* for the last
-;;; object's class. One word, written at once. A call site that sees
-;;; objects of many classes (an AST walker) misses that cache and finds
-;;; the entry in the global cache.
+;;; object's class. The cdr keeps the version of the type assumption it was
+;;; found under: after a type or a class definition changes, an obsolete
+;;; instance would still have its old class's answer here (the global cache
+;;; is emptied then, the call sites are not). A call site that sees objects
+;;; of many classes (an AST walker) misses that cache and finds the entry
+;;; in the global cache.
 (defun kiln.kernel::%typep-cached (object type cache)
   (let* ((stamp (stamp object))
          (key (+ stamp stamp))
-         (entry (car cache)))
-    (cond ((eq entry key) nil)
-          ((eq entry (+ key 1)) t)
-          (t
-           (let ((entry (or (typep-cache-probe stamp type)
-                            (typep-cache-fill object type stamp))))
-             (if (kiln.kernel::fixnump entry)
-                 (progn (setf (car cache) entry)
-                        (eq entry (+ key 1)))
-                 entry))))))
+         (version (svref kiln.kernel::*type-assumption-cell* 0)))
+    (if (eql (cdr cache) version)
+        (let ((entry (car cache)))
+          (cond ((eq entry key) nil)
+                ((eq entry (+ key 1)) t)
+                (t (typep-cached-fill object type stamp cache version key))))
+        (typep-cached-fill object type stamp cache version key))))
+
+(defun typep-cached-fill (object type stamp cache version key)
+  "Fills CACHE from the global TYPEP cache; returns the answer."
+  (let ((entry (or (typep-cache-probe stamp type)
+                   (typep-cache-fill object type stamp))))
+    (if (kiln.kernel::fixnump entry)
+        (progn (setf (car cache) entry)
+               (setf (cdr cache) version)
+               (eq entry (+ key 1)))
+        entry)))
 
 ;;; Condition classes are standard classes of their own metaclass, so
 ;;; that conditions can be told apart by their class's class.

@@ -78,16 +78,20 @@
      (slot-names t)
      &rest initargs
      &key
-       direct-slots
+       (direct-slots nil direct-slots-p)
      &allow-other-keys)
-  (check-direct-slot-specifications direct-slots)
-  (let ((direct-slot-definitions
-          (convert-slot-specifications-to-direct-slot-definitions
-           class direct-slots)))
-    (apply #'call-next-method
-           class slot-names
-           :direct-slots direct-slot-definitions
-           initargs)))
+  ;; kiln: reinitializing other options preserves the direct slots.
+  (if (not direct-slots-p)
+      (call-next-method)
+      (progn
+        (check-direct-slot-specifications direct-slots)
+        (let ((direct-slot-definitions
+                (convert-slot-specifications-to-direct-slot-definitions
+                 class direct-slots)))
+          (apply #'call-next-method
+                 class slot-names
+                 :direct-slots direct-slot-definitions
+                 initargs)))))
 
 (defmethod shared-initialize :after
     ((class class)

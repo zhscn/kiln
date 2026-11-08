@@ -202,10 +202,27 @@ satiated; their call histories fill as they are called.")
 
 ;;; CL:ENSURE-GENERIC-FUNCTION (Iconoclast calls it at load time).
 (defun cl:ensure-generic-function
-    (name &rest initargs &key environment declare method-combination &allow-other-keys)
+    (name &rest initargs &key environment declare method-combination
+           (method-class nil method-class-p) &allow-other-keys)
   (declare (ignore environment declare))
-  (apply #'mop-ensure-generic-function name
-         (append (and method-combination
-                      (list :method-combination-name (first method-combination)
-                            :method-combination-arguments (rest method-combination)))
-                 (remove-keys initargs '(:environment :declare :method-combination)))))
+  (let ((existing (and (fboundp name) (fdefinition name))))
+    (if (generic-function-p existing)
+        (apply #'reinitialize-instance existing
+               (append (when method-class-p
+                         (list :method-class (if (symbolp method-class)
+                                                 (find-class method-class)
+                                                 method-class)))
+                       (when method-combination
+                         (list :method-combination
+                               (find-method-combination existing
+                                                        (first method-combination)
+                                                        (rest method-combination))))
+                       (remove-keys initargs
+                                    '(:environment :declare :method-combination
+                                      :generic-function-class))))
+        (apply #'mop-ensure-generic-function name
+               (append (and method-combination
+                            (list :method-combination-name (first method-combination)
+                                  :method-combination-arguments (rest method-combination)))
+                       (remove-keys initargs '(:environment :declare :method-combination)))))
+    (fdefinition name)))

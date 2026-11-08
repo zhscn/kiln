@@ -96,8 +96,10 @@ list, slots), the slots unbound."
 
 (defun (setf find-class) (class name &optional errorp environment)
   (declare (ignore errorp environment))
-  (kiln.kernel::invalidate-type-caches)
-  (setf (get name '%class) class))
+  ;; The name maps to CLASS (or to another class than before): a type fact.
+  (setf (get name '%class) class)
+  (kiln.kernel::change-assumption :type name)
+  class)
 
 (defun find-class-t () (find-class 't))
 

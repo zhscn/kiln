@@ -146,11 +146,11 @@
 ;;; the compile-time environment, and at load time): the expander, a
 ;;; function of the type specifier and an environment, is kept on the
 ;;; plist of the name.
-;;; Caches of results that depend on the type definitions (ctype-interface
-;;; keeps its parsed specifiers and SUBTYPEP answers here); a new type or
-;;; class empties them.
-(defvar *type-caches-valid* nil)
-(defvar *type-cache-epoch* 0)
+;;;
+;;; Everything cached from type facts (the answers of TYPEP, the parsed
+;;; specifiers and SUBTYPEP answers of ctype) holds until a type or a class
+;;; changes: the version of the type assumption (assumptions.lisp) guards
+;;; the call-site caches, and INVALIDATE-TYPE-CACHES empties the tables.
 
 ;;; The results of TYPEP that depend only on the object's class, which
 ;;; CLOS keeps (clos/conditions.lisp, %CACHED-TYPEP): pairs of a key (the
@@ -166,15 +166,22 @@
     (setf (svref vector i) nil)))
 
 (defun invalidate-type-caches ()
-  "A type, class or class precedence list changed."
+  "A type or a class changed: the answers in the TYPEP tables may not hold
+any longer."
   (clear-simple-vector *typep-cache*)
-  (clear-simple-vector *uncacheable-types*)
-  (setf *type-caches-valid* nil
-        *type-cache-epoch* (+ *type-cache-epoch* 1)))
+  (clear-simple-vector *uncacheable-types*))
+
+(defun type-assumption-changed (names)
+  "The watcher of the type assumptions: NAMES changed."
+  (declare (ignore names))
+  (invalidate-type-caches))
+
+(register-assumption-watcher :type #'type-assumption-changed)
 
 (defun kiln.sys::%deftype (name expander)
   (setf (get name 'type-expander) expander)
-  (invalidate-type-caches)
+  ;; A DEFTYPE of the same name changes what every use of it means.
+  (change-assumption :type name)
   name)
 
 (defun typexpand-1 (type &optional environment)

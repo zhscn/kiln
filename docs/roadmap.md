@@ -59,7 +59,7 @@
 8. inline 支持 `&optional`、`&key` 参数。
 9. **分代 GC**：这一轮优化之后，自编译的分配量从约 250 GB 降到 99 GB，GC 停顿只占墙钟的 5.8%（7.3 秒），对编译器自身的收益缩到几秒，价值主要在降低峰值内存（GenImmix 不需要半个堆的复制预留）和分配密集的用户程序。下面是优化之前量的：已量过（[performance.md](research/performance.md) 的“GC”）：自举时 GC 停顿约占墙钟的 9%、worker 占 CPU 的 22%，复制的字节 93% 是反复复制的老对象，新对象只有约 1.1% 活过下一次回收（nursery 从 4 GiB 缩到 256 MiB 也不变）。估计分代后 GC 停顿从 31–39 秒降到 6–9 秒，扣掉写屏障净省墙钟的 4–6%。设计和实施步骤见 [gc.md](design/gc.md) 的“Generational GC plan”：先 GenCopy 验证屏障，再换 GenImmix；快照区同时改成 card table。另外两项不依赖分代、要改 MMTk 的：MMTk 写死的清零（约 2.5% 的 CPU），GC 并行度低（8 个线程平均只有约 3 个在干活，线程数不影响停顿）。
 10. **无 header 的 cons**：cons 现在 24 字节，SBCL 是 16 字节。做法：所有 header 的低 3 位用保留的 tag `111`，任何 Lisp 值都不会长成 header，于是对象的第一个字不是 header 就是 cons（SBCL 遍历堆也是这样区分的）；forwarding bits 已在 side metadata，forwarding 指针写在偏移 0 覆盖 car 也没问题。难点是身份哈希：cons 没有 header 就没有地方存，改为按地址哈希，GC 确实移动了某张表的键时才标记这张表需要重新哈希（SBCL 的做法）。SemiSpace 下每次 GC 都移动全部对象，所以排在分代 GC 之后。先量 cons 在分配量里的占比（按 kind 统计分配字节数）。NIL 同时带 list tag 的技巧收益很小，不做。
-11. **CLOS 调用点的内联缓存**，以及 `&rest` 泛函、方法组合不再分配参数列表。和第 3 项一起，建在 [specialization.md](design/specialization.md) 的统一框架上：先把现有的缓存（分派、`make-instance` 的 epoch、`typep` 表）改为经过统一的假设登记和失效，补上调用点 `typep` 缓存的过时问题，再做调用点特化（方法体内 `slot-value` 的置换向量、`make-instance` 的构造器对象）和生成代码；编译结果按顶层形式缓存也用同一套依赖。
+11. **CLOS 调用点的内联缓存**，以及 `&rest` 泛函、方法组合不再分配参数列表。统一的假设登记和失效框架（[specialization.md](design/specialization.md)）已经就位：现有的缓存（分派、`make-instance`、`typep` 表）都经过它，调用点 `typep` 缓存的过时问题已修掉，常量槽名的 `slot-value` 已经按对象 stamp 在调用点缓存槽位置（24.7 → 9.9 ns，和访问器方法相当）。剩下的是 `make-instance` 的构造器对象、泛函调用的内联缓存和生成代码；编译结果按顶层形式缓存也用同一套依赖。
 12. **kiln-cg**：并行构造 CLIF（现在需要 `&mut Module`），减少整个程序的 KIR 和 CLIF 同时在内存里（kiln0 链接时峰值约 9.5 GB）；以 KIR 哈希为键的机器码缓存。
 13. **其他库的快路径**：`sxhash`、字符串键的哈希表、`search`、位数组运算、`read-line` 和字符串流。
 14. **自举**：模块之间存快照，后面的阶段从快照开始。
@@ -101,7 +101,7 @@
 ### CLOS
 
 - 泛函的重定义（`defgeneric` 改 lambda list 等）。
-- 过时实例只在分派时更新：`slot-value` 在更新之前读的是旧布局，类名 `typep` 的调用点缓存给出旧类的结果。
+- 过时实例只在分派时更新：`slot-value` 在更新之前读的是旧布局（类名 `typep` 的调用点缓存已在统一框架里修掉）。
 - 重定义结构后，inline 的访问器在已编译的调用者里不变（依赖追踪不覆盖 AOT 模块）。
 - `make-instance` 改成泛函；快路径之外的构造器。
 - `change-class` 调用 `update-instance-for-different-class`。
@@ -148,7 +148,7 @@
 - AOT 模块的依赖记录：KIR 里记下每个函数的依赖，模块初始化时装进同一张表，和定义表一起做。
 - 重新载入文件：先读完整个文件，读失败就什么都不改；按定义名对应新旧顶层形式，只求值变了的，只是位置变了的只更新调试信息，消失的定义报告出来。
 - 编译中用到还是“可能过时”的宏时，就地先更新它（现在只有循环依赖时会遇到）。
-- 内联缓存、编译后的 CLOS 分派等优化的假设也作为依赖记录（`(:class c)` 一类），见 [specialization.md](design/specialization.md)。
+- 内联缓存、编译后的 CLOS 分派等优化的假设作为依赖记录（`(:class c)` 一类）：假设的键和版本格已经实现，`change-assumption` 也把键交给同一个钩子（[specialization.md](design/specialization.md)）；还没有编译期特化去记录它们。
 - `defun` 不清除名字上的宏函数，“宏改成函数”的重定义不起作用。
 
 ### 堆快照和 seal

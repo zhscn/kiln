@@ -108,7 +108,7 @@ compile-time definitions are the image's (IMAGE-CLIENT).")
   "The definition (KIND NAME) changed at compile time: the code compiled
 in the image that depends on it is out of date."
   #+kiln (when (compiles-into-image-p *client*)
-           (kiln.kernel::note-redefinition kind name))
+           (kiln.kernel::change-assumption kind name))
   #-kiln (declare (ignore kind name)))
 
 ;;; Inline functions. (DECLAIM (INLINE F)) before

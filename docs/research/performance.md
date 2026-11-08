@@ -57,7 +57,7 @@
 | `gethash` / `(setf gethash)`（eq） | 19 / 21 | 3 / 5 | 4–6× | Salmagundi 的协议层（泛函、客户端对象） |
 | `gethash`（equal，字符串键） | 85 | 21 | 4.0× | 同上 |
 | 泛函调用（单态 / 3 个类的多态） | 14 / 22 | 5 / 5 | 3–4× | 分派闭包和缓存表 |
-| `slot-value` / 访问器 | 22 / 11 | 5 / 4 | 3–5× | 按槽位置的缓存，没有内联到调用点 |
+| `slot-value` / 访问器 | 10 / 11 | 5 / 4 | 2–2.5× | 常量槽名的调用点按（stamp，槽位置）缓存；和访问器方法一样快 |
 | `catch`/`throw` | 34 | 7 | 4.9× | |
 | `&rest`（3 个参数） | 39 | 24 | 1.6× | |
 | `defstruct` 的访问器 | 3.4 | 2 | 1.7× | |
@@ -162,6 +162,8 @@ kiln 编译自己的五个模块（一个阶段，见 [bootstrap.md](../design/b
 再加上 IR 求值器（编译期求值不再经过 Common-boot 的 HIR 求值器）和文件流记住文件偏移之后，机器空闲时完整自举每个阶段 **33.8 秒**（kernel 0.9、CLOS 10.7、frontend 0.5、eval 2.9、compiler 17.7 秒），峰值 RSS 8.7 GB。同一份代码上 SBCL 编五个模块 11.0 秒（kernel 0.2、CLOS 2.3、frontend 0.3、eval 0.7、compiler 7.5），kiln 是它的 **3.0 倍**。本轮开始时 kiln 是 293 秒，快了约 8.7 倍。
 
 再之后，cross-client 的编译期求值从 Common-boot 的 HIR 求值器换成 IR 求值器（[ir.md](../design/ir.md) 的“编译期求值”）。改动前的 profile 里编译期求值约占 15%（HIR 求值器要走 s-expression-syntax、builder 协议、Iconoclast AST、AST-to-HIR 和 thunk 构造），换成 IR 求值器后约 1%。和分支点的 kiln0 背靠背交替各测两次（2026-11-08，load 约 1–3）：**45.3 → 36.2 秒**（−20%；各模块累计：kernel 1.1、CLOS 14.0、frontend 14.6、eval 18.1、compiler 35.0 秒），峰值 RSS 8.8 → 8.7 GB，KIR 不变。完整自举闭合，每个阶段约 36 秒。
+
+之后是统一的特化框架（[specialization.md](../design/specialization.md)：假设、版本格、失效的集中入口，现有的缓存改为经过它）和常量槽名 `slot-value` 的调用点缓存。上一提交的 kiln0 和这里的 kiln0 交替各测两次（2026-11-08，load 约 2–3）：自编译一个阶段 **38.4 / 38.2 → 37.9 / 38.2 秒**，不变——框架本身是纯重构，`slot-value` 的缓存只在命中路径加一次 stamp 比较。`bench/compare.lisp` 的 AOT 输出里 `slot-value` **24.7 → 9.9 ns**（同样三次，访问器方法 10.4 ns 不变），`make-instance` 和 `typep` 不变。完整自举闭合。
 
 845 秒那次的 profile（按模块统计自身时间）：
 

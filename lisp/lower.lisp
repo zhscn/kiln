@@ -671,15 +671,21 @@ true if the variable holds the cell of the variable NAME."
   "The readers of the child slots of AST's class, after a NIL."
   (let ((class (class-of ast)))
     (or (gethash class *children-plans*)
-        (setf (gethash class *children-plans*)
-              (cons nil
-                    (unless (typep ast '(or ico:function-name-ast ico:variable-name-ast
-                                         ico:block-name-ast ico:tag-ast))
-                      (loop for (cardinality reader) in (ico:slot-designators ast)
-                            when (and (member cardinality '(ico:? 1 *))
-                                      (not (and (eq reader 'ico:tagbody-ast)
-                                                (typep ast 'ico:tagbody-segment-ast))))
-                              collect (fdefinition reader))))))))
+        (let ((plan (cons nil
+                          (unless (typep ast '(or ico:function-name-ast ico:variable-name-ast
+                                               ico:block-name-ast ico:tag-ast))
+                            (loop for (cardinality reader) in (ico:slot-designators ast)
+                                  when (and (member cardinality '(ico:? 1 *))
+                                            (not (and (eq reader 'ico:tagbody-ast)
+                                                      (typep ast 'ico:tagbody-segment-ast))))
+                                    collect (fdefinition reader))))))
+          (setf (gethash class *children-plans*) plan)
+          ;; The plan rests on the AST classes not being redefined; a
+          ;; redefinition of one drops its plan.
+          #+kiln (kiln.kernel::register-assumption-dependent
+                  :class class
+                  (lambda () (remhash class *children-plans*)))
+          plan))))
 
 (defun map-children (function ast)
   "Calls FUNCTION on each child of AST, in order."
@@ -1767,6 +1773,31 @@ no pointer, the cons need not be scanned by the GC."
     (emit-lisp-call (function-cell-value 'kiln.kernel::%typep-cached)
                     (list object (constant-object type) `(:addr ,label ,+tag-cons+)))))
 
+(defun lower-cached-slot-value (object-ast slot-name)
+  "(SLOT-VALUE OBJECT 'SLOT-NAME) at a call site: a call to
+KILN.KERNEL::%SLOT-VALUE-CACHED with a cache of this call, a cons of static
+data whose car is the stamp of the last object's class and whose cdr is the
+slot's location there, both fixnums: a stamp belongs to one finalization of
+a class, so it is the guard of the location (see lisp/target/clos/
+support.lisp)."
+  (let ((object (copy-to-var (lower object-ast)))
+        (label (fresh-label "kiln_slot_value_cache_")))
+    (module-data label `(:words ,+kind-cons+ ,(nil-word) ,(nil-word)))
+    (emit-lisp-call (function-cell-value 'kiln.kernel::%slot-value-cached)
+                    (list object (constant-object slot-name)
+                          `(:addr ,label ,+tag-cons+)))))
+
+(defun lower-cached-set-slot-value (value-ast object-ast slot-name)
+  "(SETF (SLOT-VALUE OBJECT 'SLOT-NAME) VALUE), the same cache as
+LOWER-CACHED-SLOT-VALUE."
+  (let ((value (copy-to-var (lower value-ast)))
+        (object (copy-to-var (lower object-ast)))
+        (label (fresh-label "kiln_set_slot_value_cache_")))
+    (module-data label `(:words ,+kind-cons+ ,(nil-word) ,(nil-word)))
+    (emit-lisp-call (function-cell-value 'kiln.kernel::%set-slot-value-cached)
+                    (list value object (constant-object slot-name)
+                          `(:addr ,label ,+tag-cons+)))))
+
 (defun lower-global-call (name arg-asts)
   ;; (EQL x constant), as CASE expands into, is EQ for most constants.
   (when (and (eq name 'eql) (= (length arg-asts) 2)
@@ -1789,6 +1820,19 @@ no pointer, the cons need not be scanned by the GC."
                                 (list (find-package '#:common-lisp) (find-package '#:keyword)))))
           (return-from lower-global-call
             (lower-cached-typep (first arg-asts) type))))))
+  ;; SLOT-VALUE and (SETF SLOT-VALUE) with a constant slot name: a cache
+  ;; of the slot's location, guarded by the object's stamp.
+  (when (and (eq name 'slot-value) (= (length arg-asts) 2))
+    (multiple-value-bind (slot-name constantp) (constant-value (second arg-asts))
+      (when (and constantp (symbolp slot-name))
+        (return-from lower-global-call
+          (lower-cached-slot-value (first arg-asts) slot-name)))))
+  (when (and (equal name '(setf slot-value)) (= (length arg-asts) 3))
+    (multiple-value-bind (slot-name constantp) (constant-value (third arg-asts))
+      (when (and constantp (symbolp slot-name))
+        (return-from lower-global-call
+          (lower-cached-set-slot-value (first arg-asts) (second arg-asts)
+                                       slot-name)))))
   ;; MEMBER and ASSOC with EQL or EQ as the test and no key: functions of
   ;; two arguments, without parsing keywords.
   (when (member name '(member assoc))
@@ -1822,6 +1866,16 @@ no pointer, the cons need not be scanned by the GC."
              (emit-check-function f)
              (multiple-value-bind (base offset) (function-cell-place constant-name)
                (emit `(:store ,base ,offset ,f)))
+             ;; Early kernel definitions precede the notification function.
+             (let* ((notify (function-cell-value 'kiln.kernel::note-function-change))
+                    (entry (copy-to-var `(:load ,notify ,+fobj-entry+) :raw))
+                    (changed (new-block))
+                    (done (new-block)))
+               (br `(:eq ,entry (:addr ,(undefined-function-entry))) done changed)
+               (start-block changed)
+               (emit-lisp-call notify (list (constant-object constant-name)))
+               (jump done)
+               (start-block done))
              f))
           (primop
            (funcall primop (lower-args (rest arg-asts))))

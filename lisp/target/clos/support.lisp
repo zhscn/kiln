@@ -127,6 +127,48 @@ else NIL."
        (eq (class-of (class-of object)) *standard-class*)
        (%find-slot-location object name)))
 
+;;; SLOT-VALUE and (SETF SLOT-VALUE) at a call site with a constant slot
+;;; name (lower.lisp): each call site has a cache, a cons of static data,
+;;; whose car is the stamp of the object's class and whose cdr is the
+;;; slot's location there. The stamp is the check-style guard: a class has
+;;; one layout for one stamp, so the location cannot change under it. An
+;;; obsolete instance keeps the stamp and the rack of the layout its class
+;;; had when it was made, and reads the slot it was made with, as
+;;; SLOT-VALUE does. A class-allocated slot (a location that is a cons) and
+;;; an object that is not a standard instance of a standard-class go
+;;; SLOT-VALUE's own way.
+(defun kiln.kernel::%slot-value-cached (object slot-name cache)
+  (let ((stamp (stamp object)))
+    (if (eql (car cache) stamp)
+        (let ((value (standard-instance-access object (cdr cache))))
+          (if (eq value +unbound-slot-value+)
+              (slot-unbound (class-of object) object slot-name)
+              value))
+        (let ((location (fast-slot-location object slot-name)))
+          (if (and location (not (consp location)))
+              (progn
+                ;; The location first, then the stamp: no reader sees the
+                ;; new stamp with the old location.
+                (setf (cdr cache) location)
+                (setf (car cache) stamp)
+                (let ((value (standard-instance-access object location)))
+                  (if (eq value +unbound-slot-value+)
+                      (slot-unbound (class-of object) object slot-name)
+                      value)))
+              (slot-value object slot-name))))))
+
+(defun kiln.kernel::%set-slot-value-cached (value object slot-name cache)
+  (let ((stamp (stamp object)))
+    (if (eql (car cache) stamp)
+        (setf (standard-instance-access object (cdr cache)) value)
+        (let ((location (fast-slot-location object slot-name)))
+          (if (and location (not (consp location)))
+              (progn
+                (setf (cdr cache) location)
+                (setf (car cache) stamp)
+                (setf (standard-instance-access object location) value))
+              (setf (slot-value object slot-name) value))))))
+
 (defun shared-initialize-aux-1 (instance class slot-names &rest initargs)
   (when (and *switched-p* (null *standard-class*))
     (setf *standard-class* (find-class 'standard-class)))

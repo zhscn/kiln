@@ -52,7 +52,9 @@
            #:source-line #:print-frame #:print-backtrace #:exit
            ;; The back-end protocol (lisp/target/eval/server.lisp).
            #:serve
-           ;; Dependency tracking (lisp/target/compiler/dependencies.lisp).
+           ;; Assumptions and dependency tracking (lisp/target/assumptions.lisp,
+           ;; lisp/target/compiler/dependencies.lisp).
+           #:assumption-version #:assumptions
            #:dependents #:dependencies #:*recompile-verbose* #:stale-definition
            #:stack-exhausted
            ;; The sampling profiler (lisp/target/clos/profile.lisp).

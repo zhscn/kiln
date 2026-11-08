@@ -9,18 +9,23 @@
 ;;;; through ALLOCATE-INSTANCE-USING-CLASS. The decision is cached per
 ;;;; class (by its unique number, which a redefinition changes) and
 ;;;; forgotten when a method is added to or removed from one of the three
-;;;; generic functions.
+;;;; generic functions: the version of the initialization assumption.
 
 (in-package #:clostrophilia)
 
-(defvar *construction-epoch* 0)
+;;; The initialization assumption (assumptions.lisp) is one cell for all
+;;; classes: adding or removing a method of ALLOCATE-INSTANCE,
+;;; INITIALIZE-INSTANCE or SHARED-INITIALIZE can apply to any class, so
+;;; every class's cached answer goes out of date at once.
+(defun construction-version ()
+  (svref kiln.kernel::*initialization-assumption-cell* 0))
 
-;;; Direct-mapped: (unique number, epoch, fast-p) per entry, indexed by
+;;; Direct-mapped: (unique number, version, fast-p) per entry, indexed by
 ;;; the low bits of the unique number.
 (defvar *construction-cache* (kiln.kernel::make-simple-vector (* 3 256) nil))
 
 (defvar *standard-construction-methods* nil
-  "(EPOCH . method lists) of a plain standard object.")
+  "(VERSION . method lists) of a plain standard object.")
 
 (defun construction-methods (class prototype)
   (list (compute-applicable-methods #'allocate-instance (list class))
@@ -28,18 +33,23 @@
         (compute-applicable-methods #'shared-initialize (list prototype t))))
 
 (defun standard-construction-methods ()
-  (let ((entry *standard-construction-methods*))
-    (if (and entry (eql (car entry) *construction-epoch*))
+  (let ((entry *standard-construction-methods*)
+        (version (construction-version)))
+    (if (and entry (eql (car entry) version))
         (cdr entry)
         (let* ((class (find-class 'standard-object))
                (methods (construction-methods class (class-prototype class))))
-          (setf *standard-construction-methods* (cons *construction-epoch* methods))
+          (setf *standard-construction-methods* (cons version methods))
           methods))))
 
 (defvar *deciding-construction* nil)
 
 (defun fast-construction-p (class)
   (and (eq (class-of class) (find-class 'standard-class))
+       (let ((standard (find-method-combination nil 'standard '())))
+         (every (lambda (gf)
+                  (eq (generic-function-method-combination gf) standard))
+                (list #'allocate-instance #'initialize-instance #'shared-initialize)))
        (progn (unless (class-finalized-p class) (finalize-inheritance class)) t)
        (loop for a in (construction-methods class (class-prototype class))
              for b in (standard-construction-methods)
@@ -47,21 +57,22 @@
 
 (defun cached-fast-construction-p (class)
   (let* ((number (%slot class '%unique-number))
+         (version (construction-version))
          (index (* 3 (kiln.sys:%primop :fixnum-logand number 255)))
          (cache *construction-cache*))
     (cond ((and (eql (svref cache index) number)
-                (eql (svref cache (+ index 1)) *construction-epoch*))
+                (eql (svref cache (+ index 1)) version))
            (svref cache (+ index 2)))
           ;; Deciding needs MAKE-INSTANCE: those take the general way.
           (*deciding-construction* nil)
           (t
         (let ((fast-p (let ((*deciding-construction* t)) (fast-construction-p class))))
           ;; FAST-CONSTRUCTION-P may have finalized CLASS, which gives it
-          ;; a new number.
+          ;; a new number; the version is the one read before deciding.
           (let* ((number (%slot class '%unique-number))
                  (index (* 3 (kiln.sys:%primop :fixnum-logand number 255))))
             (setf (svref cache index) nil
-                  (svref cache (+ index 1)) *construction-epoch*
+                  (svref cache (+ index 1)) version
                   (svref cache (+ index 2)) fast-p
                   (svref cache index) number))
           fast-p)))))
@@ -83,12 +94,32 @@
 (defun forget-constructions (generic-function)
   (when (member (generic-function-name generic-function)
                 '(allocate-instance initialize-instance shared-initialize))
-    (setf *construction-epoch* (+ *construction-epoch* 1))))
+    (kiln.kernel::change-assumption :initialization :all)))
+
+(defun note-method-change (generic-function)
+  "A method was added to or removed from GENERIC-FUNCTION."
+  (kiln.kernel::defer-assumption-changes
+   (lambda ()
+     (unwind-protect
+          (kiln.kernel::change-assumption :methods generic-function)
+       (forget-constructions generic-function)))))
 
 (defmethod add-method :after ((generic-function standard-generic-function) method)
   (declare (ignore method))
-  (forget-constructions generic-function))
+  (note-method-change generic-function))
 
 (defmethod remove-method :after ((generic-function standard-generic-function) method)
   (declare (ignore method))
-  (forget-constructions generic-function))
+  (note-method-change generic-function))
+
+(defmethod reinitialize-instance :around
+    ((generic-function standard-generic-function) &rest initargs)
+  (declare (ignore initargs))
+  (kiln.kernel::defer-assumption-changes
+   (lambda ()
+     (unwind-protect (call-next-method)
+       ;; Effective methods depend on method combination and argument order.
+       (compute-and-set-specializer-profile generic-function)
+       (setf (call-history generic-function) '())
+       (invalidate-discriminating-function generic-function)
+       (note-method-change generic-function)))))

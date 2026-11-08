@@ -74,7 +74,8 @@ AMOP 的方法函数接收参数列表和后续方法，有效方法接收一个
 
 - `mop-ensure-class` 遇到已有的类（不是前向引用）时调用 `redefine-class`：元类必须相同；先删掉旧的直接槽的读写方法，再用新的 initargs `reinitialize-instance` 这个类。`defclass` 没写的选项（`:direct-default-initargs`、`:documentation`、`:direct-slots`）取默认值，而不是沿用旧值。
 - 然后重新终结这个类和它所有已终结的子类（`refinalize`）。Clostrophilia 的 `finalize-inheritance` 每次都给类一个新的 unique number，所以之前创建的实例 stamp 都过时了。
-- **调用历史**：从所有泛函（`*early-generic-functions*`，switchover 之后新建的也加进去）的调用历史里删掉提到这些类的项，并让判别函数失效。这些项的可用方法可能已经变了（优先级列表变了），而且按旧 stamp 建的自动机只会匹配过时的实例。
+- **假设**：重新 finalize 的每个类，它的 `(:class c)` 假设改变，它的名字的 `(:type name)` 假设也改变（[specialization.md](specialization.md)）。一批类的改变攒成一批：观察者只看到一次，重定义钩子也只收到一批通知。
+- **调用历史**：`:class` 的观察者从所有泛函（`*early-generic-functions*`，switchover 之后新建的也加进去）的调用历史里删掉提到这些类的项，并让判别函数失效。这些项的可用方法可能已经变了（优先级列表变了），而且按旧 stamp 建的自动机只会匹配过时的实例。
 - **过时实例的更新**：判别函数的未命中路径发现过时实例时调用 `update-obsolete-instance`。实例的 rack 里还留着它创建时的槽列表，所以旧槽可以按旧位置读出。新建一个当前类的实例，同名的局部槽照搬，新类没有的局部槽把名字放进 discarded、值放进属性表，新增的局部槽放进 added；实例接管新实例的 rack（和 `change-class` 一样），然后调用 `update-instance-for-redefined-class`，默认方法用 added 调用 `shared-initialize`。
 - 还有 `find-method`、`make-instances-obsolete`、`slot-exists-p`。
 - **限制**：只在泛函分派时检查过时实例。`slot-value` 直接按实例自己的槽列表找位置，所以过时实例在下次分派之前，用 `slot-value` 读到的仍是旧布局（值是对的，只是还没有更新）。类名 `typep` 的调用点缓存以 stamp 为键，过时实例在更新之前，在已经见过它的调用点上得到的是旧类的结果（全局缓存在重定义时清空，没有这个问题）。泛函的重定义（`defgeneric` 改 lambda list 等）还没有做。结构重定义创建新的类和 layout，旧实例保留旧类、stamp 和槽布局，不走过时实例更新。结构的访问器是 inline 函数，已编译的调用者不会跟着变。
@@ -82,9 +83,9 @@ AMOP 的方法函数接收参数列表和后续方法，有效方法接收一个
 ## 实例
 
 - **`shared-initialize` 的计划**（`support.lisp`，`shared-initialize-aux-1`）：元类是 `standard-class` 的类，切换之后不再调用 Clostrophilia 的 `shared-initialize-aux`（那里对每个槽调用 `slot-definition-initargs` 和 `(setf slot-value-using-class)`，两个都是泛函）。现在按类的槽列表做一个计划：每个槽四项（initargs、位置、名字、initfunction），存在 simple vector 里，初始化时按计划直接读写槽位置。计划放在直接映射的缓存里，以槽列表为键、按它的 identity hash 取下标，冲突时覆盖。类变化时槽列表会被整个换掉，所以缓存不会过时。不用哈希表，因为切换时 Salmagundi 还没有加载。
-- **`slot-value`**：对象是元类为 `standard-class` 的标准实例时，按 `%slot-location` 的缓存（键是槽列表和槽名）直接读写槽位置。
+- **`slot-value`**：对象是元类为 `standard-class` 的标准实例时，按 `%slot-location` 的缓存（键是槽列表和槽名）直接读写槽位置。槽名是常量的调用点由降级改写成带位置缓存的调用（`%slot-value-cached`，[specialization.md](specialization.md) 的“调用点特化”）：按对象的 stamp 直接找到位置，命中时和访问器方法一样快。
 - **`make-instance` 的快路径**（`constructors.lisp`）：元类是 `standard-class`、实例适用的 `allocate-instance`、`initialize-instance`、`shared-initialize` 方法和一个普通标准对象的完全相同时，`make-instance` 直接分配 rack，补上 default initargs，再按初始化计划（`planned-shared-initialize`）填槽。这正是那三个方法做的事，省掉的是三次带 `&rest` 参数的泛函调用，以及 `allocate-instance-using-class` 里 initargs 的处理。
-  - 判断结果按类缓存：直接映射的表，键是类的 unique number（重定义会改变它）和一个计数；往这三个泛函增删方法时计数加一（`add-method`、`remove-method` 的 `:after` 方法），所有类重新判断。
+  - 判断结果按类缓存：直接映射的表，键是类的 unique number（重定义会改变它）和初始化假设的版本；往这三个泛函增删方法时 `note-method-change` 改变初始化假设（`add-method`、`remove-method` 的 `:after` 方法），所有类重新判断。
   - 判断时要调用 `compute-applicable-methods`，它可能又创建实例；判断期间的 `make-instance` 一律走通用路径，避免递归。
 - 上面几处和访问器方法一样，假定没有对 `standard-class` 适用的 `slot-value-using-class` 方法（AMOP 不允许可移植程序定义这样的方法）。
 - **`change-class`**（`change-class.lisp`）：实例的类、stamp 和槽都在 rack 里，所以先建一个新类的实例，复制同名的槽，原实例接管新实例的 rack，再用 initarg 初始化新增的槽。funcallable instance 也可以。不调用 `update-instance-for-different-class`。
@@ -101,12 +102,12 @@ AMOP 的方法函数接收参数列表和后续方法，有效方法接收一个
 
 ## 类名的 `typep`
 
-- 编译器把类型是常量符号、又不在 CL 和 KEYWORD 包里的 `typep` 改成调用 `%typep-cached`，每个调用点带一个缓存（[lowering.md](lowering.md)）。CLOS 模块（`conditions.lisp`）的版本：类型名是类、又不是 deftype 时，结果只取决于对象的类，所以缓存的 car 存“上一个对象的 stamp 乘 2，结果为真再加 1”，是一个 fixnum，一次写入，GC 不需要扫描。
+- 编译器把类型是常量符号、又不在 CL 和 KEYWORD 包里的 `typep` 改成调用 `%typep-cached`，每个调用点带一个缓存（[lowering.md](lowering.md)）。CLOS 模块（`conditions.lisp`）的版本：类型名是类、又不是 deftype 时，结果只取决于对象的类，所以缓存的 car 存“上一个对象的 stamp 乘 2，结果为真再加 1”，是一个 fixnum，一次写入，GC 不需要扫描。缓存的 cdr 存填入时的类型假设版本：类型或类定义变了以后，过时实例还带着旧 stamp，调用点不能再用旧项，必须重新查全局表。
 - 多态的调用点（AST walker 里的 `(typep node 'some-ast)`）总是不命中只有一项的调用点缓存，所以后面再加一个所有调用点共用的直接映射缓存，每项是 `(键 类型)`，下标由 stamp 和类型符号的 identity hash 异或得到。
 - **全局缓存**（`*typep-cache*`，`%cached-typep`）：类型只取决于对象的类时，答案按 stamp 缓存，下标和调用点缓存的全局部分相同，两者共用一张表。kernel 的 `typep` 遇到 `or`、`and`、`not` 和不是标准类型名的 symbol 都先查它；类型不是常量、或者是复合类型（Iconoclast 的 walker 里 `(typep ast '(or ico:function-name-ast ...))`）时，调用点缓存帮不上忙，原来每次都要展开 `deftype`、`find-class`、再沿优先级列表找，这一处曾占自举时间的约 11%。
   - 哪些类型只取决于类（`class-determined-type-p`）：`typep` 用谓词判断、而谓词对一个内建类的对象全真或全假的 symbol（`null`、`cons`、`integer`、`character`、`function` 等）；其余命名了类又不是 deftype 的 symbol（`typep` 就是查优先级列表）；以及它们的 `or`、`and`、`not`。`keyword`、`bit` 这类不是类，字符串和向量类型只覆盖原生对象，都不缓存；`(integer 0 10)`、`satisfies`、`member` 也不缓存。判断过不能缓存的类型记在一张按 identity hash 直接映射的小表里，下次不再判断。
   - 以类型说明符本身（`eq`）为键，常量说明符因此每个调用点一项；运行期新构造的说明符只会不命中，结果仍然对。程序修改已经用过的类型说明符时缓存会过时（和修改常量一样不被允许）。
-  - **失效**：`deftype`、`(setf find-class)` 和类的重定义（`refinalize`）都调用 `invalidate-type-caches`，清空这张表、不能缓存的记录和 ctype 的缓存。重定义要清空，是因为过时实例的 stamp 仍是旧的 unique number，清空之后它们按 `class-of` 得到新类的答案。新类第一次终结时拿到新的 unique number，不会碰上旧项。`change-class` 换掉实例的 rack，stamp 随之变成新类的。
+  - **失效**：`deftype`、`(setf find-class)` 和类的重新 finalize 都改变类型假设（`(:type name)`，[specialization.md](specialization.md)）；`:type` 的观察者清空这张表、不能缓存的记录和 ctype 的缓存。重定义要清空，是因为过时实例的 stamp 仍是旧的 unique number，清空之后它们按 `class-of` 得到新类的答案。新类第一次终结时拿到新的 unique number，不会碰上旧项。`change-class` 换掉实例的 rack，stamp 随之变成新类的。
   - `allocate-general-instance` 判断类是不是 funcallable 时也查这张表（`subclass-cached-p`，键是类的 unique number，类型是类对象），不再每次分配都沿优先级列表找。
   - 命中时一次 `typep` 约 18–26 ns（原来 `or` 约 90 ns，非常量的类名约 80 ns）。SBCL 用每个 layout 的 `inherits` 向量按继承深度 O(1) 判断子类；这里没有这样做，因为缓存命中后不再看优先级列表，剩下的未命中在自举里可以忽略。
 - 不命中时，类名作为类型经 kernel 的 `*class-typep*` 按类查优先级列表。`typecase`、`handler-case` 和 `check-type` 都依赖它。
@@ -114,6 +115,7 @@ AMOP 的方法函数接收参数列表和后续方法，有效方法接收一个
 ## 已知限制
 
 - 泛函的重定义不支持；过时实例只在分派时更新（见“类的重定义”）。
+- `slot-value` 在过时实例更新之前读的是旧布局（值是对的，只是还没更新）；类名 `typep` 的调用点缓存已经不是限制（它检查类型假设的版本）。
 - `make-instance` 是普通函数，不是泛函；快路径之外没有预编译的构造器，也不把构造编成机器码。
 - `change-class` 不调用 `update-instance-for-different-class`。
 - 用户写的长形式 `define-method-combination`，产生的代码里有解释器不认识的运算符时不能用。

@@ -66,14 +66,28 @@ evaluating them again only replaces what they define.")
                          (stale-definition-name c)
                          (describe-dependency (stale-definition-key c)))))))
 
+(defun dependency-name (object)
+  "OBJECT for a report: the name of a class or a generic function, or the
+object itself."
+  (cond ((typep object 'clostrophilia:class)
+         (or (clostrophilia:class-name object) object))
+        ((typep object 'clostrophilia:generic-function)
+         (or (clostrophilia:generic-function-name object) object))
+        (t object)))
+
 (defun describe-dependency (key)
   (destructuring-bind (kind name) key
-    (format nil (ecase kind
-                  (:macro "the macro ~S")
-                  (:inline "the inline function ~S")
-                  (:setf "the SETF expander of ~S")
-                  (:constant "the constant ~S"))
-            name)))
+    (case kind
+      (:macro (format nil "the macro ~S" name))
+      (:inline (format nil "the inline function ~S" name))
+      (:setf (format nil "the SETF expander of ~S" name))
+      (:constant (format nil "the constant ~S" name))
+      (:function (format nil "the function ~S" name))
+      (:type (format nil "the type ~S" (dependency-name name)))
+      (:class (format nil "the class ~S" (dependency-name name)))
+      (:methods (format nil "the methods of ~S" (dependency-name name)))
+      (:initialization "the class initialization methods")
+      (t (format nil "~S ~S" kind name)))))
 
 ;;; Recording
 
@@ -344,8 +358,8 @@ whether that changed."
 
 (defun kiln.sys:dependents (kind name)
   "The names of the definitions evaluated in the image whose code depends
-on the definition (KIND NAME): KIND is :MACRO, :INLINE, :SETF or
-:CONSTANT."
+on the definition or assumption (KIND NAME): KIND is :MACRO, :INLINE,
+:SETF, :CONSTANT, :FUNCTION, :TYPE, :CLASS, :METHODS or :INITIALIZATION."
   (dependent-names (list kind name)))
 
 (defun kiln.sys:dependencies (name)

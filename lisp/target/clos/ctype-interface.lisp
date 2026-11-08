@@ -5,15 +5,19 @@
 (defvar *kiln-client* (make-instance 'kiln-client))
 
 ;;; Parsed specifiers and SUBTYPEP answers are cached (EQUAL hash tables)
-;;; until a type or class is defined (kiln.kernel::invalidate-type-caches).
+;;; for one version of the type assumption: a new type, a new class or a
+;;; changed class definition empties them (kiln.kernel::invalidate-type-caches
+;;; clears the TYPEP tables, and this version tells when).
 (defvar *ctype-cache* (make-hash-table :test 'equal))
 (defvar *subtypep-cache* (make-hash-table :test 'equal))
+(defvar *ctype-cache-version* -1)
 
 (defun check-type-caches ()
-  (unless kiln.kernel::*type-caches-valid*
-    (clrhash *ctype-cache*)
-    (clrhash *subtypep-cache*)
-    (setf kiln.kernel::*type-caches-valid* t)))
+  (let ((version (kiln.kernel::type-assumption-version)))
+    (unless (eql version *ctype-cache-version*)
+      (clrhash *ctype-cache*)
+      (clrhash *subtypep-cache*)
+      (setf *ctype-cache-version* version))))
 
 (defun cached-ctype (specifier environment)
   (if environment
@@ -34,9 +38,9 @@
       ;; Two symbols: an alist on TYPE1's plist, valid for one epoch of
       ;; the type definitions.
       (let ((entry (get type1 'subtypep-cache))
-            (epoch kiln.kernel::*type-cache-epoch*))
-        (unless (and entry (eql (car entry) epoch))
-          (setf entry (cons epoch '()))
+            (version (kiln.kernel::type-assumption-version)))
+        (unless (and entry (eql (car entry) version))
+          (setf entry (cons version '()))
           (setf (get type1 'subtypep-cache) entry))
         (let ((hit (assoc type2 (cdr entry) :test #'eq)))
           (if hit

@@ -31,7 +31,7 @@ kiln 是一个现代 Common Lisp 实现：开发时是完整的活 image，交�
 | [debugging.md](design/debugging.md) | 函数和调用点的调试信息、变量的栈槽、走栈接口、采样和分配分析器、定义记录和单步的方案 |
 | [backend-protocol.md](design/backend-protocol.md) | `kiln.sys:serve`：任务、嵌套的 debug 层、消息格式、`tools/kiln-server.sh` |
 | [dependencies.md](design/dependencies.md) | image 里定义的依赖追踪：依赖的种类、失效、提前截断 |
-| [specialization.md](design/specialization.md) | 推测、守卫和失效（草案）：统一现有的各种缓存、生成代码代替手写闭包、编译结果的缓存、seal 时折叠 |
+| [specialization.md](design/specialization.md) | 推测、守卫和失效：假设和版本格、现有的各种缓存经过它、生成代码代替手写闭包（计划）、编译结果的缓存（计划）、seal 时折叠（计划） |
 | [async.md](design/async.md) | 异步模型（未实现）：一次性续延和 condition 系统的统一、被否决的方案 |
 | [rust-interop.md](design/rust-interop.md) | Rust 宿主模块和双向互操作（草案）；交付时生成唯一的 staticlib 静态链接 |
 | [editor.md](design/editor.md) | 编辑器和 IDE KilnWorks（草案）：架构、显示管线、对运行时的需求、扩展模型 |

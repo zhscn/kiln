@@ -68,7 +68,8 @@
 
 - `(eql x 常量)`：常量不是堆上的数时按 `eq` 降级。`case` 展开成这样的比较。
 - 只有一个下标的 `aref` 和 `(setf aref)`：simple vector 就地读写，其他数组调用 kernel 的 `%aref-1`、`%set-aref-1`。
-- `typep` 的类型是编译期常量的原子类型时，直接换成对应的谓词调用（`*type-predicates*`），`typecase` 因此也不慢。类型是不在 CL 和 KEYWORD 包里的常量符号时，改成调用 `kiln.kernel::%typep-cached`，每个调用点带一个缓存（数据段里的一个静态 cons，`lower-cached-typep`）。缓存的用法见 [clos.md](clos.md) 的“类名的 `typep`”。
+- `typep` 的类型是编译期常量的原子类型时，直接换成对应的谓词调用（`*type-predicates*`），`typecase` 因此也不慢。类型是不在 CL 和 KEYWORD 包里的常量符号时，改成调用 `kiln.kernel::%typep-cached`，每个调用点带一个缓存（数据段里的一个静态 cons，`lower-cached-typep`）：car 是全局 `typep` 表的项，cdr 是填入时的类型假设版本，版本变了就重新查（[clos.md](clos.md) 的“类名的 `typep`”）。
+- `slot-value` 和 `(setf (slot-value ...))` 的槽名是编译期常量的符号时，改成调用 `kiln.kernel::%slot-value-cached` / `%set-slot-value-cached`，每个调用点带一个位置缓存（数据段里的一个静态 cons：对象的 stamp 和槽的位置；位置在缓存里按 stamp 复核，见 [specialization.md](specialization.md) 的“调用点特化”）。
 - 参数个数超过 `call-arguments-limit` 的 `list`、`list*`、`vector` 调用改写成分块的 `list*` 嵌套（`vector` 再加一次 `coerce`），`nconc`、`append` 改写成嵌套调用。其他函数超过时报出函数名。
 
 ## 分配
@@ -78,3 +79,5 @@
 ## 还没有的优化
 
 见 [roadmap.md](../roadmap.md) 的“性能”：`&optional`、`&key` 函数的 inline、编译器宏和调用点上的变换（`member`、`assoc`、`find` 等带常量 `:test`）、不逃逸局部函数的 lambda lifting、逃逸分析和拆箱、`dynamic-extent`。kiln 不做常量传播，`(funcall test ...)` 仍是间接调用。
+
+CLOS 的其余调用点特化（泛函调用的内联缓存、常量类名的 `make-instance`）还没有做，它们用 [specialization.md](specialization.md) 的假设和检查式守卫。

@@ -9,21 +9,9 @@
 
 (in-package #:kiln.kernel)
 
-;;; Proclamations at run time: SPECIAL is recorded on the plist, for the
-;;; evaluator (the eval module). The others take effect at compile time
-;;; only: the compiler on kiln sees them through *PROCLAIM-HOOK*
-;;; (lisp/target/compiler/client.lisp). (Defined first: the DECLAIM below
-;;; calls it at load time; %PUT is defined before any SPECIAL proclamation
-;;; runs.)
-(defun proclaim (declaration)
-  (declare (special *proclaim-hook*))
-  (when (and (consp declaration) (eq (car declaration) 'special))
-    (dolist (name (cdr declaration))
-      (%put name 'special t)))
-  (when (and (boundp '*proclaim-hook*) *proclaim-hook*)
-    (funcall *proclaim-hook* declaration))
-  nil)
-
+;;; The symbol plist helpers, PROCLAIM and the redefinition hook are in
+;;; assumptions.lisp, which loads first: DEFVAR and DECLAIM call them at
+;;; load time.
 
 ;;; Small functions whose calls are open-coded. Some are
 ;;; defined in types.lisp.
@@ -36,26 +24,6 @@
 (%primop :init-function-cells nil)
 (%primop :init-function-cells t)
 
-;;; (SETF GET) for the definitions below, which run before GET exists:
-;;; only primitives.
-(defun %put (symbol indicator value)
-  (do ((l (%primop :symbol-plist symbol) (cdr (cdr l))))
-      ((null l)
-       (%primop :set-symbol-plist symbol
-                (cons indicator (cons value (%primop :symbol-plist symbol))))
-       value)
-    (when (eq (car l) indicator)
-      (rplaca (cdr l) value)
-      (return value))))
-
-(defun %get (symbol indicator)
-  (do ((l (%primop :symbol-plist symbol) (cdr (cdr l))))
-      ((null l) nil)
-    (when (eq (car l) indicator)
-      (return (car (cdr l))))))
-
-(defvar *proclaim-hook* nil)
-
 ;;; The run-time macro environment: macro functions are kept on the
 ;;; symbol's plist under MACRO-FUNCTION. DEFMACRO calls (SETF
 ;;; MACRO-FUNCTION) at load time too, so this comes first. (At compile
@@ -63,27 +31,14 @@
 (defun (setf macro-function) (function name &optional environment)
   (declare (ignore environment))
   (%put name 'macro-function function)
-  (note-redefinition :macro name)
+  (change-assumption :macro name)
   function)
-
-;;; Dependency tracking: code compiled in the image records the
-;;; definitions it depends on at compile time (macros, inline functions,
-;;; setf expanders, constants); when one of them is defined again, the
-;;; compiler module's hook recompiles the code that depends on it.
-;;; NIL, or a function of a dependency key (KIND NAME), called when the
-;;; definition it names changes (the compiler module).
-(defvar *redefinition-hook* nil)
-
-(defun note-redefinition (kind name)
-  (let ((hook *redefinition-hook*))
-    (when hook
-      (funcall hook (cons kind (cons name nil))))))
 
 ;;; DEFINE-SETF-EXPANDER (and DEFSETF) at load time: the expander goes on
 ;;; the plist too, for the run-time GET-SETF-EXPANSION (the eval module).
 (defun kiln.sys::%define-setf-expander (name expander)
   (%put name 'setf-expander expander)
-  (note-redefinition :setf name)
+  (change-assumption :setf name)
   name)
 
 ;;; Byte specifiers are conses (size . position).
@@ -126,7 +81,7 @@
     (setf (symbol-value name) value)
     (%put name 'constant t)
     (when changed
-      (note-redefinition :constant name)))
+      (change-assumption :constant name)))
   name)
 
 (defmacro defconstant (name value &optional documentation)
@@ -227,7 +182,9 @@
 (defun (setf fdefinition) (f name)
   (if (setf-function-name-p name)
       (%primop :set-symbol-setf-function (cadr name) f)
-      (%primop :set-symbol-function name f)))
+      (%primop :set-symbol-function name f))
+  (note-function-change name)
+  f)
 ;;; (SETF NIL) and (SETF T) have no function (the runtime defines NIL and
 ;;; T without a setf function cell).
 (defun fboundp (name)
@@ -237,9 +194,11 @@
   (if (setf-function-name-p name)
       (%primop :unbind-setf-function (cadr name))
       (%primop :unbind-function name))
+  (note-function-change name)
   name)
 (defun symbol-function (name) (%primop :symbol-function name))
-(defun (setf symbol-function) (f name) (%primop :set-symbol-function name f))
+(defun (setf symbol-function) (f name)
+  (setf (fdefinition name) f))
 (defun (setf symbol-value) (v s) (setf (symbol-value s) v))
 (defun (setf nth) (v n l) (setf (car (nthcdr n l)) v))
 (defun (setf cddr) (v c) (setf (cdr (cdr c)) v))
