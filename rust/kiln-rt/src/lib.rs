@@ -178,7 +178,7 @@ unsafe fn run_module_here(info: &ModuleInfo) -> i32 {
         // frame.
         let here = &raw const ctx as usize;
         let size = lisp_stack_size();
-        stack::set_stack_limits(&mut *ctx, here.saturating_sub(size) + (64 << 10), size);
+        stack::set_stack_limits(&mut ctx, here.saturating_sub(size) + (64 << 10), size);
         profile::start_from_env(&mut *ctx);
         debug::write_function_map();
         match toplevel {

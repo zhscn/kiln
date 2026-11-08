@@ -105,7 +105,7 @@ pub unsafe extern "C" fn kiln_rt_poll(ctx: *mut Context, fp: usize) -> u64 {
     unsafe { (*ctx).poll_flag = 0 };
     crate::profile::poll(ctx, fp);
     // 1: the stack is exhausted; the caller signals it.
-    crate::stack::check_stack(ctx, fp) as u64
+    unsafe { crate::stack::check_stack(&mut *ctx, fp) as u64 }
 }
 
 static NEXT_IDENTITY_HASH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
