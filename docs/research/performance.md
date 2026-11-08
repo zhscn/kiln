@@ -153,6 +153,8 @@ kiln 编译自己的五个模块（一个阶段，见 [bootstrap.md](../design/b
 | 有效方法按展开的参数调用：标准方法组合的 `progn`、`multiple-value-prog1`、`call-method`、`make-method` 由有 fast function 的方法组成时，变成接受展开参数的闭包（原来只有单独一个 `call-method` 才行，一个具体方法加一个默认方法就要把参数建成列表、解释执行有效方法） | 和下一行一起测 | |
 | 上面四项合并之后，再加 GC 统计和去掉 `kiln_rt_alloc` 的重复清零（统一测量，机器空闲） | **125 秒** | 各模块：kernel 3.7 秒、CLOS 40.7 秒、frontend 1.6 秒、eval 12.4 秒、compiler 66.2 秒。SBCL 编同样的五个模块 47.5 秒（kernel 1.1、CLOS 12.6、frontend 0.4、eval 4.0、compiler 29.4），差距约 2.6 倍（本轮开始时约 6.8 倍）。GC：24 次回收，停顿 7.3 秒（墙钟的 5.8%），分配 99 GB，复制 6.3 GB，GC 线程 18 秒（CPU 的 13%） |
 
+2026-11-08，IR 的两项前置改动（原生结构对象和 KIR `switch`）一起测量：8 GiB 堆，stage1 为 **218.55 秒**、峰值 RSS 9,299,716 KiB；stage2 为 **169.49 秒**、峰值 RSS 9,292,996 KiB。两次都与普通端到端测试并行运行，负载不同，不能据此与上面的空闲测量比较，也不能分离两项改动的收益。stage0、stage1、stage2 的六个 KIR 文件一致，kiln0 和 kiln1 逐字节一致。
+
 845 秒那次的 profile（按模块统计自身时间）：
 
 | 部分 | 占比 |

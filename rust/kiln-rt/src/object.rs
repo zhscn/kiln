@@ -40,6 +40,8 @@ pub const KIND_RACK: u64 = 11;
 /// or both floats of the same format; a rational complex has a nonzero
 /// imaginary part.
 pub const KIND_COMPLEX: u64 = 12;
+/// Structure: [header (slot count << 8), layout, slots...].
+pub const KIND_STRUCTURE_INSTANCE: u64 = 13;
 
 /// Immediates: low 3 bits 0b011, bits 3..8 the immediate kind, payload
 /// from bit 8.
@@ -234,6 +236,7 @@ pub fn object_bytes(header: u64) -> usize {
         KIND_RATIO | KIND_COMPLEX => 24,
         KIND_DOUBLE => 16,
         KIND_INSTANCE => 16,
+        KIND_STRUCTURE_INSTANCE => 16 + 8 * header_length(header),
         KIND_FUNCALLABLE_INSTANCE => 32,
         KIND_RACK => 8 + 8 * header_length(header),
         KIND_FUNCTION => 16 + 8 * header_length(header),
@@ -330,6 +333,9 @@ pub unsafe fn write_object(out: &mut String, v: u64) {
             KIND_INSTANCE => {
                 let _ = write!(out, "#<STANDARD-OBJECT {:#x}>", v);
             }
+            KIND_STRUCTURE_INSTANCE => {
+                let _ = write!(out, "#<STRUCTURE-OBJECT {:#x}>", v);
+            }
             KIND_FUNCALLABLE_INSTANCE => {
                 let _ = write!(out, "#<FUNCALLABLE-INSTANCE {:#x}>", v);
             }
@@ -386,5 +392,19 @@ pub unsafe fn string_value(v: u64) -> String {
         let n = header_length(header(v));
         let chars = std::slice::from_raw_parts((untag(v) + 8) as *const u32, n);
         chars.iter().map(|&c| char::from_u32(c).unwrap_or('\u{fffd}')).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn structure_size_and_gc_fields_include_layout() {
+        for slots in [0, 1, 31, 1024] {
+            let header = KIND_STRUCTURE_INSTANCE | (slots << LENGTH_SHIFT) | (123 << HASH_SHIFT);
+            assert_eq!(object_bytes(header), 16 + 8 * slots as usize);
+            assert_eq!(crate::image::lisp_fields(header), (8, 1 + slots as usize));
+        }
     }
 }

@@ -48,6 +48,7 @@
 | 10 | funcallable-instance | `[header, 入口, rack, 安装的函数]` | — | rack、安装的函数 |
 | 11 | rack | `[header, class, stamp, 有效槽列表, 槽...]` | 字数 | 全部 |
 | 12 | complex | `[header, 实部, 虚部]` | — | 实部、虚部 |
+| 13 | structure-instance | `[header, layout, 槽...]` | 槽数 | layout 和全部槽 |
 
 超过当前 plan 普通分配上限的对象，`kiln_rt_alloc` 改用 MMTk 的 large object space。
 
@@ -72,6 +73,10 @@
 - 类指针放在 rack 里，不在 header 里（SICL 规范里考虑过的替代设计，见 [sicl-survey.md](../research/sicl-survey.md)）：`change-class` 和实例更新只需要替换 rack 指针这一个字；header 空出来的位存身份哈希。
 - `standard-instance-access` 的位置 *loc* 对应 rack 的第 *loc* + 4 个字（第 0 个字是 header，第 1 个字是 class），所以 −2 是 stamp、−1 是有效槽列表、0 起是槽。
 - 非实例对象的类和 stamp：`class-of` 按对象的 tag 和 kind 查表得到内建类，stamp 是这个类的唯一编号（[clos.md](clos.md)）。
+
+### 结构对象
+
+`defstruct` 的实例只有一个对象，槽 *i* 在第 *i* + 2 个字。layout 是不可变的 simple-vector：`#(class stamp slots depth inherits slot-count)`；`slots` 保存有效槽定义，供按名字访问使用。`inherits` 按继承深度存放祖先 layout，包含自身。类型检查比较 `inherits[目标深度]` 和目标 layout，先检查深度以保证下标有效。构造器直接分配实例并初始化槽。类重定义创建新的 layout，已有实例保留原 layout，不更新实例。结构不能使用 `change-class`。
 
 ### 数
 

@@ -25,6 +25,7 @@
 (defconstant +kind-funcallable-instance+ 10) ; [header, entry, rack, function]
 (defconstant +kind-rack+ 11)           ; [header, class, stamp, slot list, slots...]
 (defconstant +kind-complex+ 12)        ; [header, real part, imaginary part]
+(defconstant +kind-structure-instance+ 13) ; [header (slot count), layout, slots...]
 ;;; Function objects and funcallable instances differ only in bit 3: a
 ;;; kind is a function kind when (logand kind +function-kind-mask+) = 2.
 (defconstant +function-kind-mask+ #xf7)

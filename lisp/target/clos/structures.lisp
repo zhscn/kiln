@@ -1,54 +1,75 @@
-;;;; Structures: DEFSTRUCT is expanded in the host by
-;;;; Anatomicl (lisp/structures.lisp) into a DEFCLASS of the metaclass
-;;;; STRUCTURE-CLASS, constructors, a predicate and a copier.
+;;;; Native DEFSTRUCT instances carry an immutable layout and their slots.
 
 (in-package #:clostrophilia)
 
 (defclass structure-class (standard-class)
-  ())
+  ((%structure-layout :initform nil)))
 
 (defclass structure-object (standard-object)
   ()
   (:metaclass structure-class))
 
-;;; A structure's slots are at the locations 0 to N-1, in the order of its
-;;; layout (lisp/structures.lisp): the copy takes the words as they are,
-;;; unbound markers included.
+;;; Layout vector: class, stamp, effective slots, depth, ancestors, size.
+;;; The first three entries also serve the CLOS metadata locations -3..-1.
+(defun ensure-structure-layout (class)
+  (or (%slot class '%structure-layout)
+      (progn
+        (unless (class-finalized-p class) (finalize-inheritance class))
+        (let* ((parent (car (class-direct-superclasses class)))
+               (parent-layout (and (not (eq class (find-class 'structure-object)))
+                                   (ensure-structure-layout parent)))
+               (depth (if parent-layout (+ 1 (svref parent-layout 3)) 0))
+               (ancestors (kiln.kernel::make-simple-vector (+ depth 1) nil))
+               (layout (vector class (%slot class '%unique-number)
+                               (class-slots class) depth ancestors
+                               (length (class-slots class)))))
+          (when parent-layout
+            (dotimes (i depth)
+              (setf (svref ancestors i) (svref (svref parent-layout 4) i))))
+          (setf (svref ancestors depth) layout
+                (%slot class '%structure-layout) layout)
+          layout))))
+
+(defun kiln.sys::%ensure-structure-layout (class)
+  (ensure-structure-layout class))
+
+(declaim (inline structure-layout-typep))
+(defun structure-layout-typep (object layout)
+  (and (kiln.sys:%primop :structure-instance-p object)
+       (let ((actual (kiln.sys:%primop :structure-layout object)))
+         (or (eq actual layout)
+             (let ((depth (svref layout 3)))
+               (and (<= depth (svref actual 3))
+                    (eq (svref (svref actual 4) depth) layout)))))))
+
 (defun copy-structure (structure)
-  (let* ((class (class-of structure))
-         (copy (allocate-instance class)))
-    (dotimes (location (length (class-slots class)) copy)
-      (setf (standard-instance-access copy location)
-            (standard-instance-access structure location)))))
+  (unless (kiln.sys:%primop :structure-instance-p structure)
+    (error 'type-error :datum structure :expected-type 'structure-object))
+  (let* ((layout (kiln.sys:%primop :structure-layout structure))
+         (size (svref layout 5))
+         (copy (kiln.sys:%primop :allocate-structure layout size)))
+    (dotimes (location size copy)
+      (kiln.sys:%primop :set-structure-slot copy location
+                       (kiln.sys:%primop :structure-slot structure location)))))
 
-;;; Anatomicl's constructors call ALLOCATE-INSTANCE directly, which does
-;;; not finalize the class as MAKE-INSTANCE does.
-(defmethod allocate-instance :before ((class structure-class) &rest initargs)
+(defmethod allocate-instance ((class structure-class) &rest initargs)
   (declare (ignore initargs))
-  (unless (class-finalized-p class)
-    (finalize-inheritance class)))
+  (let* ((layout (ensure-structure-layout class))
+         (size (svref layout 5))
+         (instance (kiln.sys:%primop :allocate-structure layout size)))
+    (dotimes (i size instance)
+      (kiln.sys:%primop :set-structure-slot instance i +unbound-slot-value+))))
 
-;;; The accessors that DEFSTRUCT defines (lisp/structures.lisp): CLASS
-;;; is the structure's, LOCATION the slot's.
 (declaim (inline kiln.sys::%structure-ref kiln.sys::%structure-set))
-(defun kiln.sys::%structure-ref (object class name location)
-  (if (and (instancep object) (eq (kiln.sys:%primop :instance-class object) class))
-      (kiln.sys:%primop :standard-instance-access object location)
-      (structure-ref-slow object name location)))
+(defun kiln.sys::%structure-ref (object layout name location)
+  (if (structure-layout-typep object layout)
+      (kiln.sys:%primop :structure-slot object location)
+      (structure-access-error object name)))
 
-(defun kiln.sys::%structure-set (value object class name location)
-  (if (and (instancep object) (eq (kiln.sys:%primop :instance-class object) class))
-      (kiln.sys:%primop :set-standard-instance-access object location value)
-      (structure-set-slow value object name location)))
+(defun kiln.sys::%structure-set (value object layout name location)
+  (if (structure-layout-typep object layout)
+      (kiln.sys:%primop :set-structure-slot object location value)
+      (structure-access-error object name)))
 
-(defun check-structure (object name)
-  (unless (typep object name)
-    (error 'type-error :datum object :expected-type name)))
-
-(defun structure-ref-slow (object name location)
-  (check-structure object name)
-  (standard-instance-access object location))
-
-(defun structure-set-slow (value object name location)
-  (check-structure object name)
-  (setf (standard-instance-access object location) value))
+(defun structure-access-error (object name)
+  (error 'type-error :datum object :expected-type name))

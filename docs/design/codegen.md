@@ -48,6 +48,7 @@ kiln-launcher               staticlib，提供 C main，链接 kiln-rt 和 kiln-
 | `(set v E)` | 赋值 |
 | `(store A 偏移 V)`、`(store32 A 偏移 V)` | 存一个字、存 32 位 |
 | `(jump b)` / `(br C b1 b2)` | 跳转；C 非零走 b1 |
+| `(switch E 默认块 ((整数 块)...))` | 按 64 位整数分派；没有匹配时走默认块，重复键非法；密集区间生成跳转表 |
 | `(return V0 NV)` | 返回 |
 | `(call-lisp v0 nv ENTRY (ctx self nargs a...) H [(loc 起始 结束)])` | 调用 Lisp 函数；H 是 handler block 名，或 `nil`；`loc` 是调用形式的源码范围 |
 | `(call-rt "名字" (结果...) (参数...) H [(loc 起始 结束)])` | 调用 runtime 函数；只有 `unwinds` 的函数才使用 H |

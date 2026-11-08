@@ -29,10 +29,26 @@
 (defvar +unbound-slot-value+ (kiln.sys:%primop :unbound-slot-value))
 
 (defun standard-instance-access (instance location)
-  (kiln.sys:%primop :standard-instance-access instance location))
+  (if (kiln.sys:%primop :structure-instance-p instance)
+      (if (< location 0)
+          (svref (kiln.sys:%primop :structure-layout instance) (+ location 3))
+          (kiln.sys:%primop :structure-slot instance location))
+      (kiln.sys:%primop :standard-instance-access instance location)))
 
 (defun (setf standard-instance-access) (value instance location)
-  (kiln.sys:%primop :set-standard-instance-access instance location value))
+  (if (kiln.sys:%primop :structure-instance-p instance)
+      (if (< location 0)
+          (set-structure-metadata instance location value)
+          (kiln.sys:%primop :set-structure-slot instance location value))
+      (kiln.sys:%primop :set-standard-instance-access instance location value)))
+
+(defun set-structure-metadata (instance location value)
+  ;; Shared initialization records the effective slots for standard
+  ;; instances. A structure already has that immutable list in its layout.
+  (if (and (= location -1)
+           (eq value (svref (kiln.sys:%primop :structure-layout instance) 2)))
+      value
+      (error "Cannot change structure layout metadata.")))
 
 (defun slot-value-using-location+1 (instance location)
   (standard-instance-access instance location))
@@ -50,7 +66,8 @@
 (defun small-integer< (x y) (< x y))
 
 (defun instancep (object)
-  (or (kiln.sys:%primop :standard-instance-p object)
+  (or (kiln.sys:%primop :structure-instance-p object)
+      (kiln.sys:%primop :standard-instance-p object)
       (kiln.sys:%primop :funcallable-instance-p object)))
 
 (defun %allocate (class size funcallable-p)
@@ -174,7 +191,9 @@ list, slots), the slots unbound."
 
 (defun class-of (object)
   (if (instancep object)
-      (kiln.sys:%primop :instance-class object)
+      (if (kiln.sys:%primop :structure-instance-p object)
+          (svref (kiln.sys:%primop :structure-layout object) 0)
+          (kiln.sys:%primop :instance-class object))
       (let* ((index (built-in-class-index object))
              (class (svref *built-in-classes* index)))
         (or class

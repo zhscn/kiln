@@ -29,6 +29,8 @@
 
 谓词原语的结果是 `(:select c T NIL)`；放在 `if` 的测试位置时不先物化成 T/NIL 再和 NIL 比较，而是直接按 `c` 分支。`and`、`or`（展开成 `(let ((g x)) (if g g y))`）、`not`、嵌套的 `if`、常量在测试位置也都展开成分支（`lower-branch`）。
 
+在产生值的位置，同一个词法变量与至少三个不同 fixnum 键比较的 `if` 链生成 `:switch`，包括 `case` 的单键和分组键分支。先检查输入是 fixnum，再去掉 tag；非 fixnum 直接走默认分支。重复键采用第一次出现的分支，多个键可以共用一个目标块，各分支保留全部返回值。Cranelift 按键的分布选择比较和跳转表。
+
 ## `load-time-value`
 
 降级每个顶层形式之前，先找出其中所有的 `load-time-value`，在模块的 init 函数里求值，存进静态 root cell；引用处读这个 cell。所以它在包含它的顶层形式执行之前、在空词法环境里求值一次。

@@ -36,7 +36,8 @@
   class)
 
 (defmethod make-instances-obsolete ((class class))
-  (when (class-finalized-p class)
+  (when (and (class-finalized-p class)
+             (not (eq (class-of class) (find-class 'structure-class))))
     (let ((classes (refinalize class)))
       (forget-call-caches classes)))
   class)

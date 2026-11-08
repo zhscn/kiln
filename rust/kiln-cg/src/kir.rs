@@ -157,6 +157,7 @@ pub enum Stmt {
     Store32(Expr, i32, Expr),
     Jump(String),
     Br(Expr, String, String),
+    Switch(Expr, String, Vec<(i64, String)>),
     Return(Expr, Expr),
     CallLisp {
         v0: String,
@@ -504,6 +505,21 @@ fn parse_stmt(s: &Sexp) -> R<Stmt> {
             arity(h, r, 3)?;
             Stmt::Br(parse_expr(&r[0])?, sym(&r[1])?.to_string(), sym(&r[2])?.to_string())
         }
+        "switch" => {
+            arity(h, r, 3)?;
+            let mut entries = Vec::new();
+            let mut seen = std::collections::HashSet::new();
+            for entry in list(&r[2])? {
+                let pair = list(entry)?;
+                arity("switch entry", pair, 2)?;
+                let key = int(&pair[0])?;
+                if !seen.insert(key) {
+                    return Err(format!("switch: duplicate key {key}"));
+                }
+                entries.push((key, sym(&pair[1])?.to_string()));
+            }
+            Stmt::Switch(parse_expr(&r[0])?, sym(&r[1])?.to_string(), entries)
+        }
         "return" => {
             arity(h, r, 2)?;
             Stmt::Return(parse_expr(&r[0])?, parse_expr(&r[1])?)
@@ -631,4 +647,34 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
         }
         _ => return Err(format!("unknown expression {h}")),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stmt(text: &str) -> R<Stmt> {
+        let form = crate::sexp::parse_one(text).map_err(|e| e.to_string())?;
+        parse_stmt(&form)
+    }
+
+    #[test]
+    fn switch_accepts_signed_keys_and_empty_table() {
+        let Stmt::Switch(_, default, entries) =
+            stmt("(switch v fallback ((-9223372036854775808 low) (9223372036854775807 high)))").unwrap()
+        else {
+            panic!("expected switch");
+        };
+        assert_eq!(default, "fallback");
+        assert_eq!(entries, vec![(i64::MIN, "low".into()), (i64::MAX, "high".into())]);
+        assert!(matches!(stmt("(switch v fallback ())").unwrap(), Stmt::Switch(_, _, v) if v.is_empty()));
+    }
+
+    #[test]
+    fn switch_rejects_duplicate_keys_and_malformed_entries() {
+        assert!(stmt("(switch v fallback ((1 a) (1 b)))").unwrap_err().contains("duplicate key"));
+        assert!(stmt("(switch v fallback ((1)))").is_err());
+        assert!(stmt("(switch v fallback ((a b)))").is_err());
+        assert!(stmt("(switch v fallback ((1 2)))").is_err());
+    }
 }

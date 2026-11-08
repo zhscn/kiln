@@ -7,11 +7,6 @@
 ;;;; compile time, so kiln's client keeps the slot layouts of the
 ;;;; structures defined so far in the compilation session instead.
 ;;;;
-;;;; A structure-object structure is a class of the metaclass
-;;;; STRUCTURE-CLASS (lisp/target/clos/structures.lisp) with a slot,
-;;;; initarg and accessors for each slot; constructors use ALLOCATE-INSTANCE
-;;;; and (SETF SLOT-VALUE), as Anatomicl generates them.
-
 (defclass anatomicl-client () ())
 
 (defvar *anatomicl-client* (make-instance 'anatomicl-client))
@@ -92,14 +87,7 @@
              `((defmethod print-object ((object ,name) stream)
                  (funcall (function ,print-object) object stream))))))))
 
-;;; Accessors are inline functions, not generic functions (CLHS allows
-;;; either): the evaluator's VM, Eclector and the compiler call them in
-;;; their inner loops. A slot's location is its index in the layout (the
-;;; included structure's slots come first, as in the DEFCLASS above). An
-;;; instance whose class is the structure's is accessed directly; another
-;;; (of an including structure) after a type check
-;;; (lisp/target/clos/structures.lisp). The structure's class is kept in a
-;;; variable of KILN.STRUCTURES.
+;;; Accessors inline the layout ancestry check and direct slot access.
 (defun structure-class-variable (name)
   (intern (format nil "~A::~A"
                   (if (symbol-package name) (package-name (symbol-package name)) "#")
@@ -120,23 +108,21 @@
                  (push `(defun (setf ,accessor) (value object)
                           (kiln.sys::%structure-set value object ,variable ',name ,location))
                        accessors)))
-    `((defparameter ,variable (find-class ',name))
+    `((defparameter ,variable (kiln.sys::%ensure-structure-layout (find-class ',name)))
       (declaim (inline ,@(mapcar #'second accessors)))
       ,@(reverse accessors))))
 
-;;; Constructors allocate from the class in the structure's variable and
-;;; store each slot at its location, as the accessors read it (Anatomicl's
-;;; default looks the class up with FIND-CLASS and sets each slot with
-;;; SETF SLOT-VALUE by name, a search of the class's slots per slot).
+;;; Constructors allocate one object and initialize its slots by position.
 (defmethod anatomicl::generate-allocation-form
     ((client anatomicl-client) (description anatomicl::defstruct-object-description) layout)
-  (declare (ignore layout))
-  `(allocate-instance ,(structure-class-variable (anatomicl::defstruct-name description))))
+  `(kiln.sys:%primop :allocate-structure
+                     ,(structure-class-variable (anatomicl::defstruct-name description))
+                     ,(length layout)))
 
 (defmethod anatomicl::generate-slot-initialization-form
     ((client anatomicl-client) (description anatomicl::defstruct-object-description)
      layout object slot value)
-  `(kiln.sys:%primop :set-standard-instance-access ,object
+  `(kiln.sys:%primop :set-structure-slot ,object
                      ,(position (anatomicl::slot-name slot) layout :key #'anatomicl::slot-name)
                      ,value))
 

@@ -13,7 +13,9 @@
 (defun class-typep (object type)
   (let ((class (if (symbolp type) (find-class type nil) type)))
     (cond (class
-           (if (member class (%slot (class-of object) '%precedence-list)) t nil))
+           (if (eq (class-of class) (find-class 'structure-class nil))
+               (structure-layout-typep object (ensure-structure-layout class))
+               (if (member class (%slot (class-of object) '%precedence-list)) t nil)))
           ((member type *types-without-objects*) nil)
           (t (kiln.kernel::unknown-type type)))))
 

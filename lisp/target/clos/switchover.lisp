@@ -48,6 +48,11 @@
                          &key (metaclass 'standard-class) direct-superclasses
                          &allow-other-keys)
   (let ((existing (find-class name nil)))
+    ;; A new structure definition gets a new class and layout. Old instances
+    ;; keep their class, stamp, and method applicability.
+    (when (and existing
+               (eq (class-of existing) (find-class 'structure-class nil)))
+      (setf existing nil))
     ;; A class that is defined again (redefinition.lisp).
     (when (and existing (not (typep existing 'forward-referenced-class)))
       (return-from mop-ensure-class

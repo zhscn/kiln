@@ -1,0 +1,21 @@
+T
+NIL
+(T T T NIL NIL T T)
+T
+((1 2) 3)
+T
+(6 7)
+NIL
+T
+NIL
+(1 2)
+CHECKED
+CHECKED
+T
+CHECKED
+NIL
+10
+42
+T
+FOUND
+"<11>"

@@ -1,6 +1,6 @@
 # kiln 的 IR：从 CST 直接到可分析的中间表示（草案）
 
-状态：**待定**，计划替换前端的后半段。现在的流水线见 [front-end.md](front-end.md) 和 [lowering.md](lowering.md)。
+状态：**分阶段实现**。原生结构对象和 KIR 的 `:switch` 已接入；CST 到新 IR 的转换、分析和降级仍待实现，编译路径继续使用 Iconoclast。现在的流水线见 [front-end.md](front-end.md) 和 [lowering.md](lowering.md)。
 
 ## 为什么要换
 
@@ -41,16 +41,16 @@ IR 会有几百万个节点，前端和降级的时间大部分花在分配节�
 
 ### 原生的结构对象
 
-现在 `defstruct` 的实例是标准实例：一个 `[header, rack]` 对象加一个 `[header, class, stamp, 有效槽列表, 槽...]` 的 rack。每次分配两个对象、至少 6 个字；每次读槽两次载入；访问函数用 `eq` 比较类，`:include` 的子类型实例走慢路径（完整的 `typep`）。
+用标准实例表示 `defstruct` 时，实例是一个 `[header, rack]` 对象加一个 `[header, class, stamp, 有效槽列表, 槽...]` 的 rack。每次分配两个对象、至少 6 个字；每次读槽两次载入；访问函数用 `eq` 比较类，`:include` 的子类型实例走慢路径（完整的 `typep`）。
 
-**计划**：新增一个对象 kind，`structure-instance`：
+新增的对象 kind 是 `structure-instance`：
 
 ```
 [header, layout, 槽 0, 槽 1, ...]
 ```
 
 - **一个对象、一次载入**：槽 *i* 在第 *i* + 2 个字。header 的长度字段是槽数。
-- **layout** 是结构类的一个不变的描述对象：所属的类、继承深度、`inherits` 向量（按深度存放各层祖先的 layout）、槽数、stamp。
+- **layout** 是结构类的一个不变的描述对象：所属的类、继承深度、`inherits` 向量（按深度存放各层祖先及自身的 layout）、槽数、stamp，以及供反射访问使用的有效槽列表。当前用不可变的 simple-vector 表示，顺序为 `#(class stamp slots depth inherits slot-count)`。
 - **类型检查 O(1)**：结构是单继承，所以“x 是不是结构 S 的实例”就是：kind 是 `structure-instance`，且 `inherits(layout(x))[depth(S)]` 是 S 的 layout。这正是 SBCL 的做法。访问函数内联这一检查，`:include` 的子类型实例也走快路径。
 - **构造函数**：一次内联分配（`emit-alloc` 的 bump pointer 快路径）加逐个写槽，不经过 `allocate-instance`。
 - **CLOS 里的位置**：`class-of` 取 layout 的类，分派用的 stamp 取 layout 里的 stamp，`typep`、打印、`equalp`、`copy-structure`、对结构用 `slot-value`（按位置）都要认这个 kind。Rust 侧：GC 扫描全部槽（layout 是静态对象或堆对象，也要扫描）、打印、堆快照。
@@ -155,7 +155,7 @@ IR 的遍历按节点种类分派。三种做法：
 
 降级按节点的 `kind` 分派，其余规则和现在的 [lowering.md](lowering.md) 相同：函数、闭包（env 从 `fun` 的 `free` 得到，不再要 `set-static-environment` 节点）、cell、退出点和令牌、多值、分支、`load-time-value`、常量、原语和 `%primop`、调用点上的改写。
 
-有了 `fun` 的“可以直接调用”标志，降级可以把对已知局部函数的调用编成直接调用（不经过函数对象），这是现在做不到的（局部函数是持有函数对象的变量）。
+有了 `fun` 的“可以直接调用”标志，降级可以把对已知局部函数的调用编成直接调用（不经过函数对象），这是旧前端做不到的（局部函数是持有函数对象的变量）。
 
 ## 为以后留的位置
 

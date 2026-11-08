@@ -8,7 +8,7 @@ use cranelift_codegen::ir::{
 };
 use cranelift_codegen::isa::CallConv;
 use cranelift_codegen::{Context, ir::BlockCall};
-use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
+use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Switch, Variable};
 use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
 use std::collections::HashMap;
 
@@ -1048,6 +1048,15 @@ impl<M: Module> FuncLowering<'_, M> {
             Stmt::Br(c, t, e) => {
                 let cond = self.cond(b, c)?;
                 b.ins().brif(cond, self.block(t)?, &[], self.block(e)?, &[]);
+                return Ok(true);
+            }
+            Stmt::Switch(expr, default, entries) => {
+                let value = self.expr(b, expr)?;
+                let mut switch = Switch::new();
+                for (key, target) in entries {
+                    switch.set_entry(*key as u64 as u128, self.block(target)?);
+                }
+                switch.emit(b, value, self.block(default)?);
                 return Ok(true);
             }
             Stmt::Return(v0, nv) => {

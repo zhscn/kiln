@@ -23,6 +23,9 @@
   (apply #'change-class-by-rack instance new-class initargs))
 
 (defun change-class-by-rack (instance new-class &rest initargs)
+  (when (or (kiln.sys:%primop :structure-instance-p instance)
+            (eq (class-of new-class) (find-class 'structure-class)))
+    (error "CHANGE-CLASS does not accept structure objects or structure classes."))
   (unless (class-finalized-p new-class)
     (finalize-inheritance new-class))
   (let* ((old-class (class-of instance))

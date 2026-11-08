@@ -128,6 +128,7 @@ pub fn lisp_fields(h: u64) -> (usize, usize) {
         KIND_STRING | KIND_BIGNUM | KIND_DOUBLE => (8, 0),
         KIND_RATIO | KIND_COMPLEX => (8, 2),
         KIND_INSTANCE => (8, 1),
+        KIND_STRUCTURE_INSTANCE => (8, 1 + header_length(h)),
         // Skip the entry address: rack and installed function.
         KIND_FUNCALLABLE_INSTANCE => (16, 2),
         KIND_RACK => (8, header_length(h)),

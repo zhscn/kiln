@@ -143,6 +143,7 @@ else NIL."
 ;;; DEFAULT-DISCRIMINATING-FUNCTION updates them before dispatching again.
 (defun obsolete-instance-p (object)
   (and (instancep object)
+       (not (kiln.sys:%primop :structure-instance-p object))
        (not (eql (stamp object) (%slot (class-of object) '%unique-number)))))
 
 ;;; UPDATE-OBSOLETE-INSTANCE: redefinition.lisp.

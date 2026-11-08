@@ -1,6 +1,6 @@
 # CLOS
 
-CLOS 是 CLOS 模块的前半部分（`lisp/target/clos/`，加上 vendor 的 Clostrophilia）。实例、rack 和 funcallable instance 的表示见 [objects.md](objects.md)；对 Clostrophilia 的调研见 [clostrophilia.md](../research/clostrophilia.md)。
+CLOS 是 CLOS 模块的前半部分（`lisp/target/clos/`，加上 vendor 的 Clostrophilia）。实例、rack、funcallable instance 和结构对象的表示见 [objects.md](objects.md)；对 Clostrophilia 的调研见 [clostrophilia.md](../research/clostrophilia.md)。
 
 ## 决定
 
@@ -36,7 +36,7 @@ CLOS 是 CLOS 模块的前半部分（`lisp/target/clos/`，加上 vendor 的 Cl
    - **satiation**：early 判别函数还装着的时候，对每个泛函，按它的方法在每个特化位置可能遇到的类做笛卡尔积，对每组类调用 `compute-applicable-methods-using-classes`，有主方法的组合加进调用历史。组合数超过 `*satiation-limit*`（4000）的泛函跳过；
    - 先算好所有泛函的判别函数，再一次性装上。之后调用遇到新的类，走 `default-discriminating-function`；它自己调用的泛函对现有的元类都已经 satiated，所以不会无限递归；
    - `*switched-p*` 置真。此后 `make-instance` 走 `allocate-instance-using-class`（按需终结类，补上 default initargs）再 `initialize-instance`；`ensure-class` 是 `make-instance` 元类再登记 `find-class`；`ensure-generic-function` 通过 `find-method-combination` 取方法组合；`ensure-method` 是 `make-instance` 方法类再 `add-method`。
-7. **内建类**：`t`、`symbol`、`cons`、`fixnum`、`integer`、`character`、`simple-vector`、`simple-string` 等（元类 `built-in-class`）。`class-of` 对实例取 rack 里的类，其他对象按 tag 和 kind 对应到内建类。非实例对象的类和 stamp 在切换之后按类型下标缓存在 simple vector 里（内建类不会重定义）。
+7. **内建类**：`t`、`symbol`、`cons`、`fixnum`、`integer`、`character`、`simple-vector`、`simple-string` 等（元类 `built-in-class`）。`class-of` 对标准实例取 rack 里的类，对结构对象取 layout 里的类，其他对象按 tag 和 kind 对应到内建类。非实例对象的类和 stamp 在切换之后按类型下标缓存在 simple vector 里（内建类不会重定义）。
 
 运行期的 `make-symbol` 和 `gensym` 是 primop（在堆上分配 symbol），Clostrophilia 在运行期生成有效方法的形式时会用到。
 
@@ -77,7 +77,7 @@ AMOP 的方法函数接收参数列表和后续方法，有效方法接收一个
 - **调用历史**：从所有泛函（`*early-generic-functions*`，switchover 之后新建的也加进去）的调用历史里删掉提到这些类的项，并让判别函数失效。这些项的可用方法可能已经变了（优先级列表变了），而且按旧 stamp 建的自动机只会匹配过时的实例。
 - **过时实例的更新**：判别函数的未命中路径发现过时实例时调用 `update-obsolete-instance`。实例的 rack 里还留着它创建时的槽列表，所以旧槽可以按旧位置读出。新建一个当前类的实例，同名的局部槽照搬，新类没有的局部槽把名字放进 discarded、值放进属性表，新增的局部槽放进 added；实例接管新实例的 rack（和 `change-class` 一样），然后调用 `update-instance-for-redefined-class`，默认方法用 added 调用 `shared-initialize`。
 - 还有 `find-method`、`make-instances-obsolete`、`slot-exists-p`。
-- **限制**：只在泛函分派时检查过时实例。`slot-value` 直接按实例自己的槽列表找位置，所以过时实例在下次分派之前，用 `slot-value` 读到的仍是旧布局（值是对的，只是还没有更新）。类名 `typep` 的调用点缓存以 stamp 为键，过时实例在更新之前，在已经见过它的调用点上得到的是旧类的结果（全局缓存在重定义时清空，没有这个问题）。泛函的重定义（`defgeneric` 改 lambda list 等）还没有做。重定义结构走同一条路，但结构的访问器是 inline 函数，已编译的调用者不会跟着变。
+- **限制**：只在泛函分派时检查过时实例。`slot-value` 直接按实例自己的槽列表找位置，所以过时实例在下次分派之前，用 `slot-value` 读到的仍是旧布局（值是对的，只是还没有更新）。类名 `typep` 的调用点缓存以 stamp 为键，过时实例在更新之前，在已经见过它的调用点上得到的是旧类的结果（全局缓存在重定义时清空，没有这个问题）。泛函的重定义（`defgeneric` 改 lambda list 等）还没有做。结构重定义创建新的类和 layout，旧实例保留旧类、stamp 和槽布局，不走过时实例更新。结构的访问器是 inline 函数，已编译的调用者不会跟着变。
 
 ## 实例
 
@@ -92,6 +92,12 @@ AMOP 的方法函数接收参数列表和后续方法，有效方法接收一个
 - `:allocation :class` 的槽一开始是未绑定的，initform 才起作用（上游一开始就绑定为 NIL，已打补丁）。
 - standard 方法组合不要求必须有主方法：只有辅助方法的有效方法，真正调用到主方法时才报错（Predicament 对 symbol 类型的 datum 只定义了 `:around` 方法）。
 - 调用带 `&key` 的方法时，上游在参数后追加 `:allow-other-keys t`，方法的 `&rest` 参数也看得到它。kiln 改为在方法 lambda 的 lambda list 里加 `&allow-other-keys`。
+
+## 结构对象
+
+`defstruct` 的构造器按已知槽数直接分配原生结构对象，槽按位置读写。每个结构类有一个不可变的 layout，保存类、stamp、有效槽列表、继承深度、祖先 layout 向量和槽数；实例的 `class-of` 和分派 stamp 来自它。访问器内联比较祖先向量，`:include` 的实例使用同样的快速路径。
+
+`slot-value`、`slot-boundp`、`slot-makunbound` 通过 layout 的有效槽列表找到位置，再直接访问实例。`copy-structure` 保留 layout，逐字浅复制槽，包括未绑定标记。`equalp` 对相同 layout 的结构逐槽递归比较。共享初始化确认 layout 中已有的槽列表，不能改写 layout；`change-class` 拒绝结构实例和结构类。
 
 ## 类名的 `typep`
 
