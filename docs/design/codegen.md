@@ -96,6 +96,7 @@ JIT 不写这些表，编译完直接用绝对地址注册。调用点表、栈�
 - 编译器把模块的顶层形式每 16 个分成一块（`*toplevel-chunk-size*`），各块编成单独的函数，由 init 函数依次调用。寄存器分配对函数大小是超线性的，整个模块的顶层形式放在一个函数里会很慢。
 - kiln-cg 先串行构造各函数的 CLIF（声明函数引用需要 `&mut Module`），再在所有核上并行生成机器码（`KILN_CG_THREADS` 可改），最后按顺序用 `define_function_bytes` 定义，调用点表和栈图照旧从编译结果里取。JIT 和目标文件两条路径都适用。处理小模块时不开线程，ISA 也只建一次。
 - dev profile 下 kiln-cg、kiln-rt 和依赖库（Cranelift、MMTk）都用 opt-level 2；debug 断言对 kiln 自己的 crate 保持打开，对 MMTk 关掉（它的断言检查每次 side metadata 访问，GC 慢很多）。
+- **写出 KIR 文本**：在 kiln 上，编译器把模块的 KIR 逐个形式交给运行时的 `kiln_rt_write_kir`（`rust/kiln-rt/src/kirtext.rs`，经 `kiln.sys::%write-kir`），由它直接遍历列表结构、写到文件描述符；宿主（SBCL）仍用 `lisp/kir.lisp` 的 `out-kir`。两边的输出必须逐字节相同，自举时比较。
 - 环境变量：`KILN_VERIFY=1` 打开 Cranelift 的 IR verifier（默认关闭）；`KILN_CG_OPT` 设定 Cranelift 的 opt_level；`KILN_TIME=1` 打印各阶段耗时；`KILN_PERF_MAP=1` 让 JIT 写出 perf map。
 
 ## 确定性

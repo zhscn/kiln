@@ -33,6 +33,24 @@
                                   (kiln.sys:%primop :fd-write (descriptor stream)
                                                     (file-buffer stream) written end))))))))
 
+;;; The compiler writes its KIR files form by form: the runtime prints a
+;;; form straight to the file (kiln_rt_write_kir), after the buffered
+;;; output, instead of one character at a time through the stream. NIL if
+;;; STREAM is not a kiln file stream writing UTF-8; the caller prints the
+;;; form itself then. The output cursor is not updated (nothing reads the
+;;; column of a KIR file).
+(defun kiln.sys::%write-kir (form stream)
+  (when (and (typep stream 'kiln-file-stream)
+             (typep (octet-transcoder stream) 'utf-8-transcoder))
+    (when (< (in-start stream) (in-end stream))
+      (discard-file-input stream))
+    (flush-file-buffer stream)
+    (let ((result (kiln.sys:%primop :write-kir form (descriptor stream))))
+      (when (eql result -1000)
+        (error "~S is not a KIR form." form))
+      (check-sys stream result))
+    t))
+
 (defun discard-file-input (stream)
   "Moves the file position back over the input read ahead."
   (let ((ahead (- (in-end stream) (in-start stream))))

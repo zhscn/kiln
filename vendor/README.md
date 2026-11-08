@@ -196,6 +196,10 @@ functions); under `#+kiln`:
   `unuse-package` (upstream: `unuse-pacakge`).
 - `import` gives a symbol without a home package the package as its home.
 - `unintern` returns true.
+- `map-symbols` keeps the names already visited in an `equal` hash
+  table instead of a list searched for every inherited symbol (quadratic;
+  5% of kiln compiling itself, which maps every package's symbols for each
+  module).
 
 ## ctype patches
 

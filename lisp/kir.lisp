@@ -240,6 +240,7 @@ entry block current. Unterminated blocks end with a trap."
      (out-char #\)))))
 
 (defun print-kir (x stream)
+  #+kiln (when (kiln.sys::%write-kir x stream) (return-from print-kir x))
   (let ((*out* (or *spare-out* (make-string 256))) (*fill* 0))
     (out-kir x)
     (write-string *out* stream :end *fill*)

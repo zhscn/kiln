@@ -904,6 +904,13 @@ and slots), zero-filled."
   (let ((r (new-var)))
     (emit `(:call-rt ,(rt-sys) (,r) (:ctx ,op ,a ,b ,c) :nil))
     r))
+;;; Writes the text of the KIR form FORM to the file descriptor FD
+;;; (kirtext.rs, kiln_rt_write_kir): the bytes written, minus errno, or
+;;; -1000 if FORM is not KIR.
+(define-primop :write-kir (form fd)
+  (let ((r (new-var)))
+    (emit `(:call-rt ,(rt-write-kir) (,r) (:ctx ,form ,fd) :nil))
+    r))
 ;;; Compiles the KIR module in the string TEXT into the running image, its
 ;;; literal words filled from the simple vector LITERALS; the module's init
 ;;; function object, not yet called, or NIL if kiln-cg failed
