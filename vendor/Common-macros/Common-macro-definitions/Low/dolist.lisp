@@ -14,6 +14,25 @@
 ;;; compatible with the declarations.  For that reason, we choose to
 ;;; bind it.
 
+(defun dolist-result-declarations (variable declarations)
+  ;; The final NIL binding retains non-type declarations and free types.
+  (mapcar
+   (lambda (declaration)
+     `(declare
+       ,@(loop for specifier in (rest declaration)
+               for identifier = (first specifier)
+               for remaining = (remove variable (if (eq identifier 'type)
+                                                    (cddr specifier)
+                                                    (rest specifier)))
+               if (member identifier '(special dynamic-extent ignore ignorable
+                                       optimize ftype inline notinline declaration))
+                 collect specifier
+               else when remaining
+                 collect (if (eq identifier 'type)
+                             `(type ,(second specifier) ,@remaining)
+                             `(,identifier ,@remaining)))))
+   declarations))
+
 (defmacro dolist ((var list-form &optional result-form) &body body)
   ;; Do some syntax checking.
   (check-variable-name var)
@@ -23,8 +42,8 @@
     (let ((start-tag (gensym))
           (end-tag (gensym))
           (list-var (gensym)))
-      `(let ((,list-var ,list-form))
-         (block nil
+      `(block nil
+         (let ((,list-var ,list-form))
            (tagbody
               ,start-tag
               (when (endp ,list-var)
@@ -36,5 +55,6 @@
               (go ,start-tag)
               ,end-tag)
            (let ((,var nil))
+             ,@(dolist-result-declarations var declarations)
              (declare (ignorable ,var))
              ,result-form))))))

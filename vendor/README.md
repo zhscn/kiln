@@ -400,6 +400,10 @@ Under `#+kiln`:
 
 ## Common-macros patches
 
+- DOLIST and DOTIMES include their initializer in the implicit NIL block.
+  DOLIST retains declarations in its result form, excluding type
+  constraints on the iteration variable's final NIL binding.
+
 - ETYPECASE reports the union of its clause types as the expected type,
   rather than a MEMBER type containing their names.
 

@@ -13,11 +13,11 @@
     (let ((start-tag (gensym))
           (end-tag (gensym))
           (count-var (gensym)))
-      `(let ((,count-var ,count-form)
-             (,var 0))
-         (declare (type unsigned-byte ,var))
-         ,@declarations
-         (block nil
+      `(block nil
+         (let ((,count-var ,count-form)
+               (,var 0))
+           (declare (type unsigned-byte ,var))
+           ,@declarations
            (tagbody
               ,start-tag
               (when (>= ,var ,count-var)
