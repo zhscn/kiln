@@ -286,7 +286,8 @@ any longer."
          (if (and (stringp object) (= (length object) 1))
              (schar object 0)
              (char (symbol-name object) 0)))
-        ((member type '(float single-float short-float)) (float object))
+        ((eq type 'float) (float object))
+        ((member type '(single-float short-float)) (float object 1.0))
         ((member type '(double-float long-float)) (float object 1.0d0))
         ((member (if (consp type) (car type) type)
                  '(cons null vector simple-vector array simple-array string simple-string

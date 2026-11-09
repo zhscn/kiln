@@ -345,6 +345,9 @@ Under `#+kiln`:
 
 ## Common-macros patches
 
+- `incf` and `decf` evaluate the delta after the place's subforms and
+  before reading the place, preserving generalized-reference evaluation order.
+
 - `handler-case` accepts an ordinary lambda list in its `:no-error`
   clause, while condition clauses retain their zero-or-one-variable rule.
 

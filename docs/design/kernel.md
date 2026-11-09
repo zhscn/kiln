@@ -31,6 +31,8 @@ kernel 先给出简单的版本，后面的模块替换或扩充。钩子是 `ki
 
 ## 数
 
+算术参数的 `number` 检查与实数运算的 `real` 检查分开。单参数 `+`、`*`、`=`、`/=` 接受复数，单参数序比较和 `max`、`min` 仍要求实数。一元负号有独立的降级路径：fixnum 直接取负，溢出和其他数交给 kernel；浮点取负保留有符号零，复数分别对实部和虚部取负。 实数与复数的加法、乘法保留未参与运算的虚部或直接按实数缩放，避免多余的浮点零运算改变符号。`coerce` 到 `single-float` 或 `short-float` 使用单精度原型，`float` 则保留已有的浮点格式。
+
 - **运算在 Rust 里**：`kiln_rt_integer_op(ctx, op, a, b)`（`rust/kiln-rt/src/bignum.rs`，num-bigint）实现整数的加减乘、四种除法（商作为返回值，余数在 `ctx.values[0]`）、比较、位运算、`ash`、`gcd`、`expt`、`integer-length`。`kiln_rt_number_op`（`number.rs`，num-bigint 和 num-rational）处理全部实数的四则、四种除法（商是整数，余数和参数同类型）、比较、`eql`、转成浮点、`rational`、`sqrt`、`exp`、`log`、三角函数、`atan` 的两参数形式、`expt`。
 - runtime 先把参数读成 BigInt 再分配结果，所以分配时的 GC 不影响参数；结果有多个堆对象时（ratio 的分子分母、除法的余数）先分配的用 `values_live` 登记为 root。
 - **快路径和慢路径**：编译器对 `+ - *`、比较、除法、`ash`、`logand` 等内联 fixnum 运算。参数不是 fixnum 或者溢出时，调用 kernel 的 `two-arg-+`、`two-arg-<` 等函数，由它们按类型分派。`eql` 对不是同一对象的数调用 `eql-slow`。

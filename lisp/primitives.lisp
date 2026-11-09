@@ -67,12 +67,12 @@
     (start-block done)
     r))
 
-(defun emit-check-number (a)
+(defun emit-check-number (a &optional (checker 'kiln.kernel::check-number))
   "Signals an error unless A is a number (via the slow path)."
   (let ((slow (new-block)) (ok (new-block)))
     (br `(:and ,a 1) slow ok)
     (start-block slow)
-    (emit-slow-call 'kiln.kernel::check-number a)
+    (emit-slow-call checker a)
     (jump ok)
     (start-block ok)))
 
@@ -85,9 +85,22 @@
 
 (define-nary-primitive + (vals) (fold-arith '+ 0 vals))
 (define-nary-primitive * (vals) (fold-arith '* (ash 1 +fixnum-shift+) vals))
+(defun emit-negate (n)
+  (let ((r (new-var)) (overflow (new-var :raw))
+        (fast (new-block)) (slow (new-block)) (done (new-block)))
+    (br `(:and ,n 1) slow fast)
+    (start-block fast)
+    (emit `(:sub-ovf ,r ,overflow 0 ,n))
+    (br overflow slow done)
+    (start-block slow)
+    (emit `(:set ,r ,(emit-slow-call 'kiln.kernel::negate-number n)))
+    (jump done)
+    (start-block done)
+    r))
+
 (define-nary-primitive - (vals)
   (cond ((null vals) (fail "- needs at least one argument"))
-        ((null (rest vals)) (emit-arith '- 0 (first vals)))
+        ((null (rest vals)) (emit-negate (first vals)))
         (t (reduce (lambda (a b) (emit-arith '- a b)) vals))))
 ;;; LOGAND, LOGIOR, LOGXOR: fixnums open-coded (tagged fixnums combine
 ;;; bitwise as they are); other integers, and errors, by the kernel's
@@ -145,7 +158,9 @@
 are compared (no short circuit), which also checks every argument."
   (when (null vals) (fail "comparison needs at least one argument"))
   (if (null (rest vals))
-      (progn (emit-check-number (first vals)) (t-value))
+      (progn (emit-check-number (first vals)
+                               (if (eq op :eq) 'kiln.kernel::check-number
+                                   'kiln.kernel::check-real)) (t-value))
       (let ((all nil))
         (loop for (a b) on vals
               while b
