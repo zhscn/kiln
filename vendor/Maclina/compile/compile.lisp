@@ -1754,7 +1754,8 @@
 
 (defmethod compile-special ((op (eql 'catch)) form env context)
   (destructure-syntax (catch tag . body) (form :source (context-source context))
-    (let ((target (make-label)))
+    (let ((target (make-label))
+          (normal (make-label)))
       (compile-form tag env (new-context context :receiving 1))
       (emit-catch context target)
       (let ((start (make-label)))
@@ -1765,7 +1766,13 @@
                        context))
       (compile-progn body env (new-context context :dynenv '(:catch)))
       (assemble context m:catch-close)
-      (emit-label context target))))
+      (when (eql (context-receiving context) 1)
+        (emit-jump context normal))
+      (emit-label context target)
+      ;; THROW transfers values through the register, not the value stack.
+      (when (eql (context-receiving context) 1)
+        (assemble context m:push)
+        (emit-label context normal)))))
 
 (defmethod compile-special ((op (eql 'throw)) form env context)
   (destructure-syntax (throw tag result) (form :source (context-source context))
@@ -1930,6 +1937,7 @@
 ;;; and otherwise fall back to a more complicated etypecase.
 ;;; With runtime support we could expand into (coerce-fdesignator form).
 (defun compile-fdesignator (form env context)
+  (setf context (new-context context :receiving 1))
   (typecase form
     ((cons (eql function) (cons t null)) ; #'foo or #'(lambda ...)
      (compile-function-lookup (second form) env context))

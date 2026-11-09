@@ -59,7 +59,7 @@
   (initial cl:*debug-io* +terminal-io+))
 
 (defmethod whitespace-char-p ((client kiln-client) ch)
-  (and (member ch '(#\Tab #\Newline #\Linefeed #\Page #\Return #\Space)) t))
+  (eq (eclector.readtable:syntax-type cl:*readtable* ch) :whitespace))
 
 (define-interface :client-class kiln-client :client-form *client* :intrinsic t)
 

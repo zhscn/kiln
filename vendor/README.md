@@ -510,6 +510,11 @@ Under `#+kiln`:
 
 ## Maclina patches
 
+- CATCH transfers a thrown value to the value stack when its caller
+  receives one value, while normal completion keeps its existing stack
+  result. MULTIPLE-VALUE-CALL always pushes its function designator,
+  including when the call's results are discarded.
+
 - SYMBOL-MACROLET rejects constant and globally special names, and SPECIAL
   declarations for its own bindings. Inner free SPECIAL declarations and
   new variable bindings retain their lexical shadowing behavior.

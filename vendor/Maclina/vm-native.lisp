@@ -317,7 +317,8 @@
                                        (setf target ip normal t)))))
                         ;; A native THROW carries values outside the VM register.
                         (unless normal (setf (vm-values vm) caught)))
-                      (setf ip target sp old-sp bp old-bp)))
+                      (unless normal (setf sp old-sp))
+                      (setf ip target bp old-bp)))
                    ((#.m:catch-16)
                     (let ((target (+ ip (next-code-signed-16)))
                           (tag (spop))
@@ -330,7 +331,8 @@
                                        (vm bytecode closure constants frame-size)
                                        (setf target ip normal t)))))
                         (unless normal (setf (vm-values vm) caught)))
-                      (setf ip target sp old-sp bp old-bp)))
+                      (unless normal (setf sp old-sp))
+                      (setf ip target bp old-bp)))
                    ;; kiln: the values (in the VM's register) are thrown too, for a
                    ;; CATCH that is not the VM's (one in native code).
                    ((#.m:throw) (throw (spop) (values-list (vm-values vm))))
