@@ -49,11 +49,21 @@
 (define-condition common-macro-definitions::ctypecase-type-error (type-error) ())
 (define-condition common-macro-definitions::both-test-and-test-not-given (error) ())
 
+(defun common-macro-definitions::store-value-read-evaluated-form ()
+  (format *query-io* "~&;; Type a form to be evaluated:~%")
+  (list (eval (read *query-io*))))
+
 (defun common-macro-definitions::check-type-error (place value type type-string)
-  (error 'simple-type-error
-         :datum value
-         :expected-type type
-         :format-control (if type-string
-                             "The value of ~S is ~S, which is not ~A."
-                             "The value of ~S is ~S, which is not of type ~S.")
-         :format-arguments (list place value (or type-string type))))
+  (restart-case
+      (error 'simple-type-error
+             :datum value
+             :expected-type type
+             :format-control (if type-string
+                                 "The value of ~S is ~S, which is not ~A."
+                                 "The value of ~S is ~S, which is not of type ~S.")
+             :format-arguments (list place value (or type-string type)))
+    (store-value (new-value)
+      :report (lambda (stream)
+                (format stream "Supply a new value of ~S." place))
+      :interactive common-macro-definitions::store-value-read-evaluated-form
+      new-value)))

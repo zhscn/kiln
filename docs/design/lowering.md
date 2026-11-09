@@ -29,7 +29,7 @@
 
 ## 多值
 
-`lower-mv` 返回主值的操作数和值的个数（整数或 raw 变量）。会把值传递出去的节点（`progn`、`if`、`let`、局部函数、`block`、`catch`、`unwind-protect`、绑定、函数调用等）在 `ir-lower-mv` 里传出全部值，`ir-lower` 只取主值。函数体用 `lower-mv`，所以函数返回它最后一个形式的全部值。`multiple-value-call` 把所有值收集成一个列表，再按 `apply` 的方式调用。保留和传递多值的约定见 [abi.md](abi.md)。
+`lower-mv` 返回主值的操作数和值的个数（整数或 raw 变量）。会把值传递出去的节点（`progn`、`if`、`let`、局部函数、`block`、`catch`、`unwind-protect`、绑定、函数调用等）在 `ir-lower-mv` 里传出全部值，`ir-lower` 只取主值。函数体用 `lower-mv`，所以函数返回它最后一个形式的全部值。`multiple-value-bind` 展开出的 `(multiple-value-call (lambda (&optional ... &rest g) (declare (ignore g)) ...) form)` 由 IR 转换识别并归约为多值 `let` 节点（`ir-node-d` 为真），降级时直接按返回值个数用 `:select` 从主值和 `ctx.values` 取出绑定，不生成闭包，也不会让主体里的赋值或 `return-from`/`go` 变成跨函数的单元或非局部退出。`multiple-value-call` 在被调函数是 `#'list`（即 `multiple-value-list` 的展开）时直接把推入的值 `nreverse` 后返回，其余情况收集成列表再按 `apply` 调用。保留和传递多值的约定见 [abi.md](abi.md)。
 
 ## 分支
 
@@ -66,9 +66,11 @@
 
 在 `lower-global-call` 里：
 
+- `append`：编译期合并相邻的 `list` 调用、去掉空列表和 `list` 后的尾随 `nil`（反引号展开大量产生这种形状），首参是 `list` 时改写成 `list*`，只剩两个参数时调用 `kiln.kernel::append-2`。
 - `(eql x 常量)`：常量不是堆上的数时按 `eq` 降级。`case` 展开成这样的比较。
 - 只有一个下标的 `aref` 和 `(setf aref)`：simple vector 就地读写，其他数组调用 kernel 的 `%aref-1`、`%set-aref-1`。
-- `typep` 的类型是编译期常量的原子类型时，直接换成对应的谓词调用（`*type-predicates*`），`typecase` 因此也不慢。类型是不在 CL 和 KEYWORD 包里的常量符号时，改成调用 `kiln.kernel::%typep-cached`，每个调用点带一个缓存（数据段里的一个静态 cons，`lower-cached-typep`）：car 是全局 `typep` 表的项，cdr 是填入时的类型假设版本，版本变了就重新查（[clos.md](clos.md) 的“类名的 `typep`”）。
+- `typep` 的类型是编译期常量时：原子类型直接换成对应的谓词调用（`*type-predicates*`）；fixnum 范围内的整数区间（`fixnum`、`bit`、`integer`、`mod`、`unsigned-byte`、`signed-byte`）、`t`、`nil`、`boolean`、`(eql c)`、`(member ...)`（至多 8 项）以及由它们组成的 `not`、`or`、`and` 直接在调用点展开成比较或分支（`emit-inline-typep`）。其他含不在 CL 和 KEYWORD 包里的常量符号的类型，改成调用 `kiln.kernel::%typep-cached`，每个调用点带一个缓存（数据段里的一个静态 cons，`lower-cached-typep`）：car 是全局 `typep` 表的项，cdr 是填入时的类型假设版本，版本变了就重新查（[clos.md](clos.md) 的“类名的 `typep`”）。
+- `member` 和 `assoc` 不带关键字参数，或只带常量的 `:test #'eq` / `'eq` / `#'eql` / `'eql` 时，改成调用两个参数的 `%member-eq`、`%member-eql`、`%assoc-eq`、`%assoc-eql`。
 - `slot-value` 和 `(setf (slot-value ...))` 的槽名是编译期常量的符号时，改成调用 `kiln.kernel::%slot-value-cached` / `%set-slot-value-cached`，每个调用点带一个位置缓存（数据段里的一个静态 cons：对象的 stamp 和槽的位置；位置在缓存里按 stamp 复核，见 [specialization.md](specialization.md) 的“调用点特化”）。
 - 参数个数超过 `call-arguments-limit` 的 `list`、`list*`、`vector` 调用改写成分块的 `list*` 嵌套（`vector` 再加一次 `coerce`），`nconc`、`append` 改写成嵌套调用。其他函数超过时报出函数名。
 
@@ -78,6 +80,6 @@
 
 ## 还没有的优化
 
-见 [roadmap.md](../roadmap.md) 的“性能”：`&optional`、`&key` 函数的 inline、编译器宏和调用点上的变换（`member`、`assoc`、`find` 等带常量 `:test`）、不逃逸局部函数的 lambda lifting、逃逸分析和拆箱、`dynamic-extent`。kiln 不做常量传播，`(funcall test ...)` 仍是间接调用。
+见 [roadmap.md](../roadmap.md) 的“性能”：编译器宏和更多调用点上的变换（`find`、`position` 等）、不逃逸局部函数的 lambda lifting、逃逸分析和拆箱、`dynamic-extent`。kiln 不做常量传播，`(funcall test ...)` 仍是间接调用。
 
 常量类名及 initarg 名的 `make-instance` 调用通过带静态 GC root 的调用点描述符选择构造器，再传递求值后的值；细节见 [specialization.md](specialization.md)。泛函调用仍是普通的函数格调用（调用点缓存试过，比判别函数慢）。

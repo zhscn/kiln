@@ -175,6 +175,12 @@ kiln 编译自己的五个模块（一个阶段，见 [bootstrap.md](../design/b
 
 然后是函数入口：poll 请求同时把 `stack_limit` 抬到 `isize::MAX`，入口只比较一次帧指针；参数全在寄存器里的函数在读参数之前检查，慢路径尾调用共享的 `kiln_poll_retry`（轮询后再进入原函数），所以命中路径上没有调用，参数不再为 safepoint 存进栈槽。`bench/compare.lisp`（各三次取中位数）：泛函单态 7.3 → **6.9 ns**，`call-next-method` 18.5 → 17.8，`fib 20` 约 58.5 → **51.4 µs**，`format nil ~a` 7.9 → 7.4 µs，`read-from-string` 33.3 → 32.4 µs。自编译一个阶段 18.7 秒（持平）。
 
+接着修掉 `underlying-file-stream` 的包名错误（`files.lisp` 在 `cyclosis` 包里，而 `cyclosis:synonym-stream-symbol` 遮蔽了 `cl:synonym-stream-symbol` 并期待 `client` 参数，导致 `with-open-file` 传入的文件流未命中 `kiln_rt_write_kir` 快路径，回退到 Lisp 逐字符输出 KIR），并做几项前端和宏展开消分配：
+- `multiple-value-bind` 的展开直接归约为多值 `let` 节点，按返回值个数从 `v0` 和 `ctx.values` 取值，不再生成续延闭包、把被赋值外层变量放进堆单元、或把外层 `return-from`/`go` 变成非局部退出；`(multiple-value-call #'list ...)`（`multiple-value-list`）直接返回 `nreverse` 列表，不再经 `apply` 拆回再建表；常量小下标 `nth-value` 展开成 `values` 或 `multiple-value-bind`。
+- `check-type` 的 `store-value` restart 移进 `check-type-error`，命中路径不再建闭包、变量单元和退出令牌（原来 `read-char` 和 `peek-char` 每次调用都分配它们，占自举分配量的 10%）；`handler-case` 空参数列表的子句不再给外层条件变量赋值。
+- 编译器里频繁调用的 `ir-parts`、内联参数校验和复合 `typep` 检查用无分配的 `ir-proper-list-p` 代替 `(handler-case (list-length ...) (type-error () nil))`；没有 `optimize` 声明的函数复用外层的 `optimize-description`；`emit` 用 `case` 判断终结指令（原来每次调用读 `*terminators*` 并调 `member`），`bname` 声明为内联。
+- 结果：自编译一个阶段从 18.7 秒降到 **7.0–7.2 秒**（Lisp 时间 **6.5 秒**：kernel 0.3、CLOS 3.7、frontend 0.1、eval 1.2、compiler 1.2 秒），整个阶段分配总量从超过 8 GB 降到 **3,454 MiB**，在 8 GiB 自举堆下 **0 次 GC**，峰值 RSS 从 8.7 GB 降到 **3.5 GB**。同一份代码上 SBCL 编五个模块 **4.63 秒**（kernel 0.27、CLOS 2.80、frontend 0.10、eval 0.61、compiler 0.85 秒），kiln 是 SBCL 的 **1.4 倍**。`bench/compare.lisp`（AOT，三次取中位数）：`read-from-string` 32.4 → **20.3 µs**，`format nil ~a` 7.4 → **5.6 µs**，`intern` 227 → **112 ns**，`gethash equal` 85 → **50 ns**，`(setf gethash) eq` ~60 → **17.8 ns**，`handler-case` 73 → **39.9 ns**，`make-instance` 359 → **305 ns**。
+
 845 秒那次的 profile（按模块统计自身时间）：
 
 | 部分 | 占比 |

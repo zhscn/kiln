@@ -38,15 +38,19 @@
   (and (kiln.sys:%primop :structure-instance-p object)
        (let ((actual (kiln.sys:%primop :structure-layout object)))
          (or (eq actual layout)
-             (let ((depth (svref layout 3)))
-               (and (<= depth (svref actual 3))
-                    (eq (svref (svref actual 4) depth) layout)))))))
+             (let ((depth (kiln.sys:%primop :svref-unchecked layout 3)))
+               (and (kiln.sys:%primop :fixnum-le
+                                      depth (kiln.sys:%primop :svref-unchecked actual 3))
+                    (eq (kiln.sys:%primop :svref-unchecked
+                                          (kiln.sys:%primop :svref-unchecked actual 4)
+                                          depth)
+                        layout)))))))
 
 (defun copy-structure (structure)
   (unless (kiln.sys:%primop :structure-instance-p structure)
     (error 'type-error :datum structure :expected-type 'structure-object))
   (let* ((layout (kiln.sys:%primop :structure-layout structure))
-         (size (svref layout 5))
+         (size (kiln.sys:%primop :svref-unchecked layout 5))
          (copy (kiln.sys:%primop :allocate-structure layout size)))
     (dotimes (location size copy)
       (kiln.sys:%primop :set-structure-slot copy location
@@ -55,12 +59,16 @@
 (defmethod allocate-instance ((class structure-class) &rest initargs)
   (declare (ignore initargs))
   (let* ((layout (ensure-structure-layout class))
-         (size (svref layout 5))
+         (size (kiln.sys:%primop :svref-unchecked layout 5))
          (instance (kiln.sys:%primop :allocate-structure layout size)))
     (dotimes (i size instance)
       (kiln.sys:%primop :set-structure-slot instance i +unbound-slot-value+))))
 
-(declaim (inline kiln.sys::%structure-ref kiln.sys::%structure-set))
+(declaim (inline kiln.sys::%structure-typep
+                 kiln.sys::%structure-ref kiln.sys::%structure-set))
+(defun kiln.sys::%structure-typep (object layout)
+  (structure-layout-typep object layout))
+
 (defun kiln.sys::%structure-ref (object layout name location)
   (if (structure-layout-typep object layout)
       (kiln.sys:%primop :structure-slot object location)

@@ -41,32 +41,44 @@
 (defconstant +hash-mask+ #x3fffffffffffffff)
 
 (defun kiln-eq-hash (object)
-  (logand (kiln.sys:%primop :identity-hash object) +hash-mask+))
+  (kiln.sys:%primop :identity-hash object))
 
 (defun kiln-eql-hash (object)
-  (cond ((kiln.sys:%primop :fixnump object) (logand object +hash-mask+))
-        ((characterp object) (char-code object))
+  (cond ((kiln.sys:%primop :fixnump object)
+         (kiln.sys:%primop :fixnum-logand object +hash-mask+))
+        ((characterp object) (kiln.sys:%primop :char-code object))
         ((numberp object) (slow-eql-hash object))
-        (t (kiln-eq-hash object))))
+        (t (kiln.sys:%primop :identity-hash object))))
 
 (defun equal-hash-1 (object depth)
   (cond ((consp object)
-         (if (> depth 8)
+         (if (kiln.sys:%primop :fixnum-le 9 depth)
              1
-             (logand (kiln.sys:%primop :hash-mix
-                                       (equal-hash-1 (car object) (+ depth 1))
-                                       (equal-hash-1 (cdr object) (+ depth 1)))
-                     +hash-mask+)))
+             (kiln.sys:%primop :fixnum-logand
+                               (kiln.sys:%primop :hash-mix
+                                                 (equal-hash-1 (car object)
+                                                               (kiln.sys:%primop :fixnum+ depth 1))
+                                                 (equal-hash-1 (cdr object)
+                                                               (kiln.sys:%primop :fixnum+ depth 1)))
+                               +hash-mask+)))
+        ((kiln.sys:%primop :stringp object)
+         (let* ((len (kiln.sys:%primop :length object))
+                (limit (if (kiln.sys:%primop :fixnum-le len 64) len 64))
+                (hash len))
+           (dotimes (i limit (kiln.sys:%primop :fixnum-logand hash +hash-mask+))
+             (setf hash (kiln.sys:%primop :hash-mix hash
+                                          (kiln.sys:%primop :char-code
+                                                            (kiln.sys:%primop :schar object i)))))))
         ((stringp object)
          (let ((hash (length object)))
-           (dotimes (i (min (length object) 64) (logand hash +hash-mask+))
+           (dotimes (i (min (length object) 64) (kiln.sys:%primop :fixnum-logand hash +hash-mask+))
              (setf hash (kiln.sys:%primop :hash-mix hash (char-code (char object i)))))))
         ((or (symbolp object) (numberp object) (characterp object))
          (kiln-eql-hash object))
         ;; Compared by contents: bit vectors and pathnames.
         ((or (bit-vector-p object) (typep object 'pathname))
          (slow-equal-hash object))
-        (t (kiln-eq-hash object))))
+        (t (kiln.sys:%primop :identity-hash object))))
 
 (defun kiln-equal-hash (object)
   (equal-hash-1 object 0))
@@ -97,10 +109,33 @@
       (remhash key hash-table)))
 
 (defun cl:make-hash-table (&rest initargs
-                           &key test size rehash-size rehash-threshold hash-function
+                           &key (test 'eql) (size 16 size-p)
+                                (rehash-size 1.5 rehash-size-p)
+                                (rehash-threshold 0.8 rehash-threshold-p)
+                                (hash-function nil hash-function-p)
                            &allow-other-keys)
-  (declare (ignore test size rehash-size rehash-threshold hash-function))
-  (apply #'make-hash-table *client* initargs))
+  (if (and (not hash-function-p)
+           (or (not size-p) (and (kiln.sys:%primop :fixnump size) (<= 0 size)))
+           (not rehash-size-p)
+           (not rehash-threshold-p))
+      (cond ((or (eq test 'eq) (eq test #'eq))
+             (salmagundi/bucket::make-bucket-hash-table
+              'eq size rehash-size rehash-threshold 'kiln-eq-hash
+              0 #'eq #'kiln-eq-hash))
+            ((or (eq test 'eql) (eq test #'eql))
+             (salmagundi/bucket::make-bucket-hash-table
+              'eql size rehash-size rehash-threshold 'kiln-eql-hash
+              1 #'eql #'kiln-eql-hash))
+            ((or (eq test 'equal) (eq test #'equal))
+             (salmagundi/bucket::make-bucket-hash-table
+              'equal size rehash-size rehash-threshold 'kiln-equal-hash
+              2 #'equal #'kiln-equal-hash))
+            ((or (eq test 'equalp) (eq test #'equalp))
+             (salmagundi/bucket::make-bucket-hash-table
+              'equalp size rehash-size rehash-threshold 'kiln-equalp-hash
+              3 #'equalp #'kiln-equalp-hash))
+            (t (apply #'make-hash-table *client* initargs)))
+      (apply #'make-hash-table *client* initargs)))
 
 (defmacro cl:with-hash-table-iterator ((name hash-table) &body body)
   (let ((iterator (gensym "ITERATOR")))

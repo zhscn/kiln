@@ -96,17 +96,18 @@ pub unsafe fn error_with(_ctx: *mut Context, code: u64, obj: u64) -> ! {
     error_exit(&msg)
 }
 
-/// Slow path of a poll point (C4). Clears the flag in M0.
+/// Slow path of a poll point (C4). `entry` is the function that
+/// `kiln_poll_retry` will re-enter, or 0 for an in-function poll.
 ///
 /// # Safety
 /// `ctx` must be valid.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn kiln_rt_poll(ctx: *mut Context, fp: usize) -> u64 {
+pub unsafe extern "C" fn kiln_rt_poll(ctx: *mut Context, entry: usize, fp: usize) -> u64 {
     unsafe {
         (*ctx).poll_flag = 0;
         (*ctx).stack_limit = (*ctx).stack_real_limit;
     }
-    crate::profile::poll(ctx, fp);
+    crate::profile::poll(ctx, entry, fp);
     // 1: the stack is exhausted; the caller signals it.
     unsafe { crate::stack::check_stack(&mut *ctx, fp) as u64 }
 }

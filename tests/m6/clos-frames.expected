@@ -4,7 +4,7 @@ FRAMES-B clos-frames.lisp (23 21)
   ((N . 10) (Z . 10))
 (METHOD FRAMES-GF (INTEGER)) clos-frames.lisp (30 11)
   ((X . 10))
-(LAMBDA :IN CLOSTROPHILIA::DEFAULT-DISCRIMINATING-FUNCTION) compute-discriminating-function.lisp (550 4)
+CLOSTROPHILIA::DEFAULT-DISCRIMINATING-FUNCTION compute-discriminating-function.lisp (507 0)
   NIL
 (10 (11 22) 10)
 

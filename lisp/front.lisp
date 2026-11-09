@@ -149,53 +149,147 @@ of local macros): an expansion can use the kernel's internals.")
         finally (return (values (reverse declarations) '()))))
 
 (defun tree-symbols (tree)
-  (let ((symbols '()) (seen (make-hash-table :test 'eq)))
-    (labels ((walk (x)
-               (cond ((symbolp x) (pushnew x symbols))
-                     ((atom x))
-                     ((gethash x seen))
-                     (t (setf (gethash x seen) t)
-                        (walk (car x)) (walk (cdr x))))))
-      (walk tree))
+  (let ((symbols '()) (seen nil))
+    (labels ((walk (x depth)
+               (cond ((and (symbolp x) (symbol-package x)
+                           (not (keywordp x)) (not (member x '(nil t))))
+                      (pushnew x symbols :test #'eq))
+                     ((or (atom x) (zerop depth)))
+                     ((and (< depth 99900)
+                           (let ((s (or seen (setf seen (make-hash-table :test 'eq)))))
+                             (or (gethash x s) (progn (setf (gethash x s) t) nil)))))
+                     (t (walk (car x) (1- depth))
+                        (walk (cdr x) (1- depth))))))
+      (walk tree 100000))
     symbols))
 
 (defun setf-function-name-p (name)
   (and (consp name) (eq (first name) 'setf) (consp (rest name))
        (symbolp (second name)) (null (cddr name))))
 
+(defun parse-inline-lambda-list (lambda-list)
+  "Parses LAMBDA-LIST for inlining. Returns (LIST REQUIRED OPTIONAL KEYS KEY-P)
+where REQUIRED is a list of symbols, OPTIONAL is a list of (VAR INITFORM),
+and KEYS is a list of (KEYWORD VAR INITFORM); or NIL if LAMBDA-LIST is not
+eligible for inlining."
+  (when (ir-proper-list-p lambda-list)
+    (let ((state :required) (required '()) (optional '()) (keys '()) (keyp nil))
+      (dolist (item lambda-list
+               (list (nreverse required) (nreverse optional) (nreverse keys) keyp))
+        (cond ((eq item '&optional)
+               (unless (eq state :required) (return nil))
+               (setf state :optional))
+              ((eq item '&key)
+               (unless (member state '(:required :optional)) (return nil))
+               (setf state :key keyp t))
+              ((member item lambda-list-keywords)
+               (return nil))
+              ((eq state :required)
+               (unless (and (symbolp item) item) (return nil))
+               (push item required))
+              ((eq state :optional)
+               (cond ((and (symbolp item) item)
+                      (push (list item nil) optional))
+                     ((and (consp item) (symbolp (first item)) (first item)
+                           (or (null (rest item))
+                               (and (consp (rest item)) (null (cddr item)))))
+                      (push (list (first item) (second item)) optional))
+                     (t (return nil))))
+              ((eq state :key)
+               (cond ((and (symbolp item) item)
+                      (push (list (intern (symbol-name item) '#:keyword) item nil) keys))
+                     ((and (consp item)
+                           (or (null (rest item))
+                               (and (consp (rest item)) (null (cddr item)))))
+                      (let ((head (first item)) (init (second item)))
+                        (cond ((and (symbolp head) head)
+                               (push (list (intern (symbol-name head) '#:keyword) head init) keys))
+                              ((and (consp head) (symbolp (first head)) (first head)
+                                    (consp (rest head)) (symbolp (second head)) (second head)
+                                    (null (cddr head)))
+                               (push (list (first head) (second head) init) keys))
+                              (t (return nil)))))
+                     (t (return nil)))))))))
+
+(defun inline-arguments-valid-p (parsed arguments)
+  (and (ir-proper-list-p arguments)
+       (destructuring-bind (required optional keys keyp) parsed
+         (let ((n (length arguments))
+               (nreq (length required))
+               (nopt (length optional)))
+           (and (>= n nreq)
+                (if (not keyp)
+                    (<= n (+ nreq nopt))
+                    (let ((rest (nthcdr (+ nreq nopt) arguments)))
+                      (and (evenp (length rest))
+                           (loop for (k nil) on rest by #'cddr
+                                 always (and (keywordp k)
+                                             (assoc k keys :test #'eq)))))))))))
+
 (defun note-inline-definition (form)
   "FORM is a top-level DEFUN: keep its body if its name is declared inline."
   (destructuring-bind (name lambda-list &rest body) (rest form)
-    (when (and (or (symbolp name) (setf-function-name-p name))
-               ;; Declared inline, or inline and defined before: the new
-               ;; definition replaces the expansion.
-               (let ((entry (gethash name *inline-functions*)))
-                 (or (eq entry :inline) (consp entry)))
-               (eq *environment* *toplevel-environment*)
-               (listp lambda-list)
-               (every #'symbolp lambda-list)
-               (notany (lambda (p) (member p lambda-list-keywords)) lambda-list))
-      (multiple-value-bind (declarations forms) (split-body body)
-        (when (consp (gethash name *inline-functions*))
-          (note-redefined :inline name))
-        (setf (gethash name *inline-functions*)
-              (list lambda-list declarations
-                    `(block ,(if (symbolp name) name (second name)) ,@forms)
-                    (tree-symbols body)))))))
+    (let ((parsed (and (or (symbolp name) (setf-function-name-p name))
+                       ;; Declared inline, or inline and defined before: the new
+                       ;; definition replaces the expansion.
+                       (let ((entry (gethash name *inline-functions*)))
+                         (or (eq entry :inline) (consp entry)))
+                       (eq *environment* *toplevel-environment*)
+                       (parse-inline-lambda-list lambda-list))))
+      (when parsed
+        (multiple-value-bind (declarations forms) (split-body body)
+          (when (consp (gethash name *inline-functions*))
+            (note-redefined :inline name))
+          (setf (gethash name *inline-functions*)
+                (list parsed declarations
+                      `(block ,(if (symbolp name) name (second name)) ,@forms)
+                      (tree-symbols (cons lambda-list body)))))))))
 
 (defun inline-call (form)
   "The function name and the argument forms of FORM, a call by name:
 (F ARG...), or (FUNCALL (FUNCTION (SETF F)) ARG...) as SETF of a place
 expands into; else NIL."
-  (cond ((and (consp form) (symbolp (first form)) (listp (rest form)))
-         (values (first form) (rest form)))
-        ((and (consp form) (eq (first form) 'funcall)
+  (cond ((and (consp form) (eq (first form) 'funcall)
               (consp (rest form)) (listp (cddr form))
               (consp (second form)) (eq (first (second form)) 'function)
               (consp (rest (second form))) (null (cddr (second form)))
               (setf-function-name-p (second (second form))))
          (values (second (second form)) (cddr form)))
+        ((and (consp form) (symbolp (first form)) (listp (rest form)))
+         (values (first form) (rest form)))
         (t nil)))
+
+(defun local-shadowed-p (client environment symbols)
+  "True if any symbol in SYMBOLS has a local function, local macro, or
+local symbol-macro binding in ENVIRONMENT."
+  (when symbols
+    (loop for env = environment then (ir-env-parent env)
+          while (ir-env-p env)
+          do (dolist (entry (ir-env-funcs env))
+               (when (and (symbolp (car entry))
+                          (member (car entry) symbols :test #'eq))
+                 (return-from local-shadowed-p t)))
+             (dolist (entry (ir-env-vars env))
+               (when (and (consp (cdr entry))
+                          (eq (cadr entry) :symbol-macro)
+                          (member (car entry) symbols :test #'eq))
+                 (return-from local-shadowed-p t))))
+    (let ((base (if (ir-env-p environment) (ir-env-base environment) environment))
+          (*dependencies* nil))
+      (if (typep base 'trucler-reference:environment)
+          (or (loop for d in (trucler-reference::function-description base)
+                    thereis (and (typep d '(or trucler:local-function-description
+                                              trucler:local-macro-description))
+                                 (member (trucler:name d) symbols :test #'eq)))
+              (loop for d in (trucler-reference::variable-description base)
+                    thereis (and (typep d 'trucler:local-symbol-macro-description)
+                                 (member (trucler:name d) symbols :test #'eq))))
+          (loop for symbol in symbols
+                thereis (or (typep (trucler:describe-function client base symbol)
+                                   '(or trucler:local-function-description
+                                     trucler:local-macro-description))
+                            (typep (trucler:describe-variable client base symbol)
+                                   'trucler:local-symbol-macro-description)))))))
 
 (defun inline-call-p (client environment form)
   (multiple-value-bind (name arguments) (inline-call form)
@@ -207,8 +301,7 @@ expands into; else NIL."
               (not (member name *inline-expanding* :test #'equal))
               (not (member name *local-notinline* :test #'equal))
               (< (length *inline-expanding*) 8)
-              (handler-case (= (length arguments) (length (first entry)))
-                (error () nil))
+              (inline-arguments-valid-p (first entry) arguments)
               (let ((description (trucler:describe-function client environment name)))
                 ;; NIL: a function unknown to the compile-time
                 ;; environment (DEFUN does not define it at compile time).
@@ -216,24 +309,53 @@ expands into; else NIL."
                     (and (typep description 'trucler:global-function-description)
                          (not (eq (ignore-errors (trucler:inline description))
                                   'notinline)))))
-              ;; Probing the names of the body is not a dependency.
-              (let ((*dependencies* nil))
-               (notany (lambda (symbol)
-                        (or (typep (trucler:describe-function client environment symbol)
-                                   '(or trucler:local-function-description
-                                     trucler:local-macro-description))
-                            (typep (trucler:describe-variable client environment symbol)
-                                   'trucler:local-symbol-macro-description)))
-                      (fourth entry))))))))
+              (not (local-shadowed-p client environment (fourth entry))))))))
 
 (defun inline-expansion (form)
   (multiple-value-bind (name arguments) (inline-call form)
-    (destructuring-bind (lambda-list declarations body &rest more)
+    (destructuring-bind (parsed declarations body &rest more)
         (gethash name *inline-functions*)
       (declare (ignore more))
-      `(let ,(mapcar #'list lambda-list arguments)
-         ,@declarations
-         ,body))))
+      (destructuring-bind (required optional keys keyp) parsed
+        (if (and (null optional) (not keyp))
+            `(let ,(mapcar #'list required arguments)
+               ,@declarations
+               (%with-inline ,name ,body))
+            (let ((temp-bindings '())
+                  (param-bindings '())
+                  (args arguments))
+              (dolist (var required)
+                (let ((temp (gensym "ARG")))
+                  (push (list temp (pop args)) temp-bindings)
+                  (push (list var temp) param-bindings)))
+              (dolist (spec optional)
+                (destructuring-bind (var init) spec
+                  (if args
+                      (let ((temp (gensym "ARG")))
+                        (push (list temp (pop args)) temp-bindings)
+                        (push (list var temp) param-bindings))
+                      (push (list var init) param-bindings))))
+              (when keyp
+                (let ((supplied '()))
+                  (loop for (k v) on args by #'cddr
+                        for temp = (gensym "ARG")
+                        do (push (list temp v) temp-bindings)
+                           (unless (assoc k supplied :test #'eq)
+                             (push (cons k temp) supplied)))
+                  (dolist (spec keys)
+                    (destructuring-bind (kw var init) spec
+                      (let ((hit (assoc kw supplied :test #'eq)))
+                        (push (list var (if hit (cdr hit) init)) param-bindings))))))
+              (let ((inner `(%with-inline ,name
+                              (let* ,(nreverse param-bindings)
+                                ,@declarations
+                                ,body))))
+                (if temp-bindings
+                    (let ((temps (nreverse temp-bindings)))
+                      `(let ,temps
+                         (declare (ignorable ,@(mapcar #'first temps)))
+                         ,inner))
+                    inner))))))))
 
 (defun symbol-macro-expansion (client environment name)
   "The expansion of NAME if it names a symbol macro in ENVIRONMENT, and
@@ -529,6 +651,28 @@ on kiln IMAGE-CLIENT (the default there)."
                                  :environment (make-compile-environment client))))
     (initialize-session client session)))
 
+(defmethod trucler:describe-variable
+    ((client client) (environment trucler-reference:environment) name)
+  (let* ((descriptions (trucler-reference::variable-description environment))
+         (description (and descriptions
+                           (find name descriptions :test #'eq :key #'trucler:name))))
+    (trucler-reference::check-restriction
+     environment
+     (or description
+         (trucler:describe-variable
+          client (trucler-reference::global-environment environment) name)))))
+
+(defmethod trucler:describe-function
+    ((client client) (environment trucler-reference:environment) name)
+  (let* ((descriptions (trucler-reference::function-description environment))
+         (description (and descriptions
+                           (find name descriptions :test #'equal :key #'trucler:name))))
+    (trucler-reference::check-restriction
+     environment
+     (or description
+         (trucler:describe-function
+          client (trucler-reference::global-environment environment) name)))))
+
 (defun forget-global-descriptions (environment)
   "Trucler's reference environment caches the descriptions of global
 functions and variables it has looked up. The session's environment lives
@@ -536,7 +680,9 @@ across files, so the cache would hide later redefinitions (a macro
 redefined by a later module, a function that becomes a macro); it is
 cleared before each top-level form. At top level the environment holds
 nothing else."
-  (reinitialize-instance environment :function-description '() :variable-description '()))
+  (when (or (trucler-reference::function-description environment)
+            (trucler-reference::variable-description environment))
+    (reinitialize-instance environment :function-description '() :variable-description '())))
 
 (defvar *trace-toplevel* nil
   "True: FRONT-END prints each file and the head of each top-level form
@@ -626,4 +772,4 @@ order, and the host packages that DEFPACKAGE forms created."
                              collect name)))
       (when undefined
         (warn 'undefined-function-warning :names undefined)))
-    (values (reverse *toplevel-asts*) (reverse *defined-packages*))))
+    (values (nreverse *toplevel-asts*) (nreverse *defined-packages*))))

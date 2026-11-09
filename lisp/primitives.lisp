@@ -31,9 +31,6 @@
                      ,name (length ,vals) ,(length lambda-list)))
              (destructuring-bind ,lambda-list ,vals ,@body)))))
 
-(defun boolean-value (condition)
-  (copy-to-var `(:select ,condition ,(t-value) ,(nil-value))))
-
 ;;; Arithmetic. Fixnums are open-coded; other numbers, and fixnum
 ;;; overflow, take the slow path: a call to the kernel's two-argument
 ;;; function, which dispatches on the number types.
@@ -314,6 +311,15 @@ are compared (no short circuit), which also checks every argument."
 (define-nary-primitive list* (vals)
   (when (null vals) (fail "LIST* needs at least one argument"))
   (emit-list (butlast vals) (car (last vals))))
+(define-nary-primitive vector (vals)
+  (let* ((n (length vals))
+         (p (emit-alloc (+ 8 (* 8 n))
+                        (logior (ash n +length-shift+) +kind-simple-vector+)
+                        nil)))
+    (loop for v in vals
+          for offset from 8 by 8
+          do (emit `(:store ,p ,offset ,v)))
+    (copy-to-var `(:add ,p ,+tag-general+))))
 
 ;;; Primitives may return a second value, the number of values;
 ;;; those that return one value omit it.
@@ -486,6 +492,34 @@ operand N."
     (emit-error +err-index+ n)
     (start-block ok)))
 
+(define-primitive characterp (a)
+  (boolean-value `(:eq (:and ,a ,+immediate-mask+) ,+character-tag+)))
+(define-primitive simple-string-p (a)
+  (boolean-value (emit-kind-test a +kind-string+)))
+(define-primitive simple-vector-p (a)
+  (boolean-value (emit-kind-test a +kind-simple-vector+)))
+(define-primitive kiln.kernel::fixnump (a)
+  (boolean-value `(:eq (:and ,a 1) 0)))
+(define-primitive kiln.kernel::bignump (a)
+  (boolean-value (emit-kind-test a +kind-bignum+)))
+(define-primitive kiln.kernel::ratiop (a)
+  (boolean-value (emit-kind-test a +kind-ratio+)))
+(define-primitive complexp (a)
+  (boolean-value (emit-kind-test a +kind-complex+)))
+(define-primitive kiln.kernel::single-float-p (a)
+  (boolean-value `(:eq (:and ,a ,+immediate-mask+) ,+single-float-tag+)))
+(define-primitive kiln.kernel::double-float-p (a)
+  (boolean-value (emit-kind-test a +kind-double+)))
+(define-primitive floatp (a)
+  (boolean-value `(:or (:eq (:and ,a ,+immediate-mask+) ,+single-float-tag+)
+                       ,(emit-kind-test a +kind-double+))))
+(define-primitive rationalp (a)
+  (boolean-value `(:or ,(emit-integer-test a) ,(emit-kind-test a +kind-ratio+))))
+(define-primitive realp (a)
+  (boolean-value `(:or (:or ,(emit-integer-test a) ,(emit-kind-test a +kind-ratio+))
+                       (:or (:eq (:and ,a ,+immediate-mask+) ,+single-float-tag+)
+                            ,(emit-kind-test a +kind-double+)))))
+
 (define-primop :fixnump (x) (boolean-value `(:eq (:and ,x 1) 0)))
 (define-primop :characterp (x)
   (boolean-value `(:eq (:and ,x ,+immediate-mask+) ,+character-tag+)))
@@ -499,6 +533,14 @@ operand N."
   (copy-to-var `(:shl (:shr ,c ,+character-shift+) ,+fixnum-shift+)))
 (define-primop :code-char (n)
   (copy-to-var `(:or (:shl (:sar ,n ,+fixnum-shift+) ,+character-shift+) ,+character-tag+)))
+
+(define-primitive char-code (c)
+  (let ((ok (new-block)) (bad (new-block)))
+    (br `(:eq (:and ,c ,+immediate-mask+) ,+character-tag+) ok bad)
+    (start-block bad)
+    (emit-error +err-not-character+ c)
+    (start-block ok))
+  (copy-to-var `(:shl (:shr ,c ,+character-shift+) ,+fixnum-shift+)))
 
 (define-primop :length (v) (copy-to-var (vector-length v)))
 
@@ -529,6 +571,9 @@ operand N."
   (copy-to-var `(:load (:add ,v (:shl ,i 2)) ,+vector-data+)))
 (define-primop :set-svref (v i x)
   (emit-check-index v i)
+  (emit `(:store (:add ,v (:shl ,i 2)) ,+vector-data+ ,x))
+  x)
+(define-primop :set-svref-unchecked (v i x)
   (emit `(:store (:add ,v (:shl ,i 2)) ,+vector-data+ ,x))
   x)
 
@@ -562,6 +607,37 @@ of it, SLOW-FN otherwise; both return an operand. Returns the result."
   (emit-svref-fast-path v i
                         (lambda () (emit `(:store (:add ,v (:shl ,i 2)) ,+vector-data+ ,x)) x)
                         (lambda () (emit-slow-call '(setf svref) x v i))))
+
+(defun emit-schar (s i c slow-name)
+  (let ((r (new-var)) (string (new-block)) (fast (new-block)) (slow (new-block))
+        (done (new-block))
+        (bad-index `(:or (:and ,i 1) (:or (:lt ,i 0) (:ge ,i ,(vector-length s))))))
+    (br (emit-kind-test s +kind-string+) string slow)
+    (start-block string)
+    (br (if c
+            `(:or ,bad-index (:ne (:and ,c ,+immediate-mask+) ,+character-tag+))
+            bad-index)
+        slow fast)
+    (start-block fast)
+    (if c
+        (progn (emit `(:store32 (:add ,s (:shl ,i 1)) ,+vector-data+ (:shr ,c ,+character-shift+)))
+               (emit `(:set ,r ,c)))
+        (emit `(:set ,r (:or (:shl (:load32 (:add ,s (:shl ,i 1)) ,+vector-data+)
+                                   ,+character-shift+)
+                             ,+character-tag+))))
+    (jump done)
+    (start-block slow)
+    (emit `(:set ,r ,(if c
+                         (emit-slow-call slow-name c s i)
+                         (emit-slow-call slow-name s i))))
+    (jump done)
+    (start-block done)
+    r))
+
+(define-primitive schar (s i) (emit-schar s i nil 'schar))
+(define-primitive (setf schar) (c s i) (emit-schar s i c '(setf schar)))
+(define-primitive char (s i) (emit-schar s i nil 'char))
+(define-primitive (setf char) (c s i) (emit-schar s i c '(setf char)))
 
 ;;; AREF and (SETF AREF) with one subscript (lower-global-call renames
 ;;; them): a simple vector or a string is accessed inline, anything else,
@@ -628,11 +704,32 @@ of it, SLOW-FN otherwise; both return an operand. Returns the result."
 (define-primop :make-simple-vector (n x)
   (emit-check-length n)
   (let* ((len (copy-to-var `(:sar ,n ,+fixnum-shift+) :raw))
-         (x (copy-to-var x))
+         (zero (eql x 0))
+         (x (if zero 0 (copy-to-var x)))
          (p (emit-alloc `(:add 8 (:shl ,len 3))
                         `(:or (:shl ,len ,+length-shift+) ,+kind-simple-vector+))))
-    (emit-fill-loop len (lambda (i) (emit `(:store (:add ,p (:shl ,i 3)) 8 ,x))))
+    (unless zero
+      (emit-fill-loop len (lambda (i) (emit `(:store (:add ,p (:shl ,i 3)) 8 ,x)))))
     (copy-to-var `(:add ,p ,+tag-general+))))
+
+(define-nary-primitive kiln.kernel::make-simple-vector (vals)
+  (unless (<= 1 (length vals) 2)
+    (fail "MAKE-SIMPLE-VECTOR takes 1 or 2 arguments"))
+  (let ((n (first vals))
+        (x (if (rest vals) (second vals) (nil-value))))
+    (if (and (integerp n) (zerop (logand n 1))
+             (<= 0 (ash n (- +fixnum-shift+)) 15))
+        (let* ((len (ash n (- +fixnum-shift+)))
+               (zero (eql x 0))
+               (x (if (integerp x) x (copy-to-var x)))
+               (p (emit-alloc (+ 8 (* 8 len))
+                              (logior (ash len +length-shift+) +kind-simple-vector+)
+                              zero)))
+          (unless zero
+            (dotimes (i len)
+              (emit `(:store ,p ,(+ 8 (* 8 i)) ,x))))
+          (copy-to-var `(:add ,p ,+tag-general+)))
+        (funcall (gethash :make-simple-vector *primops*) (list n x)))))
 
 (define-primop :symbol-name (s) (copy-to-var `(:load ,s ,+symbol-name+)))
 (define-primop :symbol-package (s) (copy-to-var `(:load ,s ,+symbol-package+)))
@@ -678,6 +775,7 @@ cells (both by default)."
 ;; The package system sets the home package of a symbol, and
 ;; makes a new keyword its own (global) value.
 (define-primop :set-symbol-package (s p) (emit `(:store ,s ,+symbol-package+ ,p)) p)
+(define-primop :symbol-global-value (s) (copy-to-var `(:load ,s ,+symbol-value+)))
 (define-primop :set-symbol-global-value (s v) (emit `(:store ,s ,+symbol-value+ ,v)) v)
 
 (define-primop :evenp (n)
@@ -735,6 +833,7 @@ cells (both by default)."
 (define-primop :fixnum-logand (a b) (copy-to-var `(:and ,a ,b)))
 ;;; A sum known to be a fixnum (no overflow check).
 (define-primop :fixnum+ (a b) (copy-to-var `(:add ,a ,b)))
+(define-primop :fixnum-le (a b) (boolean-value `(:le ,a ,b)))
 (define-primop :fixnum-logior (a b) (copy-to-var `(:or ,a ,b)))
 (define-primop :fixnum-logxor (a b) (copy-to-var `(:xor ,a ,b)))
 (define-primop :type-error-integer (x) (emit-error +err-not-integer+ x) (nil-value))

@@ -101,7 +101,7 @@ so local names carry the module's name; shared ones (symbols) do not."
 
 (defun rt-print () (module-import-func "kiln_rt_print" 2 1))
 (defun rt-error () (module-import-func "kiln_rt_error" 3 0 :unwinds :noreturn))
-(defun rt-poll () (module-import-func "kiln_rt_poll" 1 1 :unwinds))
+(defun rt-poll () (module-import-func "kiln_rt_poll" 2 1 :unwinds))
 (defun rt-throw () (module-import-func "kiln_rt_throw" 4 0 :unwinds :noreturn))
 (defun rt-exit-to () (module-import-func "kiln_rt_exit_to" 4 0 :unwinds :noreturn))
 (defun rt-continue-unwind ()
@@ -150,7 +150,7 @@ returns the literals, a vector."
     (module-data +literals-label+ `(:words ,@(make-list (max n 1) :initial-element 0)))
     (dotimes (i n)
       (module-root +literals-label+ i))
-    (coerce (reverse *image-literal-objects*) 'simple-vector)))
+    (coerce (nreverse *image-literal-objects*) 'simple-vector)))
 
 (defun shared-entry (name)
   "When compiling into the running image, imports the shared definition
@@ -162,6 +162,8 @@ NAME, and returns NAME; else NIL (the caller defines it)."
 (defun t-word () `(:data ,(module-import-data "kiln_t") ,+tag-general+))
 (defun nil-value () (word-operand (nil-word)))
 (defun t-value () (word-operand (t-word)))
+(defun boolean-value (condition)
+  (copy-to-var `(:select ,condition ,(t-value) ,(nil-value))))
 
 (defun undefined-function-entry ()
   "A function that signals an undefined-function error for the symbol in
@@ -404,13 +406,14 @@ one (bindings have none)."
   (let ((r (find-if #'region-handler *regions*)))
     (if r (kiln.kir::kblock-name (region-handler r)) :nil)))
 
+(declaim (inline bname))
 (defun bname (b) (kiln.kir::kblock-name b))
-(defun jump (b) (emit `(:jump ,(bname b))))
-(defun br (cond then else) (emit `(:br ,cond ,(bname then) ,(bname else))))
+(defun jump (b) (emit (list :jump (bname b))))
+(defun br (cond then else) (emit (list :br cond (bname then) (bname else))))
 
 (defun copy-to-var (operand &optional (kind :obj))
   (let ((v (new-var kind)))
-    (emit `(:set ,v ,operand))
+    (emit (list :set v operand))
     v))
 
 (defun emit-fatal-error (code obj)
@@ -447,7 +450,7 @@ exhausted, and KILN.KERNEL::%STACK-EXHAUSTED signals the STORAGE-CONDITION."
             `(:load :ctx ,+ctx-poll-flag+))
         slow cont)
     (start-block slow)
-    (emit `(:call-rt ,(rt-poll) (,exhausted) (:ctx) ,(handler)))
+    (emit `(:call-rt ,(rt-poll) (,exhausted) (:ctx 0) ,(handler)))
     (br exhausted overflow cont)
     (start-block overflow)
     (emit-slow-call 'kiln.kernel::%stack-exhausted)
@@ -469,18 +472,19 @@ them."
       (let ((*regions* '()) (*call-source* nil))
         (with-function (name)
           (let ((self (copy-to-var :self))
+                (entry (copy-to-var `(:load :self ,+fobj-entry+) :raw))
                 (args (loop for reg in '(:a0 :a1 :a2)
                             for i from 0
                             collect (copy-to-var `(:select (:gt :nargs ,i) ,reg 0))))
                 (exhausted (new-var :raw))
                 (overflow (new-block)) (cont (new-block)))
-            (emit `(:call-rt ,(rt-poll) (,exhausted) (:ctx) ,(handler)))
+            (emit `(:call-rt ,(rt-poll) (,exhausted) (:ctx ,entry) ,(handler)))
             (br exhausted overflow cont)
             (start-block overflow)
             (emit-slow-call 'kiln.kernel::%stack-exhausted)
             (jump cont)
             (start-block cont)
-            (emit `(:tail-call-lisp (:load ,self ,+fobj-entry+) (:ctx ,self :nargs ,@args)))))))
+            (emit `(:tail-call-lisp ,entry (:ctx ,self :nargs ,@args)))))))
     name))
 
 (defun emit-entry-poll ()
@@ -592,12 +596,14 @@ outermost form as written (before macro expansion)."
   (or (toplevel-form-symbols toplevel)
       (setf (toplevel-form-symbols toplevel)
             (let ((table (make-hash-table :test 'eq))
-                  (seen (make-hash-table :test 'eq)))
+                  (seen nil))
               (labels ((walk (x depth)
                          (cond ((symbolp x) (setf (gethash x table) t))
-                               ((or (not (consp x)) (zerop depth) (gethash x seen)))
-                               (t (setf (gethash x seen) t)
-                                  (walk (car x) (1- depth))
+                               ((or (not (consp x)) (zerop depth)))
+                               ((and (< depth 99900)
+                                     (let ((s (or seen (setf seen (make-hash-table :test 'eq)))))
+                                       (or (gethash x s) (progn (setf (gethash x s) t) nil)))))
+                               (t (walk (car x) (1- depth))
                                   (walk (cdr x) (1- depth))))))
                 (walk (toplevel-form-form toplevel) 100000))
               table))))
@@ -639,7 +645,7 @@ in the function being compiled."
          (source (or source (and *toplevel* (toplevel-form-source *toplevel*))))
          (word (constant-word
                 (vector name file (car source) (cdr source)
-                        (and *debug-vars* (coerce (reverse *debug-vars*) 'simple-vector))))))
+                        (and *debug-vars* (coerce (nreverse *debug-vars*) 'simple-vector))))))
     (setf (kiln.kir::kfunc-debug *func*)
           (if (and (consp word) (eq (first word) :literal))
               `(:debug-ref ,+literals-label+ ,(* 8 (second word)))
@@ -866,12 +872,12 @@ if needed (not a safepoint)."
   "Objects of at most this many bytes (a constant size) are allocated by
 compiled code itself, bumping the allocator's cursor.")
 
-(defun emit-alloc (bytes header)
+(defun emit-alloc (bytes header &optional (zero-p t))
   "Allocates an object; returns a raw variable holding its untagged
-address. The payload is zeroed. No safepoint may occur before the address
-is tagged and stored in an obj variable."
+address. The payload is zeroed when ZERO-P is true. No safepoint may occur
+before the address is tagged and stored in an obj variable."
   (let ((p (new-var :raw)))
-    (if (and (integerp bytes) (<= 16 bytes *inline-alloc-limit*) (zerop (mod bytes 8)))
+    (if (and (integerp bytes) (<= 8 bytes *inline-alloc-limit*) (zerop (mod bytes 8)))
         (let ((cursor (new-var :raw)) (end (new-var :raw))
               (fast (new-block)) (slow (new-block)) (done (new-block)))
           (emit `(:set ,cursor (:load :ctx ,+ctx-alloc-cursor+)))
@@ -881,8 +887,9 @@ is tagged and stored in an obj variable."
           (start-block fast)
           (emit `(:store ,cursor 0 ,end))
           (emit `(:store ,p 0 ,header))
-          (loop for offset from 8 below bytes by 8
-                do (emit `(:store ,p ,offset 0)))
+          (when zero-p
+            (loop for offset from 8 below bytes by 8
+                  do (emit `(:store ,p ,offset 0))))
           (jump done)
           (start-block slow)
           (emit `(:call-rt ,(rt-alloc) (,p) (:ctx ,bytes ,header) ,(handler)))
@@ -896,7 +903,7 @@ is tagged and stored in an obj variable."
   ;; and reloaded around it (stack maps).
   (let* ((a (if (integerp a) a (copy-to-var a)))
          (b (if (integerp b) b (copy-to-var b)))
-         (p (emit-alloc +cons-bytes+ +kind-cons+)))
+         (p (emit-alloc +cons-bytes+ +kind-cons+ nil)))
     (emit `(:store ,p 8 ,a))
     (emit `(:store ,p 16 ,b))
     (copy-to-var `(:add ,p ,+tag-cons+))))
@@ -1106,14 +1113,160 @@ safepoint."
 
 (defparameter *type-predicates*
   '((cons . consp) (symbol . symbolp) (list . listp) (null . null) (atom . atom)
-    (integer . integerp) (number . numberp) (character . characterp)
-    (function . functionp) (keyword . keywordp) (string . stringp)
-    (simple-string . stringp) (simple-vector . simple-vector-p)
+    (integer . integerp) (signed-byte . integerp) (number . numberp)
+    (character . characterp) (function . functionp) (compiled-function . functionp)
+    (keyword . keywordp) (string . stringp) (base-string . stringp)
+    (simple-string . simple-string-p) (simple-base-string . simple-string-p)
+    (simple-vector . simple-vector-p)
     (fixnum . kiln.kernel::fixnump) (bignum . kiln.kernel::bignump)
+    (ratio . kiln.kernel::ratiop) (complex . complexp)
     (float . floatp) (real . realp) (rational . rationalp)
     (single-float . kiln.kernel::single-float-p)
-    (double-float . kiln.kernel::double-float-p))
+    (short-float . kiln.kernel::single-float-p)
+    (double-float . kiln.kernel::double-float-p)
+    (long-float . kiln.kernel::double-float-p))
   "Atomic types whose TYPEP is a call to a predicate.")
+
+(defun integer-bound (bound upperp)
+  "The inclusive integer bound for BOUND (an integer, a one-element
+integer list, or * / NIL), or NIL if unbounded or invalid."
+  (cond ((integerp bound) bound)
+        ((and (consp bound) (integerp (first bound)) (null (rest bound)))
+         (if upperp (1- (first bound)) (1+ (first bound))))
+        (t nil)))
+
+(defun type-fixnum-bounds (type)
+  "If TYPE is a specifier for an integer range within fixnum bounds,
+returns LOW, HIGH and T; else NIL, NIL and NIL."
+  (cond ((eq type 'fixnum)
+         (values +most-negative-fixnum+ +most-positive-fixnum+ t))
+        ((eq type 'bit)
+         (values 0 1 t))
+        ((and (consp type) (ir-proper-list-p (rest type)))
+         (let ((head (first type)) (args (rest type)))
+           (multiple-value-bind (low high)
+               (case head
+                 (integer
+                  (when (<= (length args) 2)
+                    (values (if (or (null args) (eq (first args) '*)) nil (integer-bound (first args) nil))
+                            (if (or (null (rest args)) (eq (second args) '*)) nil (integer-bound (second args) t)))))
+                 (mod
+                  (when (and (= (length args) 1) (integerp (first args)) (plusp (first args)))
+                    (values 0 (1- (first args)))))
+                 (unsigned-byte
+                  (when (and (= (length args) 1) (integerp (first args)) (<= 1 (first args) 62))
+                    (values 0 (1- (ash 1 (first args))))))
+                 (signed-byte
+                  (when (and (= (length args) 1) (integerp (first args)) (<= 1 (first args) 63))
+                    (let ((half (ash 1 (1- (first args)))))
+                      (values (- half) (1- half))))))
+             (if (and low high
+                      (<= +most-negative-fixnum+ low)
+                      (<= high +most-positive-fixnum+))
+                 (values low high t)
+                 (values nil nil nil)))))
+        (t (values nil nil nil))))
+
+(defun emit-fixnum-range-test (val low high)
+  "Raw 0/1 operand: is VAL a fixnum in LOW..HIGH?"
+  (let ((cond `(:eq (:and ,val 1) 0)))
+    (when (> low +most-negative-fixnum+)
+      (setf cond `(:and ,cond (:ge ,val ,(ash low +fixnum-shift+)))))
+    (when (< high +most-positive-fixnum+)
+      (setf cond `(:and ,cond (:le ,val ,(ash high +fixnum-shift+)))))
+    cond))
+
+(defun inline-typep-specifier-p (type)
+  (cond ((member type '(t nil boolean)) t)
+        ((nth-value 2 (type-fixnum-bounds type)) t)
+        ((and (symbolp type) (assoc type *type-predicates*)) t)
+        ((and (consp type) (ir-proper-list-p (rest type)))
+         (case (first type)
+           (eql (= (length (rest type)) 1))
+           (member (<= (length (rest type)) 8))
+           (not (and (= (length (rest type)) 1)
+                     (inline-typep-specifier-p (second type))))
+           ((or and) (every #'inline-typep-specifier-p (rest type)))))
+        (t nil)))
+
+(defun emit-inline-typep (val type)
+  (multiple-value-bind (low high fixnum-range-p) (type-fixnum-bounds type)
+    (cond (fixnum-range-p
+           (boolean-value (emit-fixnum-range-test val low high)))
+          ((eq type t) (t-value))
+          ((eq type nil) (nil-value))
+          ((eq type 'boolean)
+           (boolean-value `(:or (:eq ,val ,(nil-value)) (:eq ,val ,(t-value)))))
+          ((symbolp type)
+           (let* ((predicate (cdr (assoc type *type-predicates*)))
+                  (primitive (gethash predicate *primitives*)))
+             (if primitive
+                 (funcall primitive (list val))
+                 (emit-lisp-call (function-cell-value predicate) (list val)))))
+          ((eq (first type) 'eql)
+           (let ((c (ir-node 0 nil (second type))))
+             (if (eq-comparable-constant-p c)
+                 (boolean-value `(:eq ,val ,(constant-object (second type))))
+                 (funcall (gethash 'eql *primitives*)
+                          (list val (constant-object (second type)))))))
+          ((eq (first type) 'member)
+           (let ((items (rest type)))
+             (cond ((null items) (nil-value))
+                   ((every (lambda (x) (eq-comparable-constant-p (ir-node 0 nil x))) items)
+                    (boolean-value
+                     (reduce (lambda (a b) `(:or ,a ,b))
+                             (mapcar (lambda (x) `(:eq ,val ,(constant-object x))) items))))
+                   (t (emit-lisp-call (function-cell-value 'kiln.kernel::%member-eql)
+                                      (list val (constant-object items)))))))
+          ((eq (first type) 'not)
+           (boolean-value `(:eq ,(emit-inline-typep val (second type)) ,(nil-value))))
+          ((eq (first type) 'or)
+           (if (null (rest type))
+               (nil-value)
+               (let ((r (copy-to-var (t-value)))
+                     (done (new-block)))
+                 (loop for (sub . more) on (rest type)
+                       do (let ((v (emit-inline-typep val sub)))
+                            (if more
+                                (let ((next (new-block)))
+                                  (br `(:ne ,v ,(nil-value)) done next)
+                                  (start-block next))
+                                (progn
+                                  (emit `(:set ,r ,v))
+                                  (jump done)))))
+                 (start-block done)
+                 r)))
+          ((eq (first type) 'and)
+           (if (null (rest type))
+               (t-value)
+               (let ((r (copy-to-var (nil-value)))
+                     (done (new-block)))
+                 (loop for (sub . more) on (rest type)
+                       do (let ((v (emit-inline-typep val sub)))
+                            (if more
+                                (let ((next (new-block)))
+                                  (br `(:eq ,v ,(nil-value)) done next)
+                                  (start-block next))
+                                (progn
+                                  (emit `(:set ,r ,v))
+                                  (jump done)))))
+                 (start-block done)
+                 r))))))
+
+(defun cached-typep-specifier-p (type)
+  (cond ((symbolp type)
+         (and type
+              (not (member (symbol-package type)
+                           (list (find-package '#:common-lisp) (find-package '#:keyword))))))
+        ((and (consp type) (ir-proper-list-p (rest type)))
+         (case (first type)
+           ((or and)
+            (and (every (lambda (x) (or (symbolp x) (cached-typep-specifier-p x))) (rest type))
+                 (some #'cached-typep-specifier-p (rest type))))
+           (not
+            (and (= (length (rest type)) 1)
+                 (cached-typep-specifier-p (second type))))))
+        (t nil)))
 
 (defun call-ast (name arg-asts)
   (ir-node 7 nil name (coerce arg-asts 'simple-vector)))
@@ -1236,7 +1389,51 @@ LOWER-CACHED-SLOT-VALUE."
     (start-block done)
     (values result count)))
 
+(defun list-call-elements (ast)
+  "The argument ASTs of AST if it is a call to LIST, and T; else NIL and NIL."
+  (if (and (ir-node-p ast) (= (ir-node-kind ast) 7) (eq (ir-node-a ast) 'list))
+      (values (coerce (ir-node-b ast) 'list) t)
+      (values nil nil)))
+
+(defun null-constant-p (ast)
+  (multiple-value-bind (value constantp) (constant-value ast)
+    (and constantp (null value))))
+
+(defun simplify-append-asts (asts)
+  "Simplifies the argument ASTs of APPEND (such as quasiquote expansions):
+drops empty lists, merges adjacent LIST calls, and drops a trailing NIL
+after a LIST call."
+  (let ((out '()))
+    (loop for (ast . rest) on asts
+          do (multiple-value-bind (elems listp) (list-call-elements ast)
+               (cond ((and (null rest) (null-constant-p ast)
+                           out (nth-value 1 (list-call-elements (first out)))))
+                     ((and rest (or (null-constant-p ast) (and listp (null elems)))))
+                     ((and (null rest) listp (null elems))
+                      (unless (and out (nth-value 1 (list-call-elements (first out))))
+                        (push (ir-node 0 nil nil) out)))
+                     ((and listp out (nth-value 1 (list-call-elements (first out))))
+                      (setf (first out)
+                            (call-ast 'list (append (list-call-elements (first out)) elems))))
+                     (t (push ast out)))))
+    (nreverse out)))
+
 (defun lower-global-call (name arg-asts)
+  (when (eq name 'append)
+    (let ((asts (simplify-append-asts arg-asts)))
+      (cond ((null asts)
+             (return-from lower-global-call (nil-value)))
+            ((null (rest asts))
+             (return-from lower-global-call (lower (first asts))))
+            ((nth-value 1 (list-call-elements (first asts)))
+             (return-from lower-global-call
+               (lower-global-call 'list*
+                                  (append (list-call-elements (first asts))
+                                          (list (call-ast 'append (rest asts)))))))
+            ((= (length asts) 2)
+             (return-from lower-global-call
+               (lower-global-call 'kiln.kernel::append-2 asts)))
+            (t (setf arg-asts asts)))))
   (when (and (eq name 'make-instance) (call-site-specialization-p)
              (oddp (length arg-asts))
              (<= (length arg-asts) (+ +reg-args+ +values-max+)))
@@ -1248,7 +1445,7 @@ LOWER-CACHED-SLOT-VALUE."
                      (if (and constantp (symbolp key)) (push key keys) (setf valid nil))))
           (when valid
             (return-from lower-global-call
-              (lower-constructor-call name arg-asts class-name (reverse keys))))))))
+              (lower-constructor-call name arg-asts class-name (nreverse keys))))))))
   ;; (EQL x constant), as CASE expands into, is EQ for most constants.
   (when (and (eq name 'eql) (= (length arg-asts) 2)
              (or (eq-comparable-constant-p (first arg-asts))
@@ -1261,15 +1458,17 @@ LOWER-CACHED-SLOT-VALUE."
          (setf name 'kiln.kernel::%set-aref-1)))
   (when (and (eq name 'typep) (= (length arg-asts) 2))
     (multiple-value-bind (type constantp) (constant-value (second arg-asts))
-      (let ((predicate (and constantp (cdr (assoc type *type-predicates*)))))
-        (when predicate
-          (return-from lower-global-call
-            (lower-global-call predicate (list (first arg-asts)))))
-        (when (and constantp type (symbolp type)
-                   (not (member (symbol-package type)
-                                (list (find-package '#:common-lisp) (find-package '#:keyword)))))
-          (return-from lower-global-call
-            (lower-cached-typep (first arg-asts) type))))))
+      (when constantp
+        (let ((predicate (and (symbolp type) (cdr (assoc type *type-predicates*)))))
+          (cond (predicate
+                 (return-from lower-global-call
+                   (lower-global-call predicate (list (first arg-asts)))))
+                ((inline-typep-specifier-p type)
+                 (return-from lower-global-call
+                   (emit-inline-typep (copy-to-var (lower (first arg-asts))) type)))
+                ((cached-typep-specifier-p type)
+                 (return-from lower-global-call
+                   (lower-cached-typep (first arg-asts) type))))))))
   ;; SLOT-VALUE and (SETF SLOT-VALUE) with a constant slot name: a cache
   ;; of the slot's location, guarded by the object's stamp.
   (when (and (eq name 'slot-value) (= (length arg-asts) 2))

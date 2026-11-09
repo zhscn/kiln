@@ -100,21 +100,7 @@ unsafe fn string_chars(s: u64) -> impl Iterator<Item = char> {
     }
 }
 
-/// Writes the text of the KIR form `form` to the file descriptor `fd` (a
-/// fixnum). Returns the number of bytes written as a fixnum, or a negative
-/// fixnum: minus errno if writing failed, -1000 if `form` is not KIR.
-///
-/// # Safety
-/// `form` must be a valid Lisp value.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn kiln_rt_write_kir(_ctx: *mut Context, form: u64, fd: u64) -> u64 {
-    let fixnum = |n: i64| (n << 1) as u64;
-    let mut text = String::new();
-    if unsafe { write_form(&mut text, form) }.is_err() {
-        return fixnum(-1000);
-    }
-    let bytes = text.as_bytes();
-    let fd = fixnum_value(fd) as libc::c_int;
+fn write_all(fd: libc::c_int, bytes: &[u8]) -> Result<usize, i32> {
     let mut done = 0;
     while done < bytes.len() {
         let n = unsafe {
@@ -125,9 +111,59 @@ pub unsafe extern "C" fn kiln_rt_write_kir(_ctx: *mut Context, form: u64, fd: u6
             if errno == libc::EINTR {
                 continue;
             }
-            return fixnum(-(errno as i64));
+            return Err(errno);
         }
         done += n as usize;
     }
-    fixnum(bytes.len() as i64)
+    Ok(bytes.len())
+}
+
+/// Writes the text of the KIR form `form` (or a `(name . groups)` module
+/// specification) to the file descriptor `fd` (a fixnum). Returns the number
+/// of bytes written as a fixnum, or a negative fixnum: minus errno if writing
+/// failed, -1000 if `form` is not KIR.
+///
+/// # Safety
+/// `form` must be a valid Lisp value.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kiln_rt_write_kir(_ctx: *mut Context, form: u64, fd: u64) -> u64 {
+    let fixnum = |n: i64| (n << 1) as u64;
+    let fd = fixnum_value(fd) as libc::c_int;
+    let mut text = String::with_capacity(65536);
+    let mut total: usize = 0;
+    unsafe {
+        if is_cons(form) && is_general(car(form)) && (header(car(form)) & KIND_MASK) == KIND_STRING
+        {
+            text.push_str("(module ");
+            if write_form(&mut text, car(form)).is_err() {
+                return fixnum(-1000);
+            }
+            let mut groups = cdr(form);
+            while is_cons(groups) {
+                let mut group = car(groups);
+                while is_cons(group) {
+                    text.push_str("\n  ");
+                    if write_form(&mut text, car(group)).is_err() {
+                        return fixnum(-1000);
+                    }
+                    if text.len() >= 65536 {
+                        match write_all(fd, text.as_bytes()) {
+                            Ok(n) => total += n,
+                            Err(errno) => return fixnum(-(errno as i64)),
+                        }
+                        text.clear();
+                    }
+                    group = cdr(group);
+                }
+                groups = cdr(groups);
+            }
+            text.push_str(")\n");
+        } else if write_form(&mut text, form).is_err() {
+            return fixnum(-1000);
+        }
+    }
+    match write_all(fd, text.as_bytes()) {
+        Ok(n) => fixnum((total + n) as i64),
+        Err(errno) => fixnum(-(errno as i64)),
+    }
 }

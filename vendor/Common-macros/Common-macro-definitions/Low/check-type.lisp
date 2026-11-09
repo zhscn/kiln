@@ -20,21 +20,30 @@
                  ,place ,new-value-var)
            (go ,tag))))))
 
+;;; kiln: the restart is in CHECK-TYPE-ERROR so that the expansion has no
+;;; closure or non-local exit at the call site.
 (defun check-type-error (place value type type-string)
-  (error
-   'simple-type-error
-   :datum value
-   :expected-type type
-   :format-control (if type-string
-                       "The value of ~S is ~S, which is not ~A."
-                       "The value of ~S is ~S, which is not of type ~S.")
-   :format-arguments (list place value (or type-string type))))
+  (restart-case
+      (error
+       'simple-type-error
+       :datum value
+       :expected-type type
+       :format-control (if type-string
+                           "The value of ~S is ~S, which is not ~A."
+                           "The value of ~S is ~S, which is not of type ~S.")
+       :format-arguments (list place value (or type-string type)))
+    (store-value (new-value)
+      :report (lambda (stream)
+                (format stream "Supply a new value of ~S." place))
+      :interactive store-value-read-evaluated-form
+      new-value)))
 
 (defmacro check-type (place type &optional type-string)
-  (let ((variable (gensym "CHECK-TYPE-VARIABLE"))
-        (tag (gensym "CHECK-TYPE-TAG")))
+  (let ((variable (gensym "CHECK-TYPE-VARIABLE")))
     `(let ((,variable ,place))
-       (tagbody ,tag
-          (unless (typep ,variable ',type)
-            (with-store-value-restart (,variable ,place ,tag)
-              (check-type-error ',place ,variable ',type ,type-string)))))))
+       (unless (typep ,variable ',type)
+         (loop
+           (setf ,variable (check-type-error ',place ,variable ',type ,type-string)
+                 ,place ,variable)
+           (when (typep ,variable ',type)
+             (return nil)))))))

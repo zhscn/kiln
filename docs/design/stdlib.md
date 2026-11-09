@@ -22,8 +22,8 @@ Predicament 按 `predicament-common.asd` 的顺序加载。实现方要提供的
 - `eq`、`eql`、`equal` 表的散列函数直接处理 fixnum、字符、符号、字符串和 cons，不走 Salmagundi 逐步累加、为每次散列生成闭包的路径。混合一步用 `%primop :hash-mix`：在 fixnum 上做一步按 64 位截断的 FNV-1a，大整数按 62 位一段依次混入（Salmagundi 的 FNV 每一步都会产生 bignum）。
 - **开放寻址**，和 CPython 的 dict 一样：条目按插入顺序放在三个向量里（键、值、哈希）；一个索引向量，长度是 2 的幂、至多用一半，按哈希线性探测映射到条目，探测时先比较存下的哈希。每个条目不分配任何对象；向量满了就加倍（`make-hash-table` 的 rehash size 和 threshold 只是提示，CLHS 允许）。
 - **迭代顺序**按插入顺序，和 SBCL 一样。宏展开函数会遍历哈希表（Khazern 的解构临时变量），kiln 编译 kiln 必须得到 SBCL 的 KIR；按哈希顺序遍历的话，身份哈希每次运行都不同。`tests/m4/clos-hash-model.lisp` 用一个模型和 SBCL 的迭代顺序检查表。
-- 查找要用的数据放在一个 simple vector 里，按固定位置从实例读出，eq、eql、equal 内联比较；`gethash`、`(setf gethash)`、`remhash` 遇到这种表时直接调用它的函数，不经过泛函。
-- `sxhash` 仍走 Salmagundi 的累加闭包，没有 `equal` 表散列函数那样的快路径，很慢。
+- 查找要用的数据放在一个 simple vector 里，按固定位置从实例读出，eq、eql、equal 内联比较；`gethash`、`(setf gethash)`、`remhash` 遇到这种表时直接调用它的函数，不经过泛函。`(setf gethash)` 在探测过程中记下第一个墓碑槽，未命中时直接写入，不再二次探测。
+- 标准测试（`eq`、`eql`、`equal`、`equalp`）的 `make-hash-table` 直接分配实例并填写槽（`make-bucket-hash-table`），不走 `make-instance`；符号的 `equal` 哈希缓存在自身的身份哈希字段里；`sxhash` 直接调用 `kiln-equal-hash`。
 - 还没有弱表。
 
 ## 包（Parcl）
@@ -62,12 +62,11 @@ Parcl 以 intrinsic 方式加载：`parcl-low`（泛函协议和默认方法）�
 **Anatomicl 在编译期运行**：它把 `defstruct` 形式解析成描述对象，再生成普通的 Lisp 代码，生成的代码不引用 Anatomicl 自己。所以它是宿主库（kiln 上编进 compiler 模块），`defstruct` 是受保护的宿主宏（[front-end.md](front-end.md)）。kiln 的 client 在 `lisp/structures.lisp`：
 
 - **`:include` 的槽布局**：Anatomicl 默认通过 closer-mop 读被包含结构的类，可编译期没有目标端的类。kiln 在编译会话里记下每个结构的槽布局（`session-structures`）：先是被包含结构的槽（访问器名按本结构的 `conc-name` 重新生成，`:include` 给出的槽描述覆盖原有的），再是本结构自己的直接槽。
-- **类定义**：生成目标端的 `defclass`，元类是 `structure-class`，每个槽都有 initarg；`:print-object` 选项生成 `print-object` 方法。
-- **访问器**是 inline 的普通函数，可写的槽还有 inline 的 setf 函数。槽的位置就是它在布局里的序号（`defclass` 里也是这个顺序，Clostrophilia 按这个顺序分配位置）。结构的类存在包 `kiln.structures` 的一个变量里：实例的类就是这个类时直接读写槽，否则（包含它的结构的实例）先检查类型（`%structure-ref`/`%structure-set`）。
-- 复制函数调用 `cl:copy-structure`；typed 结构（`:type list`/`vector`）的描述也记在会话里，只生成访问器。
-- 构造函数、谓词、BOA lambda list 用 Anatomicl 的原样代码：构造函数调用 `allocate-instance` 和 `(setf slot-value)`。
-- **目标端**（`lisp/target/clos/structures.lisp`）：`structure-class` 是 `standard-class` 的子类，`structure-object` 是 `standard-object` 的子类；`copy-structure` 逐个复制已绑定的槽；`structure-class` 上的 `allocate-instance :before` 方法负责 finalize 类（Anatomicl 的构造函数直接调用 `allocate-instance`）。
-- 限制：构造函数走 CLOS 实例的路径，很慢；`equalp` 不比较结构的槽；重定义结构走类的重定义（[clos.md](clos.md)），但 inline 的访问器在已编译的调用者里不会跟着变；运行期（`eval` 里）的 `defstruct` 不支持：会话里的结构布局没有传给 image 里的编译器。
+- **类定义与原生表示**：生成目标端的 `defclass`，元类是 `structure-class`；实例是原生结构对象（`+kind-structure-instance+`），第一个字指向布局向量，其后按位置紧排各槽，不需要单独的 rack 对象。`:print-object` 选项生成 `print-object` 方法。
+- **访问器、谓词和构造函数**：布局向量存在包 `kiln.structures` 的全局变量里，经 `%primop :symbol-global-value` 直接读取（不经过 TLS 查找）。访问器、可写槽的 setf 函数、类型谓词（`%structure-typep`，按布局向量里的深度和祖先表做 O(1) 判断）以及至多 8 个槽的标准构造函数都声明为 `inline`；标准构造函数直接生成 `%primop :allocate-structure` 和按位置的 `:set-structure-slot`（调用点上内联展开时，关键字参数也在编译期解析）。
+- 复制函数调用 `cl:copy-structure`；typed 结构（`:type list`/`vector`）的描述也记在会话里，只生成访问器。BOA 构造函数用 Anatomicl 生成的 lambda list，分配和写槽同样走 `:allocate-structure` 和 `:set-structure-slot`。
+- **目标端**（`lisp/target/clos/structures.lisp`）：`structure-class` 是 `standard-class` 的子类，`structure-object` 是 `standard-object` 的子类；`%ensure-structure-layout` 在类终结后建立布局向量；`copy-structure` 直接分配同长度的原生结构对象并逐槽复制。
+- 限制：`equalp` 不比较结构的槽；重定义结构走类的重定义（[clos.md](clos.md)），但 inline 的访问器在已编译的调用者里不会跟着变；运行期（`eval` 里）的 `defstruct` 不支持：会话里的结构布局没有传给 image 里的编译器。
 
 ## LOOP（Khazern）
 

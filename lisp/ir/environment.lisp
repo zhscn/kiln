@@ -1,18 +1,41 @@
 (in-package #:kiln.compiler)
 
 (defun ir-lookup (environment name namespace)
-  (loop for env = environment then (ir-env-parent env)
-        while (ir-env-p env)
-        for entries = (ecase namespace
-                        (:var (ir-env-vars env)) (:fun (ir-env-funcs env))
-                        (:block (ir-env-blocks env)) (:tag (ir-env-tags env)))
-        for entry = (assoc name entries :test (if (member namespace '(:fun :tag)) #'equal #'eq))
-        when entry return (values (cdr entry) t)
-        finally (return (values nil nil))))
+  (ecase namespace
+    (:var
+     (loop for env = environment then (ir-env-parent env)
+           while (ir-env-p env)
+           for entry = (assoc name (ir-env-vars env) :test #'eq)
+           when entry return (values (cdr entry) t)
+           finally (return (values nil nil))))
+    (:fun
+     (if (symbolp name)
+         (loop for env = environment then (ir-env-parent env)
+               while (ir-env-p env)
+               for entry = (assoc name (ir-env-funcs env) :test #'eq)
+               when entry return (values (cdr entry) t)
+               finally (return (values nil nil)))
+         (loop for env = environment then (ir-env-parent env)
+               while (ir-env-p env)
+               for entries = (ir-env-funcs env)
+               for entry = (and entries (assoc name entries :test #'equal))
+               when entry return (values (cdr entry) t)
+               finally (return (values nil nil)))))
+    (:block
+     (loop for env = environment then (ir-env-parent env)
+           while (ir-env-p env)
+           for entry = (assoc name (ir-env-blocks env) :test #'eq)
+           when entry return (values (cdr entry) t)
+           finally (return (values nil nil))))
+    (:tag
+     (loop for env = environment then (ir-env-parent env)
+           while (ir-env-p env)
+           for entry = (assoc name (ir-env-tags env) :test #'eql)
+           when entry return (values (cdr entry) t)
+           finally (return (values nil nil))))))
 
 (defun ir-base-environment (environment)
-  (loop while (ir-env-p environment) do (setf environment (ir-env-parent environment))
-        finally (return environment)))
+  (if (ir-env-p environment) (ir-env-base environment) environment))
 
 (defmethod trucler:describe-variable (client (environment ir-env) name)
   (multiple-value-bind (binding found) (ir-lookup environment name :var)
@@ -68,14 +91,16 @@
                    (let ((name (if (consp quality) (car quality) quality)))
                      (unless (assoc name qualities)
                        (push (cons name (if (consp quality) (second quality) 3)) qualities)))))))
-    (flet ((quality (name fallback) (let ((entry (assoc name qualities)))
-                                     (if entry (cdr entry) fallback))))
-      (make-instance 'trucler:optimize-description
-        :speed (quality 'speed (trucler:speed base))
-        :space (quality 'space (trucler:space base))
-        :safety (quality 'safety (trucler:safety base))
-        :debug (quality 'debug (trucler:debug base))
-        :compilation-speed (quality 'compilation-speed (trucler:compilation-speed base))))))
+    (if (null qualities)
+        base
+        (flet ((quality (name fallback) (let ((entry (assoc name qualities)))
+                                         (if entry (cdr entry) fallback))))
+          (make-instance 'trucler:optimize-description
+            :speed (quality 'speed (trucler:speed base))
+            :space (quality 'space (trucler:space base))
+            :safety (quality 'safety (trucler:safety base))
+            :debug (quality 'debug (trucler:debug base))
+            :compilation-speed (quality 'compilation-speed (trucler:compilation-speed base)))))))
 
 (defmethod trucler:macro-function (name (environment ir-env))
   (let ((description (trucler:describe-function *client* environment name)))
@@ -111,6 +136,8 @@
              'trucler:global-special-variable-description)))
 
 (defun ir-declare (environment declarations)
+  (when (null declarations)
+    (return-from ir-declare environment))
   (let ((env (ir-env environment :declarations declarations
                      :vars (mapcar (lambda (name) (cons name '(:special)))
                                    (ir-special-names declarations)))))

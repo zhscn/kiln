@@ -198,13 +198,21 @@ simple-vector ARGUMENTS, the arity dispatched on when the closure is made."
         (body (ir-eval-node (ir-node-c node))))
     ;; The variables are new: an init form never sees an earlier one, so
     ;; each is bound as soon as its value is known.
-    (if (= (length binders) 1)
-        (let ((binder (svref binders 0)) (init (svref inits 0)))
-          (lambda (frame) (funcall binder frame (funcall init frame)) (funcall body frame)))
-        (lambda (frame)
-          (loop for binder across binders for init across inits
-                do (funcall binder frame (funcall init frame)))
-          (funcall body frame)))))
+    (cond ((ir-node-d node)
+           (let ((init (svref inits 0)))
+             (lambda (frame)
+               (let ((values (multiple-value-list (funcall init frame))))
+                 (loop for binder across binders
+                       do (funcall binder frame (pop values))))
+               (funcall body frame))))
+          ((= (length binders) 1)
+           (let ((binder (svref binders 0)) (init (svref inits 0)))
+             (lambda (frame) (funcall binder frame (funcall init frame)) (funcall body frame))))
+          (t
+           (lambda (frame)
+             (loop for binder across binders for init across inits
+                   do (funcall binder frame (funcall init frame)))
+             (funcall body frame))))))
 
 (defun ir-eval-if (node)
   (let ((test (ir-eval-sub (ir-node-a node)))

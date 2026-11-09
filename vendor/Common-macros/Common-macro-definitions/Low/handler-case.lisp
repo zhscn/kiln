@@ -38,10 +38,15 @@
              (let ((,condition nil))
                (declare (ignorable ,condition))
                (tagbody
+                  ;; kiln: only assign CONDITION when the clause binds a
+                  ;; variable, so clauses with () need no cell for it.
                   (flet (,@(loop for fname in fnames
                                  for tag in tags
+                                 for (_ maybe-ll) in clauses
                                  collect `(,fname (,temp)
-                                            (setq ,condition ,temp)
+                                            ,@(if maybe-ll
+                                                  `((setq ,condition ,temp))
+                                                  `((declare (ignore ,temp))))
                                             (go ,tag))))
                     (declare (dynamic-extent
                               ,@(loop for fname in fnames

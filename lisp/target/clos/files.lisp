@@ -52,24 +52,32 @@
                                                     (file-buffer stream) written end)))))
       (note-written stream end))))
 
-;;; The compiler writes its KIR files form by form: the runtime prints a
-;;; form straight to the file (kiln_rt_write_kir), after the buffered
-;;; output, instead of one character at a time through the stream. NIL if
-;;; STREAM is not a kiln file stream writing UTF-8; the caller prints the
-;;; form itself then. The output cursor is not updated (nothing reads the
-;;; column of a KIR file).
+;;; The compiler writes its KIR files via kiln_rt_write_kir, after the
+;;; buffered output, instead of one character at a time through the stream.
+;;; NIL if STREAM is not a kiln file stream writing UTF-8; the caller prints
+;;; the forms itself then. The output cursor is not updated (nothing reads
+;;; the column of a KIR file).
+(defun underlying-file-stream (stream)
+  (loop while (typep stream 'synonym-stream)
+        do (setf stream (symbol-value (cl:synonym-stream-symbol stream))))
+  (and (typep stream 'posix-file-stream)
+       (typep (octet-transcoder stream) 'utf-8-transcoder)
+       stream))
+
 (defun kiln.sys::%write-kir (form stream)
-  (when (and (typep stream 'kiln-file-stream)
-             (typep (octet-transcoder stream) 'utf-8-transcoder))
-    (when (< (in-start stream) (in-end stream))
-      (discard-file-input stream))
-    (flush-file-buffer stream)
-    (let ((result (kiln.sys:%primop :write-kir form (descriptor stream))))
-      (when (eql result -1000)
-        (error "~S is not a KIR form." form))
-      (check-sys stream result)
-      (note-written stream result))
-    t))
+  (let ((stream (underlying-file-stream stream)))
+    (when stream
+      (when (typep stream 'kiln-file-stream)
+        (when (< (in-start stream) (in-end stream))
+          (discard-file-input stream))
+        (flush-file-buffer stream))
+      (let ((result (kiln.sys:%primop :write-kir form (descriptor stream))))
+        (when (eql result -1000)
+          (error "~S is not a KIR form." form))
+        (check-sys stream result)
+        (when (typep stream 'kiln-file-stream)
+          (note-written stream result)))
+      t)))
 
 (defun discard-file-input (stream)
   "Moves the file position back over the input read ahead."
@@ -192,10 +200,11 @@ they have been read from the file, but the character has not."
         0)))
 
 (defmethod stream-file-position ((stream kiln-file-stream))
-  (let ((position (known-os-position stream)))
-    (/ (- (+ position (out-end stream) (- (in-start stream) (in-end stream)))
-          (unread-octets stream))
-       (octets-per-element stream))))
+  (let ((octets (- (+ (known-os-position stream) (out-end stream)
+                      (- (in-start stream) (in-end stream)))
+                   (unread-octets stream)))
+        (scale (octets-per-element stream)))
+    (if (eql scale 1) octets (values (floor octets scale)))))
 
 (defmethod (setf stream-file-position) (position (stream kiln-file-stream))
   (flush-file-buffer stream)

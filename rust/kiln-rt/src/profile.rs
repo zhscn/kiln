@@ -86,12 +86,18 @@ pub fn stop() {
 }
 
 /// The function start addresses of the frames from `fp` outwards, through
-/// the suspended segments (as `debug::list_frames`).
-unsafe fn walk(ctx: &Context, fp: usize) -> Vec<usize> {
+/// the suspended segments (as `debug::list_frames`). When `entry` is
+/// non-zero (`kiln_poll_retry`), it replaces the innermost frame (`fp` is
+/// the trampoline called by `kiln_poll_retry`, which replaced `entry`).
+unsafe fn walk(ctx: &Context, entry: usize, fp: usize) -> Vec<usize> {
     let mut frames = Vec::new();
     let mut fp = fp;
     let mut base = ctx.stack_base_fp;
     let mut seg = ctx.segments;
+    if entry != 0 && fp != base && fp != 0 {
+        frames.push(entry);
+        fp = unsafe { *(fp as *const usize) };
+    }
     loop {
         while fp != base && fp != 0 && frames.len() < MAX_DEPTH {
             let ret = unsafe { *((fp + 8) as *const usize) };
@@ -111,20 +117,21 @@ unsafe fn walk(ctx: &Context, fp: usize) -> Vec<usize> {
     }
 }
 
-fn record(ctx: *mut Context, fp: usize, weight: u64) {
-    let frames = unsafe { walk(&*ctx, fp) };
+fn record(ctx: *mut Context, entry: usize, fp: usize, weight: u64) {
+    let frames = unsafe { walk(&*ctx, entry, fp) };
     if let Some(s) = STATE.lock().unwrap().as_mut() {
         *s.samples.entry(frames).or_insert(0) += weight;
     }
 }
 
 /// Called by every poll slow path (`kiln_rt_poll`); `fp` is the frame
-/// pointer of its trampoline.
-pub fn poll(ctx: *mut Context, fp: usize) {
+/// pointer of its trampoline, `entry` the function `kiln_poll_retry`
+/// will re-enter (0 from an in-function poll).
+pub fn poll(ctx: *mut Context, entry: usize, fp: usize) {
     if CPU_ACTIVE.load(Ordering::Relaxed) && CONTEXT.load(Ordering::Relaxed) == ctx as usize {
         let ticks = TICKS.swap(0, Ordering::Relaxed);
         if ticks > 0 {
-            record(ctx, fp, ticks);
+            record(ctx, entry, fp, ticks);
         }
     }
 }
@@ -140,7 +147,7 @@ pub fn note_alloc(ctx: *mut Context, fp: usize, cursor: usize, bytes: usize) {
         s.last_cursor = 0;
         since + bytes
     };
-    record(ctx, fp, weight as u64);
+    record(ctx, 0, fp, weight as u64);
 }
 
 /// Called after the allocation slow path refilled the bump allocator.

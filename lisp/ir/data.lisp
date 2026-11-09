@@ -49,8 +49,13 @@
 (defstruct ir-exit
   (name nil) (owner nil) (group nil) (token nil) (flags 0) (index 0) (lowering nil))
 
-(defstruct (ir-env (:constructor ir-env (parent &key vars funcs blocks tags declarations)))
-  (parent nil) (vars nil) (funcs nil) (blocks nil) (tags nil) (declarations nil))
+(defstruct (ir-env (:constructor make-ir-env (parent base &key vars funcs blocks tags declarations)))
+  (parent nil) (base nil) (vars nil) (funcs nil) (blocks nil) (tags nil) (declarations nil))
+
+(declaim (inline ir-env ir-raw ir-new-var))
+(defun ir-env (parent &key vars funcs blocks tags declarations)
+  (make-ir-env parent (if (ir-env-p parent) (ir-env-base parent) parent)
+               :vars vars :funcs funcs :blocks blocks :tags tags :declarations declarations))
 
 (defvar *ir-lowering-epoch*)
 (defvar *ir-function*)
@@ -90,9 +95,19 @@
     (fail "~A~@[ in ~A~]~@[ at ~S~]" (apply #'format nil control args)
           *source-file* (ir-source-range *ir-source*))))
 
+(defun ir-proper-list-p (x)
+  (cond ((null x) t)
+        ((not (consp x)) nil)
+        (t (loop for fast = (cdr x) then (cddr fast)
+                 for slow = x then (cdr slow)
+                 do (when (null fast) (return t))
+                    (when (or (not (consp fast)) (eq fast slow)) (return nil))
+                    (when (null (cdr fast)) (return t))
+                    (when (not (consp (cdr fast))) (return nil))))))
+
 (defun ir-parts (form)
   (let ((raw (ir-raw form)))
-    (unless (handler-case (and (listp raw) (list-length raw) t) (type-error () nil))
+    (unless (ir-proper-list-p raw)
       (ir-error "Expected a finite proper list, got ~S" raw))
     (if (typep form 'cst:cst)
         (loop for tail = form then (cst:rest tail)
@@ -106,9 +121,15 @@
 (defun ir-new-exit (name &optional group (index 0))
   (let ((exit (make-ir-exit :name name :owner *ir-function* :group group :index index)))
     (unless group
-      (setf (ir-exit-group exit) exit
-            (ir-exit-token exit) (ir-new-var (gensym "EXIT"))))
+      (setf (ir-exit-group exit) exit))
     exit))
+
+(defun ir-wrap-block (exit body)
+  (if (logtest 2 (ir-exit-flags exit))
+      (progn
+        (setf (ir-exit-token exit) (ir-new-var (gensym "EXIT") (ir-exit-owner exit)))
+        (ir-node 14 *ir-source* exit body))
+      body))
 
 (defun ir-note-ref (var &optional assigned)
   (incf (ir-var-refs var))

@@ -81,7 +81,7 @@
                 collect `(,(anatomicl::slot-name slot)
                           :initarg ,(keyword-of (anatomicl::slot-name slot))))
          (:metaclass structure-class))
-       ,@(structure-accessor-definitions name layout)
+       ,@(structure-accessor-definitions name layout description)
        ,@(let ((print-object (anatomicl::defstruct-print-object description)))
            (when print-object
              `((defmethod print-object ((object ,name) stream)
@@ -94,29 +94,35 @@
                   (symbol-name name))
           '#:kiln.structures))
 
-(defun structure-accessor-definitions (name layout)
-  (let ((variable (structure-class-variable name))
-        (accessors '()))
+(defun structure-accessor-definitions (name layout description)
+  (let* ((variable (structure-class-variable name))
+         (layout-form `(kiln.sys:%primop :symbol-global-value ',variable))
+         (accessors '()))
     (loop for slot in layout
           for location from 0
           for accessor = (anatomicl::slot-accessor-name slot)
           when accessor
             do (push `(defun ,accessor (object)
-                        (kiln.sys::%structure-ref object ,variable ',name ,location))
+                        (kiln.sys::%structure-ref object ,layout-form ',name ,location))
                      accessors)
                (unless (anatomicl::slot-read-only slot)
                  (push `(defun (setf ,accessor) (value object)
-                          (kiln.sys::%structure-set value object ,variable ',name ,location))
+                          (kiln.sys::%structure-set value object ,layout-form ',name ,location))
                        accessors)))
     `((defparameter ,variable (kiln.sys::%ensure-structure-layout (find-class ',name)))
-      (declaim (inline ,@(mapcar #'second accessors)))
+      (declaim (inline ,@(anatomicl::defstruct-predicates description)
+                       ,@(when (<= (length layout) 8)
+                           (mapcar #'first (anatomicl::defstruct-constructors description)))
+                       ,@(mapcar #'second accessors)))
       ,@(reverse accessors))))
 
 ;;; Constructors allocate one object and initialize its slots by position.
 (defmethod anatomicl::generate-allocation-form
     ((client anatomicl-client) (description anatomicl::defstruct-object-description) layout)
   `(kiln.sys:%primop :allocate-structure
-                     ,(structure-class-variable (anatomicl::defstruct-name description))
+                     (kiln.sys:%primop :symbol-global-value
+                                       ',(structure-class-variable
+                                          (anatomicl::defstruct-name description)))
                      ,(length layout)))
 
 (defmethod anatomicl::generate-slot-initialization-form
@@ -125,6 +131,33 @@
   `(kiln.sys:%primop :set-structure-slot ,object
                      ,(position (anatomicl::slot-name slot) layout :key #'anatomicl::slot-name)
                      ,value))
+
+(defmethod anatomicl::generate-standard-constructor
+    ((client anatomicl-client) (description anatomicl::defstruct-object-description)
+     layout constructor-name)
+  (let ((vars (loop repeat (length layout) collect (gensym "SLOT")))
+        (object (gensym "OBJECT")))
+    `(defun ,constructor-name
+         (&key ,@(loop for slot in layout
+                       for var in vars
+                       collect `((,(keyword-of (anatomicl::slot-name slot)) ,var)
+                                 ,(anatomicl::slot-initform slot))))
+       (let ((,object ,(anatomicl::generate-allocation-form client description layout)))
+         ,@(loop for slot in layout
+                 for var in vars
+                 collect (anatomicl::generate-slot-initialization-form
+                          client description layout object slot var))
+         ,object))))
+
+(defmethod anatomicl::generate-predicate
+    ((client anatomicl-client) (description anatomicl::defstruct-object-description)
+     layout predicate-name)
+  (declare (ignore layout))
+  `(defun ,predicate-name (object)
+     (kiln.sys::%structure-typep
+      object (kiln.sys:%primop :symbol-global-value
+                               ',(structure-class-variable
+                                  (anatomicl::defstruct-name description))))))
 
 (defmethod anatomicl::generate-copier
     ((client anatomicl-client) (description anatomicl::defstruct-object-description) layout copier-name)

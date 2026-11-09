@@ -183,7 +183,11 @@ Under `#+kiln` (kiln reads target sources with its own features):
   entry; the vectors double when full (the rehash size and threshold are
   hints, CLHS `make-hash-table`). The vectors are allocated with kiln's
   primitive (`kiln.kernel::make-simple-vector`) and copied with plain
-  loops when they grow.
+  loops when they grow. Standard-test tables are allocated directly by
+  `make-bucket-hash-table` without `make-instance`, a symbol's `equal`
+  hash is cached in its header identity-hash field, and `(setf gethash)`
+  records the first tombstone slot while probing instead of probing a
+  second time.
 
 ## Parcl patches
 
@@ -310,6 +314,15 @@ Under `#+kiln`:
   `macroexpand-1` without it, so local macros and symbol macros were
   invisible to the expanders: `(setf (m) x)` with `m` a local macro became
   a call of `(setf m)`).
+- `Low/nth-value.lisp`: a constant index in `0..8` expands into `values`
+  or `multiple-value-bind` instead of `multiple-value-list`.
+- `Low/check-type.lisp`: the `store-value` restart is established in
+  `check-type-error` (`lisp/target/clos/runtime-errors.lisp` on the
+  target), called only when `typep` fails, so `check-type` makes no
+  closure, variable cell or exit token on the hit path.
+- `Low/handler-case.lisp`: a clause with an empty parameter list does not
+  assign the condition to the outer variable, so the variable needs no
+  cell when no clause binds it.
 
 ## Eclector patches
 
@@ -327,6 +340,10 @@ Under `#+kiln`:
   `(append (list 'if) (list '(null x)) (list y))`) and a tail
   (`` `(a ,x b c) `` ends in `'(b c)`, shared). Each expansion has the
   same constant parts.
+- `read-token` accumulates characters into a reusable buffer
+  (`*token-buffer*`) instead of allocating an adjustable vector per token,
+  and `char-syntax-type` handles ASCII characters in the standard
+  readtable inline before calling `eclector.readtable:syntax-type`.
 
 ## Inravina patches
 

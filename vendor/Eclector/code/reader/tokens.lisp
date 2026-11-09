@@ -50,7 +50,7 @@
         :float-exponent-marker)
        #b10000000)))
 
-  (declaim (type (simple-array (unsigned-byte 8) 1) +constituent-traits+))
+  (declaim (type simple-vector +constituent-traits+))
   (defvar +constituent-traits+
     (let* ((raw '((#\Backspace . :invalid)
                   (#\Tab       . :invalid)
@@ -97,8 +97,7 @@
                      do (adjust-array table (max (length table) (1+ code))
                                       :initial-element 0)
                         (setf (aref table code) pattern)))
-      (make-array (length table) :element-type '(unsigned-byte 8)
-                                 :adjustable nil
+      (make-array (length table) :adjustable nil
                                  :initial-contents table))))
 
 (macrolet ((define-trait-predicate (trait)
