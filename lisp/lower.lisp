@@ -697,9 +697,6 @@ true if the variable holds the cell of the variable NAME."
 (defun lower-progn (asts)
   (values (lower-progn-mv asts)))
 
-(defun lower-or-nil (ast)
-  (if ast (lower ast) (nil-value)))
-
 (defun lower-or-nil-mv (ast)
   (if ast (lower-mv ast) (values (nil-value) 1)))
 
@@ -1032,20 +1029,6 @@ allowed) a keyword not in KEYWORDS."
                 do (let ((v (bind-var p (nil-value)))
                          (s (bind-var supplied (nil-value))))
                      (emit-find-key list keyword v s))))))))
-
-(defun compile-function (name lambda-list body &key debug-name source)
-  "Builds the KIR function NAME. LAMBDA-LIST is a parsed lambda list.
-DEBUG-NAME and SOURCE (a source range) go into its debug info."
-  (let ((*regions* '())
-        (*debug-vars* '())
-        (*debug-var-count* 0))
-    (with-function (name)
-      (let ((*self* (copy-to-var :self)))
-        (emit-entry lambda-list)
-        (emit-poll :stack t)
-        (multiple-value-bind (v n) (lower-progn-mv body)
-          (emit `(:return ,v ,n))))
-      (set-function-debug debug-name source))))
 
 (defun local-function-label-name (name)
   "NAME's part of the label of a local function: a gensym's without its

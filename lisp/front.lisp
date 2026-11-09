@@ -71,9 +71,6 @@ time only.")
 (defvar *environment*)                  ; Trucler environment
 (defvar *structures*)                   ; DEFSTRUCT layouts (structures.lisp)
 
-(defun global-environment ()
-  (trucler:global-environment *client* *environment*))
-
 ;;; Dependency tracking. While a definition is compiled in the
 ;;; image (lisp/target/compiler/dependencies.lisp), *DEPENDENCIES* is a
 ;;; cons whose cdr collects the keys (KIND NAME) of the definitions its
