@@ -58,6 +58,7 @@ AMOP 的方法函数接收参数列表和后续方法，有效方法接收一个
   - 方法体不引用 `call-next-method` 和 `next-method-p`（绝大多数方法）：`%fast-function` 直接就是接收方法参数的 `(lambda (a1 ... an) ...)`，没有 `next-methods` 首参（因此 3 参数方法也能走寄存器参数的提前 poll），`spread-method-call` 直接返回这个函数本身，不再分配一层包装闭包；
   - 方法体只以零参数调用 `(call-next-method)` 和 `(next-method-p)`：`%fast-function` 记为 `(:next-function . (lambda (next-fn a1 ... an) ...))`，`spread-method-call` 在构造有效方法时就递归算好下一个方法的展开调用函数 `next-fn` 并用闭包绑定，调用时不再每次从方法实例读 `%fast-function` / `%function` 槽；
   - 其余情况（带参数的 `(call-next-method ...)` 或 `#'call-next-method`）：`%fast-function` 是 `(lambda (next-methods a1 ... an) ...)`。只以调用形式出现时，`call-next-method` 和 `next-method-p` 是局部宏；作为函数值出现时才是局部闭包。`bench/compare.lisp` 上 `call-next-method` 40.6 → 18.5 → 9.6 ns。
+- 带参数的 `call-next-method` 按原调用参数和新参数各计算一次完整的适用方法列表，只有方法及顺序相同时才调用下一方法。闭包通过共享单元保存自身的方法对象，检查使用该方法所属的泛型函数；方法的函数名解绑后，已经取得的泛型函数对象仍能正确检查。零参数调用保留原有快路径。
 - 走 `next-methods` 列表的慢路径需要读下一个方法的 `%function` 和 `%fast-function` 槽时，两个槽的位置按最近见到的槽列表缓存（方法几乎都是 `standard-method`），不走 `%slot` 的查找。
 
 ### 缓存

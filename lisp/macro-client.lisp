@@ -148,6 +148,10 @@ LAMBDA-EXPRESSION."
          (next-methods (gensym "NEXT-METHODS"))
          (lambda-list (second lambda-expression))
          (nextp (mentions-p '(call-next-method next-method-p) (cddr lambda-expression)))
+         (context (and nextp
+                       (not (only-no-arg-next-p '(call-next-method next-method-p)
+                                                (cddr lambda-expression)))
+                       (gensym "METHOD-CONTEXT")))
          (fastp (and (consp lambda-list)
                      (<= (length lambda-list) +max-fast-arity+)
                      (every #'symbolp lambda-list)
@@ -160,6 +164,13 @@ LAMBDA-EXPRESSION."
              ;; CALL-NEXT-METHOD-BODY calls the next method with ARGUMENTS
              ;; (NIL: the method's own); NO-ARGUMENTS-BODY with the
              ;; method's own.
+             (when context
+               (setf call-next-method-body
+                     `(progn
+                        (when arguments
+                          (kiln.sys::%check-next-method-arguments
+                           ,context ,(if fastp `(list ,@parameters) arguments) arguments))
+                        ,call-next-method-body)))
              (cond ((not nextp) form)
                    ((only-called-p '(call-next-method next-method-p) (cddr lambda-expression))
                     (let* ((with-arguments `(if (null ,next-methods)
@@ -223,7 +234,8 @@ LAMBDA-EXPRESSION."
                                           ,own)
                                      own
                                      `(,lambda-expression ,@parameters))))
-                     nil)))
+                     nil)
+              context))
             (t
              (values
               `(lambda (,arguments ,next-methods)
@@ -235,22 +247,22 @@ LAMBDA-EXPRESSION."
                                        ,arguments
                                        (rest ,next-methods))
                              `(apply ,lambda-expression ,arguments)))
-              nil))))))
+              nil context))))))
 
 (defmethod cmd:make-method-lambda-wrapper ((client macro-client))
   (lambda (lambda-expression)
-    (multiple-value-bind (slow fast) (method-lambda-forms lambda-expression)
+    (multiple-value-bind (slow fast context) (method-lambda-forms lambda-expression)
       ;; Taken apart by ENSURE-METHOD-WRAPPER.
-      (list :kiln-method-lambdas slow fast))))
+      (list :kiln-method-lambdas slow fast context))))
 
 (defmethod cmd:ensure-method-wrapper ((client macro-client))
   (lambda (function-name lambda-list qualifiers specializer-designators
            documentation method-lambda)
-    (destructuring-bind (function fast-function)
+    (destructuring-bind (function fast-function &optional context)
         (if (and (consp method-lambda) (eq (first method-lambda) :kiln-method-lambdas))
             (rest method-lambda)
             (list method-lambda nil))
-      `(kiln.sys:%defmethod
+      (let ((definition `(kiln.sys:%defmethod
         ',function-name
         :lambda-list ',lambda-list
         :qualifiers ',qualifiers
@@ -260,7 +272,11 @@ LAMBDA-EXPRESSION."
                                                 `',s)))
         :documentation ',documentation
         ,@(when function `(:function ,function))
-        ,@(when fast-function `(:fast-function ,fast-function))))))
+        ,@(when fast-function `(:fast-function ,fast-function))
+        ,@(when context `(:method-context ,context)))))
+        (if context
+            `(let ((,context (cons nil nil))) ,definition)
+            definition)))))
 
 ;;; Places. DEFINE-SETF-EXPANDER registers the expander in the
 ;;; compile-time environment and, at load time, on the symbol (the kernel's

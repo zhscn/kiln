@@ -722,7 +722,7 @@ superclasses and metaclasses come first or are built already."
            (apply fast-function arguments)))))
 
 (defun early-ensure-method (name &key lambda-list qualifiers specializers documentation function
-                                     fast-function)
+                                     fast-function method-context)
   (let* ((gf (early-ensure-generic-function
               name :lambda-list (congruent-lambda-list lambda-list)))
          (method (early-make-instance (%slot gf '%method-class)
@@ -734,7 +734,9 @@ superclasses and metaclasses come first or are built already."
                                                     (method-function-from-fast fast-function))
                                       :fast-function fast-function
                                       :documentation documentation)))
-    (early-add-method gf method)))
+    (early-add-method gf method)
+    (when method-context (setf (car method-context) method))
+    method))
 
 (defun kiln.sys:%defmethod (name &rest initargs)
   (if *braid-built-p*
@@ -742,6 +744,18 @@ superclasses and metaclasses come first or are built already."
       (progn (push (lambda () (apply #'early-ensure-method name initargs))
                    *deferred-definitions*)
              name)))
+
+(defvar *check-initialization-arguments* nil)
+
+(defun kiln.sys::%check-next-method-arguments (context original arguments)
+  (when *check-initialization-arguments*
+    (let* ((method (car context))
+           (generic-function (%slot method '%generic-function)))
+      (when generic-function
+        (unless (equal (compute-applicable-methods generic-function original)
+                       (compute-applicable-methods generic-function arguments))
+          (error "CALL-NEXT-METHOD arguments change the applicable methods of ~S."
+                 generic-function))))))
 
 ;;; CALL-NEXT-METHOD reads the next method's functions at every call: the
 ;;; locations of the two slots are cached for the last slot list seen

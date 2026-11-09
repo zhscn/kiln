@@ -18,8 +18,6 @@
 
 ;;; The MOP versions of the entry points.
 
-(defvar *check-initialization-arguments* nil)
-
 (defun default-instance-initargs (class initargs)
   (let ((defaults (class-default-initargs class)))
     (when defaults
@@ -152,7 +150,7 @@
              gf)))))
 
 (defun mop-ensure-method (name &key lambda-list qualifiers specializers documentation function
-                                   fast-function)
+                                   fast-function method-context)
   (let* ((gf (or (and (fboundp name)
                        (let ((function (fdefinition name)))
                          (and (generic-function-p function) function)))
@@ -167,6 +165,7 @@
                                     :fast-function fast-function
                                     :documentation documentation)))
     (add-method gf method)
+    (when method-context (setf (car method-context) method))
     method))
 
 ;;; Satiation
