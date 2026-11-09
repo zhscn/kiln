@@ -127,14 +127,14 @@
                                    fast-function)
   (let* ((gf (mop-ensure-generic-function
               name :lambda-list (congruent-lambda-list lambda-list)))
-         (method (make-instance (generic-function-method-class gf)
-                                :lambda-list lambda-list
-                                :qualifiers qualifiers
-                                :specializers (mapcar #'specializer-from-designator specializers)
-                                :function (or function
-                                              (method-function-from-fast fast-function))
-                                :fast-function fast-function
-                                :documentation documentation)))
+         (method (mop-make-instance (generic-function-method-class gf)
+                                    :lambda-list lambda-list
+                                    :qualifiers qualifiers
+                                    :specializers (mapcar #'specializer-from-designator specializers)
+                                    :function (or function
+                                                  (method-function-from-fast fast-function))
+                                    :fast-function fast-function
+                                    :documentation documentation)))
     (add-method gf method)
     method))
 
@@ -206,7 +206,11 @@ satiated; their call histories fill as they are called.")
     (name &rest initargs &key environment declare method-combination
            (method-class nil method-class-p) &allow-other-keys)
   (declare (ignore environment declare))
+  (when (and (symbolp name) (or (macro-function name) (special-operator-p name)))
+    (error 'program-error))
   (let ((existing (and (fboundp name) (fdefinition name))))
+    (when (and existing (not (generic-function-p existing)))
+      (error 'program-error))
     (if (generic-function-p existing)
         (apply #'reinitialize-instance existing
                (append (when method-class-p

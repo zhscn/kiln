@@ -136,6 +136,12 @@ Each patched place is marked with a `kiln:` comment.
 - `argument-stamp` reads a native structure's stamp from its layout
   inline, as it reads a standard instance's from its rack (it went
   through `stamp` out of line).
+- `default-discriminating-function` checks that the number of arguments is
+  at least the number of required parameters before indexing into the
+  argument list.
+- The condition signaled by `slot-missing` is named `slot-missing-error`
+  (upstream names the condition `slot-missing`, which makes `cl:slot-missing`
+  name a class).
 
 ## Predicament patches
 
@@ -263,12 +269,19 @@ Under `#+kiln`:
   `(setf stream-file-position)` and its methods, and has its own
   `stream-write-string`, which appends the string at once (upstream: one
   `stream-write-char` per character).
+- The default methods of `pathname` and `truename` on `t` are omitted under
+  `#+kiln` (they call `(pathname (pathname stream-designator))`, which
+  loops forever on non-pathname objects; kiln defines `cl:pathname` and
+  `cl:truename` in `lisp/target/clos/pathnames.lisp`).
 
 ## Incless patches
 
-None. kiln's client (`lisp/target/clos/printer.lisp`) supplies the
-implementation-specific parts, and `lisp/target/clos/quaviver.lisp` the
-part of Quaviver that Incless uses.
+- `define-interface` defines `kiln.kernel::%print-unreadable-object` under
+  `#+kiln` so `cl:print-unreadable-object` can be defined early in
+  `lisp/target/early.lisp` before `printer.lisp` is compiled. kiln's client
+  (`lisp/target/clos/printer.lisp`) supplies the implementation-specific
+  parts, and `lisp/target/clos/quaviver.lisp` the part of Quaviver that
+  Incless uses.
 
 ## Invistra patches
 
@@ -372,3 +385,7 @@ Under `#+kiln`:
   For that, an exit to a block or tag of the VM (`exit-8`...) passes its
   target to the entry's function, which sets the pc (and the stack and
   frame pointers) once the `go` has unwound, after those cleanups.
+- `called-fdefinition` on the target client calls
+  `kiln.kernel::%called-fdefinition` so `fdefinition` itself can signal
+  `undefined-function` when called directly while the VM still evaluates call
+  arguments before signaling `undefined-function`.

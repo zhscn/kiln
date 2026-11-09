@@ -394,8 +394,8 @@ predicate inside it is branched on, not made into T or NIL and compared."
         (multiple-value-bind (v packed)
             (multiple-value-call #'emit-unwind-values (lower-or-nil-mv (ir-node-b ast)))
           (let ((token (ir-variable-value (ir-exit-token (ir-exit-group (ir-node-a ast))))))
-            (emit `(:call-rt ,(rt-exit-to) () (:ctx ,token ,v ,packed) ,(handler))))
-          (emit '(:trap))))
+            (emit `(:call-rt ,(rt-exit-to) () (:ctx ,token ,v ,packed) ,(handler)))
+            (emit-error +err-expired-exit+ token))))
     (nil-value)))
 
 
@@ -420,7 +420,7 @@ predicate inside it is branched on, not made into T or NIL and compared."
     (multiple-value-bind (vv packed)
         (multiple-value-call #'emit-unwind-values (lower-mv (ir-node-b ast)))
       (emit `(:call-rt ,(rt-throw) () (:ctx ,tv ,vv ,packed) ,(handler))))
-    (emit '(:trap))
+    (emit-error +err-no-catch-tag+ tv)
     (nil-value)))
 
 (defun ir-lower-unwind-protect (ast)
@@ -539,7 +539,7 @@ predicate inside it is branched on, not made into T or NIL and compared."
         (progn (emit-local-exit (exit-info-regions info)) (jump (exit-info-block info)))
         (let ((token (ir-variable-value (ir-exit-token (ir-exit-group exit)))))
           (emit `(:call-rt ,(rt-exit-to) () (:ctx ,token ,(ash (ir-exit-index exit) +fixnum-shift+) 0) ,(handler)))
-          (emit '(:trap))))
+          (emit-error +err-expired-exit+ token)))
     (nil-value)))
 
 (defun ir-lower-toplevel (fun)

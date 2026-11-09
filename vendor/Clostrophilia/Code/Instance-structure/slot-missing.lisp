@@ -8,6 +8,6 @@
 (defmethod slot-missing
     (class object slot-name operation &optional new-value)
   (declare (ignore class operation new-value))
-  (error 'slot-missing
+  (error 'slot-missing-error
          :name slot-name
          :object object))

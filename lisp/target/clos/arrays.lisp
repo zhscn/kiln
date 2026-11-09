@@ -235,7 +235,7 @@
       (walk dimensions contents))))
 
 (defun native-array-p (dimensions element-type adjustable fill-pointer displaced-to)
-  (and (null (rest dimensions))
+  (and (consp dimensions) (null (rest dimensions))
        (not adjustable) (null fill-pointer) (null displaced-to)
        (member element-type '(t character))))
 
@@ -246,7 +246,9 @@
                                       displaced-to (displaced-index-offset 0))
   ;; The common case without SUBTYPEP (ctype makes vectors).
   (when (and (or (eq element-type t) (eq element-type 'character))
-             (or (integerp dimensions) (and (consp dimensions) (null (cdr dimensions))))
+             (or (and (integerp dimensions) (not (minusp dimensions)))
+                 (and (consp dimensions) (null (cdr dimensions))
+                      (integerp (car dimensions)) (not (minusp (car dimensions)))))
              (not adjustable) (null fill-pointer) (null displaced-to))
     (let* ((n (if (consp dimensions) (car dimensions) dimensions))
            (vector (if (eq element-type t)
@@ -262,7 +264,7 @@
   (let* ((dimensions (canonical-dimensions dimensions))
          (uaet (upgraded-array-element-type element-type))
          (size (let ((n 1)) (dolist (d dimensions n) (setf n (* n d)))))
-         (vectorp (null (rest dimensions))))
+         (vectorp (and (consp dimensions) (null (rest dimensions)))))
     (when (and initial-element-p initial-contents-p)
       (error 'initial-contents-and-initial-element-cannot-both-be-supplied))
     (when (and displaced-to (or initial-element-p initial-contents-p))

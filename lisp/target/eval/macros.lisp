@@ -30,26 +30,32 @@
 ;;; function.
 (defmethod kiln.cmd:get-setf-expansion
     ((client kiln.macros-target:macro-client) place &optional environment)
-  (if (and (consp place) (symbolp (car place)))
-      (let ((expander (if (and (eq (car place) 'the) (consp (cdr place)) (consp (cddr place))
-                               (null (cdddr place)))
-                          ;; (SETF (THE type place) form) is (SETF place
-                          ;; (THE type form)) (CLHS 5.1.2.6).
-                          (lambda (place environment)
-                            (multiple-value-bind (temps vals stores store-form access-form)
-                                (kiln.cmd:get-setf-expansion client (third place) environment)
-                              (values temps vals stores
-                                      `(let ((,(first stores) (the ,(second place) ,(first stores))))
-                                         ,store-form)
-                                      `(the ,(second place) ,access-form))))
-                          (get (car place) 'setf-expander))))
-        (if expander
-            (funcall expander place environment)
-            (multiple-value-bind (expansion macrop) (macroexpand-1 place environment)
-              (if macrop
-                  (kiln.cmd:get-setf-expansion client expansion environment)
-                  (call-next-method)))))
-      (call-next-method)))
+  (cond ((and (consp place) (symbolp (car place)))
+         (let ((expander (if (and (eq (car place) 'the) (consp (cdr place)) (consp (cddr place))
+                                  (null (cdddr place)))
+                             ;; (SETF (THE type place) form) is (SETF place
+                             ;; (THE type form)) (CLHS 5.1.2.6).
+                             (lambda (place environment)
+                               (multiple-value-bind (temps vals stores store-form access-form)
+                                   (kiln.cmd:get-setf-expansion client (third place) environment)
+                                 (values temps vals stores
+                                         `(let ((,(first stores) (the ,(second place) ,(first stores))))
+                                            ,store-form)
+                                         `(the ,(second place) ,access-form))))
+                             (get (car place) 'setf-expander))))
+           (if expander
+               (funcall expander place environment)
+               (multiple-value-bind (expansion macrop) (macroexpand-1 place environment)
+                 (if macrop
+                     (kiln.cmd:get-setf-expansion client expansion environment)
+                     (call-next-method))))))
+        ((symbolp place)
+         (multiple-value-bind (expansion macrop) (macroexpand-1 place environment)
+           (if macrop
+               (kiln.cmd:get-setf-expansion client expansion environment)
+               (call-next-method))))
+        (t
+         (call-next-method))))
 
 (defun get-setf-expansion (place &optional environment)
   (kiln.cmd:get-setf-expansion kiln.cmd:*client* place environment))

@@ -18,4 +18,7 @@
   (let ((*print-base* 16) (*print-radix* t))
     (write-object client (kiln.sys:%primop :identity-hash object) stream)))
 
+(defun kiln.kernel::%print-unreadable-object (object stream type identity function)
+  (write-unreadable-object *client* object stream type identity function))
+
 (define-interface :client-form *client* :client-class kiln-client :intrinsic t)

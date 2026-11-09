@@ -1,6 +1,6 @@
 (cl:in-package #:clostrophilia)
 
-(define-condition slot-missing (error)
+(define-condition slot-missing-error (error)
   ((%name :initarg :name :reader name)
    (%object :initarg :object :reader object))
   (:report (lambda (condition stream)

@@ -396,8 +396,10 @@
                         (t (mapcar #'spush (subseq (multiple-value-list (mv-call))
                                                    0 mvals)))))
                     (incf ip))
-                   ((#.m:fdefinition #.m:called-fdefinition)
+                   ((#.m:fdefinition)
                     (spush (fdefinition (constant (next-code)))) (incf ip))
+                   ((#.m:called-fdefinition)
+                    (spush (kiln.kernel::%called-fdefinition (constant (next-code)))) (incf ip))
                    ((#.m:nil) (spush nil) (incf ip))
                    ((#.m:eq) (spush (eq (spop) (spop))) (incf ip))
                    ((#.m:pop) (setf (vm-values vm) (list (spop))) (incf ip))
@@ -501,8 +503,10 @@
                       (#.m:check-arg-count-=
                        (vm:check-arg-count-= (vm-arg-count vm) (next-long))
                        (incf ip))
-                      ((#.m:fdefinition #.m:called-fdefinition)
+                      ((#.m:fdefinition)
                        (spush (fdefinition (constant (next-long)))) (incf ip))
+                      ((#.m:called-fdefinition)
+                       (spush (kiln.kernel::%called-fdefinition (constant (next-long)))) (incf ip))
                       (otherwise
                        (error 'm:unknown-long-opcode :opcode (code)))))
                    (otherwise

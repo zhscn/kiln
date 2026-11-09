@@ -128,6 +128,8 @@
 (defconstant +err-lisp-error+ 20)
 (defconstant +err-undefined-setf-function+ 21)
 (defconstant +err-stack-exhausted+ 22)        ; KILN.KERNEL::%STACK-EXHAUSTED       ; ERROR before the condition system
+(defconstant +err-no-catch-tag+ 23)
+(defconstant +err-expired-exit+ 24)
 
 ;;; Argument registers in the Lisp calling convention.
 (defconstant +reg-args+ 3)

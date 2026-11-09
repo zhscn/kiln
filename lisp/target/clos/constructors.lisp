@@ -123,3 +123,45 @@
        (setf (call-history generic-function) '())
        (invalidate-discriminating-function generic-function)
        (note-method-change generic-function)))))
+
+(let ((gf (mop-make-instance
+           'standard-generic-function
+           :name 'make-instance
+           :lambda-list '(class &rest initargs &key &allow-other-keys)
+           :method-class (find-class 'standard-method)
+           :method-combination (find-method-combination nil 'standard '()))))
+  (setf (fdefinition 'make-instance) gf)
+  (push gf *early-generic-functions*)
+  (defmethod make-instance ((class symbol) &rest initargs)
+    (apply #'make-instance (find-class class) initargs))
+  (defmethod make-instance ((class class) &rest initargs)
+    (apply #'mop-make-instance class initargs)))
+
+(defgeneric no-next-method (generic-function method &rest args))
+(defmethod no-next-method ((generic-function standard-generic-function)
+                           (method standard-method) &rest args)
+  (error "No next method for ~S in ~S with arguments ~S" method generic-function args))
+
+(defgeneric function-keywords (method))
+(defmethod function-keywords ((method standard-method))
+  (let* ((ll (method-lambda-list method))
+         (key-pos (position '&key ll)))
+    (if key-pos
+        (let ((keys '())
+              (aok nil))
+          (loop for spec in (subseq ll (+ key-pos 1))
+                until (member spec '(&aux))
+                do (cond ((eq spec '&allow-other-keys) (setf aok t))
+                         ((symbolp spec) (push (intern (symbol-name spec) '#:keyword) keys))
+                         ((consp spec)
+                          (let ((var (first spec)))
+                            (push (if (consp var)
+                                      (first var)
+                                      (intern (symbol-name var) '#:keyword))
+                                  keys)))))
+          (values (nreverse keys) aok))
+        (values '() nil))))
+
+(defgeneric describe-object (object stream))
+(defmethod describe-object (object stream)
+  (format stream "~&~S is an instance of ~S.~%" object (class-of object)))

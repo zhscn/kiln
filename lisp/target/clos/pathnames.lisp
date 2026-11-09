@@ -46,7 +46,10 @@
        (equal (%directory a) (%directory b))
        (equal (%name a) (%name b))
        (equal (%type a) (%type b))
-       (equal (%version a) (%version b))))
+       (or (equal (%version a) (%version b))
+           (and (not (logical-pathname-p a))
+                (member (%version a) '(nil :newest :unspecific))
+                (member (%version b) '(nil :newest :unspecific))))))
 
 (setf *instance-equal* #'pathname-components-equal)
 
@@ -333,7 +336,7 @@ one: a string all in one case gets the other."
 ;;; Construction and merging
 
 (defun canonical-directory (directory)
-  (cond ((null directory) nil)
+  (cond ((or (null directory) (equal directory '(:relative))) nil)
         ((stringp directory) (list :absolute directory))
         ((eq directory :wild) (list :absolute :wild-inferiors))
         (t directory)))
@@ -676,11 +679,22 @@ pieces left."
                                (push (octets-string buffer start i) names)
                                (setf start (+ i 1))))))))))))
 
+(defun check-directory-list (dir pathspec)
+  (when (consp dir)
+    (when (and (eq (first dir) :absolute)
+               (member (second dir) '(:up :back)))
+      (error 'file-error :pathname pathspec))
+    (loop for (a b) on (rest dir)
+          when (and (eq a :wild-inferiors) (member b '(:up :back)))
+            do (error 'file-error :pathname pathspec))))
+
 (defun directory (pathspec &key)
   "The pathnames of the files and directories that match PATHSPEC;
 directories are in directory form. Symbolic links are not resolved."
+  (check-directory-list (pathname-directory pathspec) pathspec)
   (let* ((pattern (translate-logical-pathname (merge-pathnames pathspec)))
          (results '()))
+    (check-directory-list (%directory pattern) pattern)
     (labels ((sub (directory name)
                (append directory (list name)))
              (files (directory)

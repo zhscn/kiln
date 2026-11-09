@@ -48,7 +48,10 @@ running image, in the null lexical environment."
 (defun native-eval-1 (form)
   (loop
     (cond ((symbolp form)
-           (return (kiln.kernel::maclina-eval form)))
+           (multiple-value-bind (expansion macrop) (macroexpand-1 form)
+             (if macrop
+                 (setf form expansion)
+                 (return (kiln.kernel::maclina-eval form)))))
           ((atom form)
            (return form))
           ((eq (first form) 'quote)

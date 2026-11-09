@@ -144,12 +144,18 @@ pub unsafe extern "C" fn kiln_rt_integer_op(ctx: *mut Context, op: u64, a: u64, 
             OP_LOGIOR => from_bigint(ctx, &(x | y)),
             OP_LOGXOR => from_bigint(ctx, &(x ^ y)),
             OP_ASH => {
-                let s = y.to_i64().unwrap_or(0);
-                if s >= 0 {
-                    from_bigint(ctx, &(x << s as usize))
+                if x.is_zero() {
+                    0
+                } else if !y.is_negative() {
+                    let s = y.to_usize().unwrap_or(usize::MAX);
+                    from_bigint(ctx, &(x << s))
                 } else {
                     // Arithmetic shift right rounds toward negative infinity.
-                    from_bigint(ctx, &(x >> (-s) as usize))
+                    match (-&y).to_u64() {
+                        Some(s) if s <= x.bits() => from_bigint(ctx, &(x >> s as usize)),
+                        _ if x.is_negative() => (-1i64 << 1) as u64,
+                        _ => 0,
+                    }
                 }
             }
             OP_GCD => from_bigint(ctx, &x.gcd(&y)),

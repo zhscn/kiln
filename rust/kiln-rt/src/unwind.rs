@@ -179,7 +179,7 @@ pub unsafe extern "C" fn kiln_rt_throw(
     value: u64,
     packed: u64,
     fp: usize,
-) -> ! {
+) {
     unsafe {
         let mut e = (*ctx).dynenv;
         while !e.is_null() {
@@ -188,9 +188,6 @@ pub unsafe extern "C" fn kiln_rt_throw(
             }
             e = (*e).prev;
         }
-        let mut s = String::new();
-        crate::object::write_object(&mut s, tag);
-        crate::rtfun::error_exit(&format!("attempt to throw to a nonexistent tag: {s}"));
     }
 }
 
@@ -209,7 +206,7 @@ pub unsafe extern "C" fn kiln_rt_exit_to(
     value: u64,
     packed: u64,
     fp: usize,
-) -> ! {
+) {
     unsafe {
         let mut e = (*ctx).dynenv;
         while !e.is_null() {
@@ -218,7 +215,6 @@ pub unsafe extern "C" fn kiln_rt_exit_to(
             }
             e = (*e).prev;
         }
-        crate::rtfun::error_exit("attempt to exit to a block or tagbody that is no longer active");
     }
 }
 

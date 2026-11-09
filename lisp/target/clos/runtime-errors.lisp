@@ -5,6 +5,7 @@
 (in-package #:clostrophilia)
 
 (define-condition kiln-simple-program-error (program-error simple-error) ())
+(define-condition kiln-simple-control-error (control-error simple-error) ())
 
 ;;; As SBCL's: STORAGE-CONDITION is not an ERROR, so HANDLER-CASE of ERROR
 ;;; does not catch it.
@@ -16,6 +17,9 @@
            (error 'type-error :datum object :expected-type expected-type))
          (program-error (control)
            (error 'kiln-simple-program-error
+                  :format-control control :format-arguments (list object)))
+         (control-error (control)
+           (error 'kiln-simple-control-error
                   :format-control control :format-arguments (list object))))
     (case code
       (1 (type-error 'fixnum))
@@ -39,6 +43,8 @@
                                :format-arguments (list object)))
       (21 (error 'undefined-function :name (list 'setf object)))
       (22 (error 'kiln.sys:stack-exhausted))
+      (23 (control-error "attempt to throw to a nonexistent tag: ~S"))
+      (24 (control-error "attempt to exit to a block or tagbody that is no longer active"))
       (t (kiln.sys:%primop :fatal-error code object)))))
 
 ;;; What the expansions of Common-macros' macros signal or call at run time.

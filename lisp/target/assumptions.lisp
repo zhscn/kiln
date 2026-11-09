@@ -60,6 +60,12 @@
     (when (eq (car l) indicator)
       (return (car (cdr l))))))
 
+(defun %has-property (symbol indicator)
+  (do ((l (%primop :symbol-plist symbol) (cdr (cdr l))))
+      ((null l) nil)
+    (when (eq (car l) indicator)
+      (return t))))
+
 ;;; Proclamations at run time: SPECIAL is recorded on the plist, for the
 ;;; evaluator (the eval module). The others take effect at compile time
 ;;; only: the compiler on kiln sees them through *PROCLAIM-HOOK*
@@ -68,7 +74,9 @@
   (declare (special *proclaim-hook*))
   (when (and (consp declaration) (eq (car declaration) 'special))
     (dolist (name (cdr declaration))
-      (%put name 'special t)))
+      (when (%has-property name '%symbol-macro)
+        (error 'program-error))
+      (%put name '%special t)))
   (when (and (boundp '*proclaim-hook*) *proclaim-hook*)
     (funcall *proclaim-hook* declaration))
   nil)

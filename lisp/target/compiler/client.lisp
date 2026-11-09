@@ -137,4 +137,7 @@ declared inline by one EVAL is expanded in the code of the next.")
   ;; lists name only those, lower.lisp).
   (setf (session-packages session) (list-all-packages))
   (setf (session-inline-functions session) (image-inline-functions))
+  (setf (session-structures session) *structures*)
   session)
+
+(setf (macro-function 'defstruct) #'expand-defstruct)

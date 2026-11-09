@@ -30,6 +30,8 @@ pub const ERR_BAD_TYPE: u64 = 19;
 /// ERROR before the condition system: OBJ is the list (DATUM . ARGUMENTS).
 pub const ERR_LISP_ERROR: u64 = 20;
 pub const ERR_UNDEFINED_SETF_FUNCTION: u64 = 21;
+pub const ERR_NO_CATCH_TAG: u64 = 23;
+pub const ERR_EXPIRED_EXIT: u64 = 24;
 
 pub fn error_exit(msg: &str) -> ! {
     let _ = std::io::stdout().flush();
@@ -91,6 +93,8 @@ pub unsafe fn error_with(_ctx: *mut Context, code: u64, obj: u64) -> ! {
         ERR_BAD_TYPE => format!("{s} is not a known type specifier"),
         ERR_LISP_ERROR => format!("error: {s}"),
         ERR_UNDEFINED_SETF_FUNCTION => format!("the function (SETF {s}) is undefined"),
+        ERR_NO_CATCH_TAG => format!("attempt to throw to a nonexistent tag: {s}"),
+        ERR_EXPIRED_EXIT => "attempt to exit to a block or tagbody that is no longer active".to_string(),
         _ => format!("error code {code}, object {s}"),
     };
     error_exit(&msg)

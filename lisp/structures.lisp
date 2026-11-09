@@ -11,7 +11,7 @@
 
 (defvar *anatomicl-client* (make-instance 'anatomicl-client))
 
-(defvar *structures*)                   ; (kind . name) -> layout or description
+(defvar *structures* (make-hash-table :test 'equal)) ; (kind . name) -> layout or description
 
 (defmethod anatomicl:structure-description ((client anatomicl-client) name environment)
   (declare (ignore environment))

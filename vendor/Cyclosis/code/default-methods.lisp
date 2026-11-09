@@ -200,13 +200,11 @@
 (defmethod stream-file-position ((stream fundamental-stream))
   nil)
 
-(let ((func #'cl:pathname))
-  (defmethod pathname (stream)
-    (funcall func stream)))
+(defmethod pathname (stream)
+  (error 'type-error :datum stream :expected-type '(or pathname string file-stream)))
 
-(let ((func #'cl:truename))
-  (defmethod truename (stream)
-    (funcall func stream)))
+(defmethod truename (stream)
+  (error 'type-error :datum stream :expected-type '(or pathname string file-stream)))
 
 (defmethod stream-element-type (stream)
   (check-stream stream)

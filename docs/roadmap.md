@@ -13,7 +13,7 @@
 | M4 | CLOS 引导和依赖 CLOS 的库：condition、哈希表、包、ctype、数组、结构、流、文件、打印、FORMAT、LOOP、reader（[clos.md](design/clos.md)、[stdlib.md](design/stdlib.md)、[io.md](design/io.md)） | 完成 |
 | M5 | 运行期 `eval`/`compile`/`load` 和 REPL；编译器在 kiln 上运行；自举闭合（kiln0 和 kiln1 逐字节相同）；原生 `compile`（[eval-compile.md](design/eval-compile.md)、[bootstrap.md](design/bootstrap.md)） | 完成 |
 | M6 | image 开发体验：堆快照（[heap-image.md](design/heap-image.md)）、原生 `eval`/`load`、帧的调试信息（[debugging.md](design/debugging.md)）、后端协议（[backend-protocol.md](design/backend-protocol.md)）、依赖追踪（[dependencies.md](design/dependencies.md)） | 前四项完成；剩下 AOT 模块的依赖和定义表、REPL 中断、SLYNK/Swank 接入 |
-| — | ANSI 补全：cl-bench 找到的缺口已补上；接入 `ansi-test` 系统排查并补齐标准覆盖度 | 进行中（见“当前优先级”与“标准库和 ANSI 覆盖”） |
+| — | ANSI 补全：cl-bench 找到的缺口已补上；`ansi-test` 全部 24 组已跑通（20,095 / 21,945 = 91.6%，见“标准库和 ANSI 覆盖”），持续补齐剩余缺口 | 进行中 |
 | — | 性能：自编译与基础代码生成已与 SBCL 持平（单阶段 5.0 s vs 4.63 s）；剩余编译器深度优化与库快路径见下文“性能” | 阶段一完成 |
 | — | seal、WPO 和 AOT 交付（[positioning.md](design/positioning.md)） | 未开始 |
 | — | 异步（[async.md](design/async.md)） | 未开始，ANSI 自举完成之前不做 |
@@ -89,7 +89,6 @@
 - **局部函数的 lambda lifting 与多调用点小函数内联**：目前 `analyze-ir` 只内联无可选参数、仅调用一次的局部函数；多次调用但不逃逸的局部函数若捕获外层变量，仍会分配闭包并在循环头 spill。
 - **编译器宏与高阶序列函数展开**：编译期的 `define-compiler-macro` 被忽略，运行期只记在 plist 上（宿主库的除外）；`find`、`position`、`sort`、`map` 等高阶调用点尚未在编译期展开成内联循环（`funcall` 比较函数和运行期解析关键字参数仍是开销来源）。
 - **逃逸分析与 `dynamic-extent`**：`&rest` 列表、跨函数退出令牌、`handler-case` / `handler-bind` 的 handler 闭包和条目仍在堆上分配；带 `&key` 的全局函数尚未生成固定位置参数的内部入口。
-- 全局符号宏：image 里的编译器看不到 `define-symbol-macro`。
 - `defclass` 定义的访问函数在文件末尾被报成未定义函数。
 - 字面数据里未 intern 的符号，名字里带宿主的 gensym 计数时，两边的 KIR 可能不同。
 - 中端放在哪里（直接在 `ir-node` 上做类型推导与变换，还是在 IR 和 KIR 之间新加一层）待定，见 [modern-practices.md](research/modern-practices.md)。
@@ -97,7 +96,6 @@
 ### 运行期的 `eval`/`compile`
 
 - `compile-file` 和 FASL。
-- 运行期的 `defstruct`（结构布局没有传给 image 里的编译器）。
 - `defsetf` 长形式在 image 里求值时出错（[eval-compile.md](design/eval-compile.md)），要在 vendor 的 Common-macros 上打补丁。
 - `compile` 的前端开销：每次新建 session。
 - `compile` 编出的函数名是 `(lambda)`；`load` 的函数没有文件和位置。
@@ -107,12 +105,41 @@
 - 泛函的重定义（`defgeneric` 改 lambda list 等）。
 - 过时实例只在分派时更新：`slot-value` 在更新之前读的是旧布局（类名 `typep` 的调用点缓存已在统一框架里修掉）。
 - 重定义结构后，inline 的访问器在已编译的调用者里不变（依赖追踪不覆盖 AOT 模块）。
-- `make-instance` 改成泛函；快路径之外的构造器。
-- `change-class` 调用 `update-instance-for-different-class`。
+- 快路径之外的 `make-instance` 构造器性能。
 - 长形式 `define-method-combination` 产生任意代码时的支持（可以用原生 `compile`）。
 - 局部冻结（sealed class、sealed generic function）是否要做，待定（[abi-policy.md](design/abi-policy.md)）。
 
 ### 标准库和 ANSI 覆盖
+
+`ansi-test`（`tools/ansi-test.sh`）全部 24 个测试组已无崩溃跑通，当前通过率 **20,095 / 21,945（91.6%，总耗时 103s）**：
+
+| 测试组 | 通过 | 失败 | 总计 | 通过率 | 主要未通过原因 |
+|---|---:|---:|---:|---:|---|
+| `symbols` | 1110 | 35 | 1145 | 96.9% | `gentemp`、`copy-symbol` 部分边界 |
+| `eval-and-compile` | 293 | 25 | 318 | 92.1% | `compile-file`、`eval-when` 细节、`special-operator-p` 宏/特殊形式边界 |
+| `data-and-control-flow` | 1344 | 84 | 1428 | 94.1% | `defsetf` 长形式、`shiftf`/`rotatef`/`psetf` 多值、`equalp` 分支 |
+| `iteration` | 832 | 11 | 843 | 98.7% | `loop` 的少量边界语法 |
+| `objects` | 644 | 218 | 862 | 74.7% | `defgeneric` 重定义与方法组合选项、`change-class` 细节、`reinitialize-instance` 关键字检查 |
+| `conditions` | 646 | 27 | 673 | 96.0% | `assert`、`ctypecase`/`ccase`、部分条件打印格式 |
+| `cons` | 1575 | 307 | 1882 | 83.7% | 集合操作（`union`/`intersection`/`set-difference`/`sublis`/`subst`）的 `:key` 和非列表检查、`ldiff`/`tailp` 边界 |
+| `types-and-classes` | 593 | 34 | 627 | 94.6% | `coerce` 复数/函数边界、内置类层次的少量差异 |
+| `arrays` | 1344 | 12 | 1356 | 99.1% | `adjust-array` 与 displaced 数组边界 |
+| `hash-tables` | 164 | 3 | 167 | 98.2% | `make-hash-table` 参数校验细节 |
+| `packages` | 372 | 128 | 500 | 74.4% | `defpackage` 冲突处理、`with-package-iterator`、字符串/字符设计符检查 |
+| `numbers` | 1376 | 68 | 1444 | 95.3% | 复数（`complex`）、超越函数在复数域的值、`decode-float` 边界、`random-state` 打印 |
+| `sequences` | 3058 | 229 | 3287 | 93.0% | 非列表/非向量序列类型报错、`map`/`merge`/`concatenate` 结果类型检查、`delete-duplicates` 边界 |
+| `structures` | 1388 | 6 | 1394 | 99.6% | `:type` 列表/向量结构的少量选项组合 |
+| `strings` | 457 | 52 | 509 | 89.8% | `base-string`、`nil` 元素类型字符串、大小写转换的起止下标检查 |
+| `characters` | 253 | 6 | 259 | 97.7% | 字符名与扩展字符谓词边界 |
+| `pathnames` | 192 | 23 | 215 | 89.3% | 逻辑路径名（logical pathname）、`wild-pathname-p` 细节 |
+| `files` | 60 | 27 | 87 | 69.0% | `directory` 通配符、`file-author`、`probe-file`/`truename` 错误类型 |
+| `streams` | 772 | 31 | 803 | 96.1% | `echo-stream`/`two-way-stream`/`concatenated-stream` 边界、`open` 的 `:if-exists` 组合 |
+| `printer` | 2122 | 324 | 2446 | 86.8% | `pprint` 派发表与逻辑块细节、`format` 浮点舍入与少量指令组合、`*print-readably*` |
+| `reader` | 652 | 21 | 673 | 96.9% | `*read-suppress*` 下的语法检查、`read-preserving-whitespace` 边界 |
+| `system-construction` | 19 | 58 | 77 | 24.7% | `compile-file`、`compile-file-pathname`、`with-compilation-unit` |
+| `environment` | 92 | 118 | 210 | 43.8% | `decode-universal-time`/`encode-universal-time`、`apropos`、`dribble`、`ed` |
+| `misc` | 737 | 3 | 740 | 99.6% | `step`/`trace` 边界 |
+| **合计** | **20095** | **1850** | **21945** | **91.6%** | |
 
 与 CL 不一致的行为：
 - `print`（编译器原语）：AOT 模块里先打印对象再换行，不经过 `*standard-output*`、`print-object` 和打印变量。要等测试的期望输出统一迁移。

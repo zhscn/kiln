@@ -23,11 +23,14 @@
   (make-instance 'm:module :bytecode (coerce bytecode 'simple-vector)))
 
 (defmethod trucler:describe-variable ((client client) (env null) name)
-  (cond ((or (null name) (eq name t) (keywordp name) (get name 'kiln.kernel::constant))
+  (cond ((or (null name) (eq name t) (keywordp name) (get name 'kiln.kernel::%constant))
          (make-instance 'trucler:constant-variable-description
            :name name :value (symbol-value name)))
-        ((get name 'kiln.kernel::special)
+        ((get name 'kiln.kernel::%special)
          (make-instance 'trucler:global-special-variable-description :name name))
+        ((kiln.kernel::%has-property name 'kiln.kernel::%symbol-macro)
+         (make-instance 'trucler:global-symbol-macro-description
+           :name name :expansion (kiln.kernel::%get name 'kiln.kernel::%symbol-macro)))
         (t nil)))
 
 (defmethod trucler:describe-function ((client client) (env null) name)
@@ -67,6 +70,14 @@
                             (environment-client environment) environment name)))
           (and (typep description 'trucler:macro-description)
                (trucler:expander description)))))
+
+(setf kiln.kernel::*environment-symbol-macro*
+      (lambda (name environment)
+        (let ((description (trucler:describe-variable
+                            (environment-client environment) environment name)))
+          (if (typep description 'trucler:symbol-macro-description)
+              (values (trucler:expansion description) t)
+              (values nil nil)))))
 
 (setf m:*client* (make-instance 'client))
 (maclina.vm-native:initialize-vm 100000)
@@ -125,18 +136,23 @@ bytecode compiler.")
 (defun load (filespec &key (verbose *load-verbose*) (print *load-print*)
                            (if-does-not-exist t) (external-format :default))
   (declare (ignore external-format))
-  (with-open-file (stream filespec :if-does-not-exist (if if-does-not-exist :error nil))
-    (when stream
-      (when verbose
-        (format t "~&; loading ~A~%" filespec))
-      (let ((*package* *package*)
-            (*readtable* *readtable*)
-            (*load-pathname* (pathname filespec))
-            (*load-truename* (pathname filespec))
-            (eof (list nil)))
-        (loop for form = (read stream nil eof)
-              until (eq form eof)
-              do (let ((values (multiple-value-list (eval form))))
-                   (when print
-                     (format t "~&~{~S~^ ~}~%" values)))))
-      t)))
+  (flet ((load-stream (stream pathname truename)
+           (let ((*package* *package*)
+                 (*readtable* *readtable*)
+                 (*load-pathname* pathname)
+                 (*load-truename* truename)
+                 (eof (list nil)))
+             (loop for form = (read stream nil eof)
+                   until (eq form eof)
+                   do (let ((values (multiple-value-list (eval form))))
+                        (when print
+                          (format t "~&~{~S~^ ~}~%" values)))))
+           t))
+    (if (streamp filespec)
+        (load-stream filespec nil nil)
+        (let ((merged (merge-pathnames filespec)))
+          (with-open-file (stream merged :if-does-not-exist (if if-does-not-exist :error nil))
+            (when stream
+              (when verbose
+                (format t "~&; loading ~A~%" merged))
+              (load-stream stream merged (or (probe-file merged) merged))))))))

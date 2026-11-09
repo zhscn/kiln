@@ -198,7 +198,7 @@ or T or NIL for a type that is not cached."
   (let ((class (if (symbolp type) (find-class type) type)))
     (unless (eq (class-of class) (find-class 'condition-class))
       (kiln.kernel::unknown-type type))
-    (apply #'make-instance class initargs)))
+    (apply #'mop-make-instance class initargs)))
 
 (defvar predicament::*condition-maker* 'kiln-make-condition)
 

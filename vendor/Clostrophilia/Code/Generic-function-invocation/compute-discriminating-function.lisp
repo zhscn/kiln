@@ -505,19 +505,21 @@
       (funcall function arguments)))
 
 (defun default-discriminating-function (generic-function arguments profile)
-  (let* ((required-argument-count (length profile))
-         (required-arguments (subseq arguments 0 required-argument-count))
-         ;; kiln: the check for obsolete instances that the comment above
-         ;; describes (step 1).  The stamp of an obsolete instance is not
-         ;; the unique number of its class, so no path of the automaton
-         ;; matches it; it is brought up to date before dispatching again.
-         (obsolete (loop for argument in required-arguments
-                         for p in profile
-                         thereis (and p (obsolete-instance-p argument) argument))))
-    (unless (null obsolete)
-      (update-obsolete-instance obsolete)
-      (return-from default-discriminating-function
-        (apply generic-function arguments))))
+  (let ((required-argument-count (length profile)))
+    (when (< (length arguments) required-argument-count)
+      (kiln.kernel::%runtime-error 3 (length arguments)))
+    (let* ((required-arguments (subseq arguments 0 required-argument-count))
+           ;; kiln: the check for obsolete instances that the comment above
+           ;; describes (step 1).  The stamp of an obsolete instance is not
+           ;; the unique number of its class, so no path of the automaton
+           ;; matches it; it is brought up to date before dispatching again.
+           (obsolete (loop for argument in required-arguments
+                           for p in profile
+                           thereis (and p (obsolete-instance-p argument) argument))))
+      (unless (null obsolete)
+        (update-obsolete-instance obsolete)
+        (return-from default-discriminating-function
+          (apply generic-function arguments)))))
   (let* ((required-argument-count (length profile))
          (required-arguments (subseq arguments 0 required-argument-count))
          (classes (loop for argument in required-arguments

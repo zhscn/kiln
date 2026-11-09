@@ -21,7 +21,7 @@
            #:+err-undefined-function+ #:+err-unbound-variable+ #:+err-not-symbol+
            #:+err-odd-keywords+ #:+err-unknown-keyword+
            #:+err-not-character+ #:+err-not-string+ #:+err-not-vector+
-           #:+err-index+ #:+err-not-sequence+ #:+err-not-integer+ #:+err-division-by-zero+ #:+err-not-number+ #:+err-bad-type+ #:+err-lisp-error+ #:+err-undefined-setf-function+ #:+unbound-slot+
+           #:+err-index+ #:+err-not-sequence+ #:+err-not-integer+ #:+err-division-by-zero+ #:+err-not-number+ #:+err-bad-type+ #:+err-lisp-error+ #:+err-undefined-setf-function+ #:+err-no-catch-tag+ #:+err-expired-exit+ #:+unbound-slot+
            #:+reg-args+))
 
 (defpackage #:kiln.kir

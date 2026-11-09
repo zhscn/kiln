@@ -83,8 +83,21 @@
   (declare (ignore env))
   (cl:find-class name errorp))
 
+(defun can-finalize-p (class)
+  (and (not (typep class 'clostrophilia:forward-referenced-class))
+       (every #'can-finalize-p (clostrophilia:class-direct-superclasses class))))
+
 (defmethod subclassp ((client kiln-client) class1 class2)
-  (if (member class2 (clostrophilia:class-precedence-list class1)) t nil))
+  (when (and (typep class1 'clostrophilia::real-class)
+             (not (clostrophilia:class-finalized-p class1))
+             (can-finalize-p class1))
+    (clostrophilia:finalize-inheritance class1))
+  (labels ((subp (c)
+             (or (eq c class2)
+                 (if (clostrophilia:class-finalized-p c)
+                     (if (member class2 (clostrophilia:class-precedence-list c)) t nil)
+                     (some #'subp (clostrophilia:class-direct-superclasses c))))))
+    (if (subp class1) t nil)))
 
 (defmethod class-aliases ((client kiln-client))
   '())
