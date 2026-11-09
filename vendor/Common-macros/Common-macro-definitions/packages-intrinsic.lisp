@@ -12,6 +12,7 @@
    #:ensure-class-name
    #:defgeneric-compile-time-action
    #:ensure-generic-function
+   #:defgeneric-methods-form
    #:setf-type-function-wrapper
    #:make-method-lambda-wrapper
    #:ensure-method-wrapper

@@ -377,6 +377,10 @@ Under `#+kiln`:
 
 ## Common-macros patches
 
+- The `defgeneric-methods-form` client hook records embedded method objects
+  for replacement on redefinition. The expansion uses a fresh generic-function
+  variable so method bodies retain their defining lexical bindings.
+
 - `defgeneric` checks duplicate and malformed options with `program-error`.
   Omitted class and method-combination options remain omitted in the client
   protocol so redefining a generic function preserves its existing choices.

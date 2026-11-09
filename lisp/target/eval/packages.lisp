@@ -15,7 +15,7 @@
   (:shadow #:get-setf-expansion #:ensure-generic-function #:proclaim)
   (:export #:*client* #:get-setf-expansion #:defun-compile-time-action
            #:add-local-nickname #:defclass-compile-time-action #:ensure-class-name
-           #:defgeneric-compile-time-action #:ensure-generic-function
+           #:defgeneric-compile-time-action #:ensure-generic-function #:defgeneric-methods-form
            #:setf-type-function-wrapper #:proclaim #:make-method-lambda-wrapper
            #:ensure-method-wrapper #:wrap-in-setf-setf-expander))
 

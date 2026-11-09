@@ -55,6 +55,11 @@ compiler's client and the run-time macros."))
     ,@(when documentation-option
         `(:documentation ',(second documentation-option)))))
 
+(defmethod cmd:defgeneric-methods-form ((client macro-client) generic-function methods)
+  (if methods
+      `(kiln.sys::%record-initial-methods ,generic-function (lambda () (list ,@methods)))
+      generic-function))
+
 ;;; Method functions. The method function takes the list of
 ;;; arguments and the next methods (AMOP). A method whose lambda list has
 ;;; only required parameters (at most +MAX-FAST-ARITY+) also gets a fast

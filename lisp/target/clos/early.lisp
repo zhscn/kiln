@@ -627,10 +627,28 @@ superclasses and metaclasses come first or are built already."
 
 (defun kiln.sys:%defgeneric (name &rest initargs)
   (if *braid-built-p*
-      (apply #'ensure-generic-function+1 name initargs)
+      (progn
+        (when (and *switched-p* (fboundp name))
+          (let ((generic-function (fdefinition name)))
+            (when (generic-function-p generic-function)
+              (dolist (method (%slot generic-function '%initial-methods))
+                (remove-method generic-function method))
+              (setf (%slot generic-function '%initial-methods) nil))))
+        (apply #'ensure-generic-function+1 name initargs))
       (progn (push (lambda () (apply #'early-ensure-generic-function name initargs))
                    *deferred-definitions*)
              name)))
+
+(defun kiln.sys::%record-initial-methods (generic-function thunk)
+  (if *braid-built-p*
+      (progn
+        (setf (%slot generic-function '%initial-methods) (funcall thunk))
+        generic-function)
+      (progn
+        (push (lambda ()
+                (setf (%slot (fdefinition generic-function) '%initial-methods) (funcall thunk)))
+              *deferred-definitions*)
+        generic-function)))
 
 (defvar *eql-specializers* '())
 

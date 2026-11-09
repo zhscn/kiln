@@ -26,10 +26,10 @@
           (remove :method options-and-methods
                   :key #'car :test-not #'eq)))
 
-;;; FIXME: We handle the :METHOD option by expanding to a DEFMETHOD,
-;;; but that is not quite right.  We need to store these methods in a
-;;; slot of the generic function so that we can remove them when the
-;;; DEFGENERIC form is reevaluated.
+(defgeneric defgeneric-methods-form (client generic-function methods)
+  (:method (client generic-function methods)
+    (declare (ignore client))
+    `(progn ,@methods ,generic-function)))
 
 (defun expand-defgeneric
     (name lambda-list options-and-methods
@@ -62,7 +62,8 @@
                  nil
                  (second method-class-option)))
            (documentation-option
-             (assoc :documentation options)))
+             (assoc :documentation options))
+           (result (gensym "GENERIC-FUNCTION")))
       `(progn
          (eval-when (:compile-toplevel)
            ,(funcall compile-time-action
@@ -75,7 +76,7 @@
                      method-combination-arguments
                      documentation-option))
          (eval-when (:load-toplevel :execute)
-           (let ((result 
+           (let ((,result
                    ,(funcall ensure-generic-function
                              name
                              lambda-list
@@ -85,6 +86,6 @@
                              method-combination-name
                              method-combination-arguments
                              documentation-option)))
-             ,@(loop for method in methods
-                     collect `(defmethod ,name ,@(rest method)))
-             result))))))
+             ,(defgeneric-methods-form
+               *client* result
+               (loop for method in methods collect `(defmethod ,name ,@(rest method))))))))))
