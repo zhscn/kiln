@@ -61,3 +61,6 @@
                            (find-class 'extended-init))) 'data))
 (defclass cached-init () ((x :initarg :x :initform 0) (added :initarg :added)))
 (print (slot-value (make-instance 'cached-init :added 23) 'added))
+
+(print (initarg-error-p (lambda () (make-instance 'checked-init "X" 7))))
+(print (slot-value (make-instance 'checked-init "X" 7 :allow-other-keys t) 'x))

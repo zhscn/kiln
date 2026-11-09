@@ -104,6 +104,9 @@
      out)
     (reverse result)))
 
+(defun argument-key-name (name)
+  (if (keywordp name) (symbol-name name) name))
+
 (defun lambda-list-protocol (lambda-list)
   (let ((required 0) (optional 0) (restp nil) (keyp nil)
         (keys '()) (allow-other-keys nil) (state :required))
@@ -122,8 +125,7 @@
                   (:key
                    (let ((name (if (consp parameter) (first parameter) parameter)))
                      (push (if (consp name)
-                               (if (keywordp (first name)) (symbol-name (first name))
-                                   (first name))
+                               (argument-key-name (first name))
                                (symbol-name name))
                            keys)))))))
     (values required optional restp keyp keys allow-other-keys)))

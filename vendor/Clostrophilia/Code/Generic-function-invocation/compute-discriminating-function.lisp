@@ -280,10 +280,44 @@
       (third (third (third effective-method)))
       (error "unsupported effective method form" effective-method)))
 
-(defun effective-method-function (generic-function effective-method)
-  (effective-method-closure
-   (effective-method-body effective-method)
-   (generic-function-method-class generic-function)))
+(defun checked-effective-method-function (generic-function methods function)
+  (when (spread-arity generic-function)
+    (return-from checked-effective-method-function function))
+  (multiple-value-bind (required optional restp keyp keys allow-other-keys)
+      (lambda-list-protocol (generic-function-lambda-list generic-function))
+    (dolist (method methods)
+      (multiple-value-bind (method-required method-optional method-restp method-keyp
+                           method-keys method-allow-other-keys)
+          (lambda-list-protocol (method-lambda-list method))
+        (declare (ignore method-required method-optional method-restp method-keyp))
+        (when method-allow-other-keys (setf allow-other-keys t))
+        (dolist (key method-keys) (pushnew key keys :test #'equal))))
+    (lambda (arguments)
+      (let ((count (length arguments)))
+        (unless (and (>= count required)
+                     (or restp keyp (<= count (+ required optional))))
+          (error 'invalid-generic-function-arguments
+                 :generic-function generic-function :arguments arguments))
+        (when keyp
+          (let ((tail (nthcdr (min count (+ required optional)) arguments)))
+            (when (oddp (length tail))
+              (error 'invalid-generic-function-arguments
+                     :generic-function generic-function :arguments arguments))
+            (unless (or allow-other-keys (getf tail :allow-other-keys))
+              (loop for (key nil) on tail by #'cddr
+                    unless (or (eq key :allow-other-keys)
+                               (and (symbolp key)
+                                    (member (argument-key-name key) keys :test #'equal)))
+                      do (error 'invalid-generic-function-arguments
+                                :generic-function generic-function :arguments arguments))))))
+      (funcall function arguments))))
+
+(defun effective-method-function (generic-function effective-method applicable-methods)
+  (checked-effective-method-function
+   generic-function applicable-methods
+   (effective-method-closure
+    (effective-method-body effective-method)
+    (generic-function-method-class generic-function))))
 
 (defun make-method-form-p (form)
   (and (consp form) (eq (first form) 'make-method)))
@@ -444,7 +478,7 @@
                ;; parameters (SPREAD-ARITY).
                (effective-method-function
                  (let ((list-function
-                         (effective-method-function generic-function effective-method))
+                         (effective-method-function generic-function effective-method applicable-methods))
                        (arity (spread-arity generic-function)))
                    (if arity
                        (spread-effective-method-function
@@ -587,7 +621,7 @@
                   (generic-function-method-combination generic-function)
                   (final-methods applicable-methods classes)))
                (list-function
-                 (effective-method-function generic-function effective-method))
+                 (effective-method-function generic-function effective-method applicable-methods))
                (arity (spread-arity generic-function)))
           (when (< (length (cdr cache)) 256)
             (push (make-eql-dispatch-entry
@@ -612,7 +646,7 @@
                   (final-methods applicable-methods classes)))
                ;; kiln: interpreted.
                (effective-method-function
-                 (effective-method-function generic-function effective-method)))
+                 (effective-method-function generic-function effective-method applicable-methods)))
           (funcall effective-method-function arguments))))))
 
 ;;; kiln: caches of the effective methods of generic functions with EQL

@@ -1,0 +1,36 @@
+(:NUMBER 9)
+7
+T
+:UNTOUCHED
+T
+(:SYMBOL 4)
+(:NUMBER 9)
+7
+T
+:UNTOUCHED
+T
+(:SYMBOL 4)
+T
+(:NUMBER NIL)
+T
+(1 5 NIL)
+(1 2 3)
+T
+(1 NIL)
+T
+T
+(2 :FOO 3)
+7
+NIL
+NIL
+7
+T
+:NUMBER
+T
+T
+3
+T
+T
+0
+(:A 2)
+T

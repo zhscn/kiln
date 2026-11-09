@@ -24,3 +24,11 @@
              (format stream "Method lambda list ~S is not congruent with ~S."
                      (mismatch-method-lambda-list condition)
                      (mismatch-generic-lambda-list condition)))))
+
+(define-condition invalid-generic-function-arguments (program-error)
+  ((%generic-function :initarg :generic-function :reader invalid-call-generic-function)
+   (%arguments :initarg :arguments :reader invalid-call-arguments))
+  (:report (lambda (condition stream)
+             (format stream "Invalid arguments ~S for generic function ~S."
+                     (invalid-call-arguments condition)
+                     (generic-function-name (invalid-call-generic-function condition))))))

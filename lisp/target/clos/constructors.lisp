@@ -89,9 +89,6 @@
   (unless (evenp (length initargs))
     (error 'invalid-initialization-arguments :class class :initargs initargs)))
 
-(defun initarg-key (name)
-  (if (keywordp name) (symbol-name name) name))
-
 (defvar *valid-initargs-cache* (kiln.kernel::make-simple-vector (* 4 256) nil))
 
 (defun valid-initialization-arguments (class)
@@ -106,7 +103,7 @@
     (let ((keys '()) (allow-other-keys nil))
       (dolist (slot (class-slots class))
         (dolist (key (slot-definition-initargs slot))
-          (pushnew (initarg-key key) keys :test #'equal)))
+          (pushnew (argument-key-name key) keys :test #'equal)))
       (dolist (methods (construction-methods class (class-prototype class)))
         (dolist (method methods)
           (multiple-value-bind (required optional restp keyp method-keys allowp)
@@ -129,7 +126,8 @@
     (multiple-value-bind (keys allow-other-keys) (valid-initialization-arguments class)
       (unless allow-other-keys
         (loop for (key nil) on initargs by #'cddr
-              unless (or (eq key :allow-other-keys) (member (initarg-key key) keys :test #'equal))
+              unless (or (eq key :allow-other-keys) (and (symbolp key)
+                                   (member (argument-key-name key) keys :test #'equal)))
                 do (error 'invalid-initialization-arguments :class class :initargs initargs))))))
 
 (defun construct-instance (class initargs)

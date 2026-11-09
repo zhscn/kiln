@@ -28,6 +28,11 @@ shows exactly what kiln changed. Changes are not sent upstream for now.
 
 ## Clostrophilia patches
 
+- Effective methods check call arity and keyword arguments against the generic
+  function and its applicable methods. Rest-only generic functions remain
+  open; keyword functions use leftmost `:allow-other-keys` semantics. These
+  checks apply on cache hits as well as misses.
+
 - Standard initialization methods declare the keys they accept, rather
   than allowing every initarg. Kiln validates slot and applicable-method
   initargs after bootstrap, including constructor fast paths.
