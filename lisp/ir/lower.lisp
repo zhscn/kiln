@@ -103,8 +103,9 @@
               (let ((*ir-entry-p* t)) (emit-entry ll))
               ;; Every incoming argument is rooted before boxing can allocate.
               (dolist (parameter (ir-parameter-list fun))
-                (dolist (var (remove nil (list (svref parameter 0) (svref parameter 2))))
-                  (ir-bind-variable var (ir-var-lowering var))))
+                (let ((var (svref parameter 0)) (supplied (svref parameter 2)))
+                  (ir-bind-variable var (ir-var-lowering var))
+                  (when supplied (ir-bind-variable supplied (ir-var-lowering supplied)))))
               (unless early-poll (emit-poll :stack t))
               (multiple-value-bind (v n) (ir-entry-defaults (ir-parameter-list fun) fun)
                 (emit `(:return ,v ,n)))))

@@ -399,7 +399,7 @@ host's: an #+SBCL branch must not be read into kiln code).")
 (defclass source-reader-client (eclector.concrete-syntax-tree::cst-client) ())
 
 (defmethod eclector.reader:evaluate-expression ((client source-reader-client) expression)
-  (compile-time-eval (cst:cst-from-expression expression)))
+  (compile-time-eval expression))
 
 (defvar *source-reader-client* (make-instance 'source-reader-client))
 
@@ -433,7 +433,7 @@ the file. Reading starts in KILN-USER, with the target's features."
 
 (defun cst-source-range (cst)
   "The source range (START . END) of CST if it has one."
-  (let ((source (cst:source cst)))
+  (let ((source (and (typep cst 'cst:cst) (cst:source cst))))
     (and (consp source) (integerp (car source)) (integerp (cdr source)) source)))
 
 (defun method-specializers (lambda-list)
@@ -462,12 +462,6 @@ the second value."
               (string= "DEF" (symbol-name op) :end2 3)
               (or (symbolp name) (and (consp name) (eq (first name) 'setf)))
               (values (list op name) nil)))))))
-
-(defun cst-list (cst)
-  "The elements of the proper-list CST."
-  (loop for c = cst then (cst:rest c)
-        while (cst:consp c)
-        collect (cst:first c)))
 
 (defgeneric evaluate-at-compile-time (client input environment)
   (:documentation "Evaluates INPUT, a CST or a form, at compile time in the
@@ -508,8 +502,8 @@ Trucler ENVIRONMENT, for CLIENT. The cross client uses the IR evaluator
         (values form nil))))
 
 (defun process-eval-when (cst compile-time-too)
-  (let* ((parts (cst-list (cst:rest cst)))
-         (situations (cst:raw (first parts)))
+  (let* ((parts (rest (ir-parts cst)))
+         (situations (ir-raw (first parts)))
          (body (rest parts))
          (ct (intersection situations '(:compile-toplevel compile)))
          (lt (intersection situations '(:load-toplevel load)))
@@ -522,17 +516,19 @@ Trucler ENVIRONMENT, for CLIENT. The cross client uses the IR evaluator
            (dolist (c body) (compile-time-eval c))))))
 
 (defun declaration-cst-p (cst)
-  (and (cst:consp cst) (eq (cst:raw (cst:first cst)) 'declare)))
+  (let ((raw (ir-raw cst)))
+    (and (consp raw) (eq (first raw) 'declare))))
 
 (defun process-toplevel-body (cst compile-time-too)
   "LOCALLY, MACROLET and SYMBOL-MACROLET at top level: their body forms are
 top-level forms too (CLHS 3.2.3.1), processed in the environment with the
 local macros added. A body that starts with declarations is compiled as a
 whole instead (the declarations would otherwise be lost)."
-  (let* ((form (cst:raw cst))
+  (let* ((form (ir-raw cst))
+         (parts (ir-parts cst))
          (body (if (eq (first form) 'locally)
-                   (cst-list (cst:rest cst))
-                   (cst-list (cst:rest (cst:rest cst))))))
+                   (rest parts)
+                   (cddr parts))))
     (if (and body (declaration-cst-p (first body)))
         (compile-toplevel-form cst compile-time-too)
         (let ((*environment*
@@ -577,7 +573,8 @@ module).")
     (if entry (cdr entry) (string designator))))
 
 (defun process-toplevel (cst compile-time-too)
-  (let* ((form (cst:raw cst))
+  (let* ((form (ir-raw cst))
+         (*macro-source* (or (cst-source-range cst) *macro-source*))
          (*definition-name* (multiple-value-bind (name function-p) (definition-name form)
                               (if name (cons name function-p) *definition-name*))))
     (when (and (consp form) (eq (first form) 'defun) (consp (rest form)) (consp (cddr form)))
@@ -585,7 +582,7 @@ module).")
     (if (and (consp form) (symbolp (first form)))
         (case (first form)
           (progn
-            (dolist (c (cst-list (cst:rest cst)))
+            (dolist (c (rest (ir-parts cst)))
               (process-toplevel c compile-time-too)))
           (eval-when
            (process-eval-when cst compile-time-too))
@@ -599,11 +596,11 @@ module).")
                                (error "IN-PACKAGE: no package named ~S" (second form))))
            (when (run-time-packages-p *client*)
              (setf *file-sets-package* t)
-             (compile-toplevel-form
-              (cst:cst-from-expression
-               `(setq *package* (,(find-package-function)
-                                 ',(package-name *package*))))
-              nil)))
+             (let ((*macro-source* nil))
+               (compile-toplevel-form
+                `(setq *package* (,(find-package-function)
+                                  ',(package-name *package*)))
+                nil))))
           ;; DEFPACKAGE creates the package in the host, so that the rest
           ;; of the sources can be read. Nothing is compiled: the run-time
           ;; package is built from the module's symbol table, which
@@ -622,7 +619,7 @@ module).")
           (t
            (multiple-value-bind (expansion macrop) (macroexpand-toplevel form)
              (if macrop
-                 (process-toplevel (cst:reconstruct *client* expansion cst) compile-time-too)
+                 (process-toplevel expansion compile-time-too)
                  (compile-toplevel-form cst compile-time-too)))))
         (compile-toplevel-form cst compile-time-too))))
 
@@ -714,10 +711,10 @@ created."
          (map-file-csts (lambda (cst) (process-toplevel-cst cst compile-time-too))
                         (if (consp path) (car (last path)) path))
          (when *file-sets-package*
-           (compile-toplevel-form
-            (cst:cst-from-expression
-             `(setq *package* (,(find-package-function) "COMMON-LISP-USER")))
-            nil)))))))
+           (let ((*macro-source* nil))
+             (compile-toplevel-form
+              `(setq *package* (,(find-package-function) "COMMON-LISP-USER"))
+              nil))))))))
 
 (defun front-end-forms (forms &optional (session (make-session)))
   "As FRONT-END, for the top-level FORMS (for COMPILE)."
@@ -727,12 +724,12 @@ created."
      (let ((*package-renames* '())
            (*file-sets-package* nil))
        (dolist (form forms)
-         (process-toplevel-cst (cst:cst-from-expression form) nil))))))
+         (process-toplevel-cst form nil))))))
 
 (defun process-toplevel-cst (cst compile-time-too)
   (forget-global-descriptions *environment*)
   (when *trace-toplevel*
-    (let ((raw (cst:raw cst)))
+    (let ((raw (ir-raw cst)))
       (format *error-output* "~&  ~S~@[ ~S~]~%"
               (if (consp raw) (first raw) raw)
               (and (consp raw) (consp (rest raw))
@@ -742,8 +739,12 @@ created."
   ;; order in the module (MODULE-SYMBOL-NAME).
   (let ((*gensym-counter* 0)
         (*toplevel-source* (cst-source-range cst))
+        (*macro-source* (cst-source-range cst))
         (*definition-name* *eval-definition*)
-        (*toplevel-raw* (or *eval-form* (cst:raw cst))))
+        (*toplevel-raw* (or *eval-form* (ir-raw cst)))
+        (*ir-file-id* (ir-source-file-number *source-file*))
+        (*ir-top-cst* (and (typep cst 'cst:cst) cst))
+        (*ir-form-sources* nil))
     (process-toplevel cst compile-time-too)))
 
 (defun call-with-front-end (session thunk)

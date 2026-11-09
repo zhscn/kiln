@@ -64,6 +64,13 @@
 (defvar *ir-source-files*)
 (defvar *ir-current-source-file*)
 (defvar *ir-conversion-depth* 0)
+(defvar *ir-top-cst* nil)
+(defvar *ir-form-sources* nil
+  "Cons subforms of the top-level form being converted -> their source
+position. A macro's expansion is a plain form, but the subforms that the
+macro passes through are the ones the reader made: their positions are
+found here.")
+(defvar *macro-source* nil)
 
 (defun ir-source-file-number (file)
   (unless (equal file *ir-current-source-file*)

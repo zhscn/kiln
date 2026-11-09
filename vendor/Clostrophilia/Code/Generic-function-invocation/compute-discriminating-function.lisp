@@ -866,12 +866,7 @@ fast function when its form has a spread closure (CALL-NEXT-METHOD in an
                      :function (lambda (arguments next-methods)
                                  (declare (ignore next-methods))
                                  (funcall closure arguments))
-                     (and spread
-                          (list :fast-function
-                                (spread-case arity
-                                  (lambda (next-methods %arguments)
-                                    (declare (ignore next-methods))
-                                    (funcall spread %arguments)))))))
+                     (and spread (list :fast-function spread))))
             next)))
 
 (defun spread-method-call (method next-methods arity)
@@ -892,18 +887,37 @@ fast function when its form has a spread closure (CALL-NEXT-METHOD in an
            (let ((location (%slot method '%slot-location)))
              (if (consp location)
                  (lambda (a0 a1) (declare (ignore a1)) (setf (car location) a0))
-                 (lambda (a0 a1)
-                   (kiln.sys:%primop :set-standard-instance-access a1 location a0)
-                   a0))))
+                 (note-reader-closure
+                  (lambda (a0 a1)
+                    (kiln.sys:%primop :set-standard-instance-access a1 location a0)
+                    a0)
+                  location))))
           (t
            (let ((fast (kiln.sys:%method-fast-function method)))
-             (and fast
-                  (spread-case arity
-                    (lambda (%arguments)
-                      ;; kiln: a jump, so that the method runs without
-                      ;; this closure's frame.
-                      (kiln.sys:%primop :tail-funcall-function
-                                        fast next-methods %arguments)))))))))
+             (cond ((functionp fast) fast)
+                   ((and (consp fast) (eq (car fast) :next-function))
+                    (let ((fn (cdr fast))
+                          (next (and next-methods
+                                     (let ((m (first next-methods))
+                                           (rest (rest next-methods)))
+                                       (if (functionp m)
+                                           (spread-list-function arity m)
+                                           (or (spread-method-call m rest arity)
+                                               (let ((slow (kiln.sys:%method-function m)))
+                                                 (spread-case arity
+                                                   (lambda (%arguments)
+                                                     (funcall slow (list %arguments) rest))))))))))
+                      (spread-case arity
+                        (lambda (%arguments)
+                          (kiln.sys:%primop :tail-funcall-function fn next %arguments)))))
+                   ((consp fast)
+                    (let ((fast (car fast)))
+                      (spread-case arity
+                        (lambda (%arguments)
+                          ;; kiln: a jump, so that the method runs without
+                          ;; this closure's frame.
+                          (kiln.sys:%primop :tail-funcall-function
+                                            fast next-methods %arguments)))))))))))
 
 (defun make-spread-discriminating-closure
     (generic-function arity profile initial eql-cache)
@@ -1109,11 +1123,48 @@ structure (inline, no call); NIL for other objects."
                                               value))
                                         (kiln.sys:%primop :tail-funcall-function entry a0)))
                                   (kiln.sys:%primop :tail-funcall-function slow a0)))
-                            (kiln.sys:%primop :tail-funcall-function slow a0)))))))
+                            (kiln.sys:%primop :tail-funcall-function slow a0))))))
+               ;; Two parameters dispatching on the second: an entry may
+               ;; be a slot writer's location.
+               (writer-dispatcher ()
+                 `(let ((slow
+                          (lambda (a0 a1)
+                            (let* ((stamp (argument-stamp a1))
+                                   (index (let ((i (kiln.sys:%primop :fixnum-logand stamp mask)))
+                                            (+ i i))))
+                              (if (eq (svref cache index) stamp)
+                                  (let ((entry (svref cache (+ index 1))))
+                                    (if (kiln.sys:%primop :fixnump entry)
+                                        (progn
+                                          (kiln.sys:%primop :set-standard-instance-access a1 entry a0)
+                                          a0)
+                                        (kiln.sys:%primop :tail-funcall-function entry a0 a1)))
+                                  (let ((function (single-dispatch-miss cache index stamp initial t)))
+                                    (if function
+                                        (kiln.sys:%primop :tail-funcall-function function a0 a1)
+                                        (default-discriminating-function
+                                         generic-function (list a0 a1) profile))))))))
+                    (lambda (a0 a1)
+                      (let ((stamp (instance-stamp-or-nil a1)))
+                        (if stamp
+                            (let ((index (kiln.sys:%primop
+                                          :fixnum-logand
+                                          (kiln.sys:%primop :fixnum+ stamp stamp) mask2)))
+                              (if (eq (kiln.sys:%primop :svref-unchecked cache index) stamp)
+                                  (let ((entry (kiln.sys:%primop
+                                                :svref-unchecked cache
+                                                (kiln.sys:%primop :fixnum+ index 1))))
+                                    (if (kiln.sys:%primop :fixnump entry)
+                                        (progn
+                                          (kiln.sys:%primop :set-standard-instance-access a1 entry a0)
+                                          a0)
+                                        (kiln.sys:%primop :tail-funcall-function entry a0 a1)))
+                                  (kiln.sys:%primop :tail-funcall-function slow a0 a1)))
+                            (kiln.sys:%primop :tail-funcall-function slow a0 a1)))))))
       (let ((mask2 (+ mask mask)))
-        (if (eql arity 1)
-            (reader-dispatcher)
-            (dispatchers))))))
+        (cond ((eql arity 1) (reader-dispatcher))
+              ((and (eql arity 2) (eql position 1)) (writer-dispatcher))
+              (t (dispatchers)))))))
 
 (defun double-dispatch-miss (cache index s1 s2 initial)
   "As SINGLE-DISPATCH-MISS, for two stamps: entries are (S1 S2 function)."

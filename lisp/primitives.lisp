@@ -157,6 +157,17 @@ are compared (no short circuit), which also checks every argument."
              `(define-nary-primitive ,name (vals) (emit-compare ,op vals))))
   (compare < :lt) (compare > :gt) (compare <= :le) (compare >= :ge) (compare = :eq))
 
+(define-nary-primitive /= (vals)
+  (when (null vals) (fail "/= needs at least one argument"))
+  (if (null (rest vals))
+      (progn (emit-check-number (first vals)) (t-value))
+      (let ((all nil))
+        (loop for (a . rest) on vals
+              do (dolist (b rest)
+                   (let ((p `(:eq ,(emit-compare-pair :eq a b) 0)))
+                     (setf all (if all `(:and ,all ,p) p)))))
+        (boolean-value all))))
+
 ;;; Objects
 
 (define-primitive eq (a b) (boolean-value `(:eq ,a ,b)))
@@ -534,13 +545,45 @@ operand N."
 (define-primop :code-char (n)
   (copy-to-var `(:or (:shl (:sar ,n ,+fixnum-shift+) ,+character-shift+) ,+character-tag+)))
 
-(define-primitive char-code (c)
+(defun emit-check-character (c)
   (let ((ok (new-block)) (bad (new-block)))
     (br `(:eq (:and ,c ,+immediate-mask+) ,+character-tag+) ok bad)
     (start-block bad)
     (emit-error +err-not-character+ c)
-    (start-block ok))
+    (start-block ok)))
+
+(define-primitive char-code (c)
+  (emit-check-character c)
   (copy-to-var `(:shl (:shr ,c ,+character-shift+) ,+fixnum-shift+)))
+
+(defun emit-char-compare (op vals)
+  (when (null vals) (fail "character comparison needs at least one argument"))
+  (dolist (c vals) (emit-check-character c))
+  (if (null (rest vals))
+      (t-value)
+      (let ((all nil))
+        (loop for (a b) on vals
+              while b
+              do (let ((p `(,op ,a ,b)))
+                   (setf all (if all `(:and ,all ,p) p))))
+        (boolean-value all))))
+
+(macrolet ((compare (name op)
+             `(define-nary-primitive ,name (vals) (emit-char-compare ,op vals))))
+  (compare char= :eq) (compare char< :lt) (compare char> :gt)
+  (compare char<= :le) (compare char>= :ge))
+
+(define-nary-primitive char/= (vals)
+  (when (null vals) (fail "CHAR/= needs at least one argument"))
+  (dolist (c vals) (emit-check-character c))
+  (if (null (rest vals))
+      (t-value)
+      (let ((all nil))
+        (loop for (a . rest) on vals
+              do (dolist (b rest)
+                   (let ((p `(:ne ,a ,b)))
+                     (setf all (if all `(:and ,all ,p) p)))))
+        (boolean-value all))))
 
 (define-primop :length (v) (copy-to-var (vector-length v)))
 

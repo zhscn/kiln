@@ -519,7 +519,7 @@ compile-time environment and the local macros visible to INPUT)."
          (*ir-eval-global* (trucler:global-environment *client* environment))
          (root (make-ir-fun :name '(:top-level-form) :lambda-list (make-ir-lambda-list))))
     (let ((*ir-function* root) (*ir-source* nil) (*ir-conversion-depth* 0)
-          (*ir-file-id* 0) (*ir-form-sources* nil))
+          (*ir-file-id* 0) (*ir-top-cst* nil) (*ir-form-sources* nil))
       (setf (ir-fun-body root) (ir-convert input (ir-env environment)))
       (analyze-ir root))
     (funcall (funcall (ir-eval-function root) #()))))

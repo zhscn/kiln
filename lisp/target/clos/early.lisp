@@ -682,6 +682,25 @@ superclasses and metaclasses come first or are built already."
               (cons gf (%slot specializer '%direct-generic-functions)))))
     method))
 
+(defun method-function-from-fast (fast-function)
+  (cond ((and (consp fast-function) (eq (car fast-function) :next-function))
+         (let ((fast (cdr fast-function)))
+           (lambda (arguments next-methods)
+             (apply fast
+                    (and next-methods
+                         (let ((m (first next-methods)) (rest (rest next-methods)))
+                           (lambda (&rest args)
+                             (funcall (kiln.sys:%method-function m) args rest))))
+                    arguments))))
+        ((consp fast-function)
+         (let ((fast (car fast-function)))
+           (lambda (arguments next-methods)
+             (apply fast next-methods arguments))))
+        (t
+         (lambda (arguments next-methods)
+           (declare (ignore next-methods))
+           (apply fast-function arguments)))))
+
 (defun early-ensure-method (name &key lambda-list qualifiers specializers documentation function
                                      fast-function)
   (let* ((gf (early-ensure-generic-function
@@ -691,7 +710,8 @@ superclasses and metaclasses come first or are built already."
                                       :qualifiers qualifiers
                                       :specializers (mapcar #'specializer-from-designator
                                                             specializers)
-                                      :function function
+                                      :function (or function
+                                                    (method-function-from-fast fast-function))
                                       :fast-function fast-function
                                       :documentation documentation)))
     (early-add-method gf method)))

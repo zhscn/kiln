@@ -131,7 +131,8 @@
                                 :lambda-list lambda-list
                                 :qualifiers qualifiers
                                 :specializers (mapcar #'specializer-from-designator specializers)
-                                :function function
+                                :function (or function
+                                              (method-function-from-fast fast-function))
                                 :fast-function fast-function
                                 :documentation documentation)))
     (add-method gf method)

@@ -67,14 +67,16 @@ compiler's client and the run-time macros."))
 (defconstant +max-fast-arity+ 6)
 
 (defun mentions-p (symbols tree)
-  (let ((seen (make-hash-table :test 'eq)))
-    (labels ((walk (x)
+  (let ((seen nil))
+    (labels ((walk (x depth)
                (cond ((symbolp x) (member x symbols))
-                     ((atom x) nil)
-                     ((gethash x seen) nil)
-                     (t (setf (gethash x seen) t)
-                        (or (walk (car x)) (walk (cdr x)))))))
-      (walk tree))))
+                     ((or (not (consp x)) (zerop depth)) nil)
+                     ((and (< depth 99900)
+                           (let ((s (or seen (setf seen (make-hash-table :test 'eq)))))
+                             (or (gethash x s) (progn (setf (gethash x s) t) nil))))
+                      nil)
+                     (t (or (walk (car x) (1- depth)) (walk (cdr x) (1- depth)))))))
+      (walk tree 100000))))
 
 ;;; A method with keyword parameters accepts any keyword arguments (the
 ;;; generic function checks them, CLHS 7.6.5): its lambda list gets
@@ -84,20 +86,41 @@ compiler's client and the run-time macros."))
   "True if SYMBOLS occur in TREE only as the first element of a list (the
 operator of a form), as far as a walk of the tree without macroexpansion
 can tell."
-  (let ((seen (make-hash-table :test 'eq)))
-    (labels ((walk (x)
-               (or (atom x)
-                   (gethash x seen)
-                   (progn
-                     (setf (gethash x seen) t)
-                     (and (walk (car x))
-                          (loop for tail = (cdr x) then (cdr tail)
-                                while (consp tail)
-                                always (let ((e (car tail)))
-                                         (if (consp e)
-                                             (walk e)
-                                             (not (member e symbols))))))))))
-      (walk tree))))
+  (let ((seen nil))
+    (labels ((walk (x depth)
+               (or (not (consp x))
+                   (zerop depth)
+                   (and (< depth 99900)
+                        (let ((s (or seen (setf seen (make-hash-table :test 'eq)))))
+                          (or (gethash x s) (progn (setf (gethash x s) t) nil))))
+                   (and (walk (car x) (1- depth))
+                        (loop for tail = (cdr x) then (cdr tail)
+                              while (consp tail)
+                              always (let ((e (car tail)))
+                                       (if (consp e)
+                                           (walk e (1- depth))
+                                           (not (member e symbols)))))))))
+      (walk tree 100000))))
+
+(defun only-no-arg-next-p (symbols tree)
+  "True if SYMBOLS occur in TREE only as (SYMBOL) with no arguments."
+  (let ((seen nil))
+    (labels ((walk (x depth)
+               (cond ((symbolp x) (not (member x symbols)))
+                     ((or (not (consp x)) (zerop depth)) t)
+                     ((and (< depth 99900)
+                           (let ((s (or seen (setf seen (make-hash-table :test 'eq)))))
+                             (or (gethash x s) (progn (setf (gethash x s) t) nil))))
+                      t)
+                     ((member (car x) symbols)
+                      (null (cdr x)))
+                     (t
+                      (and (walk (car x) (1- depth))
+                           (loop for tail = (cdr x) then (cdr tail)
+                                 while (consp tail)
+                                 always (walk (car tail) (1- depth)))
+                           (walk (cdr (last x)) (1- depth)))))))
+      (walk tree 100000))))
 
 (defun allow-other-keys-lambda-list (lambda-list)
   (if (and (member '&key lambda-list) (not (member '&allow-other-keys lambda-list)))
@@ -122,11 +145,11 @@ LAMBDA-EXPRESSION."
                      (<= (length lambda-list) +max-fast-arity+)
                      (every #'symbolp lambda-list)
                      (notany (lambda (p) (member p lambda-list-keywords)) lambda-list)))
-         (parameters (and fastp (loop repeat (length lambda-list) collect (gensym "ARG")))))
-    ;; One string in every expansion: SBCL coalesces equal literals of a
-    ;; file, kiln does not, and the KIR must be the same.
-    (flet ((with-next (call-next-method-body no-arguments-body form
-                       &aux (message "no next method"))
+         (parameters (and fastp (loop repeat (length lambda-list) collect (gensym "ARG"))))
+         ;; One string in every expansion: SBCL coalesces equal literals of a
+         ;; file, kiln does not, and the KIR must be the same.
+         (message "no next method"))
+    (flet ((with-next (call-next-method-body no-arguments-body form)
              ;; CALL-NEXT-METHOD-BODY calls the next method with ARGUMENTS
              ;; (NIL: the method's own); NO-ARGUMENTS-BODY with the
              ;; method's own.
@@ -155,33 +178,57 @@ LAMBDA-EXPRESSION."
                                   ,call-next-method-body)))
                        (declare (ignorable #'next-method-p #'call-next-method))
                        ,form)))))
-      (values
-       `(lambda (,arguments ,next-methods)
-          (declare (ignorable ,next-methods))
-          ,(with-next `(funcall (kiln.sys:%method-function (first ,next-methods))
-                                (or arguments ,arguments)
-                                (rest ,next-methods))
-                      `(funcall (kiln.sys:%method-function (first ,next-methods))
-                                ,arguments
-                                (rest ,next-methods))
-                      `(apply ,lambda-expression ,arguments)))
-       (and fastp
-            `(lambda (,next-methods ,@parameters)
-               (declare (ignorable ,next-methods))
-               ,(let ((own `(let ((fast (kiln.sys:%method-fast-function
-                                          (first ,next-methods))))
-                               (if fast
-                                   (funcall fast (rest ,next-methods) ,@parameters)
-                                   (funcall (kiln.sys:%method-function
-                                             (first ,next-methods))
-                                            (list ,@parameters)
-                                            (rest ,next-methods))))))
-                  (with-next `(if arguments
-                                  (funcall (kiln.sys:%method-function (first ,next-methods))
-                                           arguments (rest ,next-methods))
-                                  ,own)
-                             own
-                             `(,lambda-expression ,@parameters)))))))))
+      (cond ((and fastp (not nextp))
+             (values nil lambda-expression))
+            ((and fastp (only-no-arg-next-p '(call-next-method next-method-p)
+                                            (cddr lambda-expression)))
+             (values
+              nil
+              `(cons :next-function
+                     (lambda (,next-methods ,@parameters)
+                       (declare (ignorable ,next-methods))
+                       (macrolet ((next-method-p ()
+                                    '(not (null ,next-methods)))
+                                  (call-next-method ()
+                                    '(if ,next-methods
+                                         (funcall ,next-methods ,@parameters)
+                                         (error ,message))))
+                         (,lambda-expression ,@parameters))))))
+            (fastp
+             (values
+              nil
+              `(cons (lambda (,next-methods ,@parameters)
+                       (declare (ignorable ,next-methods))
+                       ,(let ((own `(let ((fast (kiln.sys:%method-fast-function
+                                                 (first ,next-methods))))
+                                      (cond ((functionp fast)
+                                             (funcall fast ,@parameters))
+                                            ((and (consp fast) (null (cdr fast)))
+                                             (funcall (car fast) (rest ,next-methods) ,@parameters))
+                                            (t
+                                             (funcall (kiln.sys:%method-function
+                                                       (first ,next-methods))
+                                                      (list ,@parameters)
+                                                      (rest ,next-methods)))))))
+                          (with-next `(if arguments
+                                          (funcall (kiln.sys:%method-function (first ,next-methods))
+                                                   arguments (rest ,next-methods))
+                                          ,own)
+                                     own
+                                     `(,lambda-expression ,@parameters))))
+                     nil)))
+            (t
+             (values
+              `(lambda (,arguments ,next-methods)
+                 (declare (ignorable ,next-methods))
+                 ,(with-next `(funcall (kiln.sys:%method-function (first ,next-methods))
+                                       (or arguments ,arguments)
+                                       (rest ,next-methods))
+                             `(funcall (kiln.sys:%method-function (first ,next-methods))
+                                       ,arguments
+                                       (rest ,next-methods))
+                             `(apply ,lambda-expression ,arguments)))
+              nil))))))
 
 (defmethod cmd:make-method-lambda-wrapper ((client macro-client))
   (lambda (lambda-expression)
@@ -205,7 +252,7 @@ LAMBDA-EXPRESSION."
                                                 `(list 'eql ,(second s))
                                                 `',s)))
         :documentation ',documentation
-        :function ,function
+        ,@(when function `(:function ,function))
         ,@(when fast-function `(:fast-function ,fast-function))))))
 
 ;;; Places. DEFINE-SETF-EXPANDER registers the expander in the

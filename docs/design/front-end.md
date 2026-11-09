@@ -60,11 +60,11 @@ IR 的词法绑定、自由变量、赋值、退出点和闭包布局直接记�
 
 ## 顶层形式处理
 
-顶层处理在 CST 层做：
+顶层处理直接作用于 CST 或顶层宏展开出的普通形式：
 
 - `progn`：逐个子形式递归处理。
 - `eval-when`：按 CLHS 3.2.3.1 的表格决定是编译、编译期求值，还是两者都做。
-- 宏形式：先查环境里的宏（`trucler:describe-function`），再查 Common-macros 的宏，展开后用 `cst:reconstruct` 保留源码位置，再递归处理。
+- 宏形式：先查环境里的宏（`trucler:describe-function`），再查 Common-macros 的宏，展开结果直接递归处理，不调用 `cst:reconstruct` 重建 CST；转换中遇到宏展开传下来的普通子形式时，按需从顶层 CST 惰性建一次 `eq` 位置表（`*ir-form-sources*`）保留源码位置，宏新生成的子形式继承外层宏调用的源码位置（`*macro-source*`）。
 - `locally`、`macrolet`、`symbol-macrolet`：主体按顶层形式处理，局部宏的展开函数求值后加进 Trucler 环境（`process-toplevel-body`）；主体以声明开头时整体编译。
 - 其他形式：在 compile-time-too 模式下先求值，然后转换成 IR（`cst-to-ir`），加入顶层形式列表。
 - 处理每个顶层形式时 `*gensym-counter*` 绑定为 0，和 SBCL 的 `compile-file` 一样。

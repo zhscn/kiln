@@ -58,12 +58,6 @@
                    ((or (null name) (eq name t) (keywordp name)) (ir-node 0 *ir-source* name))
                    (t (ir-node 3 *ir-source* name))))))))
 
-(defvar *ir-form-sources* nil
-  "Cons subforms of the top-level form being converted -> their source
-position. A macro's expansion is a plain form, but the subforms that the
-macro passes through are the ones the reader made: their positions are
-found here.")
-
 (defun ir-note-form-sources (cst)
   (let ((table (make-hash-table :test 'eq)))
     (labels ((walk (cst)
@@ -84,8 +78,11 @@ found here.")
   (let ((source (and (typep input 'cst:cst) (cst:source input))))
     (cond ((and (consp source) (integerp (car source)) (integerp (cdr source)))
            (ir-source-position *ir-file-id* (car source) (cdr source)))
-          ((and *ir-form-sources* (consp (ir-raw input)))
-           (or (gethash (ir-raw input) *ir-form-sources*) *ir-source*))
+          ((consp (ir-raw input))
+           (when (and (null *ir-form-sources*) *ir-top-cst*)
+             (setf *ir-form-sources* (ir-note-form-sources *ir-top-cst*)))
+           (or (and *ir-form-sources* (gethash (ir-raw input) *ir-form-sources*))
+               *ir-source*))
           (t *ir-source*))))
 
 (defun ir-convert (input environment)
@@ -553,8 +550,10 @@ the local macros and symbol macros of ENVIRONMENT."))
 (defun cst-to-ir (cst environment)
   (let* ((root (make-ir-fun :name '(:top-level-form) :source nil
                            :lambda-list (make-ir-lambda-list)))
-         (*ir-function* root) (*ir-source* nil) (*ir-conversion-depth* 0)
+         (*ir-function* root) (*ir-conversion-depth* 0)
          (*ir-file-id* (ir-source-file-number *source-file*))
-         (*ir-form-sources* (and (typep cst 'cst:cst) (ir-note-form-sources cst))))
+         (*ir-source* (let ((source (and (not (typep cst 'cst:cst)) *macro-source*)))
+                        (and source (ir-source-position *ir-file-id* (car source) (cdr source)))))
+         (*ir-top-cst* (or *ir-top-cst* (and (typep cst 'cst:cst) cst))))
     (setf (ir-fun-body root) (ir-convert cst (ir-env environment)))
     (analyze-ir root)))

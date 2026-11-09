@@ -181,6 +181,12 @@ kiln 编译自己的五个模块（一个阶段，见 [bootstrap.md](../design/b
 - 编译器里频繁调用的 `ir-parts`、内联参数校验和复合 `typep` 检查用无分配的 `ir-proper-list-p` 代替 `(handler-case (list-length ...) (type-error () nil))`；没有 `optimize` 声明的函数复用外层的 `optimize-description`；`emit` 用 `case` 判断终结指令（原来每次调用读 `*terminators*` 并调 `member`），`bname` 声明为内联。
 - 结果：自编译一个阶段从 18.7 秒降到 **7.0–7.2 秒**（Lisp 时间 **6.5 秒**：kernel 0.3、CLOS 3.7、frontend 0.1、eval 1.2、compiler 1.2 秒），整个阶段分配总量从超过 8 GB 降到 **3,454 MiB**，在 8 GiB 自举堆下 **0 次 GC**，峰值 RSS 从 8.7 GB 降到 **3.5 GB**。同一份代码上 SBCL 编五个模块 **4.63 秒**（kernel 0.27、CLOS 2.80、frontend 0.10、eval 0.61、compiler 0.85 秒），kiln 是 SBCL 的 **1.4 倍**。`bench/compare.lisp`（AOT，三次取中位数）：`read-from-string` 32.4 → **20.3 µs**，`format nil ~a` 7.4 → **5.6 µs**，`intern` 227 → **112 ns**，`gethash equal` 85 → **50 ns**，`(setf gethash) eq` ~60 → **17.8 ns**，`handler-case` 73 → **39.9 ns**，`make-instance` 359 → **305 ns**。
 
+再做一轮针对自编译剩余热点和 CLOS 分派的优化（2026-11-09）：
+- **去掉顶层宏展开的 `cst:reconstruct`，按需惰性构建 `*ir-form-sources*`**：`cst:reconstruct` 是旧 Iconoclast 前端留下的（每个宏展开新建 5 张哈希表、工作表和大量 `cst` CLOS 实例，占自编译分配量的约 500 MB）；现在 `process-toplevel` 直接处理宏展开出的普通形式，`*ir-form-sources*` 只在 `ir-input-source` 真正遇到宏展开传下来的普通 cons 时才按顶层 CST 建一次。
+- **`defmethod` 单次编译与直接返回快函数、预计算 `call-next-method`、融合槽写入器**：原来 `method-lambda-forms` 把方法体同时塞进慢函数和快函数编译两遍；现在只编一个函数，慢槽由 `method-function-from-fast` 包装得到（`clos.kir` 从 76 MB 降到 63 MB）。不引用 `call-next-method`/`next-method-p` 的快函数（95% 以上的方法）直接以 `(lambda (a0 ... a_{n-1}) ...)` 作为方法函数，去掉 `next-methods` 首参（3 参数方法也能走提前 poll），`spread-method-call` 直接返回它而不包一层闭包；只做零参数 `(call-next-method)` 的快函数在构造有效方法时就绑定好下一个方法的展开调用函数，调用时不再读方法槽；单分派判别闭包把槽写入器也像读取器一样融进缓存，命中时就地写槽；`mentions-p` 等扫描函数延迟分配循环检测哈希表。
+- **字符比较与 `/=` 原语、序列函数直接遍历**：`char=`、`char/=`、`char<`、`char>`、`char<=`、`char>=` 和 `/=` 作为编译器原语内联（省掉自举中 `char=` 的 129 MB `&rest` 列表分配）；`find`、`position`、`count`、`remove`、`every`、`some`、单序列 `map` 直接在列表和向量上循环，不再先用 `seq-list` 复制成列表。
+- 结果：自编译一个阶段墙钟从 7.0–7.2 秒降到 **5.4 秒**（Lisp 时间 **6.5 → 5.0 秒**：kernel 0.2、CLOS 3.0、frontend 0.1、eval 0.8、compiler 0.9 秒），分配总量从 3,454 MiB 降到 **2,581 MiB**（0 次 GC），峰值 RSS 从 3.5 GB 降到 **2.5 GB**，已接近同一份代码上 SBCL 的 **4.63 秒**（差距约 **8%**）。`bench/compare.lisp`（AOT）：泛函单态 6.9 → **6.3 ns**，多态（3 类）11.9 → **9.3 ns**，`call-next-method` 17.8 → **9.6 ns**（和 SBCL 的 9 ns 持平），写入器 7.1 → **6.8 ns**，`find` 字符串 1812 → **596 ns**，`read-from-string` 20.3 → **17.3 µs**。
+
 845 秒那次的 profile（按模块统计自身时间）：
 
 | 部分 | 占比 |

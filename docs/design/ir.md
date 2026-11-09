@@ -1,6 +1,6 @@
 # kiln 的 IR：从 CST 直接到可分析的中间表示（草案）
 
-状态：**IR 是唯一的前端**。原生结构对象、KIR `:switch` 和 CST → IR → KIR 路径都已接入；旧的 Iconoclast 前端、Common-boot 的 HIR 求值器以及它们的依赖（Common-boot、Iconoclast、s-expression-syntax、parser.packrat、builder 协议）已经删除。cross-client 的编译期求值用 IR 求值器（`lisp/ir/eval.lisp`，见下面“编译期求值”），image-client 用 Maclina。宏展开结果里原样传下来的用户子形式，按顶层形式 CST 里记下的位置取源码位置（每个顶层形式一张 eq 表），和旧前端的 `cst:reconstruct` 效果相同。调试信息上和旧前端的差别：没有 `let` 改写出的多余 lambda，只调用一次的局部函数内联后不再单独成帧。现在的流水线见 [front-end.md](front-end.md) 和 [lowering.md](lowering.md)。
+状态：**IR 是唯一的前端**。原生结构对象、KIR `:switch` 和 CST → IR → KIR 路径都已接入；旧的 Iconoclast 前端、Common-boot 的 HIR 求值器以及它们的依赖（Common-boot、Iconoclast、s-expression-syntax、parser.packrat、builder 协议）已经删除。cross-client 的编译期求值用 IR 求值器（`lisp/ir/eval.lisp`，见下面“编译期求值”），image-client 用 Maclina。宏展开结果里原样传下来的用户子形式，在转换第一次遇到普通 cons 时才按顶层形式 CST 惰性建一次 `eq` 表取源码位置，不再调用 `cst:reconstruct`。调试信息上和旧前端的差别：没有 `let` 改写出的多余 lambda，只调用一次的局部函数内联后不再单独成帧。现在的流水线见 [front-end.md](front-end.md) 和 [lowering.md](lowering.md)。
 
 ## 当前实现
 

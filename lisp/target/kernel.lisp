@@ -321,6 +321,7 @@
 (define-comparison =)
 
 (defun /= (a &rest more)
+  (check-number a)
   (loop-over-pairs a more))
 (defun loop-over-pairs (a more)
   ;; True if no two of A and MORE are =.

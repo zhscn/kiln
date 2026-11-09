@@ -53,17 +53,19 @@ CLOS 是 CLOS 模块的前半部分（`lisp/target/clos/`，加上 vendor 的 Cl
 
 AMOP 的方法函数接收参数列表和后续方法，有效方法接收一个参数列表，所以每次泛函调用都要构造 `&rest` 列表。kiln 在常见情况下免去这些分配：
 
-- **展开调用**：泛函的 lambda list 只有必需参数、至多 6 个时（`spread-arity`），判别函数就是 `(lambda (a0 a1) ...)` 这样的闭包，调用历史里的有效方法函数也直接接收参数。有效方法是单个方法时：访问器方法直接读写槽（读到未绑定的槽时调用 `slot-unbound`）；有快速函数的方法直接调用快速函数；其他有效方法（`:before`、`:around` 等组合）仍通过列表调用解释出来的闭包。
-- **快速方法函数**（`lisp/macro-client.lisp` 的 `method-lambda-forms`）：lambda list 只有必需参数（至多 6 个）的方法另有一个 `(lambda (next-methods a1 ... an) ...)`。它的 `call-next-method` 不带参数时，若下一个方法也有快速函数就直接调用，否则才构造列表。快速函数存在 `method` 的槽 `%fast-function` 里（Clostrophilia 补丁）。
-- 方法体没有出现 `call-next-method`、`next-method-p` 时，不生成这两个局部函数。只以调用形式出现时（没有 `#'call-next-method`，按不展开宏的树遍历判断），它们是局部宏：`(call-next-method)` 就地展开成调用下一个方法的快速函数，带参数的展开成先构造参数列表；作为局部函数时它们是闭包，每次调用方法都要分配两个。`bench/compare.lisp` 上 `call-next-method` 40.6 → 18.5 ns。
-- `call-next-method` 每次都要读下一个方法的 `%function` 和 `%fast-function` 槽：两个槽的位置按最近见到的槽列表缓存（方法几乎都是 `standard-method`），不走 `%slot` 的查找。
+- **展开调用**：泛函的 lambda list 只有必需参数、至多 6 个时（`spread-arity`），判别函数就是 `(lambda (a0 a1) ...)` 这样的闭包，调用历史里的有效方法函数也直接接收参数。有效方法是单个方法时：访问器方法直接读写槽（读到未绑定的槽时调用 `slot-unbound`）；有快速函数的方法直接用快速函数；其他有效方法（`:before`、`:around` 等组合）仍通过列表调用解释出来的闭包。
+- **快速方法函数与单次编译**（`lisp/macro-client.lisp` 的 `method-lambda-forms`）：lambda list 只有必需参数（至多 6 个）的方法，编译期只生成一个快速函数，慢槽 `%function` 在运行期由 `method-function-from-fast` 包装快速函数得到，不再把方法体编译两遍。快速函数存在 `method` 的槽 `%fast-function` 里（Clostrophilia 补丁），按方法体是否使用 `call-next-method` / `next-method-p` 分三种形状：
+  - 方法体不引用 `call-next-method` 和 `next-method-p`（绝大多数方法）：`%fast-function` 直接就是接收方法参数的 `(lambda (a1 ... an) ...)`，没有 `next-methods` 首参（因此 3 参数方法也能走寄存器参数的提前 poll），`spread-method-call` 直接返回这个函数本身，不再分配一层包装闭包；
+  - 方法体只以零参数调用 `(call-next-method)` 和 `(next-method-p)`：`%fast-function` 记为 `(:next-function . (lambda (next-fn a1 ... an) ...))`，`spread-method-call` 在构造有效方法时就递归算好下一个方法的展开调用函数 `next-fn` 并用闭包绑定，调用时不再每次从方法实例读 `%fast-function` / `%function` 槽；
+  - 其余情况（带参数的 `(call-next-method ...)` 或 `#'call-next-method`）：`%fast-function` 是 `(lambda (next-methods a1 ... an) ...)`。只以调用形式出现时，`call-next-method` 和 `next-method-p` 是局部宏；作为函数值出现时才是局部闭包。`bench/compare.lisp` 上 `call-next-method` 40.6 → 18.5 → 9.6 ns。
+- 走 `next-methods` 列表的慢路径需要读下一个方法的 `%function` 和 `%fast-function` 槽时，两个槽的位置按最近见到的槽列表缓存（方法几乎都是 `standard-method`），不走 `%slot` 的查找。
 
 ### 缓存
 
 - **判别闭包的缓存表**：只按一个或两个参数分派的泛函，判别闭包带一张直接映射表，以 stamp 的低位（两个 stamp 时是 `3·s1 xor s2`）为下标，大小是不小于调用历史长度的 2 的幂（4 到 256）。stamp 是连续分配的类编号，低位分布均匀。lambda list 里有 `&optional`、`&rest`、`&key` 的泛函，只按一个参数分派时也用同样的表（`make-single-dispatch-list-closure`），有效方法仍然接收参数列表。未命中的路径（查自动机、填表）放在单独的函数里：放在闭包里时，命中路径也要为它保存 callee-saved 寄存器、开一个大栈帧。
 - **EQL 特化**：参数的类不能确定适用方法时，Clostrophilia 每次调用都重新计算适用方法和有效方法。kiln 的缓存条目是 `#(有效方法 spec0 spec1 ...)`，每个参数的 spec 是 NIL（不特化）、`(对象)`（等于某个 EQL 对象）或类的 stamp（参数不是任何 EQL 对象）。判别函数在自动机未命中时先逐条比较，比较时不分配内存；命中的条目移到表头（`eql-dispatch-lookup`：有几十个 EQL 方法的泛函原来每次都扫完整个表）。缓存跟着泛函走（`*eql-dispatch-caches*`），判别函数重算时保留，方法改变时清空；每个泛函至多 256 条。
-- **单分派的判别闭包是两个闭包，命中时尾调用**（PCL 的判别函数也是比较之后直接跳到方法）：快闭包只为标准实例、funcallable instance 和结构就地取 stamp（其他对象的 stamp 要调用 `stamp+1`），用不检查边界的 `svref` 探表，命中就尾调用有效方法（`%primop :tail-funcall-function`，KIR 的 `tail-call-lisp`）；其余情况（其他对象、未命中、融合读取器的槽未绑定）尾调用慢闭包，慢闭包做完整的查表、填表，最后同样尾调用。快闭包里因此没有普通调用，不保存 callee-saved 寄存器，帧只有入口检查用的一点；`spread-method-call` 包装方法快函数的闭包也是尾调用，funcallable instance 的跳板也是。按两个参数分派的判别闭包（`make-double-dispatch-closure`）同样拆成快、慢两个；带 `&optional` 等的单分派闭包和通用的自动机闭包命中后也尾调用有效方法。一次单态调用从“调用者 → 跳板 → 判别闭包 → 有效方法闭包 → 方法”四层调用变成一层调用加三次跳转：`bench/compare.lisp` 上单态 13.7 → 7.4 ns，多态（3 类）18.9 → 11.9 ns，读取器 10.4 → 5.4 ns。代价是 backtrace 里看不到分派代码的帧，方法的帧直接接在调用者下面（未命中时是 `default-discriminating-function`）。
-- **读取器融进缓存**：`spread-method-call` 把读局部槽的闭包和槽的位置记在一张直接映射表里。只有一个参数的泛函，判别闭包的缓存项存的是槽的位置而不是闭包，命中时自己读槽；槽未绑定时仍经闭包，由它调用 `slot-unbound`。
+- **单分派的判别闭包是两个闭包，命中时尾调用**（PCL 的判别函数也是比较之后直接跳到方法）：快闭包只为标准实例、funcallable instance 和结构就地取 stamp（其他对象的 stamp 要调用 `stamp+1`），用不检查边界的 `svref` 探表，命中就尾调用有效方法（`%primop :tail-funcall-function`，KIR 的 `tail-call-lisp`）；其余情况（其他对象、未命中、融合读取器的槽未绑定）尾调用慢闭包，慢闭包做完整的查表、填表，最后同样尾调用。快闭包里因此没有普通调用，不保存 callee-saved 寄存器，帧只有入口检查用的一点；`spread-method-call` 在没有 `call-next-method` 时直接返回方法函数本身（有 `call-next-method` 时包装闭包也是尾调用），funcallable instance 的跳板也是。按两个参数分派的判别闭包（`make-double-dispatch-closure`）同样拆成快、慢两个；带 `&optional` 等的单分派闭包和通用的自动机闭包命中后也尾调用有效方法。一次单态调用从“调用者 → 跳板 → 判别闭包 → 有效方法闭包 → 方法”四层调用变成一层调用加两次跳转：`bench/compare.lisp` 上单态 13.7 → 6.3 ns，多态（3 类）18.9 → 9.3 ns，读取器 10.4 → 5.4 ns，写入器 11.1 → 6.8 ns。代价是 backtrace 里看不到分派代码的帧，方法的帧直接接在调用者下面（未命中时是 `default-discriminating-function`）。
+- **读取器和写入器融进缓存**：`spread-method-call` 把读写局部槽的闭包和槽的位置记在一张直接映射表里。只有一个参数的泛函（或两个参数、按第二个参数分派的 `(setf reader)` 泛函），判别闭包的缓存项存的是槽的位置而不是闭包，命中时自己读写槽；读取器遇到未绑定槽时仍经闭包，由它调用 `slot-unbound`。
 
 ### 过时实例
 
@@ -120,4 +122,4 @@ AMOP 的方法函数接收参数列表和后续方法，有效方法接收一个
 - `make-instance` 是普通函数，不是泛函；快路径之外通过通用构造协议；常量类名调用点的构造器可在原生编译器载入后晋升为机器码（[specialization.md](specialization.md)）。
 - `change-class` 不调用 `update-instance-for-different-class`。
 - 用户写的长形式 `define-method-combination`，产生的代码里有解释器不认识的运算符时不能用。
-- 有效方法的形式不是 `spread-form-closure` 认得的那几种（`call-method`、`progn`、`multiple-value-prog1`、`make-method`）时，仍要构造参数列表；用 `#'call-next-method` 的方法每次调用仍要分配两个局部函数闭包。`call-next-method` 每次都要读下一个方法的快速函数，没有像 PCL 那样在构造有效方法时就把下一个方法的调用准备好。
+- 有效方法的形式不是 `spread-form-closure` 认得的那几种（`call-method`、`progn`、`multiple-value-prog1`、`make-method`）时，仍要构造参数列表；用 `#'call-next-method` 的方法每次调用仍要分配两个局部函数闭包；带参数的 `(call-next-method ...)` 仍要从 `next-methods` 列表里读下一个方法。

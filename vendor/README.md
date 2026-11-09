@@ -111,11 +111,19 @@ Each patched place is marked with a `kiln:` comment.
   dispatch cache's list: the builder protocol's `relate`, with EQL
   specializers on dozens of relation kinds, scanned the whole list at
   every call (3.5% of kiln compiling itself).
-- Slot readers: `spread-method-call` records the closure that reads a
-  local slot with its location in a direct-mapped table, and the
-  discriminating closure of a one-parameter generic function caches the
-  location instead of the closure, reading the slot itself on a hit (an
-  unbound slot goes through the closure, which signals `slot-unbound`).
+- Slot readers and writers: `spread-method-call` records the closure that
+  reads or writes a local slot with its location in a direct-mapped table,
+  and the discriminating closure of a one-parameter generic function (or a
+  two-parameter generic function dispatching on its second parameter) caches
+  the location instead of the closure, reading or writing the slot itself on
+  a hit (an unbound slot on a read goes through the closure, which signals
+  `slot-unbound`).
+- Fast method functions that do not mention `call-next-method` or
+  `next-method-p` take only the method's parameters without a `next-methods`
+  parameter and are returned directly by `spread-method-call` without a
+  wrapper closure; fast method functions that only call `(call-next-method)`
+  or `(next-method-p)` with zero arguments (`:next-function`) receive the
+  precomputed next-method function from `spread-method-call`.
 - Effective methods of the standard method combination's shapes (`progn`,
   `multiple-value-prog1`, `call-method`, `make-method`) whose methods have
   fast functions become closures of the spread arguments

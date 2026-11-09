@@ -51,7 +51,7 @@
 
 ## 原语和 `%primop`
 
-**原语**（`lisp/primitives.lisp`）是编译器直接展开的 CL 函数：fixnum 的 `+ - * 1+ 1- < > <= >= = zerop plusp minusp`、`logand`、`logior`、`logxor`，`eq eql null not`，类型谓词，cons 操作（`cons car cdr first rest second third cadr cddr endp rplaca rplacd list list*`），`svref`、`(setf svref)`、`length`，`values`、`values-list`、`apply`、`funcall`、`nth`、`nthcdr`、`fdefinition`、`symbol-value`、`boundp` 及其 setf，以及 `kiln.sys` 里的测试用原语。
+**原语**（`lisp/primitives.lisp`）是编译器直接展开的 CL 函数：fixnum 的 `+ - * 1+ 1- < > <= >= = /= zerop plusp minusp`、`logand`、`logior`、`logxor`，字符比较（`char= char/= char< char> char<= char>=`），`eq eql null not`，类型谓词，cons 操作（`cons car cdr first rest second third cadr cddr endp rplaca rplacd list list*`），`svref`、`(setf svref)`、`length`，`values`、`values-list`、`apply`、`funcall`、`nth`、`nthcdr`、`fdefinition`、`symbol-value`、`boundp` 及其 setf，以及 `kiln.sys` 里的测试用原语。
 
 - CL 的函数不能被重定义（CLHS 11.1.2.1.2），所以内联是合法的。
 - 数值原语内联 fixnum 的快路径；参数不是 fixnum 或者溢出时调用 kernel 的 `two-arg-+` 等函数。`floor`、`truncate`、`ceiling`、`round`、`mod`、`rem` 对两个 fixnum、`ash` 对 fixnum 也有内联的快路径（KIR 的 `sdiv`、`srem`、`shlv`、`sarv`），不调用 runtime。比较原语接受任意个参数，按相邻两两比较。
