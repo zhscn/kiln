@@ -15,6 +15,14 @@
 
 (in-package #:clostrophilia)
 
+(defmethod reinitialize-instance :after
+    ((generic-function standard-generic-function) &rest initargs)
+  (declare (ignore initargs))
+  (setf (call-history generic-function) nil)
+  (compute-and-set-specializer-profile generic-function)
+  (invalidate-discriminating-function generic-function)
+  (note-method-change generic-function))
+
 (defgeneric (setf class-name) (name class))
 
 (defmethod (setf class-name) (name (class class))

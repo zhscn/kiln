@@ -249,7 +249,7 @@
                      (specializer condition)))))
 
 (define-condition option-or-method-must-be-non-empty-list
-    (error)
+    (program-error)
   ((%expression :initarg :expression :reader expression))
   (:report (lambda (condition stream)
              (format stream
@@ -489,3 +489,9 @@
                       slot specs, but~@
                       ~s was found."
                      (slot-list condition)))))
+
+(define-condition invalid-defgeneric-option (program-error)
+  ((option :initarg :option :reader invalid-defgeneric-option))
+  (:report (lambda (condition stream)
+             (format stream "Invalid or repeated DEFGENERIC option: ~S"
+                     (invalid-defgeneric-option condition)))))

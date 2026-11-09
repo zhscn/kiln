@@ -108,16 +108,29 @@
       class)))
 
 (defun mop-ensure-generic-function
-    (name &key lambda-list (argument-precedence-order nil apo-p)
+    (name &key (lambda-list nil lambda-list-p) (argument-precedence-order nil apo-p)
             (generic-function-class 'standard-generic-function)
-            (method-class 'standard-method)
-            (method-combination-name 'standard)
+            (method-class 'standard-method method-class-p)
+            (method-combination-name 'standard method-combination-p)
             (method-combination-arguments '())
-            documentation)
+            (documentation nil documentation-p))
   (let ((existing (and (fboundp name) (fdefinition name))))
-    (cond ((generic-function-p existing) existing)
-          ((and (fboundp name) (not (eq generic-function-class 'standard-generic-function)))
-           (error "not a generic function" name))
+    (cond ((generic-function-p existing)
+           (when *check-initialization-arguments*
+             (apply #'reinitialize-instance existing
+                    (append (when lambda-list-p (list :lambda-list lambda-list))
+                            (when apo-p (list :argument-precedence-order argument-precedence-order))
+                            (when method-class-p
+                              (list :method-class (if (symbolp method-class)
+                                                      (find-class method-class) method-class)))
+                            (when method-combination-p
+                              (list :method-combination
+                                    (find-method-combination existing method-combination-name
+                                                             method-combination-arguments)))
+                            (when documentation-p (list :documentation documentation)))))
+           existing)
+          ((and (fboundp name) *check-initialization-arguments*)
+           (error 'program-error))
           (t
            (let ((gf (apply #'make-instance generic-function-class
                             :name name
@@ -139,8 +152,11 @@
 
 (defun mop-ensure-method (name &key lambda-list qualifiers specializers documentation function
                                    fast-function)
-  (let* ((gf (mop-ensure-generic-function
-              name :lambda-list (congruent-lambda-list lambda-list)))
+  (let* ((gf (or (and (fboundp name)
+                       (let ((function (fdefinition name)))
+                         (and (generic-function-p function) function)))
+                  (mop-ensure-generic-function
+                   name :lambda-list (congruent-lambda-list lambda-list))))
          (method (mop-make-instance (generic-function-method-class gf)
                                     :lambda-list lambda-list
                                     :qualifiers qualifiers

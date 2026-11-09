@@ -1,21 +1,24 @@
 (cl:in-package #:common-macro-definitions)
 
 (defun check-defgeneric-options-and-methods (options-and-methods)
-  (loop for option-or-method in options-and-methods
-        do (unless (consp option-or-method)
-             (error 'option-or-method-must-be-non-empty-list
-                    :expression option-or-method))
-           (unless (member (first option-or-method)
-                           '(:argument-precedence-order
-                             declare
-                             :documentation
-                             :method-combination
-                             :generic-function-class
-                             :method-class
-                             :method))
-             ;; FIXME: Define signal type.
-             (error 'unknown-defgeneric-option
-                    :option option-or-method))))
+  (let ((seen nil))
+    (dolist (option options-and-methods)
+      (unless (and (consp option) (ecc:proper-list-p option))
+        (error 'option-or-method-must-be-non-empty-list :expression option))
+      (let ((name (first option)))
+        (unless (and (member name '(:argument-precedence-order declare :documentation
+                                   :method-combination :generic-function-class :method-class :method))
+                     (or (member name '(:method declare)) (not (member name seen)))
+                     (or (not (member name '(:documentation :generic-function-class :method-class)))
+                         (= (length option) 2)))
+          (error 'invalid-defgeneric-option :option option))
+        (when (and (member name '(:generic-function-class :method-class :method-combination))
+                   (or (< (length option) 2) (null (second option))
+                       (not (symbolp (second option)))))
+          (error 'invalid-defgeneric-option :option option))
+        (when (and (eq name :documentation) (not (stringp (second option))))
+          (error 'invalid-defgeneric-option :option option))
+        (push name seen)))))
 
 (defun separate-options-and-methods (options-and-methods)
   (values (remove :method options-and-methods
@@ -38,7 +41,7 @@
              (assoc :method-combination options))
            (method-combination-name
              (if (null method-combination-option)
-                 'standard
+                 nil
                  (second method-combination-option)))
            (method-combination-arguments
              (if (null method-combination-option)
@@ -50,13 +53,13 @@
              (assoc :generic-function-class options))
            (generic-function-class-name
              (if (null generic-function-class-option)
-                 'standard-generic-function
+                 nil
                  (second generic-function-class-option)))
            (method-class-option
              (assoc :method-class options))
            (method-class-name
              (if (null method-class-option)
-                 'standard-method
+                 nil
                  (second method-class-option)))
            (documentation-option
              (assoc :documentation options)))

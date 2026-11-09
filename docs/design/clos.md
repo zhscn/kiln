@@ -99,7 +99,7 @@ CLOS 模块完成引导后，`make-instance` 检查初始化参数的成对结�
 - **调用历史**：`:class` 的观察者从所有泛函（`*early-generic-functions*`，switchover 之后新建的也加进去）的调用历史里删掉提到这些类的项，并让判别函数失效。这些项的可用方法可能已经变了（优先级列表变了），而且按旧 stamp 建的自动机只会匹配过时的实例。
 - **过时实例的更新**：判别函数的未命中路径发现过时实例时调用 `update-obsolete-instance`。实例的 rack 里还留着它创建时的槽列表，所以旧槽可以按旧位置读出。新建一个当前类的实例，同名的局部槽照搬，新类没有的局部槽把名字放进 discarded、值放进属性表，新增的局部槽放进 added；实例接管新实例的 rack（和 `change-class` 一样），然后调用 `update-instance-for-redefined-class`，默认方法用 added 调用 `shared-initialize`。
 - 还有 `find-method`、`make-instances-obsolete`、`slot-exists-p`。
-- **限制**：只在泛函分派时检查过时实例。`slot-value` 直接按实例自己的槽列表找位置，所以过时实例在下次分派之前，用 `slot-value` 读到的仍是旧布局（值是对的，只是还没有更新）。类名 `typep` 的调用点缓存以 stamp 为键，过时实例在更新之前，在已经见过它的调用点上得到的是旧类的结果（全局缓存在重定义时清空，没有这个问题）。泛函的重定义（`defgeneric` 改 lambda list 等）还没有做。结构重定义创建新的类和 layout，旧实例保留旧类、stamp 和槽布局，不走过时实例更新。结构的访问器是 inline 函数，已编译的调用者不会跟着变。
+- **限制**：只在泛函分派时检查过时实例。`slot-value` 直接按实例自己的槽列表找位置，所以过时实例在下次分派之前，用 `slot-value` 读到的仍是旧布局（值是对的，只是还没有更新）。类名 `typep` 的调用点缓存以 stamp 为键，过时实例在更新之前，在已经见过它的调用点上得到的是旧类的结果（全局缓存在重定义时清空，没有这个问题）。泛函重新初始化先检查新 lambda list 与现有方法 congruent；成功后清空调用历史和 EQL 分派缓存，重建特化符概况并使判别函数及方法假设失效。结构重定义创建新的类和 layout，旧实例保留旧类、stamp 和槽布局，不走过时实例更新。结构的访问器是 inline 函数，已编译的调用者不会跟着变。
 
 
 ## 对象重建形式
@@ -142,7 +142,7 @@ CLOS 模块完成引导后，`make-instance` 检查初始化参数的成对结�
 
 ## 已知限制
 
-- 泛函的重定义不支持；过时实例只在分派时更新（见“类的重定义”）。
+- `defgeneric` 的内嵌方法尚未单独追踪；再次求值定义不会自动移除旧的内嵌方法。过时实例只在分派时更新（见“类的重定义”）。
 - `slot-value` 在过时实例更新之前读的是旧布局（值是对的，只是还没更新）；类名 `typep` 的调用点缓存已经不是限制（它检查类型假设的版本）。
 - `make-instance` 是普通函数，不是泛函；快路径之外通过通用构造协议；常量类名调用点的构造器可在原生编译器载入后晋升为机器码（[specialization.md](specialization.md)）。
 - `change-class` 不调用 `update-instance-for-different-class`。

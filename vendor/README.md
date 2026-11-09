@@ -28,6 +28,9 @@ shows exactly what kiln changed. Changes are not sent upstream for now.
 
 ## Clostrophilia patches
 
+- Generic-function reinitialization checks lambda-list congruence against
+  installed methods before changing metadata.
+
 - Class reinitialization updates superclass links only when direct superclasses
   were supplied; renaming and documentation changes preserve the layout.
 
@@ -373,6 +376,10 @@ Under `#+kiln`:
   not).
 
 ## Common-macros patches
+
+- `defgeneric` checks duplicate and malformed options with `program-error`.
+  Omitted class and method-combination options remain omitted in the client
+  protocol so redefining a generic function preserves its existing choices.
 
 - `typecase` treats `T` as an ordinary type, allowing later clauses; only
   `otherwise` must be last.

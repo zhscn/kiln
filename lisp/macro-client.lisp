@@ -46,10 +46,12 @@ compiler's client and the run-time macros."))
     :lambda-list ',lambda-list
     ,@(when argument-precedence-order
         `(:argument-precedence-order ',(rest argument-precedence-order)))
-    :generic-function-class ',generic-function-class-name
-    :method-class ',method-class-name
-    :method-combination-name ',method-combination-name
-    :method-combination-arguments ',method-combination-arguments
+    ,@(when generic-function-class-name
+        `(:generic-function-class ',generic-function-class-name))
+    ,@(when method-class-name `(:method-class ',method-class-name))
+    ,@(when method-combination-name
+        `(:method-combination-name ',method-combination-name
+          :method-combination-arguments ',method-combination-arguments))
     ,@(when documentation-option
         `(:documentation ',(second documentation-option)))))
 

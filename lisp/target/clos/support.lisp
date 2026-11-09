@@ -48,7 +48,12 @@
 
 ;;; Only used with classes.
 (defun subtypep-1 (class-1 class-2)
-  (if (member class-2 (%slot class-1 '%precedence-list)) t nil))
+  (let ((precedence-list (%slot class-1 '%precedence-list)))
+    (if precedence-list
+        (if (member class-2 precedence-list) t nil)
+        (or (eq class-1 class-2)
+            (some (lambda (superclass) (subtypep-1 superclass class-2))
+                  (%slot class-1 '%direct-superclasses))))))
 
 ;;; SHARED-INITIALIZE of an instance of a class whose metaclass is
 ;;; STANDARD-CLASS: from a plan of the class's slots, made
