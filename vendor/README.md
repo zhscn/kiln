@@ -345,6 +345,10 @@ Under `#+kiln`:
 
 ## Common-macros patches
 
+- `defclass` rejects duplicate direct slot names and default initarg names.
+  Repeated singleton slot options signal `program-error` and retain their
+  slot specifier for condition reporting.
+
 - `incf` and `decf` evaluate the delta after the place's subforms and
   before reading the place, preserving generalized-reference evaluation order.
 

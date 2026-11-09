@@ -329,7 +329,7 @@
                       ~s"
                      (qualifier condition)))))
 
-(define-condition multiple-allocation-options-not-permitted (error)
+(define-condition multiple-allocation-options-not-permitted (program-error)
   ((%slot-specifier :initarg :slot-specifier :reader slot-specifier))
   (:report (lambda (condition stream)
              (format stream
@@ -337,7 +337,7 @@
                       ~s was found."
                      (slot-specifier condition)))))
 
-(define-condition multiple-documentation-options-not-permitted (error)
+(define-condition multiple-documentation-options-not-permitted (program-error)
   ((%slot-specifier :initarg :slot-specifier :reader slot-specifier))
   (:report (lambda (condition stream)
              (format stream
@@ -345,7 +345,7 @@
                       ~s was found."
                      (slot-specifier condition)))))
 
-(define-condition multiple-initform-options-not-permitted (error)
+(define-condition multiple-initform-options-not-permitted (program-error)
   ((%slot-specifier :initarg :slot-specifier :reader slot-specifier))
   (:report (lambda (condition stream)
              (format stream
@@ -353,7 +353,7 @@
                       ~s was found."
                      (slot-specifier condition)))))
 
-(define-condition multiple-type-options-not-permitted (error)
+(define-condition multiple-type-options-not-permitted (program-error)
   ((%slot-specifier :initarg :slot-specifier :reader slot-specifier))
   (:report (lambda (condition stream)
              (format stream

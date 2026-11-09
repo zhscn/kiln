@@ -71,6 +71,10 @@ AMOP 的方法函数接收参数列表和后续方法，有效方法接收一个
 
 类重定义后，旧实例 rack 里的 stamp 和类当前的 unique number 不一致。Clostrophilia 的 `default-discriminating-function` 没有检查这一点（注释说要检查，代码没有），stamp 过时的实例会让分派死循环。kiln 的补丁在慢路径里先检查特化参数里有没有过时的实例，有就先更新再重新分派，这是重定义屏障（C4）在 CLOS 上的落实。
 
+## 类定义检查
+
+`defclass` 在宏展开时检查直接槽名和默认 initarg 名的唯一性。槽的 `:initform`、`:allocation`、`:type` 和 `:documentation` 只能出现一次，重复时报告 `program-error`；`:initarg`、`:reader`、`:writer` 和 `:accessor` 可以重复，用于声明多个初始化入口或访问函数。
+
 ## 类的重定义
 
 `redefinition.lisp`，按 CLHS 4.3.6：

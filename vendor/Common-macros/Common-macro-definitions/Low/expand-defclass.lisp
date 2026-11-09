@@ -66,7 +66,7 @@
     (if flag
         (progn (unless (= (length value) 1)
                  (error 'multiple-initform-options-not-permitted
-                        :datum direct-slot-spec))
+                        :slot-specifier direct-slot-spec))
                (remhash :initform table)
                `(:initform ',(car value)
                  :initfunction ,(make-initfunction (car value))))
@@ -109,7 +109,7 @@
     (if flag
         (progn (unless (= (length value) 1)
                  (error 'multiple-documentation-options-not-permitted
-                        :datum direct-slot-spec))
+                        :slot-specifier direct-slot-spec))
                (unless (stringp (car value))
                  (error 'slot-documentation-option-must-be-string
                         :datum (car value)))
@@ -133,7 +133,7 @@
     (if flag
         (progn (unless (= (length value) 1)
                  (error 'multiple-type-options-not-permitted
-                        :datum direct-slot-spec))
+                        :slot-specifier direct-slot-spec))
                (remhash :type table)
                `(:type ',(car value))))))
 
@@ -178,6 +178,12 @@
   (when (not (ecc:proper-list-p direct-slot-specs))
     (error 'malformed-slot-list
            :slot-list direct-slot-specs))
+  (let ((names '()))
+    (dolist (spec direct-slot-specs)
+      (let ((name (if (consp spec) (car spec) spec)))
+        (when (member name names :test #'eq)
+          (error 'program-error))
+        (push name names))))
   `(list ,@(loop for spec in direct-slot-specs
                  collect (canonicalize-direct-slot-spec spec))))
 
@@ -200,6 +206,11 @@
   (unless (evenp (length initargs))
     (error 'malformed-default-initargs-option
            :option `(:default-initargs ,@initargs)))
+  (let ((names '()))
+    (loop for (name value) on initargs by #'cddr
+          do (when (member name names :test #'eq)
+               (error 'program-error))
+             (push name names)))
   `(list ,@(loop for (name value) on initargs by #'cddr
                  collect (canonicalize-default-initarg name value))))
 
