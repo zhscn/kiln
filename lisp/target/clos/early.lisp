@@ -80,8 +80,15 @@ list, slots), the slots unbound."
           do (setf (standard-instance-access instance location) +unbound-slot-value+))
     instance))
 
+(defvar *funcallable-instance-function-hook* nil)
+
 (defun set-funcallable-instance-function (funcallable-instance function)
-  (kiln.sys:%primop :set-funcallable-instance-function funcallable-instance function))
+  (kiln.sys:%primop :set-funcallable-instance-function
+                  funcallable-instance
+                  (if *funcallable-instance-function-hook*
+                      (funcall *funcallable-instance-function-hook* funcallable-instance function)
+                      function))
+  function)
 
 (defun set-class-word (instance class)
   ;; Rack word 1 is location -3.

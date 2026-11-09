@@ -1171,6 +1171,8 @@ and slots), zero-filled."
 (define-primop :set-standard-instance-access (obj location value)
   (emit `(:store (:add ,(rack-of obj) (:shl ,location 2)) ,(- 32 +tag-general+) ,value))
   value)
+(define-primop :funcallable-instance-function (fi)
+  (copy-to-var `(:load ,fi ,(- 24 +tag-general+))))
 (define-primop :set-funcallable-instance-function (fi f)
   (emit-check-function f)
   (emit `(:store ,fi ,(- 24 +tag-general+) ,f))

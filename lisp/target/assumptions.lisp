@@ -399,6 +399,10 @@ creates a new cell. Shared type and initialization cells cannot be retired."
       (invalidate-assumption-cell kind name cell)))
   nil)
 
+(defvar *trace-definition-hook* nil)
+
 (defun note-function-change (name)
   "A function binding changed, including removal of the binding."
+  (when *trace-definition-hook*
+    (funcall *trace-definition-hook* name))
   (change-assumption :function name))

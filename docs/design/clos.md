@@ -68,6 +68,8 @@ AMOP 的方法函数接收参数列表和后续方法，有效方法接收一个
 - **单分派的判别闭包是两个闭包，命中时尾调用**（PCL 的判别函数也是比较之后直接跳到方法）：快闭包只为标准实例、funcallable instance 和结构就地取 stamp（其他对象的 stamp 要调用 `stamp+1`），用不检查边界的 `svref` 探表，命中就尾调用有效方法（`%primop :tail-funcall-function`，KIR 的 `tail-call-lisp`）；其余情况（其他对象、未命中、融合读取器的槽未绑定）尾调用慢闭包，慢闭包做完整的查表、填表，最后同样尾调用。快闭包里因此没有普通调用，不保存 callee-saved 寄存器，帧只有入口检查用的一点；`spread-method-call` 在没有 `call-next-method` 时直接返回方法函数本身（有 `call-next-method` 时包装闭包也是尾调用），funcallable instance 的跳板也是。按两个参数分派的判别闭包（`make-double-dispatch-closure`）同样拆成快、慢两个；带 `&optional` 等的单分派闭包和通用的自动机闭包命中后也尾调用有效方法。一次单态调用从“调用者 → 跳板 → 判别闭包 → 有效方法闭包 → 方法”四层调用变成一层调用加两次跳转：`bench/compare.lisp` 上单态 13.7 → 6.3 ns，多态（3 类）18.9 → 9.3 ns，读取器 10.4 → 5.4 ns，写入器 11.1 → 6.8 ns。代价是 backtrace 里看不到分派代码的帧，方法的帧直接接在调用者下面（未命中时是 `default-discriminating-function`）。
 - **读取器和写入器融进缓存**：`spread-method-call` 把读写局部槽的闭包和槽的位置记在一张直接映射表里。只有一个参数的泛函（或两个参数、按第二个参数分派的 `(setf reader)` 泛函），判别闭包的缓存项存的是槽的位置而不是闭包，命中时自己读写槽；读取器遇到未绑定槽时仍经闭包，由它调用 `slot-unbound`。
 
+安装 funcallable instance 的函数时，可以经过跟踪钩子。没有泛函数被跟踪时钩子为 NIL；启用时由跟踪记录保留实际判别函数并安装包装，保持泛函数对象及方法表不变。函数跟踪的接口见 [debugging.md](debugging.md)。
+
 ### 过时实例
 
 类重定义后，旧实例 rack 里的 stamp 和类当前的 unique number 不一致。Clostrophilia 的 `default-discriminating-function` 没有检查这一点（注释说要检查，代码没有），stamp 过时的实例会让分派死循环。kiln 的补丁在慢路径里先检查特化参数里有没有过时的实例，有就先更新再重新分派，这是重定义屏障（C4）在 CLOS 上的落实。
