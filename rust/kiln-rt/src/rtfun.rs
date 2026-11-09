@@ -330,6 +330,8 @@ fn c_path(bytes: Vec<u8>) -> Option<std::ffi::CString> {
 ///   1970. 16 the processor time of the process in microseconds.
 /// - 17 sleep for a microseconds. 18 exit with status a.
 /// - 19 local timezone at Unix second a: b=0 seconds west, b=1 daylight flag.
+/// - 20 environment string selected by a into buffer b: 0 implementation version,
+///   1 OS name, 2 OS release, 3 hostname, 4 architecture, 5 CPU model.
 ///
 /// # Safety
 /// The arguments must be as described.
@@ -483,6 +485,49 @@ pub unsafe extern "C" fn kiln_rt_sys(_ctx: *mut Context, op: u64, a: u64, b: u64
                 -local.tm_gmtoff
             } else {
                 i64::from(local.tm_isdst > 0)
+            }
+        }
+        20 => {
+            let which = fixnum_value(a);
+            if which == 0 {
+                unsafe { store_octets(b, env!("CARGO_PKG_VERSION").as_bytes()) }
+            } else if which == 5 {
+                match std::fs::read_to_string("/proc/cpuinfo") {
+                    Ok(info) => match info.lines().find_map(|line| {
+                        let (key, value) = line.split_once(':')?;
+                        matches!(key.trim(), "model name" | "cpu" | "Processor")
+                            .then(|| value.trim())
+                            .filter(|value| !value.is_empty())
+                    }) {
+                        Some(model) => unsafe { store_octets(b, model.as_bytes()) },
+                        None => -(libc::ENOENT as i64),
+                    },
+                    Err(e) => -(e.raw_os_error().unwrap_or(libc::EIO) as i64),
+                }
+            } else {
+                let mut info: libc::utsname = unsafe { std::mem::zeroed() };
+                if unsafe { libc::uname(&mut info) } < 0 {
+                    errno()
+                } else {
+                    let field = match which {
+                        1 => &info.sysname,
+                        2 => &info.release,
+                        3 => &info.nodename,
+                        4 => &info.machine,
+                        _ => return fixnum(einval),
+                    };
+                    let value = unsafe { std::ffi::CStr::from_ptr(field.as_ptr()) }.to_bytes();
+                    let value = if which == 4 {
+                        match value {
+                            b"x86_64" => &b"X86-64"[..],
+                            b"aarch64" => &b"ARM64"[..],
+                            _ => value,
+                        }
+                    } else {
+                        value
+                    };
+                    unsafe { store_octets(b, value) }
+                }
             }
         }
         _ => einval,

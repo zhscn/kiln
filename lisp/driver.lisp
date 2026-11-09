@@ -321,6 +321,7 @@
          (kiln-clos-file "pathnames")
          (kiln-clos-file "files")
          (kiln-clos-file "time")
+         (kiln-clos-file "environment")
          (kiln-clos-file "image")
          (kiln-clos-file "debug")
          (kiln-clos-file "profile")

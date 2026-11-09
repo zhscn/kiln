@@ -11,6 +11,12 @@
   - 失败时返回负的 errno。
   - 用一个入口而不是每个系统调用各导入一个函数，KIR 和 kiln-cg 都不必为新调用改动。所有系统调用经过同一个入口，以后的记录与回放也依赖这一点。
 
+## 环境信息
+
+环境查询函数从当前运行进程获取机器和操作系统信息，恢复堆快照后仍查询当前主机。系统接口 20 把选择器 `a` 对应的 UTF-8 字符串写入缓冲区 `b`：0 为 Cargo 包版本，1 为操作系统名，2 为内核发行版本，3 为主机名，4 为架构名，5 为 CPU 型号。CPU 型号来自 Linux 的 `/proc/cpuinfo`；无法获取时 `machine-version` 返回 NIL。架构名采用 SBCL 的拼写，例如 `X86-64`。
+
+`lisp-implementation-type` 返回 `"kiln"`。`short-site-name` 和 `long-site-name` 返回各自的运行期配置变量，初始为 NIL。
+
 ## 日期和时区
 
 `decode-universal-time` 和 `encode-universal-time` 在 Lisp 层做公历换算，支持秒精度的有理数时区。显式时区不应用夏令时；缺省时区通过系统接口 19 查询指定 Unix 秒的向西偏移（选择器 0）或夏令时标志（选择器 1），查询失败返回负 errno。解码返回的时区是标准时偏移，夏令时单独返回。
