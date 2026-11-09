@@ -273,7 +273,13 @@
 ;;; Complex numbers are done here, on their parts (see "Complex
 ;;; numbers" below).
 
-(defun compiled-function-p (x) (functionp x))
+(defvar *compiled-function-instance-p* nil)
+
+(defun compiled-function-p (x)
+  (and (functionp x)
+       (or (not (%primop :funcallable-instance-p x))
+           (and *compiled-function-instance-p*
+                (funcall *compiled-function-instance-p* x)))))
 (defun rationalp (x) (or (integerp x) (%primop :ratiop x)))
 (defun floatp (x) (or (%primop :single-float-p x) (%primop :double-float-p x)))
 (defun realp (x) (or (rationalp x) (floatp x)))

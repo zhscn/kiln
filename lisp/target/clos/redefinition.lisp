@@ -31,7 +31,7 @@
   name)
 
 (defun slot-exists-p (object slot-name)
-  (let ((class (class-of object)))
+  (let ((class (physical-class-of object)))
     (unless (class-finalized-p class) (finalize-inheritance class))
     (if (find slot-name (class-slots class) :key #'slot-definition-name) t nil)))
 
@@ -60,7 +60,7 @@
 
 (defmethod make-instances-obsolete ((class class))
   (when (and (class-finalized-p class)
-             (not (eq (class-of class) (find-class 'structure-class))))
+             (not (eq (physical-class-of class) (find-class 'structure-class))))
     (refinalize class))
   class)
 
@@ -76,7 +76,7 @@
 ;;; Called by MOP-ENSURE-CLASS for an existing class that is not a forward
 ;;; reference.
 (defun redefine-class (class metaclass initargs)
-  (unless (eq (class-of class) metaclass)
+  (unless (eq (physical-class-of class) metaclass)
     (error "Cannot redefine ~S with the metaclass ~S." class (class-name metaclass)))
   (remove-accessor-methods class)
   ;; The options DEFCLASS leaves out take their defaults again.
@@ -180,7 +180,7 @@ the automaton built from them matches the old stamps."
 (defun update-obsolete-instance (instance)
   "Brings INSTANCE, whose class was redefined after it was made, up to
 date (CLHS 4.3.6.1)."
-  (let* ((class (class-of instance))
+  (let* ((class (physical-class-of instance))
          (old-slots (standard-instance-access instance -1))
          (new (progn (unless (class-finalized-p class) (finalize-inheritance class))
                      (allocate-instance class)))

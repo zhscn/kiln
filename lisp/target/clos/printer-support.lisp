@@ -51,10 +51,19 @@
 ;;; TYPE-OF uses the class name only while it names that same class.
 (setf kiln.kernel::*instance-type-of*
       (lambda (object)
-        (if (instancep object)
-            (let* ((class (class-of object)) (name (class-name class)))
-              (if (and name (eq (find-class name nil) class)) name class))
-            t)))
+        (cond ((arrayp object)
+               (let ((element-type (array-element-type object))
+                     (dimensions (array-dimensions object))
+                     (simple (kiln.kernel::simple-array-p object)))
+                 (cond ((and (= (length dimensions) 1) (eq element-type 'bit))
+                        (list (if simple 'simple-bit-vector 'bit-vector) (car dimensions)))
+                       ((and (= (length dimensions) 1) (not simple))
+                        (list 'vector element-type (car dimensions)))
+                       (t (list (if simple 'simple-array 'array) element-type dimensions)))))
+              ((instancep object)
+               (let* ((class (physical-class-of object)) (name (class-name class)))
+                 (if (and name (eq (find-class name nil) class)) name class)))
+              (t t))))
 
 ;;; The macro characters of the standard syntax (the printer asks whether
 ;;; a symbol's name must be quoted). There is no reader at run time yet,

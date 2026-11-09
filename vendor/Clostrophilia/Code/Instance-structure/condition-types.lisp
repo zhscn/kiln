@@ -33,4 +33,4 @@
                       ~s~@
                       which is a built-in class, so it has no slots."
                      (object condition)
-                     (class-of (object condition))))))
+                     (physical-class-of (object condition))))))

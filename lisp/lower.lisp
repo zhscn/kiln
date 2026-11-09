@@ -1114,7 +1114,7 @@ safepoint."
 (defparameter *type-predicates*
   '((cons . consp) (symbol . symbolp) (list . listp) (null . null) (atom . atom)
     (integer . integerp) (signed-byte . integerp) (number . numberp)
-    (character . characterp) (function . functionp) (compiled-function . functionp)
+    (character . characterp) (function . functionp) (compiled-function . compiled-function-p)
     (keyword . keywordp) (string . stringp) (base-string . stringp)
     (simple-string . simple-string-p) (simple-base-string . simple-string-p)
     (simple-vector . simple-vector-p)

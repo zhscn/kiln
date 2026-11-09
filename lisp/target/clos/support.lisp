@@ -129,7 +129,7 @@ instance of a class whose metaclass is STANDARD-CLASS and has the slot,
 else NIL."
   (and *standard-class*
        (kiln.sys:%primop :standard-instance-p object)
-       (eq (class-of (class-of object)) *standard-class*)
+       (eq (physical-class-of (physical-class-of object)) *standard-class*)
        (%find-slot-location object name)))
 
 ;;; SLOT-VALUE and (SETF SLOT-VALUE) at a call site with a constant slot
@@ -147,7 +147,7 @@ else NIL."
     (if (eql (car cache) stamp)
         (let ((value (standard-instance-access object (cdr cache))))
           (if (eq value +unbound-slot-value+)
-              (values (slot-unbound (class-of object) object slot-name))
+              (values (slot-unbound (physical-class-of object) object slot-name))
               value))
         (let ((location (fast-slot-location object slot-name)))
           (if (and location (not (consp location)))
@@ -158,7 +158,7 @@ else NIL."
                 (setf (car cache) stamp)
                 (let ((value (standard-instance-access object location)))
                   (if (eq value +unbound-slot-value+)
-                      (values (slot-unbound (class-of object) object slot-name))
+                      (values (slot-unbound (physical-class-of object) object slot-name))
                       value)))
               (slot-value object slot-name))))))
 
@@ -177,7 +177,7 @@ else NIL."
 (defun shared-initialize-aux-1 (instance class slot-names &rest initargs)
   (when (and *switched-p* (null *standard-class*))
     (setf *standard-class* (find-class 'standard-class)))
-  (if (and *standard-class* (eq (class-of class) *standard-class*))
+  (if (and *standard-class* (eq (physical-class-of class) *standard-class*))
       (planned-shared-initialize instance class slot-names initargs)
       (apply #'shared-initialize-aux instance class slot-names initargs)))
 
@@ -191,6 +191,6 @@ else NIL."
 (defun obsolete-instance-p (object)
   (and (instancep object)
        (not (kiln.sys:%primop :structure-instance-p object))
-       (not (eql (stamp object) (%slot (class-of object) '%unique-number)))))
+       (not (eql (stamp object) (%slot (physical-class-of object) '%unique-number)))))
 
 ;;; UPDATE-OBSOLETE-INSTANCE: redefinition.lisp.

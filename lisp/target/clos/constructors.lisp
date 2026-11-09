@@ -45,7 +45,7 @@
 (defvar *deciding-construction* nil)
 
 (defun fast-construction-p (class)
-  (and (eq (class-of class) (find-class 'standard-class))
+  (and (eq (physical-class-of class) (find-class 'standard-class))
        (let ((standard (find-method-combination nil 'standard '())))
          (every (lambda (gf)
                   (eq (generic-function-method-combination gf) standard))
@@ -140,7 +140,7 @@
 
 (defmethod reinitialize-instance ((instance standard-object) &rest initargs)
   (when *check-initialization-arguments*
-    (let ((class (class-of instance)))
+    (let ((class (physical-class-of instance)))
       (check-initarg-shape class initargs)
       (unless (getf initargs :allow-other-keys)
         (multiple-value-bind (keys allow-other-keys)
@@ -235,4 +235,4 @@
 
 (defgeneric describe-object (object stream))
 (defmethod describe-object (object stream)
-  (format stream "~&~S is an instance of ~S.~%" object (class-of object)))
+  (format stream "~&~S is an instance of ~S.~%" object (physical-class-of object)))

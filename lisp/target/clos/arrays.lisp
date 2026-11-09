@@ -83,7 +83,7 @@
 (defvar *class-element-types* '())      ; (class . element-type)
 
 (defun element-type (array)
-  (let* ((class (class-of array))
+  (let* ((class (clostrophilia::physical-class-of array))
          (entry (assoc class *class-element-types* :test #'eq)))
     (if entry
         (cdr entry)
@@ -201,6 +201,20 @@
 
 (setf kiln.kernel::*complex-array-kind* #'complex-array-kind
       kiln.kernel::*complex-array-op* #'complex-array-op)
+
+(setf clostrophilia::*public-class-of*
+      (lambda (object)
+        (let ((kind (complex-array-kind object)))
+          (when kind
+            (cl:find-class
+             (case kind
+               (:string (if (array-is-simple object) 'cl:simple-string 'cl:string))
+               (:vector
+                (if (eq (element-type object) 'bit)
+                    (if (array-is-simple object) 'cl:simple-bit-vector 'cl:bit-vector)
+                    (if (and (array-is-simple object) (eq (element-type object) t))
+                        'cl:simple-vector 'cl:vector)))
+               (t (if (array-is-simple object) 'cl:simple-array 'cl:array))))))))
 
 ;;; ctype's view of arrays.
 (defmethod ctype:upgraded-array-element-type ((client ctype::kiln-client) specifier

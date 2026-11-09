@@ -1,0 +1,7 @@
+(let ((function (compile nil '(lambda (x) (1+ x)))))
+  (print (compiled-function-p function))
+  (print (typep function 'compiled-function))
+  (print (funcall function 8)))
+(defgeneric compiled-kind-gf (x))
+(print (compiled-function-p #'compiled-kind-gf))
+(print (typep #'compiled-kind-gf 'compiled-function))

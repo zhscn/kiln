@@ -63,7 +63,7 @@ Parcl 以 intrinsic 方式加载：`parcl-low`（泛函协议和默认方法）�
 
 **混合表示**：元素为 T 的一维 simple vector 和 simple string 是原生对象，`svref`、`schar` 和 kernel 的快路径不变；其余数组都是 Regalia 的标准类的实例。
 
-- **类层次**：CL 的 `array`、`simple-array`、`vector`、`simple-vector`、`string`、`simple-string`、`bit-vector`、`simple-bit-vector` 都是内建类，原生对象的类是 `simple-vector` 和 `simple-string`。Regalia 的类在 `regalia` 包里，补丁遮蔽同名的 CL 符号；它的 `array` 以 `standard-object` 和 `cl:array` 为父类。简单与否由实例的状态决定（不可调整、没有 fill pointer、没有 displaced），类本身不区分。
+- **类层次**：CL 的 `array`、`simple-array`、`vector`、`simple-vector`、`string`、`simple-string`、`bit-vector`、`simple-bit-vector` 都是内建类，原生对象的类是 `simple-vector` 和 `simple-string`。Regalia 的类在 `regalia` 包里，补丁遮蔽同名的 CL 符号；它的 `array` 以私有 `slot-object` 和 `cl:array` 为父类。存储类本身不区分简单性；公开 `class-of` 按实例的简单性、元素类型和秩返回内建数组类，内部槽访问及分派使用物理存储类。
 - **存储**：元素存在 `contents` 槽里的原生向量中（补丁加了 `%contents` 和 `%adjustable` 两个槽）。字符数组用字符串存，其他元素类型都用 simple-vector 存，特化类型在写入时检查元素类型。displaced 数组没有存储，读写时转到目标数组，加上偏移。
 - **kernel 的钩子**：kernel 的 `stringp`、`vectorp`、`arrayp`、`length`、`aref`、`char`、`row-major-aref`、`array-rank`、`array-dimensions` 等先处理原生向量，其余对象交给 `*complex-array-kind*`（把对象映射为 `:string`、`:vector`、`:array` 或 NIL）和 `*complex-array-op*`（按关键字执行操作）。kernel 在泛函分派内部也会问种类（`gethash` 的分派会调用 `stringp`），所以这里不能调用泛函：种类按 stamp 查一张向量。
 - kernel 内部用 `make-simple-vector` 构造向量；`make-array` 对元素类型为 T 或 character 的简单情况直接返回原生对象，不调用 `subtypep`。一维、没有位移的可调向量增长时直接换掉原生存储（`resize-vector`）。

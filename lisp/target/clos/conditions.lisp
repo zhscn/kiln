@@ -14,9 +14,15 @@
   (let ((class (cond ((symbolp type) (find-class type nil))
                      ((typep type 'class) type))))
     (cond (class
-           (if (eq (class-of class) (find-class 'structure-class nil))
+           (if (eq (physical-class-of class) (find-class 'structure-class nil))
                (structure-layout-typep object (ensure-structure-layout class))
-               (if (member class (%slot (class-of object) '%precedence-list)) t nil)))
+               (let* ((public-array-class
+                        (and (eq (physical-class-of class) (find-class 'built-in-class))
+                             (member (find-class 'array) (%slot class '%precedence-list))))
+                      (object-class (if public-array-class
+                                        (class-of object)
+                                        (physical-class-of object))))
+                 (if (member class (%slot object-class '%precedence-list)) t nil))))
           ((member type *types-without-objects*) nil)
           (t (kiln.kernel::unknown-type type)))))
 
@@ -197,7 +203,7 @@ or T or NIL for a type that is not cached."
 
 (defun kiln-make-condition (type &rest initargs)
   (let ((class (if (symbolp type) (find-class type) type)))
-    (unless (eq (class-of class) (find-class 'condition-class))
+    (unless (eq (physical-class-of class) (find-class 'condition-class))
       (kiln.kernel::unknown-type type))
     (apply #'mop-make-instance class initargs)))
 
@@ -208,8 +214,8 @@ or T or NIL for a type that is not cached."
 ;;; control and arguments for a simple condition).
 (defun kiln-default-debugger (condition)
   (%primop-lisp-error
-   (cons (class-name (class-of condition))
-         (loop for slot in (%slot (class-of condition) '%effective-slots)
+   (cons (class-name (physical-class-of condition))
+         (loop for slot in (%slot (physical-class-of condition) '%effective-slots)
                for name = (%slot slot '%name)
                unless (eq name '%report)
                  append (list name (debugger-description (%slot condition name)))))))
@@ -219,7 +225,7 @@ or T or NIL for a type that is not cached."
   (cond ((generic-function-p object)
          (list 'generic-function (%slot object '%name)))
         ((instancep object)
-         (list 'instance-of (class-name (class-of object))))
+         (list 'instance-of (class-name (physical-class-of object))))
         ((consp object)
          (mapcar #'debugger-description object))
         (t object)))

@@ -1,6 +1,8 @@
 (cl:in-package #:clostrophilia)
 
-(defclass standard-object (t)
+(defclass slot-object (t) ())
+
+(defclass standard-object (slot-object)
   ()
   (:documentation
    "This class is the root class for all standard objects."))

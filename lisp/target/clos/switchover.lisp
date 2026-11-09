@@ -75,7 +75,7 @@
     ;; definition gets a new class and layout; old instances keep the old
     ;; class.
     (when (and existing
-               (eq (class-of existing) (find-class 'structure-class nil)))
+               (eq (physical-class-of existing) (find-class 'structure-class nil)))
       (if (same-structure-definition-p existing direct-superclasses initargs)
           (return-from mop-ensure-class existing)
           (setf existing nil)))
@@ -181,8 +181,8 @@ satiated; their call histories fill as they are called.")
   (let ((result '()))
     (dolist (method methods)
       (let ((specializer (nth position (%slot method '%specializers))))
-        (if (eq (class-of specializer) (find-class 'eql-specializer))
-            (pushnew (class-of (%slot specializer '%object)) result)
+        (if (eq (physical-class-of specializer) (find-class 'eql-specializer))
+            (pushnew (physical-class-of (%slot specializer '%object)) result)
             (dolist (class (all-classes))
               (when (member specializer (%slot class '%precedence-list))
                 (pushnew class result))))))

@@ -23,9 +23,9 @@
     (object slot-names &rest initargs &key &allow-other-keys))
 
 (defmethod shared-initialize
-    ((instance standard-object) slot-names &rest initargs)
+    ((instance slot-object) slot-names &rest initargs)
   (apply #'shared-initialize-aux-1
-         instance (class-of instance) slot-names initargs)
+         instance (physical-class-of instance) slot-names initargs)
   instance)
 
 ; LocalWords:  metaobjects metaobject

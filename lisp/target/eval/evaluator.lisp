@@ -84,6 +84,12 @@
 
 (in-package #:kiln.kernel)
 
+(setf *compiled-function-instance-p*
+      (lambda (object)
+        (or (typep object 'maclina.machine:function)
+            (typep object 'maclina.machine:closure))))
+
+
 (defvar *load-verbose* nil)
 (defvar *load-print* nil)
 (defvar *load-pathname* nil)

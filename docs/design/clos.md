@@ -29,7 +29,7 @@ CLOS 是 CLOS 模块的前半部分（`lisp/target/clos/`，加上 vendor 的 Cl
    - 有效槽定义里槽名和位置记下来，之后 early 代码按槽名经 rack 的槽列表读写元对象，不经过泛函。
    
    然后执行推迟的定义。
-4. **early 泛函**：真正的 `standard-generic-function` 实例，判别函数是 `early-discriminate`：按每个必需参数的 `class-of` 和优先级列表计算适用方法，按特化程度排序，按 standard 方法组合执行，不缓存。它很慢，但已经是完整的分派，足以运行 Clostrophilia 自己的初始化和终结方法。braid 里的类，访问器方法是真正的 `standard-reader-method`/`standard-writer-method`。在 early 阶段，`make-instance` 只按 initarg 和 initform 填槽，不调用 `initialize-instance`。
+4. **early 泛函**：真正的 `standard-generic-function` 实例，判别函数是 `early-discriminate`：按每个必需参数的物理类和优先级列表计算适用方法，按特化程度排序，按 standard 方法组合执行，不缓存。它很慢，但已经是完整的分派，足以运行 Clostrophilia 自己的初始化和终结方法。braid 里的类，访问器方法是真正的 `standard-reader-method`/`standard-writer-method`。在 early 阶段，`make-instance` 只按 initarg 和 initform 填槽，不调用 `initialize-instance`。
 5. **Clostrophilia 的其余部分**：槽访问、方法组合、对象初始化、类终结、泛函调用、dependent 维护，以及泛函、类、方法、槽定义的初始化。`define-method-combination` 的展开函数要调用 Clostrophilia 自己的函数，这几个文件以 `:compile-time-too` 加载。Ecclesia 此时还编不了（要用哈希表和 `ignore-errors`），Clostrophilia 运行期要用的四个函数先用 `clos/ecclesia.lisp` 的简化版代替，它们不检查 lambda list。kiln 的引导代码和 Clostrophilia 在同一个包里，引导代码自己的辅助函数都以 `early-` 开头。
 6. **切换**（`switchover.lisp`）：
    - 所有 early 泛函换上 standard 方法组合，清空调用历史；
@@ -170,3 +170,9 @@ CLOS 模块完成引导后，`make-instance` 检查初始化参数的成对结�
 `reinitialize-instance` 的标准对象检查将槽的 initarg 与实际适用的 `reinitialize-instance`、`shared-initialize` 方法所接受的关键字合并；后者按 `(instance nil)` 计算适用性。显式 `&allow-other-keys` 或调用者最左侧为真的 `:allow-other-keys` 放宽检查，单独的 `&rest` 不放宽。策略按实际实例计算，不复用构造器以 prototype 为依据的缓存，因此 EQL 特化及方法变化即时生效。
 
 `find-method` 总是检查特化符数量与必需参数数量一致；`errorp` 为 NIL 只抑制找不到匹配方法的错误。
+
+## 数组的公开类型与存储类
+
+`class-of` 为 Regalia 数组返回内建数组类，区分简单性、向量、字符串和位向量。CLOS 的布局访问和内部方法分派通过 `physical-class-of` 使用实际存储类；Regalia 的元素类型查询也使用该类。类对象形式的数组 `typep` 使用公开类层次，内部存储类仍按物理类判断。
+
+`slot-object` 是标准对象及数组存储对象共用的内部基类，提供初始化与槽协议。数组存储类继承它及内建数组类，不属于 `standard-object`。因此数组的公开类型说明符可以完整表达对象的标准类型属性。

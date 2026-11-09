@@ -12,11 +12,8 @@
 
 (defgeneric (setf displaced-index-offset) (offset array))
 
-;;; ARRAY is a standard class, so STANDARD-OBJECT will automatically
-;;; be included as a superclass.
-;;; kiln: also of the built-in class CL:ARRAY (STANDARD-OBJECT must then
-;;; be given), with the elements in a native vector.
-(defclass array (#+kiln standard-object #+kiln cl:array)
+;;; Array storage uses the slot protocol independently of STANDARD-OBJECT.
+(defclass array (#+kiln clostrophilia::slot-object #+kiln cl:array)
   ((%dimensions
     :initarg :dimensions
     :reader array-dimensions)

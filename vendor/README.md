@@ -29,6 +29,10 @@ shows exactly what kiln changed. Changes are not sent upstream for now.
 
 ## Clostrophilia patches
 
+- A private `slot-object` root shares initialization between standard objects
+  and array storage. Internal dispatch and layout access use physical classes;
+  public array classification uses the built-in hierarchy.
+
 - Long method combinations bind `:arguments` variables in effective methods,
   including supplied-p variables, `&whole`, and missing required arguments.
   `:generic-function` exposes the generic function to the expansion body.
@@ -301,6 +305,10 @@ functions); under `#+kiln`:
   (`lisp/target/clos/ctype-*.lisp`).
 
 ## Regalia patches
+
+- Array storage inherits the private slot-object root and the public array
+  hierarchy, keeping arrays outside `standard-object`.
+
 
 Under `#+kiln` (simple vectors and strings stay native):
 

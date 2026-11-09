@@ -6,7 +6,7 @@
     (instance &rest initargs &key &allow-other-keys))
 
 (defmethod reinitialize-instance
-    ((instance standard-object) &rest initargs)
+    ((instance slot-object) &rest initargs)
   ;; Call shared-initialize with a slot-list of (), meaning no slot,
   ;; i.e., only assign values to slots that have explicit
   ;; initialization arguments in initargs.

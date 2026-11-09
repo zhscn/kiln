@@ -687,7 +687,7 @@
     (loop for i from 0 below count
           collect (loop for method in methods
                         for specializer = (nth i (%slot method '%specializers))
-                        when (eq (class-of specializer) eql-specializer-class)
+                        when (eq (physical-class-of specializer) eql-specializer-class)
                           collect (%slot specializer '%object)))))
 
 (defun eql-dispatch-cache (generic-function)
@@ -920,7 +920,7 @@ fast function when its form has a spread closure (CALL-NEXT-METHOD in an
             next)))
 
 (defun spread-method-call (method next-methods arity)
-  (let ((class (class-of method)))
+  (let ((class (physical-class-of method)))
     (cond ((and (eq class (find-class 'standard-reader-method)) (= arity 1))
            (let ((location (%slot method '%slot-location))
                  (name (%slot (%slot method '%slot-definition) '%name)))
@@ -928,13 +928,13 @@ fast function when its form has a spread closure (CALL-NEXT-METHOD in an
                  (lambda (a0)
                    (let ((value (car location)))
                      (if (eq value +unbound-slot-value+)
-                         (values (slot-unbound (class-of a0) a0 name))
+                         (values (slot-unbound (physical-class-of a0) a0 name))
                          value)))
                  (note-reader-closure
                   (lambda (a0)
                     (let ((value (kiln.sys:%primop :standard-instance-access a0 location)))
                       (if (eq value +unbound-slot-value+)
-                          (values (slot-unbound (class-of a0) a0 name))
+                          (values (slot-unbound (physical-class-of a0) a0 name))
                           value)))
                   location))))
           ((and (eq class (find-class 'standard-writer-method)) (= arity 2))

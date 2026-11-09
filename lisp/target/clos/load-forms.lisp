@@ -27,7 +27,7 @@
   (declare (ignore environment))
   (unless (typep object 'standard-object)
     (error 'type-error :datum object :expected-type 'standard-object))
-  (let ((class (class-of object)) (initializers nil))
+  (let ((class (physical-class-of object)) (initializers nil))
     (dolist (slot (class-slots class))
       (let ((name (slot-definition-name slot)))
         (when (if slot-names-p

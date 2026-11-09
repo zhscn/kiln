@@ -88,7 +88,7 @@
 ### 字符串和数组
 
 - 只有一种 UTF-32 的 `simple-character-string`，每个字符 4 字节。`base-string` 以后作为它的子类型单独一个 kind。
-- 原生的数组只有元素为 T 的一维 simple-vector 和 simple string。其余数组（多维、特化元素类型、可调整、带 fill pointer、displaced）都是 Regalia 的标准实例（[stdlib.md](stdlib.md) 的“数组”）。
+- 原生的数组只有元素为 T 的一维 simple-vector 和 simple string。其余数组（多维、特化元素类型、可调整、带 fill pointer、displaced）都是 Regalia 的槽存储实例（[stdlib.md](stdlib.md) 的“数组”）。
 
 ## 静态对象
 

@@ -5,7 +5,7 @@
 ;;; that does a direct instance access according to the relevant class
 ;;; in CLASSES.  Otherwise, it returns the METHOD argument unchanged.
 (defun maybe-replace-method (method classes)
-  (let ((method-class (class-of method)))
+  (let ((method-class (physical-class-of method)))
     (flet ((slot-location (direct-slot class)
              (let* ((name (slot-definition-name direct-slot))
                     (effective-slots (class-slots class))

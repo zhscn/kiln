@@ -58,7 +58,7 @@ kernel 先给出简单的版本，后面的模块替换或扩充。钩子是 `ki
 - 编译期把常量原子类型的 `typep` 换成谓词调用，把类名的 `typep` 换成 `%typep-cached`（[lowering.md](lowering.md)）。
 - `equal` 按活动长度比较位向量，支持填充指针和位移。`equalp` 按元素递归比较数组，向量按活动长度、其他数组按维度匹配，忽略存储元素类型；哈希表按测试函数、条目数、对应键的值递归比较。
 - `coerce` 保留已符合目标类型的对象，接受类对象及 `deftype` 别名作为目标，复数转换遵循有理数的规范表示；浮点转换后检查目标范围，字符转换使用 `character` 的设计符规则。`typep` 的类对象参数直接按该类判断，允许无名类。
-- `type-of`、`coerce`、`equalp` 覆盖已有的类型。`typep` 也认识 `complex`、`(complex 类型)` 和 `simple-bit-vector`。`deftype` 和 `subtypep` 由 ctype 提供（[stdlib.md](stdlib.md)）。
+- `type-of` 对 0 和 1 返回 `bit`，对其他非负整数返回保留下界的区间类型；字符区分 standard、base 和 extended。数组结果保留存储元素类型、完整维度和简单性，向量的维度不受 fill pointer 影响。具名标准实例保留类名协议。`compiled-function-p` 接受原生函数和 Maclina 字节码函数、闭包；泛型函数及其他 funcallable instance 只满足 `functionp`。`coerce`、`equalp` 覆盖已有的类型。`typep` 也认识 `complex`、`(complex 类型)` 和 `simple-bit-vector`。`deftype` 和 `subtypep` 由 ctype 提供（[stdlib.md](stdlib.md)）。
 
 ## 序列和列表
 

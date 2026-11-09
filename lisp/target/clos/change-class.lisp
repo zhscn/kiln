@@ -27,14 +27,14 @@
 
 (defmethod update-instance-for-different-class
     ((previous standard-object) (current standard-object) &rest initargs)
-  (let* ((old-names (mapcar #'slot-definition-name (class-slots (class-of previous))))
-         (added (loop for slot in (class-slots (class-of current))
+  (let* ((old-names (mapcar #'slot-definition-name (class-slots (physical-class-of previous))))
+         (added (loop for slot in (class-slots (physical-class-of current))
                       for name = (slot-definition-name slot)
                       when (and (eq (slot-definition-allocation slot) :instance)
                                 (not (member name old-names)))
                         collect name)))
     (when (and *check-initialization-arguments* initargs)
-      (let ((class (class-of current)))
+      (let ((class (physical-class-of current)))
         (check-initarg-shape class initargs)
         (multiple-value-bind (keys allow-other-keys)
             (initialization-argument-policy
@@ -46,11 +46,11 @@
 
 (defun change-class-by-rack (instance new-class &rest initargs)
   (when (or (kiln.sys:%primop :structure-instance-p instance)
-            (eq (class-of new-class) (find-class 'structure-class)))
+            (eq (physical-class-of new-class) (find-class 'structure-class)))
     (error "CHANGE-CLASS does not accept structure objects or structure classes."))
   (unless (class-finalized-p new-class)
     (finalize-inheritance new-class))
-  (let* ((old-class (class-of instance))
+  (let* ((old-class (physical-class-of instance))
          (new (allocate-instance new-class))
          (old-names (mapcar #'slot-definition-name (class-slots old-class))))
     (dolist (slot (class-slots new-class))

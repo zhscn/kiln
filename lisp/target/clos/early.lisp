@@ -202,7 +202,7 @@ list, slots), the slots unbound."
 (defvar *built-in-stamps* (kiln.kernel::make-simple-vector 14 nil))
 (defvar *switched-p* nil)
 
-(defun class-of (object)
+(defun physical-class-of (object)
   (if (instancep object)
       (if (kiln.sys:%primop :structure-instance-p object)
           (svref (kiln.sys:%primop :structure-layout object) 0)
@@ -215,18 +215,24 @@ list, slots), the slots unbound."
                 (setf (svref *built-in-classes* index) class))
               class)))))
 
+(defvar *public-class-of* nil)
+
+(defun class-of (object)
+  (or (and *public-class-of* (funcall *public-class-of* object))
+      (physical-class-of object)))
+
 (defun stamp (object)
   (if (instancep object)
       (standard-instance-access object -2)
       (let* ((index (built-in-class-index object))
              (stamp (svref *built-in-stamps* index)))
         (or stamp
-            (let ((stamp (%slot (class-of object) '%unique-number)))
+            (let ((stamp (%slot (physical-class-of object) '%unique-number)))
               (when *switched-p*
                 (setf (svref *built-in-stamps* index) stamp))
               stamp)))))
 
-(defun class-of+1 (object) (class-of object))
+(defun class-of+1 (object) (physical-class-of object))
 (defun stamp+1 (object) (stamp object))
 
 (defvar *class-unique-number* 0)
@@ -592,7 +598,7 @@ superclasses and metaclasses come first or are built already."
 (defun generic-function-p (object)
   (and (kiln.sys:%primop :funcallable-instance-p object)
        (member (find-class 'generic-function)
-               (%slot (class-of object) '%precedence-list))))
+               (%slot (physical-class-of object) '%precedence-list))))
 
 (defun early-ensure-generic-function
     (name &key lambda-list argument-precedence-order
@@ -824,18 +830,18 @@ superclasses and metaclasses come first or are built already."
 ;;; The early discriminating function
 
 (defun specializer-applicable-p (specializer argument)
-  (if (eq (class-of specializer) (find-class 'eql-specializer))
+  (if (eq (physical-class-of specializer) (find-class 'eql-specializer))
       (eql (%slot specializer '%object) argument)
-      (member specializer (%slot (class-of argument) '%precedence-list))))
+      (member specializer (%slot (physical-class-of argument) '%precedence-list))))
 
 (defun early-method-more-specific-p (m1 m2 arguments)
   (loop for s1 in (%slot m1 '%specializers)
         for s2 in (%slot m2 '%specializers)
         for argument in arguments
         unless (eq s1 s2)
-          return (cond ((eq (class-of s1) (find-class 'eql-specializer)) t)
-                       ((eq (class-of s2) (find-class 'eql-specializer)) nil)
-                       (t (let ((cpl (%slot (class-of argument) '%precedence-list)))
+          return (cond ((eq (physical-class-of s1) (find-class 'eql-specializer)) t)
+                       ((eq (physical-class-of s2) (find-class 'eql-specializer)) nil)
+                       (t (let ((cpl (%slot (physical-class-of argument) '%precedence-list)))
                             (< (position s1 cpl) (position s2 cpl)))))))
 
 (defun call-method-function (method arguments next-methods)

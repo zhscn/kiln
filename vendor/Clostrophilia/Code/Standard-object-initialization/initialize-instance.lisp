@@ -6,5 +6,5 @@
     (instance &rest initargs &key &allow-other-keys))
 
 (defmethod initialize-instance
-    ((instance standard-object) &rest initargs)
+    ((instance slot-object) &rest initargs)
   (apply #'shared-initialize instance t initargs))
