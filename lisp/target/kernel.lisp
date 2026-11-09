@@ -952,6 +952,21 @@
           (t (let ((entry (rassoc name *character-names* :test #'string-equal)))
                (and entry (code-char (car entry))))))))
 
+(defun character-designator-p (object)
+  (or (characterp object)
+      (and (symbolp object) (= (length (symbol-name object)) 1))
+      (and (stringp object) (= (length object) 1))))
+
+(defun character (object)
+  (cond ((characterp object) object)
+        ((and (stringp object) (= (length object) 1)) (char object 0))
+        ((and (symbolp object) (= (length (symbol-name object)) 1))
+         (char (symbol-name object) 0))
+        (t (error 'simple-type-error :datum object
+                  :expected-type '(satisfies character-designator-p)
+                  :format-control "~S is not a character designator."
+                  :format-arguments (list object)))))
+
 (defun standard-char-p (c)
   (let ((x (char-code c)))
     (or (= x 10) (<= 32 x 126))))

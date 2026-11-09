@@ -53,7 +53,7 @@ Parcl 以 intrinsic 方式加载：`parcl-low`（泛函协议和默认方法）�
 
 - **`deftype`**：Common-macros 的 `deftype` 通过 client 钩子生成 `(kiln.sys::%deftype 'name expander)`，外面套一层三种时机都有的 `eval-when`。编译期环境里的 `%deftype` 把展开函数登记到编译期环境，kernel 里的把它存到名字的 plist 上。
 - **ctype** 按 `ctype.asd` 的顺序加载，但 `host.lisp` 和 `runtime.lisp` 换成 kiln 的 client（`ctype-client.lisp`，原文件在加载时用宿主的 `subtypep` 和类计算常量），`interface.lisp` 换成 `ctype-interface.lisp`，定义 `cl:subtypep`、`cl:upgraded-array-element-type`、`cl:upgraded-complex-part-type`。
-- client 的取值：浮点只有 single-float 和 double-float（short-float 归入 single，long-float 归入 double）；正负零是不同的值；数组的 UAET 按 Regalia 的类划分；base-char 是 0–127，与 kernel 的 `typep` 一致。
+- client 的取值：浮点只有 single-float 和 double-float（short-float 归入 single，long-float 归入 double）；正负零是不同的值；数组的 UAET 按 Regalia 的类划分；base-char 是 0–127，extended-char 是其余 Unicode 码点；standard-char 仅含换行和 ASCII 可打印字符。三者与 kernel 的 `typep` 一致，类型判断依赖具体字符，不按类缓存。`character` 接受字符、有效长度为一的字符串和名字长度为一的符号，其他输入报告类型错误。
 - ctype 的泛函用长形式方法组合 `basic`，它生成 `(surely (call-method ...) ...)` 这样的有效方法；ctype 的 client 经 `*effective-method-operators*` 登记 `surely` 的解释（依次调用各个方法，直到第二个值为真），所以不需要运行期编译器。
 - **缓存**：类型说明符的解析结果和 `subtypep` 的答案缓存在 `equal` 哈希表里，对类型假设的一个版本有效；两个符号的 `subtypep` 缓存在第一个符号的 plist 上，带那个版本。`deftype`、`(setf find-class)` 或类的重新 finalize 改变类型假设（[specialization.md](specialization.md)），缓存在下一次使用时清空。写每个字符的流操作都要调用 `subtypep`，所以缓存是必要的。
 - ctype 里特化在 `complex` 上的部分（`ccomplex.lisp`）仍用 `#-kiln` 去掉（接入时 kiln 还没有 complex）：`subtypep` 不懂 complex 类型；`typep` 对 complex 类型由 kernel 回答。

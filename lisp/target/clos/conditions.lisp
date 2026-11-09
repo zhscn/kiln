@@ -42,7 +42,7 @@
     short-float double-float long-float complex))
 
 (defparameter *class-undetermined-types*
-  '(keyword boolean base-char standard-char string base-string simple-string
+  '(keyword boolean base-char standard-char extended-char string base-string simple-string
     simple-base-string simple-vector vector simple-array simple-bit-vector array
     sequence bit unsigned-byte signed-byte))
 
