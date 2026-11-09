@@ -6,6 +6,7 @@
          (slot (find slot-name slots
                      :test #'eq :key #'slot-definition-name)))
     (if (null slot)
-        (apply #'slot-missing class object slot-name operation
-               (if (null new-value-p) '() (list new-value)))
-        slot)))
+        (values (apply #'slot-missing class object slot-name operation
+                       (if (null new-value-p) '() (list new-value)))
+                nil)
+        (values slot t))))

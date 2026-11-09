@@ -4,13 +4,9 @@
 ;;; to CLASS.  Client code will have to define MAKE-INSTANCE
 ;;; accordinly.
 
-;;; The AMOP says that ALLOCATE-INSTANCE checks whether the class is
-;;; finalized, and if not, calls FINALIZE-INHERITANCE.  However, the
-;;; INITARGS received by ALLOCATE-INSTANCE should be the defaulted
-;;; initargs, and computing the defaulted initargs requires the class
-;;; to be finalized.  A peek at PCL shows that the class is finalized
-;;; in MAKE-INSTANCE, before ALLOCATE-INSTANCE is called, which makes
-;;; more sense.  For that reason, we finalize the class here.
+;;; ALLOCATE-INSTANCE finalizes its class before reading the instance
+;;; layout. MAKE-INSTANCE also needs finalization before computing the
+;;; defaulted initargs, so ALLOCATE-INSTANCE-USING-CLASS does it earlier.
 
 (defun allocate-instance-using-class
     (class

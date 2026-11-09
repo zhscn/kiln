@@ -177,6 +177,8 @@
 
 (defmethod remove-method ((generic-function standard-generic-function)
                           (method standard-method))
+  (unless (eq (method-generic-function method) generic-function)
+    (return-from remove-method generic-function))
   ;; Remove entries in the call history for which the method is
   ;; applicable.
   (setf (call-history generic-function)
@@ -204,4 +206,5 @@
                     (update-dependent generic-function
                                       dependent
                                       'remove-method
-                                      method))))
+                                      method)))
+  generic-function)

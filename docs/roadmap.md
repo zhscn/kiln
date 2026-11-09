@@ -13,7 +13,7 @@
 | M4 | CLOS 引导和依赖 CLOS 的库：condition、哈希表、包、ctype、数组、结构、流、文件、打印、FORMAT、LOOP、reader（[clos.md](design/clos.md)、[stdlib.md](design/stdlib.md)、[io.md](design/io.md)） | 完成 |
 | M5 | 运行期 `eval`/`compile`/`load` 和 REPL；编译器在 kiln 上运行；自举闭合（kiln0 和 kiln1 逐字节相同）；原生 `compile`（[eval-compile.md](design/eval-compile.md)、[bootstrap.md](design/bootstrap.md)） | 完成 |
 | M6 | image 开发体验：堆快照（[heap-image.md](design/heap-image.md)）、原生 `eval`/`load`、帧的调试信息（[debugging.md](design/debugging.md)）、后端协议（[backend-protocol.md](design/backend-protocol.md)）、依赖追踪（[dependencies.md](design/dependencies.md)） | 前四项完成；剩下 AOT 模块的依赖和定义表、REPL 中断、SLYNK/Swank 接入 |
-| — | ANSI 补全：cl-bench 找到的缺口已补上；`ansi-test` 全部 24 组已跑通（20,853 / 21,868 = 95.4%，另跳过 77 项，见“标准库和 ANSI 覆盖”），持续补齐剩余缺口 | 进行中 |
+| — | ANSI 补全：cl-bench 找到的缺口已补上；`ansi-test` 全部 24 组已跑通（20,944 / 21,868 = 95.8%，另跳过 77 项，见“标准库和 ANSI 覆盖”），持续补齐剩余缺口 | 进行中 |
 | — | 性能：自编译与基础代码生成已与 SBCL 持平（单阶段 5.0 s vs 4.63 s）；剩余编译器深度优化与库快路径见下文“性能” | 阶段一完成 |
 | — | seal、WPO 和 AOT 交付（[positioning.md](design/positioning.md)） | 未开始 |
 | — | 异步（[async.md](design/async.md)） | 未开始，ANSI 自举完成之前不做 |
@@ -111,7 +111,7 @@
 
 ### 标准库和 ANSI 覆盖
 
-`ansi-test`（`tools/ansi-test.sh`）全部 24 个测试组已无崩溃跑通，当前实际执行用例的通过率为 **20,853 / 21,868（95.4%）**。共注册 21,945 项，另有 77 项因关闭 note 而跳过；跳过项不计入通过数或通过率的分母。关闭的 note 与 SBCL 一致：`:nil-vectors-are-strings` 和 `:open-if-exists-new-version-no-error`。
+`ansi-test`（`tools/ansi-test.sh`）全部 24 个测试组已无崩溃跑通，当前实际执行用例的通过率为 **20,944 / 21,868（95.8%）**。共注册 21,945 项，另有 77 项因关闭 note 而跳过；跳过项不计入通过数或通过率的分母。关闭的 note 与 SBCL 一致：`:nil-vectors-are-strings` 和 `:open-if-exists-new-version-no-error`。
 
 | 测试组 | 通过 | 失败 | 跳过 | 总计 | 通过率 | 主要未通过原因 |
 |---|---:|---:|---:|---:|---:|---|
@@ -119,7 +119,7 @@
 | `eval-and-compile` | 293 | 25 | 0 | 318 | 92.1% | `compile-file`、`eval-when` 细节、`special-operator-p` 宏/特殊形式边界 |
 | `data-and-control-flow` | 1384 | 42 | 2 | 1428 | 97.1% | `defsetf` 长形式、`shiftf`/`rotatef`/`psetf` 多值、`equalp` 分支 |
 | `iteration` | 832 | 11 | 0 | 843 | 98.7% | `loop` 的少量边界语法 |
-| `objects` | 644 | 218 | 0 | 862 | 74.7% | `defgeneric` 重定义与方法组合选项、`change-class` 细节、`reinitialize-instance` 关键字检查 |
+| `objects` | 735 | 127 | 0 | 862 | 85.3% | `defgeneric` 重定义与方法组合选项、`change-class` 细节、`reinitialize-instance` 关键字检查 |
 | `conditions` | 646 | 27 | 0 | 673 | 96.0% | `assert`、`ctypecase`/`ccase`、部分条件打印格式 |
 | `cons` | 1882 | 0 | 0 | 1882 | 100.0% | — |
 | `types-and-classes` | 600 | 21 | 6 | 627 | 96.6% | `coerce` 复数/函数边界、内置类层次的少量差异 |
@@ -139,7 +139,7 @@
 | `system-construction` | 30 | 47 | 0 | 77 | 39.0% | `compile-file`、`compile-file-pathname`、`with-compilation-unit` |
 | `environment` | 93 | 117 | 0 | 210 | 44.3% | `decode-universal-time`/`encode-universal-time`、`apropos`、`dribble`、`ed` |
 | `misc` | 737 | 3 | 0 | 740 | 99.6% | `step`/`trace` 边界 |
-| **合计** | **20853** | **1015** | **77** | **21945** | **95.4%** | |
+| **合计** | **20944** | **924** | **77** | **21945** | **95.8%** | |
 
 与 CL 不一致的行为：
 - `print`（编译器原语）：AOT 模块里先打印对象再换行，不经过 `*standard-output*`、`print-object` 和打印变量。要等测试的期望输出统一迁移。

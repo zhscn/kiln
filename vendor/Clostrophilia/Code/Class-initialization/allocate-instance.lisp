@@ -13,13 +13,9 @@
 ;;; third one is specialized to BUILT-IN-CLASS.  The last one signals
 ;;; an error.
 
-;;; The AMOP says that ALLOCATE-INSTANCE checks whether the class is
-;;; finalized, and if not, calls FINALIZE-INHERITANCE.  However, the
-;;; INITARGS received by ALLOCATE-INSTANCE should be the defaulted
-;;; initargs, and computing the defaulted initargs requires the class
-;;; to be finalized.  A peek at PCL shows that the class is finalized
-;;; in MAKE-INSTANCE, before ALLOCATE-INSTANCE is called, which makes
-;;; more sense.
+;;; ALLOCATE-INSTANCE finalizes its class before reading the instance
+;;; layout. MAKE-INSTANCE also needs finalization before computing the
+;;; defaulted initargs, so ALLOCATE-INSTANCE-USING-CLASS does it earlier.
 
 ;;; This method on ALLOCATE-INSTANCE is specialized to REGULAR-CLASS.
 ;;; Every instance of a regular class has two initial cells (the
@@ -34,6 +30,8 @@
      &rest initargs
      &key (additional-size 0)
      &allow-other-keys)
+  (unless (class-finalized-p class)
+    (finalize-inheritance class))
   (let* ((size (+ (instance-size class) additional-size 2))
          (stamp (unique-number class))
          (slots (class-slots class))

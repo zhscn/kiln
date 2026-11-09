@@ -28,6 +28,13 @@ shows exactly what kiln changed. Changes are not sent upstream for now.
 
 ## Clostrophilia patches
 
+- Direct `allocate-instance` calls finalize the class before reading its
+  layout. `remove-method` returns its generic function and leaves methods
+  attached to other generic functions alone.
+- A missing slot returns through `slot-missing` rather than being passed
+  to the slot-definition protocol. Setters supply the `setf` operation and
+  new value; slot predicates and mutators preserve their required results.
+
 - A single-dispatch discriminating closure is a fast closure that probes
   the cache for an instance's stamp and tail-calls the effective method
   (`%primop :tail-funcall-function`), and a slow closure for everything
