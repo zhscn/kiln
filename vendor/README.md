@@ -379,6 +379,10 @@ Under `#+kiln`:
 
 ## Maclina patches
 
+- The native VM advances past the operands of `encell` and the long
+  closure creation and initialization instructions. Both VMs support long
+  `encell` operands for captured mutable parameters beyond local slot 255.
+
 - The VM's `throw` throws the values in its register (`vm-native.lisp`), not
   no values: a `catch` in native code (not the VM's) received `nil`
   (a macro function compiled by Maclina that throws to a `catch` in native

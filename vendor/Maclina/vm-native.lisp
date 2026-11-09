@@ -438,7 +438,8 @@
                     (return))
                    ((#.m:encell)
                     (let ((index (next-code)))
-                      (setf (local index) (make-cell (local index)))))
+                      (setf (local index) (make-cell (local index))))
+                    (incf ip))
                    ((#.m:long)
                     (case (next-code)
                       (#.m:ref (spush (local (next-long))) (incf ip))
@@ -460,15 +461,22 @@
                                  template
                                  (coerce (gather
                                           (m:environment-size template))
-                                         'simple-vector)))))
+                                         'simple-vector))))
+                       (incf ip))
                       (#.m:make-uninitialized-closure          
                        (spush (let ((template (constant (next-long))))
-                                (m:make-closure m:*client* template))))
+                                (m:make-closure m:*client* template)))
+                       (incf ip))
                       (#.m:initialize-closure
                        (let ((env (m:environment (local (next-long)))))
                          (declare (type simple-vector env))
                          (loop for i from (1- (length env)) downto 0 do
-                           (setf (aref env i) (spop)))))
+                           (setf (aref env i) (spop))))
+                       (incf ip))
+                      (#.m:encell
+                       (let ((index (next-long)))
+                         (setf (local index) (make-cell (local index))))
+                       (incf ip))
                       (#.m:bind-required-args
                        (vm:bind-required-args (next-long)
                                               stack bp (vm-args vm))

@@ -636,6 +636,10 @@
                          (loop for i from (1- (length env)) downto 0 do
                            (setf (aref env i) (spop))))
                        (incf ip))
+                      (#.m:encell
+                       (let ((index (next-long)))
+                         (setf (local index) (make-cell (local index))))
+                       (incf ip))
                       (#.m:bind-required-args
                        (vm:bind-required-args (next-long)
                                               stack bp (vm-args vm))
