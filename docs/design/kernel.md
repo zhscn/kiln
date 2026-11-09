@@ -49,7 +49,7 @@ kernel 先给出简单的版本，后面的模块替换或扩充。钩子是 `ki
 ## 字符和字符串
 
 - 字符是 Unicode 码点，字符串是 UTF-32（[objects.md](objects.md)）。
-- 字符的大小写和分类只覆盖 Latin-1。
+- 字符的大小写和分类只覆盖 Latin-1。`char-name` 和 `name-char` 支持 C0、C1 控制字符及空格的名字，控制字符的主名与 SBCL 一致；Eclector 的字符查找协议使用同一份名字，支持打印回读。`make-string` 在数组层按升级后的元素类型检查 `:element-type`，字符子类型共享原生字符串存储。
 - 字符串比较（`string=` 到 `string-not-lessp`，以及不区分大小写的版本和 `char-lessp` 等）接受 `:start1` 等关键字；`string=` 用 primop 逐字比较。
 
 ## 类型

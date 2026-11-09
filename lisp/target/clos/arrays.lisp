@@ -210,6 +210,11 @@
 (defmethod ctype:simple-array-p ((client ctype::kiln-client) object)
   (kiln.kernel::simple-array-p object))
 
+(defun cl:make-string (size &key (initial-element #\Space) (element-type 'character))
+  (unless (eq (upgraded-array-element-type element-type) 'character)
+    (error "Invalid string element type: ~S" element-type))
+  (kiln.sys:%primop :make-string size (kiln.kernel::check-character initial-element)))
+
 ;;; MAKE-ARRAY
 
 (defun canonical-dimensions (dimensions)

@@ -11,6 +11,9 @@
 
 (defclass kiln-client () ())
 
+(defmethod find-character ((client kiln-client) (designator string))
+  (cl:name-char designator))
+
 ;;; Bound by the CL functions below, not set globally: Eclector's other
 ;;; entry points choose their client with (OR *CLIENT* default), as the
 ;;; CST reader does.
