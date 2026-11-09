@@ -2,6 +2,12 @@
 
 这些都编进 CLOS 模块，放在 CLOS 之后（[modules.md](modules.md)）。流、文件、打印和读入见 [io.md](io.md)。vendor 的模块的补丁见 `vendor/README.md`。
 
+## 列表和序列
+
+kernel 的列表与序列函数在 `lisp/target/kernel.lisp`、`sequences.lisp` 和 `types.lisp`。树替换先比较整个子树，命中后直接返回替换值；`subst`、`sublis` 及其谓词变体保留未变化的子树，破坏性变体更新原 cons。
+
+`make-sequence` 展开 `deftype`，接受序列类和具体的列表、向量类型，检查长度约束并按元素类型分配。`map`、`merge` 和 `concatenate` 使用同一套结果类型检查；`concatenate` 的列表结果是新列表。`elt` 按有效序列长度检查下标，`map-into` 按目标向量容量写入并更新 fill pointer。`nsubstitute` 更新原序列，向量的 `sort` 和 `stable-sort` 写回原向量；`replace` 返回原目标对象，内部存储快路径保留目标的元素类型约束。
+
 ## condition 系统（Predicament）
 
 Predicament 按 `predicament-common.asd` 的顺序加载。实现方要提供的部分照 SICL 的 `Code/Conditions/` 来写（`lisp/target/clos/conditions.lisp`）：

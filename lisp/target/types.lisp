@@ -130,7 +130,8 @@
           (or (null args) (eq (car args) '*)
               (if (stringp object)
                   (if (member (car args) '(character base-char standard-char)) t nil)
-                  (eq (car args) t)))
+                  (or (eq (car args) t)
+                      (eq (upgraded-array-element-type (car args)) t))))
           (let ((dims (if (eq head 'vector)
                           (if (or (null (cdr args)) (eq (cadr args) '*)) '* (cdr args))
                           (if (null (cdr args)) '* (cadr args)))))
@@ -275,6 +276,12 @@ any longer."
         ((member type '(string simple-string))
          (let* ((l (coerce-to-list object)) (s (make-string (length l))) (i 0))
            (dolist (c l s) (setf (schar s i) c) (setq i (+ i 1)))))
+        ((eq type 'function)
+         (cond ((symbolp object) (symbol-function object))
+               ((and (consp object) (eq (car object) 'lambda))
+                (progv (list '*compile-function*) (list nil)
+                  (values (compile nil object))))
+               (t (error 'type-error :datum object :expected-type 'function))))
         ((eq type 'character)
          (if (and (stringp object) (= (length object) 1))
              (schar object 0)
@@ -282,7 +289,7 @@ any longer."
         ((member type '(float single-float short-float)) (float object))
         ((member type '(double-float long-float)) (float object 1.0d0))
         ((member (if (consp type) (car type) type)
-                 '(vector simple-vector array simple-array string simple-string
+                 '(cons null vector simple-vector array simple-array string simple-string
                    base-string simple-base-string bit-vector simple-bit-vector))
          ;; Other vector types: MAKE-SEQUENCE knows them.
          (let* ((l (coerce-to-list object)) (s (make-sequence type (length l))) (i 0))

@@ -481,17 +481,24 @@ other, the shorter's length and the rest of the longer after it."
 (defun delete (item seq &rest args) (apply #'remove item seq args))
 (defun delete-if (pred seq &rest args) (apply #'remove-if pred seq args))
 (defun delete-if-not (pred seq &rest args) (apply #'remove-if-not pred seq args))
-(defun remove-duplicates (seq &key test test-not key from-end)
-  (let ((result nil) (l (seq-list seq 0 nil)))
+(defun remove-duplicates (seq &key test test-not key from-end (start 0) end)
+  (let* ((end (or end (length seq)))
+         (region (seq-list seq start end))
+         (result nil))
     (if from-end
-        (dolist (x l)
-          (unless (member (if key (funcall key x) x) result :test test :test-not test-not :key key)
+        (dolist (x region)
+          (unless (member (if key (funcall key x) x) result
+                          :test (and test (lambda (a b) (funcall test b a)))
+                          :test-not (and test-not (lambda (a b) (funcall test-not b a)))
+                          :key key)
             (push x result)))
-        (do ((rest l (cdr rest))) ((null rest))
+        (do ((rest region (cdr rest))) ((null rest))
           (unless (member (if key (funcall key (car rest)) (car rest)) (cdr rest)
                           :test test :test-not test-not :key key)
             (push (car rest) result))))
-    (like-seq seq (nreverse result))))
+    (like-seq seq (nconc (seq-list seq 0 start) (nreverse result)
+                         (seq-list seq end nil)))))
+
 (defun delete-duplicates (seq &rest args) (apply #'remove-duplicates seq args))
 (defun nsubstitute-if (new pred seq &key key (start 0) end count from-end)
   (let* ((end (or end (length seq)))
@@ -595,6 +602,8 @@ other, the shorter's length and the rest of the longer after it."
   (if (listp seq) seq (seq-list seq 0 nil)))
 
 (defun map (result-type f seq &rest seqs)
+  (when (and result-type (not (sequence-result-type-p result-type)))
+    (error 'type-error :datum result-type :expected-type '(satisfies sequence-result-type-p)))
   (if (null seqs)
       (cond ((null result-type)
              (if (listp seq)
@@ -620,14 +629,16 @@ other, the shorter's length and the rest of the longer after it."
                      (t
                       (dotimes (i n v) (setf (svref v i) (funcall f (aref seq i))))))))
             (t
-             (coerce (if (listp seq)
-                         (mapcar f seq)
-                         (let ((r nil))
-                           (dotimes (i (length seq) (nreverse r))
-                             (push (funcall f (aref seq i)) r))))
-                     result-type)))
+             (let* ((elements (if (listp seq)
+                                  (mapcar f seq)
+                                  (let ((r nil))
+                                    (dotimes (i (length seq) (nreverse r))
+                                      (push (funcall f (aref seq i)) r)))))
+                    (result (make-sequence result-type (length elements))))
+               (replace result elements))))
       (let ((results (apply #'mapcar f (map-arg-list seq) (mapcar #'map-arg-list seqs))))
-        (if (null result-type) nil (coerce results result-type)))))
+        (if (null result-type) nil
+            (replace (make-sequence result-type (length results)) results)))))
 
 (defun map-into (target f &rest seqs)
   (let ((lists (mapcar #'map-arg-list seqs))
@@ -658,7 +669,16 @@ other, the shorter's length and the rest of the longer after it."
                (dolist (x l acc)
                  (setq acc (if from-end (funcall f x acc) (funcall f acc x)))))))))
 
+(defun sequence-end (seq start end)
+  (let* ((n (length seq)) (end (or end n)))
+    (unless (and (integerp start) (<= 0 start n))
+      (error 'type-error :datum start :expected-type `(integer 0 ,n)))
+    (unless (and (integerp end) (<= start end n))
+      (error 'type-error :datum end :expected-type `(integer ,start ,n)))
+    end))
+
 (defun fill (seq item &key (start 0) end)
+  (setq end (sequence-end seq start end))
   (if (listp seq)
       (let ((i 0))
         (do ((l seq (cdr l))) ((or (null l) (and end (>= i end))) seq)
@@ -668,11 +688,13 @@ other, the shorter's length and the rest of the longer after it."
         (setf (aref seq i) item))))
 
 (defun replace (target source &key (start1 0) end1 (start2 0) end2)
-  (let* ((end1 (or end1 (length target)))
-         (end2 (or end2 (length source)))
+  (let* ((end1 (sequence-end target start1 end1))
+         (end2 (sequence-end source start2 end2))
          (n (min (- end1 start1) (- end2 start2))))
     (cond ((<= n 0) target)
           ((and (vectorp target) (vectorp source)
+                (or (eq (array-element-type target) t)
+                    (equal (array-element-type target) (array-element-type source)))
                 (or (not (native-vector-p target)) (not (native-vector-p source)))
                 (or (native-vector-p target) (complex-array-op :native-storage target))
                 (or (native-vector-p source) (complex-array-op :native-storage source)))
@@ -680,7 +702,8 @@ other, the shorter's length and the rest of the longer after it."
            ;; storage, as the elements are at the same indices.
            (replace (if (native-vector-p target) target (complex-array-op :native-storage target))
                     (if (native-vector-p source) source (complex-array-op :native-storage source))
-                    :start1 start1 :end1 (+ start1 n) :start2 start2 :end2 (+ start2 n)))
+                    :start1 start1 :end1 (+ start1 n) :start2 start2 :end2 (+ start2 n))
+           target)
           ((and (vectorp target) (vectorp source))
            (if (and (simple-vector-p target) (simple-vector-p source))
                ;; The same vector with the target after the source: copy
@@ -728,10 +751,12 @@ other, the shorter's length and the rest of the longer after it."
           (merge-lists (merge-sort head pred key) (merge-sort tail pred key) pred key)))))
 
 (defun sort (seq pred &key key)
-  (like-seq seq (merge-sort (seq-list seq 0 nil) pred key)))
+  (let ((sorted (merge-sort (seq-list seq 0 nil) pred key)))
+    (if (listp seq) sorted (replace seq sorted))))
 (defun stable-sort (seq pred &key key) (sort seq pred :key key))
 (defun merge (result-type a b pred &key key)
-  (coerce (merge-lists (seq-list a 0 nil) (seq-list b 0 nil) pred key) result-type))
+  (let ((elements (merge-lists (seq-list a 0 nil) (seq-list b 0 nil) pred key)))
+    (replace (make-sequence result-type (length elements)) elements)))
 
 ;;; Strings with bounds
 
