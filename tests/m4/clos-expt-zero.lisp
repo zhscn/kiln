@@ -1,0 +1,7 @@
+(dolist (base '(0 2 -2 1/3 2.0 2d0 #c(1/2 1/3) #c(2.0 3.0)
+               #c(-2.0 -3.0) #c(2d0 3d0)))
+  (dolist (power '(0 0.0 -0.0 0d0 #c(0.0 0.0) #c(0d0 0d0)))
+    (print (expt base power))))
+(defun zero-exponent (base power) (expt base power))
+(print (handler-case (zero-exponent nil 0) (type-error () :type-error)))
+(print (handler-case (zero-exponent 0 nil) (type-error () :type-error)))

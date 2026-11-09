@@ -573,7 +573,14 @@
                   0
                   (truncate (abs (* l n)) (gcd l n)))))))
 (defun expt (base power)
-  (cond ((and (integerp power) (%primop :complexp base))
+  (check-number base)
+  (check-number power)
+  (cond ((zerop power)
+         (let ((unit (1+ (* base power))))
+           (if (%primop :complexp unit)
+               (complex (realpart unit) (abs (imagpart unit)))
+               unit)))
+        ((and (integerp power) (%primop :complexp base))
          ;; Exact for rational parts.
          (if (minusp power) (/ (integer-power base (- power))) (integer-power base power)))
         ((or (%primop :complexp base) (%primop :complexp power)
