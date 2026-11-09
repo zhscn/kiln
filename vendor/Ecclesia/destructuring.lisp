@@ -249,7 +249,8 @@
 	       ;; to be made.
 	       (unless (allow-other-keys lambda-list)
 		 (let ((temp (gensym))
-		       (allowed-keywords (mapcar #'caar (keys lambda-list))))
+		       (allowed-keywords (cons :allow-other-keys
+                                       (mapcar #'caar (keys lambda-list)))))
 		   (push temp variables-to-ignore)
 		   ;; Perhaps there was a :allow-other-keys <true> in
 		   ;; the argument list.  As usual, if there are

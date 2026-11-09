@@ -51,7 +51,7 @@ Parcl 以 intrinsic 方式加载：`parcl-low`（泛函协议和默认方法）�
 
 ## 类型（ctype）和 `deftype`
 
-- **`deftype`**：Common-macros 的 `deftype` 通过 client 钩子生成 `(kiln.sys::%deftype 'name expander)`，外面套一层三种时机都有的 `eval-when`。编译期环境里的 `%deftype` 把展开函数登记到编译期环境，kernel 里的把它存到名字的 plist 上。
+- **`deftype`**：Common-macros 的 `deftype` 通过 client 钩子生成 `(kiln.sys::%deftype 'name expander)`，外面套一层三种时机都有的 `eval-when`。编译期环境里的 `%deftype` 把展开函数登记到编译期环境，kernel 里的把它存到名字的 plist 上。Ecclesia 为省略初始值的可选参数和关键字参数生成被引用的 `*`，显式初始值按形式求值。
 - **ctype** 按 `ctype.asd` 的顺序加载，但 `host.lisp` 和 `runtime.lisp` 换成 kiln 的 client（`ctype-client.lisp`，原文件在加载时用宿主的 `subtypep` 和类计算常量），`interface.lisp` 换成 `ctype-interface.lisp`，定义 `cl:subtypep`、`cl:upgraded-array-element-type`、`cl:upgraded-complex-part-type`。
 - client 的取值：浮点只有 single-float 和 double-float（short-float 归入 single，long-float 归入 double）；正负零是不同的值；数组的 UAET 按 Regalia 的类划分；base-char 是 0–127，extended-char 是其余 Unicode 码点；standard-char 仅含换行和 ASCII 可打印字符。三者与 kernel 的 `typep` 一致，类型判断依赖具体字符，不按类缓存。`character` 接受字符、有效长度为一的字符串和名字长度为一的符号，其他输入报告类型错误。
 - ctype 的泛函用长形式方法组合 `basic`，它生成 `(surely (call-method ...) ...)` 这样的有效方法；ctype 的 client 经 `*effective-method-operators*` 登记 `surely` 的解释（依次调用各个方法，直到第二个值为真），所以不需要运行期编译器。

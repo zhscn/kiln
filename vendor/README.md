@@ -513,3 +513,11 @@ Under `#+kiln`:
   `kiln.kernel::%called-fdefinition` so `fdefinition` itself can signal
   `undefined-function` when called directly while the VM still evaluates call
   arguments before signaling `undefined-function`.
+
+## Ecclesia patches
+
+- DEFTYPE keyword parameters quote the implicit `*` default, matching the
+  optional-parameter parser. Explicit initforms retain their evaluation
+  semantics; ordinary destructuring continues to default to NIL.
+- Destructuring recognizes `:allow-other-keys` as a legal key even when its
+  leftmost value is NIL; that value still controls unknown-key acceptance.

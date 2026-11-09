@@ -652,14 +652,14 @@
 	`(,(if (symbolp (car key))
 	       `(,(intern (symbol-name (car key)) :keyword) ,(car key))
 	       `(,(caar key) ,(parse-pattern (cadar key))))
-	  ,(if (> length 1) (cadr key) default)
+	  ,(if (> length 1) (cadr key) `',default)
 	  . ,(cddr key)))
       (progn
 	(unless (and (symbolp key)
 		     (not (constantp key)))
 	  (error 'malformed-ordinary-key
 		 :code key))
-	`((,(intern (symbol-name key) :keyword) ,key) ,default))))
+	`((,(intern (symbol-name key) :keyword) ,key) ',default))))
 
 (defun parse-destructuring-key (key)
   (parse-destructuring/deftype-key key nil))
