@@ -36,7 +36,8 @@ kernel 先给出简单的版本，后面的模块替换或扩充。钩子是 `ki
 - **运算在 Rust 里**：`kiln_rt_integer_op(ctx, op, a, b)`（`rust/kiln-rt/src/bignum.rs`，num-bigint）实现整数的加减乘、四种除法（商作为返回值，余数在 `ctx.values[0]`）、比较、位运算、`ash`、`gcd`、`expt`、`integer-length`。`kiln_rt_number_op`（`number.rs`，num-bigint 和 num-rational）处理全部实数的四则、四种除法（商是整数，余数和参数同类型）、比较、`eql`、转成浮点、`rational`、`sqrt`、`exp`、`log`、三角函数、`atan` 的两参数形式、`expt`。
 - runtime 先把参数读成 BigInt 再分配结果，所以分配时的 GC 不影响参数；结果有多个堆对象时（ratio 的分子分母、除法的余数）先分配的用 `values_live` 登记为 root。
 - **快路径和慢路径**：编译器对 `+ - *`、比较、除法、`ash`、`logand` 等内联 fixnum 运算。参数不是 fixnum 或者溢出时，调用 kernel 的 `two-arg-+`、`two-arg-<` 等函数，由它们按类型分派。`eql` 对不是同一对象的数调用 `eql-slow`。
-- **数值错误是 condition**：runtime 的数值运算（Rust）发现的错误没法变成 condition，所以 kernel 在调用 runtime 之前先在 Lisp 里检查：`two-arg-*` 系列检查参数是不是实数，除法检查除数是不是零。
+- **数值错误是 condition**：kernel 在 Lisp 层检查参数与结果。`two-arg-*` 系列检查实数参数，除法在调用 runtime 前检查除数；`exp`、`expt` 在取得结果后检查浮点上溢。
+- `exp` 和 `expt` 对有限参数产生的无穷结果执行软件上溢检查，发出 `floating-point-overflow`；检查覆盖单精度结果窄化及复数分量。实数的单精度窄化上溢按 `coerce` 记录双精度结果和目标类型；双精度上溢的操作与参数槽为 NIL，与 SBCL 一致。复数整数正幂在乘法步骤后检查，浮点复数的负幂在对数域计算，避免先求正幂造成中间溢出。零底数配合非零、实部不为正的指数发出 `division-by-zero`。
 - **类型传染**按 CLHS 12.1.4：double > single > 有理数；有理数的初等函数结果是 single-float。比较是精确的：浮点数按它表示的有理数和有理数比较。
 - `expt` 先检查两个参数均为数。零指数通过 `1 + base × power` 构造单位值，保留两参数的浮点格式和复数类型传染，复数结果的虚部规范为正零；有理复数仍按零虚部规范化为实数。
 - **浮点的分解**（CLHS 12.2）：`integer-decode-float`、`decode-float`、`scale-float`、`float-sign`、`float-digits`、`float-precision`、`float-radix` 按位实现在 kernel 里。
@@ -45,7 +46,7 @@ kernel 先给出简单的版本，后面的模块替换或扩充。钩子是 `ki
 - 位运算：`logeqv`、`lognand`、`lognor`、`logandc1/2`、`logorc1/2`、`logcount`、`boole`。
 - `random`、`*random-state*`、`make-random-state`：随机状态是一个结构，存一个 32 位的 xorshift128 生成器（`lisp/target/clos/random.lisp`）。
 - 常量：超出 fixnum 范围的字面量编译成静态 bignum，double-float、ratio 和 complex 编译成静态对象，single-float 是立即数。
-- 还没有：浮点的 trap、NaN 和无穷的读写。
+- 还没有：硬件浮点 trap 的配置接口、NaN 和无穷的读写。
 
 ## 字符和字符串
 
