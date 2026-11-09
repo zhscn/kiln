@@ -140,12 +140,13 @@ CLOS 模块完成引导后，`make-instance` 检查初始化参数的成对结�
   - 命中时一次 `typep` 约 18–26 ns（原来 `or` 约 90 ns，非常量的类名约 80 ns）。SBCL 用每个 layout 的 `inherits` 向量按继承深度 O(1) 判断子类；这里没有这样做，因为缓存命中后不再看优先级列表，剩下的未命中在自举里可以忽略。
 - 不命中时，类名作为类型经 kernel 的 `*class-typep*` 按类查优先级列表。`typecase`、`handler-case` 和 `check-type` 都依赖它。
 
+`change-class` 保留同名槽的值时只写入目标类的实例槽；目标类共享槽保留原有状态。标准 `update-instance-for-different-class` 合并槽及适用更新方法、共享初始化方法的关键字，检查 initarg 后初始化新增的实例槽。
+
 ## 已知限制
 
 - 过时实例只在分派时更新（见“类的重定义”）。
 - `slot-value` 在过时实例更新之前读的是旧布局（值是对的，只是还没更新）；类名 `typep` 的调用点缓存已经不是限制（它检查类型假设的版本）。
 - `make-instance` 是普通函数，不是泛函；快路径之外通过通用构造协议；常量类名调用点的构造器可在原生编译器载入后晋升为机器码（[specialization.md](specialization.md)）。
-- `change-class` 不调用 `update-instance-for-different-class`。
 - 用户写的长形式 `define-method-combination`，产生的代码里有解释器不认识的运算符时不能用。
 - 有效方法的形式不是 `spread-form-closure` 认得的那几种（`call-method`、`progn`、`multiple-value-prog1`、`make-method`）时，仍要构造参数列表；用 `#'call-next-method` 的方法每次调用仍要分配两个局部函数闭包；带参数的 `(call-next-method ...)` 仍要从 `next-methods` 列表里读下一个方法。
 
