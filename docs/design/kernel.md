@@ -39,7 +39,7 @@ kernel 先给出简单的版本，后面的模块替换或扩充。钩子是 `ki
 - **数值错误是 condition**：runtime 的数值运算（Rust）发现的错误没法变成 condition，所以 kernel 在调用 runtime 之前先在 Lisp 里检查：`two-arg-*` 系列检查参数是不是实数，除法检查除数是不是零。
 - **类型传染**按 CLHS 12.1.4：double > single > 有理数；有理数的初等函数结果是 single-float。比较是精确的：浮点数按它表示的有理数和有理数比较。
 - **浮点的分解**（CLHS 12.2）：`integer-decode-float`、`decode-float`、`scale-float`、`float-sign`、`float-digits`、`float-precision`、`float-radix` 按位实现在 kernel 里。
-- **complex**：运算在 kernel 里按两部分做（`two-arg-+` 等先判断有没有 complex 参数），部分之间的类型传染由实数的传染得到。`eql` 的慢路径、`=`、`zerop`、`abs`（浮点按比例缩放）、`phase`、`signum`、`conjugate`、`cis`，以及 `sqrt`/`exp`/`log`/`expt` 和三角、双曲函数及其反函数的 complex 版本；负数的 `sqrt`/`log` 和负底数的非整数次幂得到 complex。分支切割按 CLHS 12.1.5.3，在实轴上的取值和 SBCL 一致。双曲函数和反函数对实数也有。
+- **complex**：运算在 kernel 里按两部分做（`two-arg-+` 等先判断有没有 complex 参数），部分之间的类型传染由实数的传染得到。`eql` 的慢路径、`=`、`zerop`、`abs`（浮点按比例缩放）、`phase`、`signum`、`conjugate`、`cis`，以及 `sqrt`/`exp`/`log`/`expt` 和三角、双曲函数及其反函数的 complex 版本；负数的 `sqrt`/`log` 和负底数的非整数次幂得到 complex。分支切割按 CLHS 12.1.5.3，在实轴上的取值和 SBCL 一致。双曲函数和反函数对实数也有。复数平方根按最大分量缩放，再由较大的分量计算另一分量；`asin` 和 `acos` 采用两个平方根的分解式，并在大幅值处使用渐近式，避免相消与中间结果溢出。实数 `asinh` 按绝对值计算后恢复符号，小量通过补偿的 log(1+x) 计算。
 - `float` 带 single-float 原型时把 double 转成 single；`ffloor`、`fceiling`、`ftruncate`、`fround`。
 - 位运算：`logeqv`、`lognand`、`lognor`、`logandc1/2`、`logorc1/2`、`logcount`、`boole`。
 - `random`、`*random-state*`、`make-random-state`：随机状态是一个结构，存一个 32 位的 xorshift128 生成器（`lisp/target/clos/random.lisp`）。
