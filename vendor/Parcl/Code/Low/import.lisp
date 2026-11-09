@@ -5,10 +5,13 @@
   (let ((name (symbol-name client symbol)))
     (multiple-value-bind (present-symbol status)
         (find-present-symbol client package name)
+      (when (and status (eq symbol present-symbol))
+        (return-from import t))
       (unless (or (null status) (eq symbol present-symbol))
         ;; We have a conflict.
         (restart-case
             (error 'symbol-conflict
+                   :package package
                    :conflicting-symbols (list symbol present-symbol))
           (unintern-existing-symbol ()
             (unintern client package present-symbol)
@@ -24,6 +27,7 @@
                      ;; We have a conflict.
                      (restart-case
                          (error 'symbol-conflict
+                   :package package
                                 :conflicting-symbols
                                 (list symbol inherited-symbol))
                        (make-a-shadowing-symbol ()

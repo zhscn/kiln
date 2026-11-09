@@ -8,6 +8,6 @@
         (loop for used-package in (use-list client package)
               do (multiple-value-bind (symbol status)
                      (find-present-symbol client used-package name)
-                   (unless (null status)
+                   (when (eq status :external)
                      (return (values symbol :inherited))))
               finally (return (values nil nil))))))

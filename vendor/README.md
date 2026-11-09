@@ -205,6 +205,22 @@ Under `#+kiln` (kiln reads target sources with its own features):
 
 ## Parcl patches
 
+- Symbol lookup inherits only external symbols. Importing an already
+  present symbol preserves its status; unexporting an accessible internal
+  or inherited symbol succeeds. Export conflict checks honor shadowing
+  symbols in the using package.
+- `make-package` offers recovery for existing names and conflicting
+  nicknames. Package deletion offers recovery for missing packages and
+  packages still used by others.
+
+- Public package mutators return `t` after completing their operations.
+  Package designators are resolved with an explicit `package-error` when
+  the package does not exist; invalid designator types signal `type-error`.
+  `intern` accepts general strings and normalizes their active contents
+  before creating a symbol.
+- `shadowing-import` installs the chosen symbol directly, so an inherited
+  symbol with the same name does not trigger the conflict checks of `import`.
+
 Loaded intrinsically (`parcl-low`, `parcl-low-class`, the `parcl`
 functions); under `#+kiln`:
 
@@ -378,6 +394,9 @@ Under `#+kiln`:
   the types and in the standard dispatch table.
 
 ## Maclina patches
+
+- The native VM captures the values of a native `throw` caught by a
+  bytecode `catch`, including when cleanup code calls back into the VM.
 
 - The native VM advances past the operands of `encell` and the long
   closure creation and initialization instructions. Both VMs support long

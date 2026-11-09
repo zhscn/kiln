@@ -1,7 +1,9 @@
 (cl:in-package #:parcl)
 
 (defun intern (name &optional (package-designator *package*))
-  (parcl-low:intern *client* (find-package package-designator) name))
+  (unless (stringp name)
+    (error 'type-error :datum name :expected-type 'string))
+  (parcl-low:intern *client* (find-package-or-error package-designator) (string name)))
 
 (setf (documentation 'intern 'function)
       (format nil

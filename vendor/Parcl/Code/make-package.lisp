@@ -7,7 +7,12 @@
         (canonicalized-nicknames (mapcar #'string nicknames))
         (canonicalized-packages
           (loop for package-to-use in use
-                collect (find-package package-to-use))))
+                collect (find-package-or-error package-to-use))))
+    (dolist (name (cons canonicalized-name canonicalized-nicknames))
+      (let ((existing (find-package name)))
+        (when existing
+          (cerror "Return the existing package." 'package-error :package name)
+          (return-from make-package existing))))
     (let ((result (parcl-low:make-package *client* canonicalized-name)))
       (setf (parcl-low:nicknames *client* result) canonicalized-nicknames)
       (parcl-low:use-packages *client* result canonicalized-packages)

@@ -34,6 +34,9 @@ Parcl 以 intrinsic 方式加载：`parcl-low`（泛函协议和默认方法）�
 - 在 KEYWORD 里 intern 的 symbol 设为外部 symbol，并以自身为值。`keywordp` 比较 `kiln.kernel::*keyword-package*`。
 - kiln 自己写的：`list-all-packages`、`packagep`、`rename-package`、`delete-package`、`unintern`、`find-all-symbols`、`do-symbols`、`do-external-symbols`、`do-all-symbols`、`with-package-iterator`（先把要遍历的 symbol 收集成列表）。
 - **运行期的 `defpackage` 和 `in-package`**：`%defpackage` 按 CLHS 的顺序建立或更新包（昵称、shadow、shadowing import、use 列表、import、intern、export、包局部昵称）；包已存在时就地更新，不检查和原定义的差异；没有 `:use` 时 use 列表为空，和 SBCL 一样；忽略 `:documentation` 和 `:size`。`in-package` 展开成对 `*package*` 的赋值。模块里顶层的这两个宏只在编译期执行（[front-end.md](front-end.md)）。
+- 包操作返回标准规定的值；`intern` 接受一般字符串并使用其有效内容。只有外部 symbol 会被继承，`shadowing-import` 直接安装指定 symbol，`import` 保留已存在 symbol 的内外部状态。
+- 包迭代宏的 `return` 退出整个迭代，声明也作用于结果式。`with-package-iterator` 必须至少指定一种 symbol 状态。
+- `defpackage` 检查重复的 `:size`、`:documentation` 和必须互斥的 symbol 名列表。导入不存在的 symbol 时提供 `intern` restart；删除不存在的包或仍被使用的包时提供 `continue`。`make-package` 遇到已占用的名字或昵称时，`continue` 返回已有包，与 SBCL 一致。
 - 启动时 `*package*` 是 `COMMON-LISP-USER`。
 - 限制：冲突时的 restart 只有 Parcl 原有的那些（`use-package` 冲突直接报 `package-error`）；`do-symbols` 对有 use 列表的包是平方复杂度（Parcl 的 `map-symbols` 用列表去重）。
 

@@ -2,10 +2,10 @@
 
 (defmethod unexport (client package symbol)
   (multiple-value-bind (putative-symbol status)
-      (find-present-symbol client package (symbol-name client symbol))
-    (if (and (eq putative-symbol symbol)
-             (eq status :external))
-        (progn (ensure-present-symbol client package symbol :internal)
+      (find-symbol client package (symbol-name client symbol))
+    (if (and status (eq putative-symbol symbol))
+        (progn (when (eq status :external)
+                 (ensure-present-symbol client package symbol :internal))
                t)
         (restart-case 
             (error 'symbol-is-not-accessible

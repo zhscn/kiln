@@ -3,11 +3,12 @@
 (defun #-kiln unuse-pacakge #+kiln unuse-package ; kiln: typo
     (packages-to-unuse &optional (package-designator *package*))
   (let ((packages (if (listp packages-to-unuse)
-                      (mapcar #'find-package packages-to-unuse)
-                      (list (find-package packages-to-unuse))))
-        (package (find-package package-designator)))
+                      (mapcar #'find-package-or-error packages-to-unuse)
+                      (list (find-package-or-error packages-to-unuse))))
+        (package (find-package-or-error package-designator)))
     (loop for package-to-unuse in packages
-          do (parcl-low:unuse-package *client* package package-to-unuse))))
+          do (parcl-low:unuse-package *client* package package-to-unuse))
+    t))
 
 (setf (documentation 'unuse-package 'function)
       (format nil

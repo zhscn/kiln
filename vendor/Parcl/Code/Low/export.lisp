@@ -11,6 +11,7 @@
   (multiple-value-bind (conflicting-symbol status)
       (find-symbol client using-package (symbol-name client symbol))
     (when (and (or (eq status :internal) (eq status :external))
+               (not (eq conflicting-symbol symbol))
                (not (member conflicting-symbol
                             (shadowing-symbols client using-package)
                             :test #'eq)))
@@ -51,6 +52,9 @@
 (defun detect-and-resolve-export-conflict-2
     (client package symbol using-package)
   #+sbcl (declare (sb-ext:muffle-conditions sb-ext:compiler-note))
+  (when (find (symbol-name client symbol) (shadowing-symbols client using-package)
+              :key (lambda (shadow) (symbol-name client shadow)) :test #'string=)
+    (return-from detect-and-resolve-export-conflict-2 nil))
   (loop with name = (symbol-name client symbol)
         for used-package in (use-list client using-package)
         unless (eq used-package package)

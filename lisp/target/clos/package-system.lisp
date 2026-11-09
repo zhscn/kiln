@@ -62,6 +62,10 @@
 
 (defvar *packages* (make-hash-table :test 'equal))
 
+(defmethod find-package ((designator t))
+  (error 'type-error :datum designator
+         :expected-type '(or package string symbol character)))
+
 (defmethod find-package ((designator package))
   designator)
 
@@ -125,12 +129,17 @@
 (defun delete-package (designator)
   (let ((package (find-package designator)))
     (cond ((null package)
-           (error 'package-error :package designator))
+           (cerror "Ignore the request to delete this package."
+                   'package-error :package designator)
+           nil)
           ((null (parcl-low:name *client* package))
            nil)
           (t
-           (unless (null (parcl-low:used-by-list *client* package))
-             (error 'package-error :package package))
+           (when (parcl-low:used-by-list *client* package)
+             (cerror "Remove this package from its users' use lists and delete it."
+                     'package-error :package package)
+             (dolist (user (copy-list (parcl-low:used-by-list *client* package)))
+               (parcl-low:unuse-package *client* user package)))
            (dolist (used (parcl-low:use-list *client* package))
              (parcl-low:unuse-package *client* package used))
            (dolist (entry (parcl-low:symbol-entries *client* package))
@@ -186,6 +195,7 @@
                             ,package nil)
        (let ((,var nil))
          (declare (ignorable ,var))
+         ,@declarations
          ,result))))
 
 (defmacro do-external-symbols ((var &optional (package '*package*) result) &body body)
@@ -195,17 +205,22 @@
                             ,package t)
        (let ((,var nil))
          (declare (ignorable ,var))
+         ,@declarations
          ,result))))
 
 (defmacro do-all-symbols ((var &optional result) &body body)
   (multiple-value-bind (declarations statements) (split-declarations body)
-    `(block nil
-       (dolist (package (list-all-packages))
-         (map-package-symbols (lambda (,var) ,@declarations (tagbody ,@statements))
-                              package nil))
-       (let ((,var nil))
-         (declare (ignorable ,var))
-         ,result))))
+    (let ((package (gensym "PACKAGE")))
+      `(block nil
+         (mapc (lambda (,package)
+                 (map-package-symbols
+                  (lambda (,var) ,@declarations (tagbody ,@statements))
+                  ,package nil))
+               (list-all-packages))
+         (let ((,var nil))
+           (declare (ignorable ,var))
+           ,@declarations
+           ,result)))))
 
 (defun package-iterator-items (package-list symbol-types)
   "A list of (symbol status package) for WITH-PACKAGE-ITERATOR."
@@ -236,6 +251,10 @@
         (values t (first item) (second item) (third item)))))
 
 (defmacro with-package-iterator ((name package-list &rest symbol-types) &body body)
+  (unless (and symbol-types
+               (every (lambda (type) (member type '(:internal :external :inherited)))
+                      symbol-types))
+    (error 'program-error))
   (let ((cell (gensym "ITERATOR")))
     `(let ((,cell (list (package-iterator-items ,package-list ',symbol-types))))
        (macrolet ((,name () (list 'package-iterator-next ',cell)))
@@ -341,10 +360,39 @@
   (loop for (name . arguments) in options
         when (eq name key) append arguments))
 
+(defun check-package-options (options)
+  (dolist (key '(:size :documentation))
+    (when (> (count key options :key #'car) 1)
+      (error 'program-error)))
+  (let* ((shadow (mapcar #'string (option-arguments :shadow options)))
+         (shadowing-import nil) (import nil)
+         (intern (mapcar #'string (option-arguments :intern options)))
+         (export (mapcar #'string (option-arguments :export options))))
+    (dolist (option options)
+      (case (car option)
+        (:shadowing-import-from
+         (setq shadowing-import (append shadowing-import (mapcar #'string (cddr option)))))
+        (:import-from
+         (setq import (append import (mapcar #'string (cddr option)))))))
+    (dolist (pair (list (list shadow shadowing-import) (list shadow import)
+                        (list shadowing-import import)
+                        (list intern (append shadow shadowing-import import export))))
+      (when (intersection (first pair) (second pair) :test #'string=)
+        (error 'program-error)))))
+
+(defun package-import-symbol (name package)
+  (multiple-value-bind (symbol status) (find-symbol (string name) package)
+    (if status symbol
+        (restart-case (error 'package-error :package package)
+          (intern ()
+            :report "Intern the missing symbol in the source package."
+            (intern (string name) package))))))
+
 (defun kiln.kernel::%defpackage (name options)
   "Creates or updates the package NAME as DEFPACKAGE with OPTIONS does, in
 the order of CLHS: shadows, shadowing imports, use list, imports and
 interned symbols, exports; then local nicknames."
+  (check-package-options options)
   (let* ((name (string name))
          (package (or (find-package name) (make-package name :use '()))))
     (rename-package package name (mapcar #'string (option-arguments :nicknames options)))
@@ -354,10 +402,7 @@ interned symbols, exports; then local nicknames."
             do (let ((from (find-package-or-error from)))
                  (shadowing-import
                   (mapcar (lambda (n)
-                            (multiple-value-bind (symbol status) (find-symbol (string n) from)
-                              (unless status
-                                (error 'package-error :package from))
-                              symbol))
+                            (package-import-symbol n from))
                           names)
                   package)))
     (use-package (mapcar #'find-package-or-error (option-arguments :use options)) package)
@@ -365,10 +410,7 @@ interned symbols, exports; then local nicknames."
           when (eq key :import-from)
             do (let ((from (find-package-or-error from)))
                  (import (mapcar (lambda (n)
-                                   (multiple-value-bind (symbol status) (find-symbol (string n) from)
-                                     (unless status
-                                       (error 'package-error :package from))
-                                     symbol))
+                                   (package-import-symbol n from))
                                  names)
                          package)))
     (dolist (n (option-arguments :intern options))

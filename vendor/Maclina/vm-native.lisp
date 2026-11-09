@@ -308,30 +308,29 @@
                     (let ((target (+ ip (next-code-signed)))
                           (tag (spop))
                           (old-sp sp)
-                          (old-bp bp))
+                          (old-bp bp)
+                          (normal nil))
                       (incf ip 2)
-                      (catch tag
-                        (vm bytecode closure constants frame-size)
-                        ;; since catch-close is used for local unwinds
-                        ;; as well as normal exit of the catch block,
-                        ;; don't jump to the end of the catch
-                        ;; unless something actually threw.
-                        (setf target ip))
-                      (setf ip target)
-                      (setf sp old-sp)
-                      (setf bp old-bp)))
+                      (let ((caught (multiple-value-list
+                                     (catch tag
+                                       (vm bytecode closure constants frame-size)
+                                       (setf target ip normal t)))))
+                        ;; A native THROW carries values outside the VM register.
+                        (unless normal (setf (vm-values vm) caught)))
+                      (setf ip target sp old-sp bp old-bp)))
                    ((#.m:catch-16)
                     (let ((target (+ ip (next-code-signed-16)))
                           (tag (spop))
                           (old-sp sp)
-                          (old-bp bp))
+                          (old-bp bp)
+                          (normal nil))
                       (incf ip 3)
-                      (catch tag
-                        (vm bytecode closure constants frame-size)
-                        (setf target ip))
-                      (setf ip target)
-                      (setf sp old-sp)
-                      (setf bp old-bp)))
+                      (let ((caught (multiple-value-list
+                                     (catch tag
+                                       (vm bytecode closure constants frame-size)
+                                       (setf target ip normal t)))))
+                        (unless normal (setf (vm-values vm) caught)))
+                      (setf ip target sp old-sp bp old-bp)))
                    ;; kiln: the values (in the VM's register) are thrown too, for a
                    ;; CATCH that is not the VM's (one in native code).
                    ((#.m:throw) (throw (spop) (values-list (vm-values vm))))
