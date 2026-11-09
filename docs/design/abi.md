@@ -140,6 +140,8 @@ IR 前端转换 lambda list 之后（`lisp/ir/convert.lisp`），每个 `&option
 
 函数入口和每个 tagbody 标签（也就是循环头）都插入 poll。循环头读取 `ctx.poll_flag`，非零就调用 `kiln_rt_poll`；函数入口只比较帧指针和 `ctx.stack_limit`（一次比较一次分支，和 V8 用栈界限传中断一样）。请求 poll 的一方（`request_poll`）先设 `poll_flag`，再把 `stack_limit` 设成 `isize::MAX`（编译出的代码按有符号数比较），所以下一个函数入口也进入慢路径；`kiln_rt_poll` 清掉标志，把 `stack_limit` 恢复成真正的界限。`kiln_rt_poll` 声明为 `unwinds`，经过 trampoline、按 `try_call` 编译，因为慢路径可能 signal 并展开。慢路径现在处理栈耗尽和采样分析器的采样（[debugging.md](debugging.md) 的“性能分析器”）。
 
+参数全在寄存器里的函数（位置参数不超过 3 个，没有 `&rest`、`&key`）在读参数之前就做入口检查，慢路径不是调用，而是带着同样的 self 和参数尾调用共享函数 `kiln_poll_retry`：它把 `nargs` 之外的参数寄存器清零（GC 不会看到垃圾），调用 `kiln_rt_poll`，需要时发出栈耗尽，然后再尾调用回这个函数。这样函数自己的命中路径上没有调用，参数不必为 safepoint 存到栈上（Cranelift 把跨 safepoint 存活的引用在定义处存进栈槽）。
+
 **栈耗尽**：函数入口的帧指针低于真正的界限（`stack_real_limit`）时，慢路径报告栈耗尽。`kiln_rt_poll` 返回 1 表示栈耗尽，入口随后调用 `kiln.kernel::%stack-exhausted`，它发出 `kiln.sys:stack-exhausted`（`storage-condition` 的子类，不是 `error`，和 SBCL 一样）。
 
 - runtime 为每个栈设两个界限（`rust/kiln-rt/src/stack.rs`）：软界限在栈底之上栈大小的 1/8（256 KiB 到 4 MiB 之间），硬界限在栈底之上 64 KiB。

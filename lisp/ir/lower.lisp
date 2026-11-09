@@ -92,15 +92,22 @@
             (*debug-vars* '()) (*debug-var-count* 0)
             (*function-name* (local-function-debug-name (or (ir-fun-name fun) (gensym "LAMBDA")))))
         (with-function (name)
-          (let ((*self* (copy-to-var :self)))
-            (let ((*ir-entry-p* t)) (emit-entry (ir-parsed-lambda-list fun)))
-            ;; Every incoming argument is rooted before boxing can allocate.
-            (dolist (parameter (ir-parameter-list fun))
-              (dolist (var (remove nil (list (svref parameter 0) (svref parameter 2))))
-                (ir-bind-variable var (ir-var-lowering var))))
-            (emit-poll :stack t)
-            (multiple-value-bind (v n) (ir-entry-defaults (ir-parameter-list fun) fun)
-              (emit `(:return ,v ,n))))
+          (let* ((ll (ir-parsed-lambda-list fun))
+                 ;; All arguments in registers: poll first, re-entering
+                 ;; on the slow path (EMIT-ENTRY-POLL).
+                 (early-poll (and (not (ll-rest ll)) (not (ll-key-p ll))
+                                  (<= (+ (length (ll-required ll)) (length (ll-optional ll)))
+                                      +reg-args+))))
+            (when early-poll (emit-entry-poll))
+            (let ((*self* (copy-to-var :self)))
+              (let ((*ir-entry-p* t)) (emit-entry ll))
+              ;; Every incoming argument is rooted before boxing can allocate.
+              (dolist (parameter (ir-parameter-list fun))
+                (dolist (var (remove nil (list (svref parameter 0) (svref parameter 2))))
+                  (ir-bind-variable var (ir-var-lowering var))))
+              (unless early-poll (emit-poll :stack t))
+              (multiple-value-bind (v n) (ir-entry-defaults (ir-parameter-list fun) fun)
+                (emit `(:return ,v ,n)))))
           (set-function-debug *function-name* (ir-source-range (ir-fun-source fun))))))
     name))
 

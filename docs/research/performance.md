@@ -173,6 +173,8 @@ kiln 编译自己的五个模块（一个阶段，见 [bootstrap.md](../design/b
 
 同一路线继续：按两个参数分派的判别闭包也拆成快、慢两个，带 `&optional` 等的单分派闭包和自动机闭包命中后尾调用；方法体只调用 `call-next-method`、`next-method-p`（没有 `#'call-next-method`）时，它们是局部宏而不是每次分配的闭包。`bench/compare.lisp`（AOT，各三次取中位数）：`call-next-method` **40.6 → 18.5 ns**，单态 7.3、多态 12.0 ns（多态里含 `(mod i 3)` 和 `svref`），读取器 6.2 ns，与之前持平。
 
+然后是函数入口：poll 请求同时把 `stack_limit` 抬到 `isize::MAX`，入口只比较一次帧指针；参数全在寄存器里的函数在读参数之前检查，慢路径尾调用共享的 `kiln_poll_retry`（轮询后再进入原函数），所以命中路径上没有调用，参数不再为 safepoint 存进栈槽。`bench/compare.lisp`（各三次取中位数）：泛函单态 7.3 → **6.9 ns**，`call-next-method` 18.5 → 17.8，`fib 20` 约 58.5 → **51.4 µs**，`format nil ~a` 7.9 → 7.4 µs，`read-from-string` 33.3 → 32.4 µs。自编译一个阶段 18.7 秒（持平）。
+
 845 秒那次的 profile（按模块统计自身时间）：
 
 | 部分 | 占比 |

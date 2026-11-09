@@ -454,6 +454,45 @@ exhausted, and KILN.KERNEL::%STACK-EXHAUSTED signals the STORAGE-CONDITION."
     (jump cont)
     (start-block cont)))
 
+(defun poll-retry ()
+  "The shared function that the entry poll of a function with at most
++REG-ARGS+ positional parameters and no &REST or &KEY tail-calls on its
+slow path, with that function as self and its arguments: it calls the poll
+slow path, then enters the function again. The function's own hit path
+makes no call, so its arguments are not spilled for the safepoint.
+Registers beyond the arguments are zeroed, so that the GC never sees
+them."
+  (let ((name "kiln_poll_retry"))
+    (unless (or (shared-entry name) (gethash name (kiln.kir::kmodule-defined *module*)))
+      (setf (gethash name (kiln.kir::kmodule-defined *module*)) t)
+      (module-shared name)
+      (let ((*regions* '()) (*call-source* nil))
+        (with-function (name)
+          (let ((self (copy-to-var :self))
+                (args (loop for reg in '(:a0 :a1 :a2)
+                            for i from 0
+                            collect (copy-to-var `(:select (:gt :nargs ,i) ,reg 0))))
+                (exhausted (new-var :raw))
+                (overflow (new-block)) (cont (new-block)))
+            (emit `(:call-rt ,(rt-poll) (,exhausted) (:ctx) ,(handler)))
+            (br exhausted overflow cont)
+            (start-block overflow)
+            (emit-slow-call 'kiln.kernel::%stack-exhausted)
+            (jump cont)
+            (start-block cont)
+            (emit `(:tail-call-lisp (:load ,self ,+fobj-entry+) (:ctx ,self :nargs ,@args)))))))
+    name))
+
+(defun emit-entry-poll ()
+  "The poll at the entry of a function whose arguments are all in
+registers, before it reads them: the slow path re-enters the function
+through POLL-RETRY."
+  (let ((slow (new-block)) (cont (new-block)))
+    (br `(:lt (:fp) (:load :ctx ,+ctx-stack-limit+)) slow cont)
+    (start-block slow)
+    (emit `(:tail-call-lisp (:addr ,(poll-retry)) (:ctx :self :nargs :a0 :a1 :a2)))
+    (start-block cont)))
+
 (defun pop-entry (region)
   (emit `(:store :ctx ,+ctx-dynenv+ (:load (:slot ,(region-slot region)) ,+dyn-prev+))))
 

@@ -73,6 +73,7 @@ pub const EXPORTED_NAMES: &[&str] = &[
     "kiln_funcallable_trampoline",
     "kiln_funcallable_unset",
     "kiln_funcallable_unset_fobj",
+    "kiln_poll_retry",
 ];
 
 static EXPORTS: std::sync::RwLock<Vec<(String, usize)>> = std::sync::RwLock::new(Vec::new());
