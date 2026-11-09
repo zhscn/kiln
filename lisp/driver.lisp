@@ -299,6 +299,7 @@
          (kiln-clos-file "change-class")
          (kiln-clos-file "redefinition")
          (kiln-clos-file "constructors")
+         (kiln-clos-file "load-forms")
          (kiln-clos-file "specialization")
          (kiln-clos-file "trivial-package-locks")
          ;; Trinsic, for the interfaces of Cyclosis and the printer modules.

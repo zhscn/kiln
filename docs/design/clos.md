@@ -83,6 +83,11 @@ AMOP 的方法函数接收参数列表和后续方法，有效方法接收一个
 - 还有 `find-method`、`make-instances-obsolete`、`slot-exists-p`。
 - **限制**：只在泛函分派时检查过时实例。`slot-value` 直接按实例自己的槽列表找位置，所以过时实例在下次分派之前，用 `slot-value` 读到的仍是旧布局（值是对的，只是还没有更新）。类名 `typep` 的调用点缓存以 stamp 为键，过时实例在更新之前，在已经见过它的调用点上得到的是旧类的结果（全局缓存在重定义时清空，没有这个问题）。泛函的重定义（`defgeneric` 改 lambda list 等）还没有做。结构重定义创建新的类和 layout，旧实例保留旧类、stamp 和槽布局，不走过时实例更新。结构的访问器是 inline 函数，已编译的调用者不会跟着变。
 
+
+## 对象重建形式
+
+`make-load-form` 是泛函。类对象按已注册的名字生成 `find-class` 形式；标准对象、结构对象和 condition 的默认方法报错，由具体类提供重建协议。`make-load-form-saving-slots` 返回分配形式和槽恢复形式，支持指定槽名；默认保存实例槽，保留槽的未绑定状态，供调用方在分配对象后执行恢复形式。实现位于 `lisp/target/clos/load-forms.lisp`。
+
 ## 实例
 
 直接调用 `allocate-instance` 也会先 finalize 类，随后按布局分配未绑定的槽。缺少槽时，`slot-missing` 的主值按对应访问操作返回；setter 传入 `setf` 和新值，`slot-makunbound` 返回原实例。`remove-method` 返回其泛函，并保留不属于该泛函的方法与原泛函的关联。
