@@ -26,3 +26,6 @@
            :expected-type 'null))
   (when (typep datum *break-on-signals*)
     (break "~a~%Break because of *BREAK-ON-SIGNALS*" datum)))
+
+(defmethod signal (datum &rest arguments)
+  (signal (coerce-to-condition datum arguments 'simple-condition 'signal)))

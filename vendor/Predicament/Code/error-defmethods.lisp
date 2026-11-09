@@ -18,3 +18,6 @@
     (error 'type-error
            :datum arguments
            :expected-type 'null)))
+
+(defmethod error (datum &rest arguments)
+  (error (coerce-to-condition datum arguments 'simple-error 'error)))

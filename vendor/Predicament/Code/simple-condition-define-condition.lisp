@@ -9,6 +9,7 @@
     :initarg :format-control
     :reader simple-condition-format-control)
    (%format-arguments
+    :initform nil
     :initarg :format-arguments
     :reader simple-condition-format-arguments))
   (:report (lambda (condition stream)

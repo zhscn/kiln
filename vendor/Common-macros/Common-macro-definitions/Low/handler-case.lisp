@@ -4,7 +4,9 @@
   (loop for clause in clauses
         unless (and (ecc:proper-list-p clause)
                  (>= (length clause) 2)
-                 (typep (second clause) '(or null (cons symbol null))))
+                 (if (eq (first clause) :no-error)
+                     (ecc:proper-list-p (second clause))
+                     (typep (second clause) '(or null (cons symbol null)))))
           do (error 'malformed-handler-case-clause :clause clause))
   (let ((no-error-clause (assoc :no-error clauses)))
     (if no-error-clause

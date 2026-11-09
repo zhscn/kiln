@@ -1,8 +1,14 @@
 (cl:in-package #:predicament)
 
 (defun cerror (continue-format-control datum &rest arguments)
-  (with-simple-restart (continue continue-format-control arguments)
-    (apply #'error datum arguments)))
+  (let ((condition (coerce-to-condition datum
+                                        (if (typep datum 'condition) nil arguments)
+                                        'simple-error 'cerror)))
+    (restart-case (error condition)
+      (continue ()
+        :report (lambda (stream) (apply #'format stream continue-format-control arguments))
+        nil))))
+
 
 (setf (documentation 'cerror 'function)
       (format nil

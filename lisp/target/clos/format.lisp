@@ -25,3 +25,10 @@
 (defmethod trinsic:cell-value
     ((client cyclosis::kiln-client) (name (eql 'cl:format)) (type (eql 'cl:function)))
   #'format)
+
+(defmethod print-object ((restart restart) stream)
+  (cond ((or *print-escape* *print-readably*) (call-next-method))
+        ((predicament::report-function restart)
+         (funcall (predicament::report-function restart) stream))
+        ((restart-name restart) (prin1 (restart-name restart) stream))
+        (t (let ((*print-escape* t)) (call-next-method)))))

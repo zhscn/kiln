@@ -152,6 +152,12 @@ Each patched place is marked with a `kiln:` comment.
 
 ## Predicament patches
 
+- Simple conditions default their format arguments to `nil`. `error`,
+  `signal` and `warn` accept function format controls through the condition
+  coercion protocol; `warn` rejects conditions outside `warning`.
+- `cerror` keeps condition objects' extra arguments for the continuation
+  report and applies them individually to its format control.
+
 - `signal` and `warn` on a string or a symbol call themselves on the condition without
   a stray `nil` argument (which its own `:before` method rejected).
 - Under `#+kiln`, the reports of `error`, `parse-error`, `program-error`,
@@ -338,6 +344,9 @@ Under `#+kiln`:
   not).
 
 ## Common-macros patches
+
+- `handler-case` accepts an ordinary lambda list in its `:no-error`
+  clause, while condition clauses retain their zero-or-one-variable rule.
 
 - `remf` binds all place temporaries and evaluates the indicator before
   reading the property list, preserving generalized-place evaluation order.

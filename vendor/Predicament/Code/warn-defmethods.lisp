@@ -21,3 +21,9 @@
     (error 'type-error
            :datum arguments
            :expected-type 'null)))
+
+(defmethod warn (datum &rest arguments)
+  (let ((condition (coerce-to-condition datum arguments 'simple-warning 'warn)))
+    (unless (typep condition 'warning)
+      (error 'type-error :datum condition :expected-type 'warning))
+    (warn condition)))

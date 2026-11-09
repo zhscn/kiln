@@ -17,6 +17,7 @@ Predicament 按 `predicament-common.asd` 的顺序加载。实现方要提供的
 - **early 阶段的 condition**：kernel 的 early `define-condition` 记下的定义（Ecclesia、Clostrophilia 的约 80 个）在 Predicament 之后建成真正的 condition 类（`early-conditions.lisp`），之后 Clostrophilia 报出的错误可以被 handler 捕获。
 - **运行期错误**：编译出的代码和 kernel 发现的错误经 `%runtime-error` 变成 condition（[kernel.md](kernel.md)）。
 - **报告**：条件的 `print-object` 在不转义时打印报告。Predicament 给 `error`、`parse-error`、`program-error`、`control-error`、`reader-error`、`warning`、`style-warning`、`storage-condition` 定义的、不看条件内容的报告在 kiln 下去掉了：Khazern 的条件同时继承 `parse-error` 和 `acclimation:condition`，类优先级里 `parse-error` 在前，它的“A parse error has occurred.”会盖住 Acclimation 的本地化报告。没有报告的条件打印成“Condition X was signalled.”，和 SBCL 一样。
+- **条件参数和 restart 报告**：simple condition 的格式参数默认是 NIL；`error`、`signal`、`warn` 支持函数形式的格式控制，`warn` 要求最终条件属于 `warning`。`cerror` 的附加参数用于 continuation 报告，条件对象自身不接收这些参数。restart 在不转义打印时调用报告函数；`:no-error` 子句接受普通 lambda list。
 - **默认 debugger**：打印报告和 backtrace 后退出（[debugging.md](debugging.md)）；后端协议里是嵌套的 debug 层（[backend-protocol.md](backend-protocol.md)）。
 - 前端为它做的：编译期的 `macroexpand` 按 kiln 的环境展开（`restart-case` 展开时要判断信号形式是不是 `error`、`signal`）；`restart-bind` 和 `restart-case` 所在的文件以 `:compile-time-too` 加载。
 
