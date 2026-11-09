@@ -50,7 +50,7 @@
 - `file-position` 扣除 `unread-char` 退回的字符（源码位置依赖它，[front-end.md](front-end.md)）。字符流的 `file-position` 以八位组计。
 - `make-file-stream` 是 kiln client 的方法：`:supersede` 和 `:rename-and-delete` 直接截断文件，不写临时文件；`:rename` 把原文件改名为 `原名.bak`；`:new-version`（输出的默认值）和 `:error` 一样，文件存在就报错，和 SBCL 一样。
 
-**时间**（`time.lisp`）：`get-internal-real-time` 和 `get-internal-run-time` 以微秒计，`get-universal-time`、`sleep`。没有时区，所以没有 `decode-universal-time`、`get-decoded-time`。`sleep` 期间其他线程不能做 GC（现在还没有其他线程）。
+**时间**（`time.lisp`）：`get-internal-real-time` 和 `get-internal-run-time` 以微秒计；`get-universal-time`、公历换算和本地时区查询使用上文的日期接口。`time` 将实际经过时间和进程 CPU 时间写到 `*trace-output*`，保留原形式的词法环境和全部返回值，正常返回与非局部退出时都会报告。`sleep` 期间其他线程不能做 GC（现在还没有其他线程）。
 
 ## 读入（Eclector）
 

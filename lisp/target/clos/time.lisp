@@ -8,6 +8,23 @@
 
 (defun get-internal-run-time () (sys 16))
 
+(defun report-elapsed-time (real-start run-start)
+  (let ((real-seconds (/ (- (get-internal-real-time) real-start)
+                         (float internal-time-units-per-second 1d0)))
+        (run-seconds (/ (- (get-internal-run-time) run-start)
+                        (float internal-time-units-per-second 1d0))))
+    (format *trace-output*
+            "~&Evaluation took:~%  ~,6F seconds of real time~%  ~,6F seconds of run time~%"
+            real-seconds run-seconds)))
+
+(defmacro time (form)
+  (let ((real-start (gensym "REAL-START"))
+        (run-start (gensym "RUN-START")))
+    `(let ((,real-start (get-internal-real-time))
+           (,run-start (get-internal-run-time)))
+       (unwind-protect ,form
+         (report-elapsed-time ,real-start ,run-start)))))
+
 (defun get-universal-time ()
   ;; Universal time of 1970-01-01T00:00:00Z.
   (+ (sys 15) 2208988800))

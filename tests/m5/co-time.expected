@@ -1,0 +1,42 @@
+(NIL)
+T
+NIL
+T
+(:A :B :C)
+T
+((T))
+T
+(:LEXICAL)
+T
+(:EXPANDED)
+T
+(:RETURNED)
+T
+(:THROWN)
+T
+(:COMPILED :VALUES)
+T
+(1 :ONCE T)
+:PROPAGATED
+T
+(NIL)
+T
+NIL
+T
+(:A :B :C)
+T
+((T))
+T
+(:LEXICAL)
+T
+(:EXPANDED)
+T
+(:RETURNED)
+T
+(:THROWN)
+T
+(:COMPILED :VALUES)
+T
+(1 :ONCE T)
+:PROPAGATED
+T
