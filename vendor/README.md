@@ -28,6 +28,12 @@ shows exactly what kiln changed. Changes are not sent upstream for now.
 
 ## Clostrophilia patches
 
+- Long method combinations bind `:arguments` variables in effective methods,
+  including supplied-p variables, `&whole`, and missing required arguments.
+  `:generic-function` exposes the generic function to the expansion body.
+  Argument binders are compiled with the definition and retain its lexical
+  environment; effective methods interpret the resulting variable references.
+
 - Generic-function reinitialization checks lambda-list congruence against
   installed methods before changing metadata.
 

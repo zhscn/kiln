@@ -22,7 +22,7 @@
    ;; contains calls to the local macros CALL-METHOD and MAKE-METHOD
    ;; the definitions of which need to wrap the form before it can be
    ;; compiled.  The expansion function in this slots should be
-   ;; applied to a list of method/qualifier pairs and the signature of
+   ;; applied to the generic function, method/qualifier pairs, and signature of
    ;; the variant.  This function will bind the local variables in the
    ;; DEFINE-METHOD-COMBINATION form to the values in the signature
    ;; and then run the code for categorizing the methods and the code

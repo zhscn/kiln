@@ -324,46 +324,60 @@
 
 ;;; The next methods of a CALL-METHOD form: MAKE-METHOD forms become
 ;;; methods whose function interprets the form.
-(defun resolve-next-methods (next-methods method-class)
+(defun resolve-next-methods (next-methods method-class &optional variables frame)
   (loop for next in next-methods
         collect
         (if (make-method-form-p next)
-            (let ((closure (effective-method-closure (second next) method-class)))
+            (let ((closure (effective-method-closure (second next) method-class variables)))
               (make-method-instance method-class
                 :qualifiers '()
                 :lambda-list '()
                 :specializers '()
                 :function (lambda (arguments next-methods)
                             (declare (ignore next-methods))
-                            (funcall closure arguments))))
+                            (funcall closure (if variables (cons frame arguments) arguments)))))
             next)))
 
-(defun call-method-closure (method next-methods method-class)
+(defun call-method-closure (method next-methods method-class &optional variables)
   (if (make-method-form-p method)
-      (effective-method-closure (second method) method-class)
+      (effective-method-closure (second method) method-class variables)
       ;; kiln: method functions with keyword parameters allow other keys
       ;; (kiln's method lambdas); appending :ALLOW-OTHER-KEYS T to the
       ;; arguments would show it to a &REST parameter.
       (let ((function (method-function method))
-            (next-methods (resolve-next-methods next-methods method-class)))
+            (resolved (unless variables (resolve-next-methods next-methods method-class))))
         (lambda (arguments)
-          (funcall function arguments next-methods)))))
+          (if variables
+              (funcall function (cdr arguments)
+                       (resolve-next-methods next-methods method-class variables (car arguments)))
+              (funcall function arguments resolved))))))
 
 ;;; kiln: other operators that clients' method combinations use (an alist
 ;;; of the operator and a function of the form and a function that
 ;;; interprets a subform, which returns the closure).
 (defvar *effective-method-operators* '())
 
-(defun effective-method-closure (form method-class)
-  (flet ((sub (form) (effective-method-closure form method-class)))
+(defun effective-method-closure (form method-class &optional variables)
+  (flet ((sub (form) (effective-method-closure form method-class variables)))
     (cond ((and (symbolp form) (not (keywordp form)) (not (member form '(t nil))))
-           (error "unsupported variable in an effective method form" form))
+           (let ((entry (assoc form variables)))
+             (unless entry (error "unsupported variable in an effective method form" form))
+             (let ((index (cdr entry)))
+               (lambda (arguments) (svref (car arguments) index)))))
           ((atom form)
            (lambda (arguments) (declare (ignore arguments)) form))
           (t
            (case (first form)
              (call-method
-              (call-method-closure (second form) (third form) method-class))
+              (call-method-closure (second form) (third form) method-class variables))
+             (%method-combination-arguments
+              (let* ((binder (second form))
+                     (bindings (cons (cons nil nil)
+                                     (loop for name in (third form) for i from 0
+                                           collect (cons name i))))
+                     (body (effective-method-closure (fourth form) method-class bindings)))
+                (lambda (arguments)
+                  (funcall body (cons (funcall binder arguments) arguments)))))
              (quote
               (let ((object (second form)))
                 (lambda (arguments) (declare (ignore arguments)) object)))

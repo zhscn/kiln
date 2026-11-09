@@ -129,6 +129,12 @@ CLOS 模块完成引导后，`make-instance` 检查初始化参数的成对结�
 
 `slot-value`、`slot-boundp`、`slot-makunbound` 通过 layout 的有效槽列表找到位置，再直接访问实例。`copy-structure` 保留 layout，逐字浅复制槽，包括未绑定标记。`equalp` 对相同 layout 的结构逐槽递归比较。共享初始化确认 layout 中已有的槽列表，不能改写 layout；`change-class` 拒绝结构实例和结构类。
 
+## 长形式方法组合的参数
+
+`define-method-combination` 的 `:arguments` 将变量名绑定为有效方法中的变量引用；每次泛型调用时，通过定义处编译好的 binder 计算绑定值。binder 支持 `&whole`、可选参数及 supplied-p、剩余参数、关键字和辅助变量，保留默认值形式的词法环境。超出实际参数数量的必需参数补 NIL；组合只描述部分参数时允许剩余参数。`&key` 按自身的 lambda list 检查关键字。`call-method` 始终收到原始调用参数，参数绑定帧不暴露给方法。
+
+`:generic-function` 在计算有效方法形式时绑定对应的泛型函数对象。有效方法解释器将参数引用解析为绑定帧中的位置，普通分派和展开调用共用该结果。
+
 ## 类名的 `typep`
 
 - 编译器把类型是常量符号、又不在 CL 和 KEYWORD 包里的 `typep` 改成调用 `%typep-cached`，每个调用点带一个缓存（[lowering.md](lowering.md)）。CLOS 模块（`conditions.lisp`）的版本：类型名是类、又不是 deftype 时，结果只取决于对象的类，所以缓存的 car 存“上一个对象的 stamp 乘 2，结果为真再加 1”，是一个 fixnum，一次写入，GC 不需要扫描。缓存的 cdr 存填入时的类型假设版本：类型或类定义变了以后，过时实例还带着旧 stamp，调用点不能再用旧项，必须重新查全局表。
