@@ -28,6 +28,9 @@ shows exactly what kiln changed. Changes are not sent upstream for now.
 
 ## Clostrophilia patches
 
+- Class reinitialization updates superclass links only when direct superclasses
+  were supplied; renaming and documentation changes preserve the layout.
+
 - Effective methods check call arity and keyword arguments against the generic
   function and its applicable methods. Rest-only generic functions remain
   open; keyword functions use leftmost `:allow-other-keys` semantics. These

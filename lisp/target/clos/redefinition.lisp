@@ -15,6 +15,13 @@
 
 (in-package #:clostrophilia)
 
+(defgeneric (setf class-name) (name class))
+
+(defmethod (setf class-name) (name (class class))
+  (check-type name symbol)
+  (reinitialize-instance class :name name)
+  name)
+
 (defun slot-exists-p (object slot-name)
   (let ((class (class-of object)))
     (unless (class-finalized-p class) (finalize-inheritance class))
@@ -118,19 +125,23 @@
 (defmethod reinitialize-instance :around
     ((class class) &rest initargs
      &key (direct-superclasses nil superclasses-p) &allow-other-keys)
-  (let ((*existing-superclasses* (class-direct-superclasses class)))
-    (kiln.kernel::defer-assumption-changes
-     (lambda ()
-       (unwind-protect
-            (multiple-value-prog1
-                (apply #'call-next-method class
-                       :direct-superclasses
-                       (if superclasses-p
-                           (or direct-superclasses (default-superclasses class))
-                           *existing-superclasses*)
-                       initargs)
-              (refinalize class))
-         (note-class-change class))))))
+  (if (and initargs
+           (loop for tail on initargs by #'cddr
+                 always (member (car tail) '(:name :documentation))))
+      (call-next-method)
+    (let ((*existing-superclasses* (class-direct-superclasses class)))
+      (kiln.kernel::defer-assumption-changes
+       (lambda ()
+         (unwind-protect
+              (multiple-value-prog1
+                  (apply #'call-next-method class
+                         :direct-superclasses
+                         (if superclasses-p
+                             (or direct-superclasses (default-superclasses class))
+                             *existing-superclasses*)
+                         initargs)
+                (refinalize class))
+           (note-class-change class)))))))
 
 (defun forget-call-caches (classes)
   "Removes the call caches that mention one of CLASSES from every generic

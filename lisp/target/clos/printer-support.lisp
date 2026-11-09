@@ -48,11 +48,13 @@
          (*read-suppress* nil) (*readtable* kiln.kernel::*standard-readtable*))
      ,@body))
 
-;;; TYPE-OF of a standard instance (generic functions included): its
-;;; class's name.
+;;; TYPE-OF uses the class name only while it names that same class.
 (setf kiln.kernel::*instance-type-of*
       (lambda (object)
-        (if (instancep object) (class-name (class-of object)) t)))
+        (if (instancep object)
+            (let* ((class (class-of object)) (name (class-name class)))
+              (if (and name (eq (find-class name nil) class)) name class))
+            t)))
 
 ;;; The macro characters of the standard syntax (the printer asks whether
 ;;; a symbol's name must be quoted). There is no reader at run time yet,

@@ -95,14 +95,15 @@
     ((class class)
      (slot-names t)
      &key
-       direct-superclasses
+       (direct-superclasses nil superclasses-p)
        direct-slots)
-  (let* ((old *existing-superclasses*)
-         (obsolete (set-difference old direct-superclasses))
-         (new (set-difference direct-superclasses old)))
-    (loop for direct-superclass in obsolete
-          do (remove-direct-subclass direct-superclass class))
-    (loop for direct-superclass in new
-          do (add-direct-subclass direct-superclass class)))
+  (when superclasses-p
+    (let* ((old *existing-superclasses*)
+           (obsolete (set-difference old direct-superclasses))
+           (new (set-difference direct-superclasses old)))
+      (loop for direct-superclass in obsolete
+            do (remove-direct-subclass direct-superclass class))
+      (loop for direct-superclass in new
+            do (add-direct-subclass direct-superclass class))))
   (loop for direct-slot-definition in direct-slots
         do (create-readers-and-writers class direct-slot-definition)))

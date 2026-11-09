@@ -270,8 +270,10 @@ any longer."
         ((characterp object) 'character)
         ((stringp object) (list 'simple-array 'character (list (length object))))
         ((simple-vector-p object) (list 'simple-vector (length object)))
+        ((and *instance-type-of* (%primop :funcallable-instance-p object))
+         (funcall *instance-type-of* object))
         ((functionp object) 'compiled-function)
-        ;; Standard instances: the name of the class, once CLOS sets this.
+        ;; Standard instances: their class type specifier, once CLOS is loaded.
         (*instance-type-of* (funcall *instance-type-of* object))
         (t t)))
 

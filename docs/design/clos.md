@@ -148,3 +148,7 @@ CLOS 模块完成引导后，`make-instance` 检查初始化参数的成对结�
 - `change-class` 不调用 `update-instance-for-different-class`。
 - 用户写的长形式 `define-method-combination`，产生的代码里有解释器不认识的运算符时不能用。
 - 有效方法的形式不是 `spread-form-closure` 认得的那几种（`call-method`、`progn`、`multiple-value-prog1`、`make-method`）时，仍要构造参数列表；用 `#'call-next-method` 的方法每次调用仍要分配两个局部函数闭包；带参数的 `(call-next-method ...)` 仍要从 `next-methods` 列表里读下一个方法。
+
+## 类名与对象类型
+
+`(setf class-name)` 通过 `reinitialize-instance` 更新类的名字，不改变 `find-class` 的名字绑定。只更新名字或文档时保留实例布局，不将既有实例标为过时。`type-of` 为标准实例、结构实例及泛型函数返回类名；如果该名字为 NIL，或已不再通过 `find-class` 指向原类，则返回类对象本身。
