@@ -329,6 +329,7 @@ fn c_path(bytes: Vec<u8>) -> Option<std::ffi::CString> {
 /// - 14 the monotonic clock in microseconds. 15 the time in seconds since
 ///   1970. 16 the processor time of the process in microseconds.
 /// - 17 sleep for a microseconds. 18 exit with status a.
+/// - 19 local timezone at Unix second a: b=0 seconds west, b=1 daylight flag.
 ///
 /// # Safety
 /// The arguments must be as described.
@@ -471,6 +472,17 @@ pub unsafe extern "C" fn kiln_rt_sys(_ctx: *mut Context, op: u64, a: u64, b: u64
             {
                 crate::profile::finish_from_env();
                 std::process::exit(fixnum_value(a) as i32)
+            }
+        }
+        19 => {
+            let seconds = fixnum_value(a) as libc::time_t;
+            let mut local: libc::tm = unsafe { std::mem::zeroed() };
+            if unsafe { libc::localtime_r(&seconds, &mut local) }.is_null() {
+                errno()
+            } else if fixnum_value(b) == 0 {
+                -local.tm_gmtoff
+            } else {
+                i64::from(local.tm_isdst > 0)
             }
         }
         _ => einval,
