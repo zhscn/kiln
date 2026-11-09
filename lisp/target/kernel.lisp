@@ -1003,9 +1003,16 @@ apply."
         ((vectorp seq) (complex-array-op :length seq))
         (t (%primop :type-error-sequence seq))))
 
+(defun check-sequence-index (seq i)
+  (let ((n (length seq)))
+    (unless (and (integerp i) (<= 0 i) (< i n))
+      (error 'type-error :datum i :expected-type `(integer 0 (,n))))))
+
 (defun elt (seq i)
+  (check-sequence-index seq i)
   (if (listp seq) (nth i seq) (aref seq i)))
 (defun (setf elt) (value seq i)
+  (check-sequence-index seq i)
   (if (listp seq)
       (setf (car (nthcdr i seq)) value)
       (setf (aref seq i) value)))
