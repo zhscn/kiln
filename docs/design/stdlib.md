@@ -45,6 +45,7 @@ Parcl 以 intrinsic 方式加载：`parcl-low`（泛函协议和默认方法）�
 - 包操作返回标准规定的值；`intern` 接受一般字符串并使用其有效内容。只有外部 symbol 会被继承，`shadowing-import` 直接安装指定 symbol，`import` 保留已存在 symbol 的内外部状态。
 - 包迭代宏的 `return` 退出整个迭代，声明也作用于结果式。`with-package-iterator` 必须至少指定一种 symbol 状态。
 - `defpackage` 检查重复的 `:size`、`:documentation` 和必须互斥的 symbol 名列表。导入不存在的 symbol 时提供 `intern` restart；删除不存在的包或仍被使用的包时提供 `continue`。`make-package` 遇到已占用的名字或昵称时，`continue` 返回已有包，与 SBCL 一致。
+- `apropos-list` 按名称忽略大小写搜索可访问符号，按身份去重并排序；包参数为 NIL 时搜索所有包。支持 SBCL 的第三个可选参数 `external-only`，指定包时只保留属于该包的外部符号。`apropos` 打印结果及绑定摘要，返回零个值。
 - 启动时 `*package*` 是 `COMMON-LISP-USER`。
 - 限制：冲突时的 restart 只有 Parcl 原有的那些（`use-package` 冲突直接报 `package-error`）；`do-symbols` 对有 use 列表的包是平方复杂度（Parcl 的 `map-symbols` 用列表去重）。
 
