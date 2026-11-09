@@ -304,6 +304,48 @@ fn c_path(bytes: Vec<u8>) -> Option<std::ffi::CString> {
     std::ffi::CString::new(bytes).ok()
 }
 
+fn file_author(path: &std::ffi::CStr) -> Result<Vec<u8>, i32> {
+    let mut metadata: libc::stat = unsafe { std::mem::zeroed() };
+    if unsafe { libc::stat(path.as_ptr(), &mut metadata) } < 0 {
+        let error = std::io::Error::last_os_error()
+            .raw_os_error()
+            .unwrap_or(libc::EIO);
+        if !matches!(error, libc::ENOENT | libc::ELOOP)
+            || unsafe { libc::lstat(path.as_ptr(), &mut metadata) } < 0
+        {
+            return Err(error);
+        }
+    }
+    let mut buffer = vec![0u8; 4096];
+    loop {
+        let mut entry: libc::passwd = unsafe { std::mem::zeroed() };
+        let mut result = std::ptr::null_mut();
+        let status = unsafe {
+            libc::getpwuid_r(
+                metadata.st_uid,
+                &mut entry,
+                buffer.as_mut_ptr().cast(),
+                buffer.len(),
+                &mut result,
+            )
+        };
+        if status == libc::ERANGE {
+            let size = buffer.len().checked_mul(2).ok_or(libc::ENOMEM)?;
+            buffer.resize(size, 0);
+            continue;
+        }
+        if status != 0 {
+            return Err(status);
+        }
+        if result.is_null() || entry.pw_name.is_null() {
+            return Ok(Vec::new());
+        }
+        return Ok(unsafe { std::ffi::CStr::from_ptr(entry.pw_name) }
+            .to_bytes()
+            .to_vec());
+    }
+}
+
 /// File system calls for pathnames and file streams. `op`
 /// selects the call; file names are simple vectors of octets (UTF-8), and
 /// results that are names are stored into the simple vector given as the
@@ -332,6 +374,7 @@ fn c_path(bytes: Vec<u8>) -> Option<std::ffi::CString> {
 /// - 19 local timezone at Unix second a: b=0 seconds west, b=1 daylight flag.
 /// - 20 environment string selected by a into buffer b: 0 implementation version,
 ///   1 OS name, 2 OS release, 3 hostname, 4 architecture, 5 CPU model.
+/// - 21 file owner name for path a into buffer b; empty if its UID has no name.
 ///
 /// # Safety
 /// The arguments must be as described.
@@ -530,6 +573,13 @@ pub unsafe extern "C" fn kiln_rt_sys(_ctx: *mut Context, op: u64, a: u64, b: u64
                 }
             }
         }
+        21 => match name(a) {
+            None => einval,
+            Some(path) => match file_author(&path) {
+                Ok(author) => unsafe { store_octets(b, &author) },
+                Err(error) => -i64::from(error),
+            },
+        },
         _ => einval,
     };
     fixnum(result)
@@ -579,3 +629,43 @@ pub unsafe extern "C" fn kiln_rt_float_decimal(_ctx: *mut Context, x: u64, which
 }
 
 use crate::object::fixnum_value;
+
+#[cfg(test)]
+mod file_author_tests {
+    use super::file_author;
+    use std::ffi::CString;
+    use std::os::unix::{ffi::OsStrExt, fs::symlink};
+
+    struct Fixture(std::path::PathBuf);
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn file_author_queries_files_and_unresolvable_symlinks() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let directory =
+            std::env::temp_dir().join(format!("kiln-file-author-{}-{unique}", std::process::id()));
+        std::fs::create_dir(&directory).unwrap();
+        let fixture = Fixture(directory);
+        std::fs::write(fixture.0.join("file"), b"owner").unwrap();
+        symlink("file", fixture.0.join("link")).unwrap();
+        symlink("missing", fixture.0.join("dangling")).unwrap();
+        symlink("self", fixture.0.join("self")).unwrap();
+        let query = |name| {
+            let path = fixture.0.join(name);
+            file_author(&CString::new(path.as_os_str().as_bytes()).unwrap())
+        };
+        let owner = query("file").unwrap();
+        for name in ["link", "dangling", "self"] {
+            assert_eq!(query(name), Ok(owner.clone()), "owner of {name}");
+        }
+        assert_eq!(query("missing"), Err(libc::ENOENT));
+    }
+}

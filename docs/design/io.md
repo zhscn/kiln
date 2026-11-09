@@ -42,6 +42,7 @@
 - 逻辑 pathname 的设备是 `:unspecific`，省略目录时为 `(:absolute)`，显式 `:newest` 版本保留在 namestring 中。`open` 后流的 pathname 保留逻辑组件；文件系统调用使用翻译后的物理名字。`logical-pathname-translations` 登记 host，`translate-logical-pathname` 按第一条匹配的转换翻译，翻译到物理 pathname 时转成小写。
 - `pathname-match-p`、`translate-pathname` 支持 `:wild`、`:wild-inferiors` 和名字里的 `*`。
 - `equal` 和 `equalp` 按分量比较 pathname（kernel 的 `equal` 对标准实例调用 `*instance-equal*`）。
+- `file-author` 用系统接口 21 查询文件所有者：`stat` 取得 UID，`getpwuid_r` 解析用户名，再写入调用方的八位组缓冲区。普通符号链接查询目标的所有者，悬空或自指链接查询链接本身。与 SBCL 一致，UID 没有对应账户时报告错误；不存在的文件、系统查询失败和通配路径报 `file-error`。
 - 文件系统函数：`probe-file`、`truename`、`file-write-date`、`delete-file`、`rename-file`、`ensure-directories-exist`、`directory`、`user-homedir-pathname`。`*default-pathname-defaults*` 在启动时（包括从快照启动时）设为当前目录。
 - 限制：只支持 Unix 的物理 pathname，没有 host 对象（物理 pathname 的 host 是 NIL），名字里不能用反斜杠转义；`directory` 不解析符号链接；编译器不支持 pathname 常量。
 

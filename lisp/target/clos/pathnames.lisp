@@ -639,8 +639,11 @@ pieces left."
         (+ seconds 2208988800))))
 
 (defun file-author (pathspec)
-  (declare (ignore pathspec))
-  nil)
+  (let* ((path (pathname pathspec))
+         (author (sys-string 21 (native-octets path))))
+    (cond ((not (stringp author)) (file-system-error path author))
+          ((zerop (length author)) (error "No account for the owner of ~S." path))
+          (t author))))
 
 (defun delete-file (filespec)
   (let* ((p (merge-pathnames filespec))
