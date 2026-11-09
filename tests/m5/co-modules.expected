@@ -1,0 +1,12 @@
+T
+("module")
+NIL
+("EXTRA-MODULE" "FILE-MODULE")
+(:TWO :ONE)
+NIL
+(:TWO :ONE)
+("Q")
+((:DECLINE #\Q) (:PROVIDE #\Q))
+NIL
+T
+NIL

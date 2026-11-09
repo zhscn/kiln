@@ -34,6 +34,12 @@
 6. `repl.lisp`：`kiln.sys:repl`，维护 `*`、`+`、`/` 等变量；形式没有处理的错误打印出来，经 `abort` 回到提示符。`tools/repl.sh` 构建 kernel、CLOS、eval 三个模块并启动它（`--jit` 改用 JIT）。
 7. `server.lisp`：后端协议（[backend-protocol.md](backend-protocol.md)）。
 
+## `provide` 和 `require`
+
+`provide` 把字符串设计符转换为名字，按 `string=` 去重后加入 `*modules*`，返回 T。`require` 已登记的模块时不加载文件；否则按顺序加载指定的单个 pathname 或 pathname 列表，即使第一个文件已调用 `provide`，也继续加载其余文件。模块代码负责调用 `provide`，`require` 不自动登记名字。返回值是本次新增登记的模块名字列表。
+
+未指定文件时，`require` 按顺序调用 `kiln.kernel::*module-provider-functions*`，直到某个函数返回真，传入原始名字设计符。该列表初始为空，找不到 provider 时报告错误。嵌套加载会检查循环依赖；错误或非局部退出会恢复当前加载栈。
+
 ## 原生 `compile`
 
 compiler 模块的最后一个文件 `lisp/target/compiler/native.lisp` 把 `kiln.kernel::*compile-function*` 设成 `native-compile`，此后的 `compile` 都编成机器码。这个变量为 NIL 时用 Maclina。compiler 模块自己载入时调用的 `compile` 仍是字节码。
