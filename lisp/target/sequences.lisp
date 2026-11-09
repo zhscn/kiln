@@ -195,12 +195,75 @@ other, the shorter's length and the rest of the longer after it."
         (t (satisfies-test a b test test-not nil))))
 (defun copy-tree (x)
   (if (consp x) (cons (copy-tree (car x)) (copy-tree (cdr x))) x))
+(defun substitute-tree (tree replacement destructive)
+  ;; REPLACEMENT returns the new value and whether this subtree matched.
+  ;; Test before descending so replacement trees are never traversed.
+  (labels ((walk (node)
+             (multiple-value-bind (value matched) (funcall replacement node)
+               (cond (matched value)
+                     ((atom node) node)
+                     (t (let ((head (walk (car node)))
+                              (tail (walk (cdr node))))
+                          (cond (destructive
+                                 (rplaca node head)
+                                 (rplacd node tail)
+                                 node)
+                                ((and (eq head (car node))
+                                      (eq tail (cdr node))) node)
+                                (t (cons head tail)))))))))
+    (walk tree)))
+
 (defun subst (new old tree &key test test-not key)
-  (cond ((satisfies-test old tree test test-not key) new)
-        ((consp tree)
-         (cons (subst new old (car tree) :test test :test-not test-not :key key)
-               (subst new old (cdr tree) :test test :test-not test-not :key key)))
-        (t tree)))
+  (substitute-tree tree
+                   (lambda (node)
+                     (values new (satisfies-test old node test test-not key)))
+                   nil))
+
+(defun nsubst (new old tree &key test test-not key)
+  (substitute-tree tree
+                   (lambda (node)
+                     (values new (satisfies-test old node test test-not key)))
+                   t))
+
+(defun subst-if (new predicate tree &key key)
+  (substitute-tree tree
+                   (lambda (node)
+                     (values new (funcall predicate (if key (funcall key node) node))))
+                   nil))
+
+(defun subst-if-not (new predicate tree &key key)
+  (substitute-tree tree
+                   (lambda (node)
+                     (values new (not (funcall predicate (if key (funcall key node) node)))))
+                   nil))
+
+(defun nsubst-if (new predicate tree &key key)
+  (substitute-tree tree
+                   (lambda (node)
+                     (values new (funcall predicate (if key (funcall key node) node))))
+                   t))
+
+(defun nsubst-if-not (new predicate tree &key key)
+  (substitute-tree tree
+                   (lambda (node)
+                     (values new (not (funcall predicate (if key (funcall key node) node)))))
+                   t))
+
+(defun sublis (alist tree &key test test-not key)
+  (substitute-tree tree
+                   (lambda (node)
+                     (let ((pair (assoc (if key (funcall key node) node) alist
+                                        :test test :test-not test-not)))
+                       (values (cdr pair) pair)))
+                   nil))
+
+(defun nsublis (alist tree &key test test-not key)
+  (substitute-tree tree
+                   (lambda (node)
+                     (let ((pair (assoc (if key (funcall key node) node) alist
+                                        :test test :test-not test-not)))
+                       (values (cdr pair) pair)))
+                   t))
 
 (defun maplist (f list)
   (let ((result nil))

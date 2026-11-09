@@ -1,0 +1,16 @@
+(NIL B)
+(SMALL MEDIUM LARGE 20)
+(REPLACED C)
+((A A) A A)
+(1 (EVEN . 3) EVEN)
+(ATOM ATOM . ATOM)
+(A B)
+(X B)
+NIL
+T
+T
+T
+(X (B X))
+(NIL B . END)
+(1 EVEN 3)
+(ATOM ATOM . ATOM)

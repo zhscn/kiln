@@ -75,6 +75,9 @@ if [[ ! -f "$IMAGE" || "$KILN_COMPILER" -nt "$IMAGE" || "$0" -nt "$IMAGE" ]]; th
   (load "cl-symbol-names.lsp")
   (load "notes.lsp"))
 
+(regression-test::disable-note :open-if-exists-new-version-no-error)
+(regression-test::disable-note :nil-vectors-are-strings)
+
 (in-package :cl-user)
 
 (defun tree-has-defstruct-p (form)
@@ -101,7 +104,14 @@ if [[ ! -f "$IMAGE" || "$KILN_COMPILER" -nt "$IMAGE" || "$0" -nt "$IMAGE" ]]; th
         (let ((*default-pathname-defaults* *ansi-test-dir*)
               (*package* (find-package :cl-test)))
           (load (concatenate 'string group "/load.lsp"))
-          (regression-test:do-tests))
+          (let ((*default-pathname-defaults*
+                  (if sandbox (pathname sandbox) *default-pathname-defaults*)))
+            (regression-test:do-tests)
+            (let* ((passed (length regression-test::*passed-tests*))
+                   (failed (length regression-test::*failed-tests*))
+                   (total (length (cdr regression-test::*entries*))))
+              (format t "~&ANSI-RESULT ~D ~D ~D~%"
+                      passed failed (- total passed failed)))))
         (let ((*default-pathname-defaults* *ansi-test-dir*)
               (*package* (find-package :cl-test)))
           (kiln.sys:serve)))))
@@ -111,9 +121,14 @@ if [[ ! -f "$IMAGE" || "$KILN_COMPILER" -nt "$IMAGE" || "$0" -nt "$IMAGE" ]]; th
   (kiln.sys:save-image img :toplevel #'run-ansi-group))
 EOF
   echo "Building prelude image $IMAGE with $KILN_COMPILER..."
+  rm -f "$IMAGE"
   printf '(:eval 1 "(load \\"%s\\")")\n' "$PRELUDE_LISP" \
     | ANSI_TEST_DIR="${ANSI_TEST_DIR%/}/" ANSI_IMAGE="$IMAGE" \
       KILN_HEAP_SIZE="$HEAP_SIZE" KILN_SERVE=1 "$KILN_COMPILER" > "$OUT_DIR/prelude.log" 2>&1
+  if [[ ! -f "$IMAGE" ]]; then
+    cat "$OUT_DIR/prelude.log" >&2
+    exit 1
+  fi
 fi
 
 ALL_GROUPS=(
@@ -149,17 +164,20 @@ else
   TEST_GROUPS=("${ALL_GROUPS[@]}")
 fi
 
-printf "%-24s %7s %7s %7s %7s %8s\n" "Group" "Passed" "Failed" "Total" "Rate" "Time"
-printf "%-24s %7s %7s %7s %7s %8s\n" "------------------------" "-------" "-------" "-------" "-------" "--------"
+printf "%-24s %7s %7s %7s %7s %7s %8s\n" "Group" "Passed" "Failed" "Skipped" "Total" "Rate" "Time"
+printf "%-24s %7s %7s %7s %7s %7s %8s\n" "------------------------" "-------" "-------" "-------" "-------" "-------" "--------"
 
 sum_passed=0
 sum_failed=0
+sum_skipped=0
 sum_total=0
 sum_time=0
 
 for g in "${TEST_GROUPS[@]}"; do
   rm -rf "$SANDBOX_DIR"
   mkdir -p "$SANDBOX_DIR"
+  cp -a "$ANSI_TEST_DIR/sandbox/." "$SANDBOX_DIR"
+  rm -rf "$SANDBOX_DIR/scratch"
   t0=$(date +%s.%N)
   set +e
   ANSI_GROUP="$g" ANSI_TEST_DIR="${ANSI_TEST_DIR%/}/" ANSI_SANDBOX="$SANDBOX_DIR" \
@@ -169,22 +187,23 @@ for g in "${TEST_GROUPS[@]}"; do
   t1=$(date +%s.%N)
   dt=$(awk "BEGIN {printf \"%.2f\", $t1 - $t0}")
   sum_time=$(awk "BEGIN {printf \"%.2f\", $sum_time + ($t1 - $t0)}")
-  total=$(grep -a "^Doing .* pending tests" "$OUT_DIR/${g}.log" | tail -n 1 | awk '{print $2}' || true)
-  failed=$(grep -a -c "^Test .* failed$" "$OUT_DIR/${g}.log" || true)
-  if [[ -z "$total" || "$rc" -ne 0 ]]; then
-    printf "%-24s %7s %7s %7s %7s %7ss (rc=%d)\n" "$g" "-" "$failed" "${total:--}" "CRASH" "$dt" "$rc"
+  result=$(grep -a "^ANSI-RESULT " "$OUT_DIR/${g}.log" | tail -n 1 || true)
+  if [[ -z "$result" || "$rc" -ne 0 ]]; then
+    printf "%-24s %7s %7s %7s %7s %7s %7ss (rc=%d)\n" "$g" "-" "-" "-" "-" "CRASH" "$dt" "$rc"
   else
-    passed=$((total - failed))
-    rate=$(awk "BEGIN {printf \"%.1f%%\", ($passed * 100.0) / $total}")
-    printf "%-24s %7d %7d %7d %7s %7ss\n" "$g" "$passed" "$failed" "$total" "$rate" "$dt"
+    read -r _ passed failed skipped <<< "$result"
+    total=$((passed + failed + skipped))
+    rate=$(awk "BEGIN {if ($passed + $failed) printf \"%.1f%%\", ($passed * 100.0) / ($passed + $failed); else print \"-\"}")
+    printf "%-24s %7d %7d %7d %7d %7s %7ss\n" "$g" "$passed" "$failed" "$skipped" "$total" "$rate" "$dt"
     sum_passed=$((sum_passed + passed))
     sum_failed=$((sum_failed + failed))
+    sum_skipped=$((sum_skipped + skipped))
     sum_total=$((sum_total + total))
   fi
 done
 
 if [[ ${#TEST_GROUPS[@]} -gt 1 && $sum_total -gt 0 ]]; then
-  printf "%-24s %7s %7s %7s %7s %8s\n" "------------------------" "-------" "-------" "-------" "-------" "--------"
-  tot_rate=$(awk "BEGIN {printf \"%.1f%%\", ($sum_passed * 100.0) / $sum_total}")
-  printf "%-24s %7d %7d %7d %7s %7ss\n" "Total" "$sum_passed" "$sum_failed" "$sum_total" "$tot_rate" "$sum_time"
+  printf "%-24s %7s %7s %7s %7s %7s %8s\n" "------------------------" "-------" "-------" "-------" "-------" "-------" "--------"
+  tot_rate=$(awk "BEGIN {printf \"%.1f%%\", ($sum_passed * 100.0) / ($sum_passed + $sum_failed)}")
+  printf "%-24s %7d %7d %7d %7d %7s %7ss\n" "Total" "$sum_passed" "$sum_failed" "$sum_skipped" "$sum_total" "$tot_rate" "$sum_time"
 fi
