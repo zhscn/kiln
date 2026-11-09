@@ -3,7 +3,6 @@
 # Fetch with tools/fetch-deps.sh.
 Acclimation https://github.com/robert-strandh/Acclimation master 9339b92e16e6a6784488f8bac82c189ae4bab4aa
 alexandria https://gitlab.common-lisp.net/alexandria/alexandria master f283e25efbe9f4323419a138b22ad2fc027f6641
-Anatomicl https://github.com/s-expressionists/Anatomicl main f8279fb9dc303e12abe5a4e63a9e7bc7df586b98
 Buoy https://github.com/s-expressionists/Buoy master 548ce48a504937517f35d2b6450c325a42c144c7
 Clonedijk https://github.com/robert-strandh/Clonedijk main e4be22b2841d673597e16ae1a08a69e1c08162f7
 Clordane https://github.com/robert-strandh/Clordane master efa01a56d1609330609c847bf1f491c6fefa32ab

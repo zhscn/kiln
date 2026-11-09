@@ -21,6 +21,7 @@
      (:tree ,(merge-pathnames "vendor/Common-macros/" (truename root)))
      (:tree ,(merge-pathnames "vendor/Eclector/" (truename root)))
      (:tree ,(merge-pathnames "vendor/Ecclesia/" (truename root)))
+     (:tree ,(merge-pathnames "vendor/Anatomicl/" (truename root)))
      (:tree ,(merge-pathnames "vendor/Maclina/" (truename root)))
      (:tree ,deps)
      :inherit-configuration)))

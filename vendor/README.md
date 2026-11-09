@@ -22,6 +22,7 @@ shows exactly what kiln changed. Changes are not sent upstream for now.
 | Invistra | https://github.com/s-expressionists/Invistra | 1585d04b1b1fc3b6e042de30b7785fe877ae4e2e (2026-06-22) | BSD (`Invistra/LICENSE.md`) |
 | Khazern | https://github.com/s-expressionists/Khazern | b657262946bfba0e17ee930c58c8fcd6fa6be774 (2026-09-17) | BSD (`Khazern/LICENSE.md`) |
 | Eclector | https://github.com/s-expressionists/Eclector | 1088a7998f0d205da12ff48de7238b1008a31792 (2026-08-29) | BSD (`Eclector/LICENSE`) |
+| Anatomicl | https://github.com/s-expressionists/Anatomicl | f8279fb9dc303e12abe5a4e63a9e7bc7df586b98 | BSD (`Anatomicl/LICENSE.md`) |
 | Ecclesia | https://github.com/s-expressionists/Ecclesia | 74027d0cedba9b98dce9611bf3ae2793e8819449 | BSD (`Ecclesia/LICENSE.md`) |
 | Common-macros | https://github.com/robert-strandh/Common-macros | 4596ddf32357fa793ece25cecb6e8661259b51ac (2026-02-10) | no license file |
 | Inravina | https://github.com/s-expressionists/Inravina | e28b107b025b2efdd4f16ed71fbdc0e1af62e478 (2026-07-11) | MIT (`Inravina/LICENSE.md`) |
