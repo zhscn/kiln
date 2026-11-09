@@ -69,7 +69,8 @@
 (defun mop-ensure-class (name &rest initargs
                          &key (metaclass 'standard-class) direct-superclasses
                          &allow-other-keys)
-  (let ((existing (find-class name nil)))
+  (let* ((binding (find-class name nil))
+         (existing (and binding (eq (class-name binding) name) binding)))
     ;; A structure defined again with the same included structure and slot
     ;; names (a file loaded again) keeps its class and layout, so that the
     ;; existing instances still satisfy the accessors. A different

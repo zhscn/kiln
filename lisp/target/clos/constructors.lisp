@@ -91,6 +91,20 @@
 
 (defvar *valid-initargs-cache* (kiln.kernel::make-simple-vector (* 4 256) nil))
 
+(defun initialization-argument-policy (class method-lists)
+  (let ((keys nil) (allow-other-keys nil))
+    (dolist (slot (class-slots class))
+      (dolist (key (slot-definition-initargs slot))
+        (pushnew (argument-key-name key) keys :test #'equal)))
+    (dolist (methods method-lists)
+      (dolist (method methods)
+        (multiple-value-bind (required optional restp keyp method-keys allowp)
+            (lambda-list-protocol (method-lambda-list method))
+          (declare (ignore required optional restp keyp))
+          (when allowp (setf allow-other-keys t))
+          (dolist (key method-keys) (pushnew key keys :test #'equal)))))
+    (values keys allow-other-keys)))
+
 (defun valid-initialization-arguments (class)
   (let* ((number (%slot class '%unique-number))
          (version (construction-version))
@@ -100,17 +114,8 @@
                (eql version (svref cache (+ index 1))))
       (return-from valid-initialization-arguments
         (values (svref cache (+ index 2)) (svref cache (+ index 3)))))
-    (let ((keys '()) (allow-other-keys nil))
-      (dolist (slot (class-slots class))
-        (dolist (key (slot-definition-initargs slot))
-          (pushnew (argument-key-name key) keys :test #'equal)))
-      (dolist (methods (construction-methods class (class-prototype class)))
-        (dolist (method methods)
-          (multiple-value-bind (required optional restp keyp method-keys allowp)
-              (lambda-list-protocol (method-lambda-list method))
-            (declare (ignore required optional restp keyp))
-            (when allowp (setf allow-other-keys t))
-            (dolist (key method-keys) (pushnew key keys :test #'equal)))))
+    (multiple-value-bind (keys allow-other-keys)
+        (initialization-argument-policy class (construction-methods class (class-prototype class)))
       (when (and (eql number (%slot class '%unique-number))
                  (eql version (construction-version)))
         (setf (svref cache index) nil
@@ -120,15 +125,31 @@
               (svref cache index) number))
       (values keys allow-other-keys))))
 
+(defun check-initialization-keys (class initargs keys allow-other-keys)
+  (unless (or allow-other-keys (getf initargs :allow-other-keys))
+    (loop for (key nil) on initargs by #'cddr
+          unless (or (eq key :allow-other-keys)
+                     (and (symbolp key) (member (argument-key-name key) keys :test #'equal)))
+            do (error 'invalid-initialization-arguments :class class :initargs initargs))))
+
 (defun check-initialization-arguments (class initargs)
   (check-initarg-shape class initargs)
   (unless (getf initargs :allow-other-keys)
     (multiple-value-bind (keys allow-other-keys) (valid-initialization-arguments class)
-      (unless allow-other-keys
-        (loop for (key nil) on initargs by #'cddr
-              unless (or (eq key :allow-other-keys) (and (symbolp key)
-                                   (member (argument-key-name key) keys :test #'equal)))
-                do (error 'invalid-initialization-arguments :class class :initargs initargs))))))
+      (check-initialization-keys class initargs keys allow-other-keys))))
+
+(defmethod reinitialize-instance ((instance standard-object) &rest initargs)
+  (when *check-initialization-arguments*
+    (let ((class (class-of instance)))
+      (check-initarg-shape class initargs)
+      (unless (getf initargs :allow-other-keys)
+        (multiple-value-bind (keys allow-other-keys)
+            (initialization-argument-policy
+             class (list (compute-applicable-methods #'reinitialize-instance (list instance))
+                         (compute-applicable-methods #'shared-initialize (list instance nil))))
+          (check-initialization-keys class initargs keys allow-other-keys)))))
+  (apply #'shared-initialize instance nil initargs)
+  instance)
 
 (defun construct-instance (class initargs)
   "What MAKE-INSTANCE does for a class with FAST-CONSTRUCTION-P."

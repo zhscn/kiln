@@ -93,7 +93,7 @@ CLOS 模块完成引导后，`make-instance` 检查初始化参数的成对结�
 
 `redefinition.lisp`，按 CLHS 4.3.6：
 
-- `mop-ensure-class` 遇到已有的类（不是前向引用）时调用 `redefine-class`：元类必须相同；先删掉旧的直接槽的读写方法，再用新的 initargs `reinitialize-instance` 这个类。`defclass` 没写的选项（`:direct-default-initargs`、`:documentation`、`:direct-slots`）取默认值，而不是沿用旧值。
+- `mop-ensure-class` 只有在名字绑定与类自身的名字一致时才重定义该类；类被改名或匿名化后，通过旧绑定再次 `defclass` 会创建新类，既有实例保留原类。遇到已有的类（不是前向引用）时调用 `redefine-class`：元类必须相同；先删掉旧的直接槽的读写方法，再用新的 initargs `reinitialize-instance` 这个类。`defclass` 没写的选项（`:direct-default-initargs`、`:documentation`、`:direct-slots`）取默认值，而不是沿用旧值。
 - 然后重新终结这个类和它所有已终结的子类（`refinalize`）。Clostrophilia 的 `finalize-inheritance` 每次都给类一个新的 unique number，所以之前创建的实例 stamp 都过时了。
 - **假设**：重新 finalize 的每个类，它的 `(:class c)` 假设改变，它的名字的 `(:type name)` 假设也改变（[specialization.md](specialization.md)）。一批类的改变攒成一批：观察者只看到一次，重定义钩子也只收到一批通知。
 - **调用历史**：`:class` 的观察者从所有泛函（`*early-generic-functions*`，switchover 之后新建的也加进去）的调用历史里删掉提到这些类的项，并让判别函数失效。这些项的可用方法可能已经变了（优先级列表变了），而且按旧 stamp 建的自动机只会匹配过时的实例。
@@ -156,3 +156,9 @@ CLOS 模块完成引导后，`make-instance` 检查初始化参数的成对结�
 ## 泛型函数的内嵌方法
 
 `defgeneric` 将内嵌方法对象记录在泛型函数的 `initial-methods` 槽。再次求值时，先移除这些方法，再验证并更新泛型函数，最后登记新方法。独立 `defmethod` 的方法保留；如果它替换过内嵌方法，旧方法对象已经脱离泛型函数，移除旧记录不会删掉替代者。引导期间尚未建成 braid 的内嵌方法随定义一起延迟创建，保留定义处的词法环境。
+
+## 重初始化参数
+
+`reinitialize-instance` 的标准对象检查将槽的 initarg 与实际适用的 `reinitialize-instance`、`shared-initialize` 方法所接受的关键字合并；后者按 `(instance nil)` 计算适用性。显式 `&allow-other-keys` 或调用者最左侧为真的 `:allow-other-keys` 放宽检查，单独的 `&rest` 不放宽。策略按实际实例计算，不复用构造器以 prototype 为依据的缓存，因此 EQL 特化及方法变化即时生效。
+
+`find-method` 总是检查特化符数量与必需参数数量一致；`errorp` 为 NIL 只抑制找不到匹配方法的错误。

@@ -39,6 +39,9 @@
 
 (defmethod find-method ((generic-function generic-function) qualifiers specializers
                         &optional (errorp t))
+  (unless (= (length specializers)
+             (length (required-parameters (generic-function-lambda-list generic-function))))
+    (error "Wrong number of specializers for ~S: ~S." generic-function specializers))
   (let ((specializers (mapcar #'specializer-from-designator specializers)))
     (or (find-if (lambda (method)
                    (and (equal (method-qualifiers method) qualifiers)
