@@ -75,6 +75,7 @@ Parcl 以 intrinsic 方式加载：`parcl-low`（泛函协议和默认方法）�
 
 **Anatomicl 在编译期运行**：它把 `defstruct` 形式解析成描述对象，再生成普通的 Lisp 代码，生成的代码不引用 Anatomicl 自己。所以它是宿主库（kiln 上编进 compiler 模块），`defstruct` 是受保护的宿主宏（[front-end.md](front-end.md)）。kiln 的 client 在 `lisp/structures.lisp`：
 
+- **typed 选项检查**：显式指定 predicate 的 typed 结构必须有 `:named`；named vector 的元素类型必须包含 `symbol`，不能只靠数组元素类型升级后能够容纳名字。选项不兼容时在宏展开期报告 `simple-error`。
 - **`:include` 的槽布局**：Anatomicl 默认通过 closer-mop 读被包含结构的类，可编译期没有目标端的类。kiln 在编译会话里记下每个结构的槽布局（`session-structures`）：先是被包含结构的槽（访问器名按本结构的 `conc-name` 重新生成，`:include` 给出的槽描述覆盖原有的），再是本结构自己的直接槽。
 - **类定义与原生表示**：生成目标端的 `defclass`，元类是 `structure-class`；实例是原生结构对象（`+kind-structure-instance+`），第一个字指向布局向量，其后按位置紧排各槽，不需要单独的 rack 对象。`:print-object` 选项生成 `print-object` 方法。
 - **访问器、谓词和构造函数**：布局向量存在包 `kiln.structures` 的全局变量里，经 `%primop :symbol-global-value` 直接读取（不经过 TLS 查找）。访问器、可写槽的 setf 函数、类型谓词（`%structure-typep`，按布局向量里的深度和祖先表做 O(1) 判断）以及至多 8 个槽的标准构造函数都声明为 `inline`；标准构造函数直接生成 `%primop :allocate-structure` 和按位置的 `:set-structure-slot`（调用点上内联展开时，关键字参数也在编译期解析）。

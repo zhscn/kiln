@@ -578,3 +578,9 @@ Under `#+kiln`:
   semantics; ordinary destructuring continues to default to NIL.
 - Destructuring recognizes `:allow-other-keys` as a legal key even when its
   leftmost value is NIL; that value still controls unknown-key acceptance.
+
+## Anatomicl patches
+
+- Typed structures require `:named` when requesting a predicate, and named
+  vector structures require an element type that admits every symbol.
+  Incompatible options signal `simple-error` during macro expansion.

@@ -22,8 +22,10 @@
   ((%option :initarg :option :reader option))
   (:default-initargs :expected-type 'symbol))
 
-(define-condition predicate-requires-named-structure (program-error)
-  ())
+(define-condition predicate-requires-named-structure (simple-error)
+  ()
+  (:default-initargs
+   :format-control ":PREDICATE requires :NAMED for a typed structure."))
 
 (define-condition initial-offset-requires-typed-structure (program-error)
   ())

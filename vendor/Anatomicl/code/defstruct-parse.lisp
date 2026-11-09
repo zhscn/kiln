@@ -313,6 +313,13 @@
                 (type (parse-type-option options))
                 (initial-offset (parse-initial-offset-option options))
                 (print-object (parse-print-object-option options)))
+            (when (and named (consp type) (eq (first type) 'vector)
+                       (consp (rest type)) (null (cddr type)))
+              (multiple-value-bind (symbols-allowed certainp)
+                  (subtypep 'symbol (second type))
+                (when (and certainp (not symbols-allowed))
+                  (error ":NAMED requires an element type that includes SYMBOL, not ~S."
+                         (second type)))))
             (if type
                 (make-instance 'defstruct-typed-description
                                :name name
