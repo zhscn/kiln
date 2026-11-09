@@ -10,6 +10,8 @@
   ((message :initarg :message :reader kiln-compile-error-message))
   (:report (lambda (c s) (write-string (kiln-compile-error-message c) s))))
 
+(define-condition kiln-program-error (kiln-compile-error program-error) ())
+
 (defun fail (control &rest args)
   (error 'kiln-compile-error :message (apply #'format nil control args)))
 

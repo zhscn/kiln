@@ -1844,11 +1844,27 @@
                                      :name name
                                      :source (expr-source-location
                                               binding (context-source context))))
+                            (let ((description (var-info name env)))
+                              (when (typep description 'trucler:constant-variable-description)
+                                (error 'bind-constant :name name :source source))
+                              (when (typep description 'trucler:global-special-variable-description)
+                                (error 'symbol-macro-special :name name :source source)))
                             (make-symbol-macro name expansion)))))
-      (compile-locally body (make-lexical-environment
-                             env
-                             :vars (append (nreverse smacros) (vars env)))
-                       context))))
+      (multiple-value-bind (forms declarations)
+          (parse-body body :source (context-source context))
+        (dolist (declaration declarations)
+          (dolist (specifier (rest declaration))
+            (when (eq (first specifier) 'special)
+              (dolist (name (rest specifier))
+                (when (find name smacros :key #'trucler:name)
+                  (error 'symbol-macro-special :name name
+                         :source (context-source context)))))))
+        (compile-progn forms
+                       (add-declarations
+                        (make-lexical-environment
+                         env :vars (append (nreverse smacros) (vars env)))
+                        declarations (context-source context))
+                       context)))))
 
 (defun lexenv-for-macrolet (env)
   ;; Macrolet expanders need to be compiled in the local compilation environment,

@@ -99,8 +99,10 @@ found here.")
 
 (defun ir-error (control &rest args)
   (let ((*print-circle* t) (*print-level* 8) (*print-length* 16))
-    (fail "~A~@[ in ~A~]~@[ at ~S~]" (apply #'format nil control args)
-          *source-file* (ir-source-range *ir-source*))))
+    (error 'kiln-program-error
+           :message (format nil "~A~@[ in ~A~]~@[ at ~S~]"
+                            (apply #'format nil control args)
+                            *source-file* (ir-source-range *ir-source*)))))
 
 (defun ir-proper-list-p (x)
   (cond ((null x) t)

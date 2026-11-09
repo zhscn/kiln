@@ -6,6 +6,12 @@
              (format stream "Attempt to bind constant variable ~s"
                      (name condition)))))
 
+(define-condition symbol-macro-special (compiler-program-error)
+  ((%name :initarg :name :reader name))
+  (:report (lambda (condition stream)
+             (format stream "Symbol macro ~S cannot be SPECIAL"
+                     (name condition)))))
+
 (define-condition go-tag-not-tag (compiler-program-error)
   ((%tag :initarg :tag :reader tag))
   (:report (lambda (condition stream)

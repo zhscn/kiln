@@ -499,6 +499,10 @@ Under `#+kiln`:
 
 ## Maclina patches
 
+- SYMBOL-MACROLET rejects constant and globally special names, and SPECIAL
+  declarations for its own bindings. Inner free SPECIAL declarations and
+  new variable bindings retain their lexical shadowing behavior.
+
 - Both VMs implement long-operand stack-pointer save and restore, so local
   blocks work when their saved stack location exceeds 255.
 

@@ -526,6 +526,14 @@ Trucler ENVIRONMENT, for CLIENT. The cross client uses the IR evaluator
   (let ((raw (ir-raw cst)))
     (and (consp raw) (eq (first raw) 'declare))))
 
+(defun check-symbol-macro-name (name environment)
+  (unless (and (symbolp name) name (not (eq name t)) (not (keywordp name)))
+    (ir-error "Invalid symbol macro name ~S" name))
+  (let ((description (trucler:describe-variable *client* environment name)))
+    (when (typep description '(or trucler:constant-variable-description
+                                 trucler:global-special-variable-description))
+      (ir-error "Symbol macro ~S names a constant or special variable" name))))
+
 (defun process-toplevel-body (cst compile-time-too)
   "LOCALLY, MACROLET and SYMBOL-MACROLET at top level: their body forms are
 top-level forms too (CLHS 3.2.3.1), processed in the environment with the
@@ -555,6 +563,10 @@ whole instead (the declarations would otherwise be lost)."
                   (symbol-macrolet
                    (let ((env *environment*))
                      (dolist (binding (second form) env)
+                       (unless (and (consp binding) (consp (cdr binding))
+                                    (null (cddr binding)))
+                         (ir-error "Invalid symbol macro binding ~S" binding))
+                       (check-symbol-macro-name (first binding) *environment*)
                        (setf env (trucler:add-local-symbol-macro
                                   *client* env (first binding) (second binding)))))))))
           (dolist (c body)
