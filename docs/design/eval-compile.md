@@ -23,6 +23,7 @@
    - kernel 和 CLOS 自己定义的宏（`loop`、`define-condition`、`do-symbols` 等）在载入 Common-macros 之前保存起来，之后恢复，所以仍然优先。Common-macros 的定义另存在 `kiln.kernel::*common-macros*`，kiln 上的交叉编译要用（[front-end.md](front-end.md)）。
    - 嵌套 `values` 位置为每个子位置的次要存储变量预先绑定 NIL；只向子位置的主存储变量分配输入值，零存储变量的子位置不消耗输入值。
    - 广义位置支持 `(apply #'symbol ...)`，读取和写入共用已求值的参数。长格式 `defsetf` 为参数和存储变量生成独立临时变量，展开函数保留定义时的词法环境及具名 block。`define-modify-macro` 传递调用点的词法环境，先求值附加参数，再读取位置。
+   - `define-compiler-macro` 登记展开函数后，返回定义的函数名作为唯一值，包括 `(setf name)`；编译器是否使用展开函数遵循其编译策略。
    - `define-setf-expander` 和 `defsetf` 在载入时生效，展开函数记在符号的 plist 上。运行期的 `get-setf-expansion` 依次查展开函数、宏，最后用 setf 函数。
 3. Trucler（base，以及 trucler-native 的 client 类）。
 4. Maclina：base、compile、vm-shared、vm-native。

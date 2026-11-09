@@ -90,10 +90,23 @@
     (error "~S is a declaration name and cannot name a type." name))
   name)
 
+(defun proper-declaration-p (declaration)
+  (and (consp declaration) (symbolp (car declaration))
+       (do ((slow declaration) (fast declaration))
+           (nil)
+         (cond ((null fast) (return t))
+               ((not (consp fast)) (return nil))
+               ((null (cdr fast)) (return t))
+               ((not (consp (cdr fast))) (return nil)))
+         (setq slow (cdr slow) fast (cddr fast))
+         (when (eq slow fast) (return nil)))))
+
 ;;; Runtime proclamations record special bindings and custom declaration
 ;;; names. The compiler hook processes compilation-specific information.
 (defun proclaim (declaration)
   (declare (special *proclaim-hook* *declaration-names*))
+  (unless (proper-declaration-p declaration)
+    (error 'program-error))
   (when (and (consp declaration) (eq (car declaration) 'special))
     (dolist (name (cdr declaration))
       (when (%has-property name '%symbol-macro)

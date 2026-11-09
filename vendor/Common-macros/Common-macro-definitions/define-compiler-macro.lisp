@@ -3,4 +3,5 @@
 (defmacro define-compiler-macro (name lambda-list &body body)
   (let ((expansion (ecc:parse-compiler-macro-using-canonicalization name lambda-list body)))
     `(eval-when (:compile-toplevel :load-toplevel :execute)
-       (setf (compiler-macro-function ',name) ,expansion))))
+       (setf (compiler-macro-function ',name) ,expansion)
+       ',name)))

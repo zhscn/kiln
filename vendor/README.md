@@ -396,6 +396,9 @@ Under `#+kiln`:
 
 ## Common-macros patches
 
+- `define-compiler-macro` returns its function name as one value after
+  registering the expander, including `(setf name)` definitions.
+
 - The `defgeneric-methods-form` client hook records embedded method objects
   for replacement on redefinition. The expansion uses a fresh generic-function
   variable so method bodies retain their defining lexical bindings.
