@@ -27,7 +27,7 @@
 
 ## 流（Cyclosis）
 
-`peek-char` 的 peek-type 为 T 时，按当前 `*readtable*` 的语法类型跳过空白；`set-syntax-from-char` 对空白语法的修改立即生效。
+`peek-char` 的 peek-type 为 T 时，按当前 `*readtable*` 的语法类型跳过空白；`set-syntax-from-char` 对空白语法的修改立即生效。 字符流的 peek 先查看 `unread-char` 缓冲；字符串流的 `file-position` 和读入结束索引指向下一个字符，设置位置会丢弃回退字符。
 
 - Cyclosis 用 Trinsic 的 `make-define-interface` 生成 CL 的流函数和宏，展开在 kiln 的 client 文件（`streams.lisp`）里。
 - 上游的 intrinsic 接口在自己的包里遮蔽 `stream`、`close`、`streamp` 等名字，加载时再 `shadowing-import` 进 CL；kiln 的运行期包是宿主包的镜像，这一步做不了，所以补丁让 Cyclosis 直接使用这些 CL symbol。需要 client 参数的函数（`open`、`peek-char` 等）仍然遮蔽。

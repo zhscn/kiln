@@ -156,7 +156,13 @@
     (unless position
       (setf position start))))
 
+;;; A buffered unread character precedes the stored offset in the string.
+(defmethod stream-file-position :around ((instance string-input-stream))
+  (let ((position (call-next-method)))
+    (if (and position (previous-char instance)) (1- position) position)))
+
 (defmethod (setf stream-file-position) :around (position (instance string-input-stream))
+  (setf (previous-char instance) nil)
   (case position
     (:start
      (call-next-method (stream-file-start instance) instance))

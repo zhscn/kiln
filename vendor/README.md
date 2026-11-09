@@ -332,6 +332,11 @@ Under `#+kiln` (simple vectors and strings stay native):
 
 ## Cyclosis patches
 
+- Character input peeking returns the unread buffer before consulting the
+  underlying stream. String input positions exclude that buffered
+  character; seeking discards it, and WITH-INPUT-FROM-STRING reports the
+  logical next-character index.
+
 - OPEN keeps the merged pathname as the stream's pathname, including
   logical components. The kiln file client translates it when accessing
   the physical file system.

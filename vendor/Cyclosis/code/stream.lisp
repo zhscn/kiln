@@ -145,6 +145,9 @@
       (update-cursor input-cursor ch)
       ch)))
 
+(defmethod stream-peek-char :around ((stream character-input-mixin))
+  (or (previous-char stream) (call-next-method)))
+
 (defmethod stream-read-char-no-hang :around ((stream character-input-mixin))
   (with-accessors ((previous-char previous-char)
                    (input-cursor input-cursor))

@@ -1,0 +1,45 @@
+((1 2 3) 7)
+(123 4)
+(123 6)
+((1 2 3) 7)
+(123 3)
+(123 5)
+(123 5)
+0
+(233 1)
+0
+(233 0)
+(233 1)
+(955 2)
+:DONE
+0
+(17 1)
+(! 1)
+:UPCASE
+:UPCASE
+:DOWNCASE
+:DOWNCASE
+:PRESERVE
+:PRESERVE
+:INVERT
+:INVERT
+T
+T
+T
+:UPCASE
+T
+T
+T
+:UPCASE
+T
+T
+T
+:UPCASE
+T
+T
+T
+:UPCASE
+T
+T
+T
+:UPCASE

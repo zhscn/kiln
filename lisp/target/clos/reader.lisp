@@ -85,9 +85,12 @@
         (eclector.readtable:copy-readtable from))))
 
 (defun cl:readtable-case (readtable)
+  (check-type readtable cl:readtable)
   (eclector.readtable:readtable-case readtable))
 
 (defun (setf cl:readtable-case) (mode readtable)
+  (check-type readtable cl:readtable)
+  (check-type mode (member :upcase :downcase :preserve :invert))
   (setf (eclector.readtable:readtable-case readtable) mode))
 
 (defun cl:make-dispatch-macro-character (char &optional non-terminating-p
