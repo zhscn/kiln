@@ -396,7 +396,7 @@ are compared (no short circuit), which also checks every argument."
     (start-block other)
     (br `(:eq ,cur ,(nil-value)) done bad)
     (start-block bad)
-    (emit-error +err-not-list+ list)
+    (emit-error +err-not-list+ cur)
     (start-block done)))
 
 (define-nary-primitive funcall (vals)

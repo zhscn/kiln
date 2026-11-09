@@ -58,7 +58,7 @@
 - `package` 是包对象，未 intern 的 symbol 是 NIL。编译器生成的静态 symbol 在这个槽里先存包名字符串，包系统启动时把它换成包对象（[stdlib.md](stdlib.md) 的“包”）。在那之前 `keywordp` 和 runtime 的打印器靠包名判断。
 - **`function` 槽就是函数 cell。** 调用全局函数：从 symbol 读出函数对象，再读入口地址，`call_indirect`。`(setf fdefinition)` 直接写这个槽，重定义因此立即生效。
 - **未定义函数**：每个 symbol 的 `function` 槽初始指向一个“未定义函数”对象。它是一个 env 长度为 1 的函数对象，入口是 `kiln_undefined_function`，env 里放着这个 symbol，所以出错时能报告函数名。调用点不需要额外检查。未定义的 `(setf f)` 有单独的报错入口。
-- `value` 槽是全局值，未绑定时是 UNBOUND。keyword 的值是它自己。
+- `value` 槽是全局值，未绑定时是 UNBOUND。NIL、T 和 keyword 的值都是它们自己。
 - **TLS 下标**按 fixnum 存放（下标 << 1），所以 symbol 的所有字段都是合法的 Lisp 值，GC 可以统一扫描堆上的 symbol。0 表示还没有分配。TLS 表项地址 = 表基址 + 存放的值 << 2。
 - `setf 函数` 槽存名为 `(setf symbol)` 的函数，`fdefinition`、`(setf fdefinition)`、`fboundp` 都接受 setf 名字。编译期已知的 `(setf f)` 也可以有单独的静态 cell。
 - NIL 和 T 是 runtime 里的静态对象（`kiln_nil`、`kiln_t`）。名字字符串在 runtime 启动时填写（Rust 的常量求值不能做指针加 tag）；它们的 plist、包、函数槽登记为 GC root，函数槽在 kernel 启动时放上未定义函数对象。

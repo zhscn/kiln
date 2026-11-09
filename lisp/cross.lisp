@@ -153,7 +153,8 @@ at compile time (USE-HOST-MACROS).")
     ;; (USE-HOST-MACROS): Clostrum-basic's +UNBOUND+ is the marker of an
     ;; unbound cell of the compile-time environment itself.
     (def 'kiln.sys::%define-constant
-      (lambda (name value)
+      (lambda (name value &optional documentation)
+        (declare (ignore documentation))
         (unless (host-constant-p name)
           (clo:make-constant client genv name value))
         name))

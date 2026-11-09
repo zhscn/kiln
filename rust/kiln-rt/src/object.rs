@@ -137,7 +137,7 @@ pub static mut kiln_nil: SymbolObj = SymbolObj {
     name: 0,
     package: 0,
     function: 0,
-    value: 0, // NIL's value is NIL; never read through this slot.
+    value: 0,
     tls_index: 0,
     plist: 0,
     setf_function: 0,
@@ -163,6 +163,7 @@ pub fn init_statics() {
         let n = &raw mut kiln_nil;
         (*n).name = tag_general(&NIL_NAME);
         (*n).package = cl;
+        (*n).value = nil;
         (*n).plist = nil;
         let t = &raw mut kiln_t;
         (*t).name = tag_general(&T_NAME);
@@ -298,7 +299,7 @@ pub unsafe fn write_object(out: &mut String, v: u64) {
                 {
                     (unsafe { string_value(s.package) }) == "KEYWORD"
                 } else {
-                    s.value == v && v != tag_general(&raw const kiln_t)
+                    s.value == v && v != nil() && v != tag_general(&raw const kiln_t)
                 };
                 if keyword {
                     out.push(':');

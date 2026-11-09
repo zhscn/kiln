@@ -79,7 +79,7 @@ kernel 先给出简单的版本，后面的模块替换或扩充。钩子是 `ki
 
 - `(setf macro-function)` 把展开函数记在符号 plist 的 `macro-function` 下；`macro-function`、`macroexpand-1`、`macroexpand`、`*macroexpand-hook*`、`constantp` 都在 kernel 里。带 Maclina 或编译器前端的 Trucler 环境时，由造出这个环境的 client 查询局部宏（`kiln.eval:environment-client`）。
 - `proclaim` 先检查声明是非空、以符号为标识的有限 proper list；带点尾或循环声明在登记及编译器钩子之前报告 `program-error`。随后保存自定义 declaration 名，字节码和原生编译环境通过 Trucler 查询同一份登记。declaration 名与类型、类和结构名互斥，类型定义和类名绑定都会检查冲突；未知 declaration 标识符产生 style warning。
-- `defconstant` 在加载期给符号做常量标记；`define-setf-expander` 和 `defsetf` 的展开函数也记在 plist 上（eval 模块之后）。
+- `defconstant` 在加载期给符号做常量标记，并将文档字符串存为该符号的 `variable` 文档；`define-setf-expander` 和 `defsetf` 的展开函数也记在 plist 上（eval 模块之后）。
 - 编译期仍然用前端自己的环境（[front-end.md](front-end.md)），两者互不影响。
 
 ## 运行期错误

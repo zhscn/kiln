@@ -88,7 +88,7 @@
 ;;; the compiler on kiln is the run-time one: there
 ;;; %DEFINE-CONSTANT is this function (the host's compile-time
 ;;; environment has its own).
-(defun kiln.sys::%define-constant (name value)
+(defun kiln.sys::%define-constant (name value &optional documentation)
   ;; A constant whose value changes (undefined behavior, CLHS DEFCONSTANT):
   ;; the code compiled with the old value is out of date.
   (when (%has-property name '%symbol-macro)
@@ -97,16 +97,18 @@
                       (not (eql (symbol-value name) value)))))
     (setf (symbol-value name) value)
     (%put name '%constant t)
+    (when documentation
+      (%put name '%documentation
+            (list* 'variable documentation (%get name '%documentation))))
     (when changed
       (change-assumption :constant name)))
   name)
 
 (defmacro defconstant (name value &optional documentation)
-  (declare (ignore documentation))
   `(progn
      (eval-when (:compile-toplevel)
        (kiln.sys::%define-constant ',name ,value))
-     (kiln.sys::%define-constant ',name ,value)))
+     (kiln.sys::%define-constant ',name ,value ,documentation)))
 
 (defconstant most-positive-fixnum 4611686018427387903)
 (defconstant most-negative-fixnum -4611686018427387904)

@@ -6,6 +6,6 @@
          (keys (collect-e/ctypecase-keys clauses))
          (final `(error 'etypecase-type-error
                         :datum ,variable
-                        :expected-type '(member ,@keys))))
+                        :expected-type '(or ,@keys))))
     `(let ((,variable ,keyform))
        ,(expand-e/ctypecase-clauses clauses variable final 'etypecase))))

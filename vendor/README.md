@@ -29,6 +29,10 @@ shows exactly what kiln changed. Changes are not sent upstream for now.
 
 ## Clostrophilia patches
 
+- Generic-function option conditions use private accessor names for the
+  invalid declaration and method-combination values, keeping the CL
+  symbols DECLARATION and METHOD-COMBINATION unbound as functions.
+
 - A private `slot-object` root shares initialization between standard objects
   and array storage. Internal dispatch and layout access use physical classes;
   public array classification uses the built-in hierarchy.
@@ -395,6 +399,9 @@ Under `#+kiln`:
   not).
 
 ## Common-macros patches
+
+- ETYPECASE reports the union of its clause types as the expected type,
+  rather than a MEMBER type containing their names.
 
 - `define-compiler-macro` returns its function name as one value after
   registering the expander, including `(setf name)` definitions.

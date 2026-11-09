@@ -91,29 +91,29 @@
 
 (define-condition generic-function-declaration-must-be-valid
     (program-error)
-  ((%declaration :initarg :declaration :reader declaration))
+  ((%declaration :initarg :declaration :reader invalid-declaration))
   (:report (lambda (condition stream)
              (format stream
                      "A generic function declaration must be a valid~@
                       OPTIMIZE declaration.  But the following was~@
                       found instead:~@
                       ~s"
-                     (declaration condition)))))
+                     (invalid-declaration condition)))))
 
-(defgeneric method-combination (condition))
+(defgeneric invalid-method-combination (condition))
 
 (define-condition method-combination-option-must-be-method-combination
     (program-error)
   ((%method-combination
     :initarg :method-combination
-    :reader method-combination))
+    :reader invalid-method-combination))
   (:report (lambda (condition stream)
              (format stream
                      "The :METHOD-COMBINATION argument must be a~@
                       method-combination metaobject, but the following was~@
                       given instead:~@
                       ~s"
-                     (method-combination condition)))))
+                     (invalid-method-combination condition)))))
 
 (defgeneric method-class (condition))
 
