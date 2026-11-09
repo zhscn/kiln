@@ -9,26 +9,35 @@
                `(,',update-fn ,@temps ,store)
                `(,',access-fn ,@temps)))))
 
-;;; Note that the long form of DEFSETF is poorly defined for some obscure cases.
-;;; See e.g. https://bugs.launchpad.net/sbcl/+bug/1452947
 (defun expand-long-defsetf (access-fn lambda-list stores body)
   (let* ((argforms (gensym "ARGFORMS"))
          (temps (gensym "TEMPS"))
+         (vals (gensym "VALS"))
+         (arguments (gensym "ARGUMENTS"))
          (ll (ecclesia:parse-defsetf-lambda-list lambda-list))
          (eparam1 (ecclesia:environment ll))
-         (eparam (if (eq eparam1 :none) nil eparam1)))
-    (multiple-value-bind (bindings ignores) (ecc:destructure-lambda-list ll argforms)
-      `(define-setf-expander ,access-fn (&rest ,argforms
-                                           ,@(when eparam `(&environment ,eparam)))
-         (let ((,temps (loop repeat (length ,argforms) collect (gensym))))
-           (values ,temps ,argforms ',stores
-                   (let* (,@bindings
-                          ;; we rebind eparam so that body declarations can apply to it.
-                          ,@(when eparam `((,eparam ,eparam))))
-                     (declare (ignore ,@ignores))
-                     ,@body)
-                   ;; avoiding some weird double unquotes
-                   (list* ',access-fn ,argforms)))))))
+         (eparam (if (eq eparam1 :none) (gensym "ENV") eparam1)))
+    (multiple-value-bind (bindings ignores) (ecc:destructure-lambda-list ll arguments)
+      (multiple-value-bind (declarations documentation forms)
+          (ecc:separate-function-body body)
+        (declare (ignore documentation))
+        `(define-setf-expander ,access-fn (&rest ,argforms &environment ,eparam)
+           (let ((,temps nil) (,vals nil) (,arguments nil)
+                 ,@(mapcar (lambda (store) `(,store (gensym "STORE"))) stores))
+             (dolist (form ,argforms)
+               (if (constantp form ,eparam)
+                   (push form ,arguments)
+                   (let ((temp (gensym "ARG")))
+                     (push temp ,temps)
+                     (push form ,vals)
+                     (push temp ,arguments))))
+             (setf ,arguments (nreverse ,arguments))
+             (values (nreverse ,temps) (nreverse ,vals) (list ,@stores)
+                     (let* (,@bindings)
+                       (declare (ignore ,@ignores))
+                       ,@declarations
+                       (block ,access-fn ,@forms))
+                     (cons ',access-fn ,arguments))))))))
 
 (defmacro defsetf (access-fn &rest rest)
   (check-type access-fn symbol)

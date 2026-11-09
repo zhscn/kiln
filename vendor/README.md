@@ -371,6 +371,14 @@ Under `#+kiln`:
 
 ## Common-macros patches
 
+- `defmacro` returns the macro name. `define-modify-macro` passes the
+  lexical environment to place expansion and evaluates modifier arguments
+  before reading the place.
+- Long-form `defsetf` binds fresh store symbols, uses temporaries for
+  evaluated arguments, and preserves constant keyword names, lexical scope,
+  declarations and the implicit named block. Generalized APPLY places call
+  the accessor's SETF function with the stored arguments.
+
 - Extra `defclass` options are quoted data. Singleton extra slot options
   are unwrapped, and repeated values use SBCL's ordering, so custom
   metaclasses and slot-definition classes receive their intended initargs.

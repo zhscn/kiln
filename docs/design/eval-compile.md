@@ -21,6 +21,7 @@
 2. **运行期的标准宏：Common-macros。**
    - 宿主编译器用的是它的 extrinsic 版本（包 `COMMON-MACRO-DEFINITIONS` 遮蔽宏的名字），这些源码不能原样编进目标端，上游的 intrinsic 包也不能用（遮蔽得太少）。kiln 自己定义包 `kiln.cmd`：使用 CL，只遮蔽 `get-setf-expansion`、`ensure-generic-function`、`proclaim` 这三个带 client 参数的函数；读 Common-macros 的源码时用 `:renames` 把包名换成 `KILN.CMD`。
    - kernel 和 CLOS 自己定义的宏（`loop`、`define-condition`、`do-symbols` 等）在载入 Common-macros 之前保存起来，之后恢复，所以仍然优先。Common-macros 的定义另存在 `kiln.kernel::*common-macros*`，kiln 上的交叉编译要用（[front-end.md](front-end.md)）。
+   - 广义位置支持 `(apply #'symbol ...)`，读取和写入共用已求值的参数。长格式 `defsetf` 为参数和存储变量生成独立临时变量，展开函数保留定义时的词法环境及具名 block。`define-modify-macro` 传递调用点的词法环境，先求值附加参数，再读取位置。
    - `define-setf-expander` 和 `defsetf` 在载入时生效，展开函数记在符号的 plist 上。运行期的 `get-setf-expansion` 依次查展开函数、宏，最后用 setf 函数。
 3. Trucler（base，以及 trucler-native 的 client 类）。
 4. Maclina：base、compile、vm-shared、vm-native。
@@ -77,4 +78,3 @@ compiler 模块载入后，`eval` 也走原生编译（`native-eval`，挂在 `k
 - `compile` 的前端开销：每次都新建 session。
 - `compile` 编出的函数名是 `(lambda)`；`load` 逐个读取形式再求值，没有文件和位置。
 - 运行期的 `defstruct`（[stdlib.md](stdlib.md)）。
-- `defsetf` 的长形式（带 lambda list 和存储变量的那种）在 image 里求值时出错，报 `No variable-description for V`（V 是存储变量）。原因在 Common-macros 的 `expand-long-defsetf`：展开出的 `define-setf-expander` 直接把用户写的存储变量当作存储变量返回，但 body 里的 `,v` 要在展开时求值，那里 `v` 没有绑定。正确的展开要为每个存储变量生成 gensym，在 body 外把存储变量绑定到它。短形式没有问题。
