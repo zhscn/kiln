@@ -9,6 +9,7 @@
   (multiple-value-bind (vars vals store-vars writer-forms reader-forms)
       (get-setf-expansion *client* keyplace environment)
     (let* ((label (gensym))
+           (result (gensym))
            (keys (collect-e/ccase-keys clauses 'ccase))
            (final `(restart-case (error 'ccase-type-error
                                         :datum ,(car store-vars)
@@ -26,6 +27,8 @@
       `(let* ,(mapcar #'list vars vals)
          (declare (ignorable ,@vars))
          (multiple-value-bind ,store-vars ,reader-forms
-           (tagbody
-              ,label
-              ,(expand-e/ccase-clauses clauses (car store-vars) final 'ccase)))))))
+           (block ,result
+             (tagbody
+                ,label
+                (return-from ,result
+                  ,(expand-e/ccase-clauses clauses (car store-vars) final 'ccase)))))))))

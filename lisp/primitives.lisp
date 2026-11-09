@@ -285,6 +285,11 @@ are compared (no short circuit), which also checks every argument."
 
 (defun emit-nthcdr (n list)
   (emit-check-fixnums n n)
+  (let ((ok (new-block)) (bad (new-block)))
+    (br `(:ge ,n 0) ok bad)
+    (start-block bad)
+    (emit-error +err-index+ n)
+    (start-block ok))
   (let ((i (copy-to-var n)) (cur (copy-to-var list))
         (head (new-block)) (body (new-block)) (done (new-block)))
     (jump head)

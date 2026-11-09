@@ -316,6 +316,11 @@ Under `#+kiln`:
 
 ## Common-macros patches
 
+- `remf` binds all place temporaries and evaluates the indicator before
+  reading the property list, preserving generalized-place evaluation order.
+- `ccase` and `ctypecase` return the selected clause's values from their
+  retry loop. `ctypecase` reports the union of the accepted types.
+
 - `defclass`: a slot specifier that is a symbol is canonicalized into the
   form `(list :name 'slot)` (upstream: `(:name 'slot)`, which is then
   evaluated as a call of `:name`). Khazern has such a slot.

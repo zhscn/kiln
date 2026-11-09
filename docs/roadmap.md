@@ -13,7 +13,7 @@
 | M4 | CLOS 引导和依赖 CLOS 的库：condition、哈希表、包、ctype、数组、结构、流、文件、打印、FORMAT、LOOP、reader（[clos.md](design/clos.md)、[stdlib.md](design/stdlib.md)、[io.md](design/io.md)） | 完成 |
 | M5 | 运行期 `eval`/`compile`/`load` 和 REPL；编译器在 kiln 上运行；自举闭合（kiln0 和 kiln1 逐字节相同）；原生 `compile`（[eval-compile.md](design/eval-compile.md)、[bootstrap.md](design/bootstrap.md)） | 完成 |
 | M6 | image 开发体验：堆快照（[heap-image.md](design/heap-image.md)）、原生 `eval`/`load`、帧的调试信息（[debugging.md](design/debugging.md)）、后端协议（[backend-protocol.md](design/backend-protocol.md)）、依赖追踪（[dependencies.md](design/dependencies.md)） | 前四项完成；剩下 AOT 模块的依赖和定义表、REPL 中断、SLYNK/Swank 接入 |
-| — | ANSI 补全：cl-bench 找到的缺口已补上；`ansi-test` 全部 24 组已跑通（20,315 / 21,868 = 92.9%，另跳过 77 项，见“标准库和 ANSI 覆盖”），持续补齐剩余缺口 | 进行中 |
+| — | ANSI 补全：cl-bench 找到的缺口已补上；`ansi-test` 全部 24 组已跑通（20,491 / 21,868 = 93.7%，另跳过 77 项，见“标准库和 ANSI 覆盖”），持续补齐剩余缺口 | 进行中 |
 | — | 性能：自编译与基础代码生成已与 SBCL 持平（单阶段 5.0 s vs 4.63 s）；剩余编译器深度优化与库快路径见下文“性能” | 阶段一完成 |
 | — | seal、WPO 和 AOT 交付（[positioning.md](design/positioning.md)） | 未开始 |
 | — | 异步（[async.md](design/async.md)） | 未开始，ANSI 自举完成之前不做 |
@@ -111,24 +111,24 @@
 
 ### 标准库和 ANSI 覆盖
 
-`ansi-test`（`tools/ansi-test.sh`）全部 24 个测试组已无崩溃跑通，当前实际执行用例的通过率为 **20,315 / 21,868（92.9%）**。共注册 21,945 项，另有 77 项因关闭 note 而跳过；跳过项不计入通过数或通过率的分母。关闭的 note 与 SBCL 一致：`:nil-vectors-are-strings` 和 `:open-if-exists-new-version-no-error`。
+`ansi-test`（`tools/ansi-test.sh`）全部 24 个测试组已无崩溃跑通，当前实际执行用例的通过率为 **20,491 / 21,868（93.7%）**。共注册 21,945 项，另有 77 项因关闭 note 而跳过；跳过项不计入通过数或通过率的分母。关闭的 note 与 SBCL 一致：`:nil-vectors-are-strings` 和 `:open-if-exists-new-version-no-error`。
 
 | 测试组 | 通过 | 失败 | 跳过 | 总计 | 通过率 | 主要未通过原因 |
 |---|---:|---:|---:|---:|---:|---|
 | `symbols` | 1110 | 34 | 1 | 1145 | 97.0% | `gentemp`、`copy-symbol` 部分边界 |
 | `eval-and-compile` | 293 | 25 | 0 | 318 | 92.1% | `compile-file`、`eval-when` 细节、`special-operator-p` 宏/特殊形式边界 |
-| `data-and-control-flow` | 1345 | 81 | 2 | 1428 | 94.3% | `defsetf` 长形式、`shiftf`/`rotatef`/`psetf` 多值、`equalp` 分支 |
+| `data-and-control-flow` | 1373 | 53 | 2 | 1428 | 96.3% | `defsetf` 长形式、`shiftf`/`rotatef`/`psetf` 多值、`equalp` 分支 |
 | `iteration` | 832 | 11 | 0 | 843 | 98.7% | `loop` 的少量边界语法 |
 | `objects` | 644 | 218 | 0 | 862 | 74.7% | `defgeneric` 重定义与方法组合选项、`change-class` 细节、`reinitialize-instance` 关键字检查 |
 | `conditions` | 646 | 27 | 0 | 673 | 96.0% | `assert`、`ctypecase`/`ccase`、部分条件打印格式 |
-| `cons` | 1747 | 135 | 0 | 1882 | 92.8% | `last`/`butlast`/`nbutlast`、`ldiff`/`tailp` 边界，`mapl`/`maplist`/`mapcon` 多列表参数，列表访问器及 setf 函数缺口 |
+| `cons` | 1882 | 0 | 0 | 1882 | 100.0% | — |
 | `types-and-classes` | 594 | 27 | 6 | 627 | 95.7% | `coerce` 复数/函数边界、内置类层次的少量差异 |
 | `arrays` | 1344 | 12 | 0 | 1356 | 99.1% | `adjust-array` 与 displaced 数组边界 |
 | `hash-tables` | 164 | 2 | 1 | 167 | 98.8% | `make-hash-table` 参数校验细节 |
-| `packages` | 372 | 127 | 1 | 500 | 74.5% | `defpackage` 冲突处理、`with-package-iterator`、字符串/字符设计符检查 |
+| `packages` | 373 | 126 | 1 | 500 | 74.7% | `defpackage` 冲突处理、`with-package-iterator`、字符串/字符设计符检查 |
 | `numbers` | 1376 | 67 | 1 | 1444 | 95.4% | 复数（`complex`）、超越函数在复数域的值、`decode-float` 边界、`random-state` 打印 |
-| `sequences` | 3061 | 223 | 3 | 3287 | 93.2% | 非列表/非向量序列类型报错、`map`/`merge`/`concatenate` 结果类型检查、`delete-duplicates` 边界 |
-| `structures` | 1388 | 6 | 0 | 1394 | 99.6% | `:type` 列表/向量结构的少量选项组合 |
+| `sequences` | 3070 | 214 | 3 | 3287 | 93.5% | 非列表/非向量序列类型报错、`map`/`merge`/`concatenate` 结果类型检查、`delete-duplicates` 边界 |
+| `structures` | 1390 | 4 | 0 | 1394 | 99.7% | `:type` 列表/向量结构的少量选项组合 |
 | `strings` | 447 | 17 | 45 | 509 | 96.3% | `base-string`、`nil` 元素类型字符串、大小写转换的起止下标检查 |
 | `characters` | 253 | 6 | 0 | 259 | 97.7% | 字符名与扩展字符谓词边界 |
 | `pathnames` | 199 | 16 | 0 | 215 | 92.6% | 逻辑路径名（logical pathname）、`wild-pathname-p` 细节 |
@@ -137,9 +137,9 @@
 | `printer` | 2122 | 321 | 3 | 2446 | 86.9% | `pprint` 派发表与逻辑块细节、`format` 浮点舍入与少量指令组合、`*print-readably*` |
 | `reader` | 652 | 21 | 0 | 673 | 96.9% | `*read-suppress*` 下的语法检查、`read-preserving-whitespace` 边界 |
 | `system-construction` | 30 | 47 | 0 | 77 | 39.0% | `compile-file`、`compile-file-pathname`、`with-compilation-unit` |
-| `environment` | 92 | 118 | 0 | 210 | 43.8% | `decode-universal-time`/`encode-universal-time`、`apropos`、`dribble`、`ed` |
+| `environment` | 93 | 117 | 0 | 210 | 44.3% | `decode-universal-time`/`encode-universal-time`、`apropos`、`dribble`、`ed` |
 | `misc` | 737 | 3 | 0 | 740 | 99.6% | `step`/`trace` 边界 |
-| **合计** | **20315** | **1553** | **77** | **21945** | **92.9%** | |
+| **合计** | **20491** | **1377** | **77** | **21945** | **93.7%** | |
 
 与 CL 不一致的行为：
 - `print`（编译器原语）：AOT 模块里先打印对象再换行，不经过 `*standard-output*`、`print-object` 和打印变量。要等测试的期望输出统一迁移。

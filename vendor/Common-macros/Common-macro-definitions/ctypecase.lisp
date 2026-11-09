@@ -7,10 +7,11 @@
   (multiple-value-bind (vars vals store-vars writer-forms reader-forms)
       (get-setf-expansion *client* keyplace environment)
     (let* ((label (gensym))
+           (result (gensym))
            (keys (collect-e/ctypecase-keys clauses))
            (final `(restart-case (error 'ctypecase-type-error
                                         :datum ,(car store-vars)
-                                        :expected-type '(member ,@keys))
+                                        :expected-type '(or ,@keys))
                      (store-value (v)
                        :interactive
                        (lambda ()
@@ -24,6 +25,8 @@
       `(let* ,(mapcar #'list vars vals)
          (declare (ignorable ,@vars))
          (multiple-value-bind ,store-vars ,reader-forms
-           (tagbody
-              ,label
-              ,(expand-e/ctypecase-clauses clauses (car store-vars) final 'ctypecase)))))))
+           (block ,result
+             (tagbody
+                ,label
+                (return-from ,result
+                  ,(expand-e/ctypecase-clauses clauses (car store-vars) final 'ctypecase)))))))))
