@@ -1,0 +1,116 @@
+;;;; Interactive object traversal through public value and slot protocols.
+
+(in-package #:kiln.kernel)
+
+(defvar kiln.sys:*inspected*)
+(defvar *inspect-length* 20)
+
+(defun inspect-parts (object)
+  "Returns the part count and an indexed reader yielding label, value and state."
+  (typecase object
+    (cons (values 2 (lambda (index)
+                      (values (if (zerop index) 'car 'cdr)
+                              (if (zerop index) (car object) (cdr object)) :value))))
+    (array (values (array-total-size object)
+                   (lambda (index)
+                     (if (array-element-type object)
+                         (values index (row-major-aref object index) :value)
+                         (values index nil :unavailable)))))
+    (symbol
+     (values 5
+             (lambda (index)
+               (case index
+                 (0 (values 'name (symbol-name object) :value))
+                 (1 (values 'package (symbol-package object) :value))
+                 (2 (if (boundp object)
+                        (values 'value (symbol-value object) :value)
+                        (values 'value nil :unbound)))
+                 (3 (if (and (fboundp object) (not (special-operator-p object)))
+                        (values 'function (or (macro-function object) (fdefinition object)) :value)
+                        (values 'function nil :unbound)))
+                 (4 (values 'plist (symbol-plist object) :value))))))
+    (hash-table
+     (values (hash-table-count object)
+             (lambda (index)
+               (block found
+                 (let ((position 0))
+                   (maphash (lambda (key value)
+                              (when (= position index)
+                                (return-from found (values index (cons key value) :value)))
+                              (incf position))
+                            object))
+                 (values index nil :unavailable)))))
+    (pathname
+     (values 6 (lambda (index)
+                 (values (nth index '(host device directory name type version))
+                         (funcall (nth index '(pathname-host pathname-device pathname-directory
+                                               pathname-name pathname-type pathname-version)) object)
+                         :value))))
+    (package
+     (values 5 (lambda (index)
+                 (values (nth index '(name nicknames use-list used-by-list shadowing-symbols))
+                         (funcall (nth index '(package-name package-nicknames package-use-list
+                                               package-used-by-list package-shadowing-symbols)) object)
+                         :value))))
+    (standard-object
+     (let ((slots (clostrophilia:class-slots (class-of object))))
+       (values (length slots)
+               (lambda (index)
+                 (let ((name (clostrophilia:slot-definition-name (nth index slots))))
+                   (if (slot-boundp object name)
+                       (values name (slot-value object name) :value)
+                       (values name nil :unbound)))))))
+    (t (values 0 nil))))
+
+(defun inspect (object)
+  (let ((kiln.sys:*inspected* object)
+        (*print-circle* t) (*print-readably* nil)
+        (*print-level* (or *print-level* 6))
+        (*print-length* (or *print-length* 20))
+        (history nil) (start 0) (redisplay t) (eof (list nil)))
+    (loop
+      (multiple-value-bind (count part) (inspect-parts kiln.sys:*inspected*)
+        (let ((page-size (max 1 *inspect-length*)))
+          (when redisplay
+            (describe kiln.sys:*inspected*)
+            (loop for index from start below (min count (+ start page-size))
+                  do (multiple-value-bind (label value state) (funcall part index)
+                       (format t "~&~D. ~S: " index label)
+                       (case state
+                         (:value (format t "~S~%" value))
+                         (:unbound (format t "[unbound]~%"))
+                         (t (format t "[unavailable]~%")))))
+            (when (> count (+ start page-size))
+              (format t "~&~D parts total; N displays the next page.~%" count))
+            (setf redisplay nil))
+          (format t "~&Inspect> ")
+          (force-output)
+          (handler-case
+              (let* ((command (read *standard-input* nil eof))
+                     (name (and (symbolp command) (string-upcase (symbol-name command)))))
+                (cond ((or (eq command eof) (member name '("Q" "E") :test #'equal))
+                       (return))
+                      ((integerp command)
+                       (if (<= 0 command (1- count))
+                           (multiple-value-bind (label value state) (funcall part command)
+                             (declare (ignore label))
+                             (if (eq state :value)
+                                 (progn (push kiln.sys:*inspected* history)
+                                        (setf kiln.sys:*inspected* value start 0 redisplay t))
+                                 (format t "~&That part is ~A.~%" state)))
+                           (format t "~&No part numbered ~D.~%" command)))
+                      ((equal name "U")
+                       (if history
+                           (setf kiln.sys:*inspected* (pop history) start 0 redisplay t)
+                           (format t "~&Already at the root object.~%")))
+                      ((equal name "R") (setf redisplay t))
+                      ((equal name "N")
+                       (when (< (+ start page-size) count) (incf start page-size))
+                       (setf redisplay t))
+                      ((equal name "P")
+                       (setf start (max 0 (- start page-size)) redisplay t))
+                      ((member name '("?" "H" "HELP") :test #'equal)
+                       (format t "~&Integer: enter part; U: up; R: redisplay; N/P: page; Q/E: quit.~%Other forms are evaluated; KILN.SYS:*INSPECTED* is the current object.~%"))
+                      (t (format t "~&~{~S~^ ~}~%" (multiple-value-list (eval command))))))
+            (error (condition) (format t "~&~A~%" condition)))))))
+  (values))

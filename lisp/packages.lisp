@@ -57,7 +57,7 @@
            #:assumption-version #:assumptions
            #:*compilation-cache-limit* #:clear-compilation-cache #:compilation-cache-statistics
            #:dependents #:dependencies #:*recompile-verbose* #:stale-definition
-           #:stack-exhausted
+           #:stack-exhausted #:*inspected*
            ;; The sampling profiler (lisp/target/clos/profile.lisp).
            #:start-profiler #:stop-profiler #:profile-samples #:profile-report
            #:write-folded-stacks #:with-profiling))
