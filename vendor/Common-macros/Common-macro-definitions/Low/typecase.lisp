@@ -15,8 +15,7 @@
                          (not (null clause)))
               (error 'malformed-typecase-clause
                      :clause clause))
-            (if (or (eq (car clause) 'otherwise)
-                    (eq (car clause) t))
+            (if (eq (car clause) 'otherwise)
                 (if (null (cdr clauses))
                     `(progn ,@(cdr clause))
                     (error 'otherwise-clause-not-last

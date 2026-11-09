@@ -441,6 +441,8 @@
                     (incf ip))
                    ((#.m:long)
                     (case (next-code)
+                      (#.m:save-sp (setf (local (next-long)) sp) (incf ip))
+                      (#.m:restore-sp (setf sp (local (next-long))) (incf ip))
                       (#.m:ref (spush (local (next-long))) (incf ip))
                       (#.m:const (spush (constant (next-long))) (incf ip))
                       (#.m:closure (spush (closure (next-long))) (incf ip))

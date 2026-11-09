@@ -1,0 +1,10 @@
+(0 1 NIL 2 3 NIL)
+(0 1 2 3)
+((NIL 1 2) 1 2 (:VALUE))
+:FIRST
+(:ANYTHING 1)
+(0 1 NIL 2 3 NIL)
+(0 1 2 3)
+((NIL 1 2) 1 2 (:VALUE))
+:FIRST
+(:ANYTHING 1)

@@ -1515,9 +1515,10 @@ there: -1, 0 or 1."
     (dolist (place places)
       (multiple-value-bind (ts vs ss store-form access-form)
           (get-setf-expansion place env)
-        (setq temps (append temps ts)
-              vals (append vals vs)
-              stores (append stores (list (car ss)))
+        (setq temps (append temps ts (cdr ss))
+              vals (append vals vs (mapcar (lambda (store) (declare (ignore store)) nil)
+                                           (cdr ss)))
+              stores (append stores (and ss (list (car ss))))
               store-forms (append store-forms (list store-form))
               access-forms (append access-forms (list access-form)))))
     (values temps vals stores

@@ -1,0 +1,27 @@
+(defun check-values-typecase ()
+  (print (eval '(let (a b c d e f)
+                 (declare (ignorable a b c d e f))
+                 (setf (values a (values b c) (values d) (values e f))
+                       (values 0 1 2 3 4 5 6))
+                 (list a b c d e f))))
+  (print (eval '(let (a b c d e f)
+                 (declare (ignorable a b c d e f))
+                 (multiple-value-list
+                  (setf (values a (values b c) (values d) (values e f))
+                        (values 0 1 2 3 4 5 6))))))
+  (print (eval '(let ((a 10) (b 20) (events nil))
+                 (list (multiple-value-list
+                        (setf (values (values) a (values b))
+                              (progn (push :value events) (values 1 2 3))))
+                       a b events))))
+  (print (eval '(typecase 10 (t (values :first :second)) (integer :wrong)
+                         (otherwise :wrong))))
+  (print (eval '(let ((count 0))
+                 (list (typecase (progn (incf count) 'a)
+                         (integer :integer) (t :anything) (string :wrong)) count)))))
+(check-values-typecase)
+#+kiln
+(let ((kiln.kernel::*eval-function* nil) (kiln.kernel::*compile-function* nil))
+  (check-values-typecase))
+#-kiln
+(check-values-typecase)

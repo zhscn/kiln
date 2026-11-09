@@ -371,6 +371,9 @@ Under `#+kiln`:
 
 ## Common-macros patches
 
+- `typecase` treats `T` as an ordinary type, allowing later clauses; only
+  `otherwise` must be last.
+
 - `defmacro` returns the macro name. `define-modify-macro` passes the
   lexical environment to place expansion and evaluates modifier arguments
   before reading the place.
@@ -459,6 +462,9 @@ Under `#+kiln`:
   the types and in the standard dispatch table.
 
 ## Maclina patches
+
+- Both VMs implement long-operand stack-pointer save and restore, so local
+  blocks work when their saved stack location exceeds 255.
 
 - Unrecognized declaration identifiers signal style warnings. Global
   `declaration` proclamations are available through Trucler, so custom
