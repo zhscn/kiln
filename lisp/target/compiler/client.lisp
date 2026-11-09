@@ -102,12 +102,14 @@
     env))
 
 (defmethod evaluate-at-compile-time ((client image-client) input environment)
-  (maclina.compile:eval (if (typep input 'cst:cst) (cst:raw input) input)
-                        (maclina-environment environment)))
+  (let ((kiln.cmd:*client* kiln.kernel::*runtime-macro-client*))
+    (maclina.compile:eval (if (typep input 'cst:cst) (cst:raw input) input)
+                          (maclina-environment environment))))
 
 (defmethod ir-local-macro-expander ((client image-client) name lambda-list body environment)
-  (maclina.compile:eval (ecclesia:parse-macro name lambda-list body)
-                        (maclina-environment (ir-evaluation-environment environment))))
+  (let ((kiln.cmd:*client* kiln.kernel::*runtime-macro-client*))
+    (maclina.compile:eval (ecclesia:parse-macro name lambda-list body)
+                          (maclina-environment (ir-evaluation-environment environment)))))
 
 ;;; Inline proclamations at compile time (DECLAIM) reach the front end
 ;;; through the kernel's PROCLAIM.

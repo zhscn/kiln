@@ -2,7 +2,7 @@
 ;;;; compiled by the image's front end and lower.lisp into a KIR module
 ;;;; whose literals are the image's objects, which kiln-cg, linked into the
 ;;;; runtime, compiles into memory (kiln_rt_jit). The compiler module's
-;;;; last file: from here on the kernel's COMPILE and EVAL (so LOAD) use
+;;;; native entry points: from here on the kernel's COMPILE and EVAL (so LOAD) use
 ;;;; it, not Maclina.
 
 (in-package #:kiln.compiler)

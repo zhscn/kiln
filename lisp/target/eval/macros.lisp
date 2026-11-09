@@ -18,7 +18,8 @@
 (dolist (entry *kiln-macros*)
   (setf (macro-function (car entry)) (cdr entry)))
 
-(setf kiln.cmd:*client* (make-instance 'kiln.macros-target:macro-client))
+(defvar *runtime-macro-client* (make-instance 'kiln.macros-target:macro-client))
+(setf kiln.cmd:*client* *runtime-macro-client*)
 
 ;;; DEFPACKAGE as at compile time (front.lisp).
 (defmacro defpackage (name &rest options)

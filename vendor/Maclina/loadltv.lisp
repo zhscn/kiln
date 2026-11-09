@@ -687,13 +687,12 @@ Did not initialize constants~{ #~d~}"
 
 (defmethod %load-instruction ((mnemonic (eql 'make-bytecode-module)) stream)
   (let* ((len (read-ub32 stream))
-         (bytecode (make-array len :element-type '(unsigned-byte 8)))
-         ;; literals set by setf-literals
-         (module (m:make-module m:*client* bytecode)))
+         (bytecode (make-array len :element-type '(unsigned-byte 8))))
     (dbgprint " (make-bytecode-module ~d)" len)
     (read-sequence bytecode stream)
     (dbgprint "  bytecode:~{ ~2,'0x~}" (coerce bytecode 'list))
-    (setf (next-constant) module)))
+    ;; Clients may copy or convert the bytecode while constructing a module.
+    (setf (next-constant) (m:make-module m:*client* bytecode))))
 
 (defmethod %load-instruction ((mnemonic (eql 'setf-literals)) stream)
   (let* ((mod (constant (read-index stream)))
@@ -860,10 +859,9 @@ If :ENVIRONMENT is provided, it must be a runtime environment. The FASL is loade
       (dbgprint "File reports ~d instructions" ninsts)
       (loop repeat ninsts
             do (load-instruction stream))
-      ;; CLHS is sort of written like LISTEN only works on character
-      ;; streams, but that would be a pointless restriction.
-      ;; Clasp and SBCL at least allow it on byte streams.
-      (when (listen stream)
+      ;; The container ends at EOF, including on binary streams whose LISTEN
+      ;; protocol is separate from character input.
+      (when (read-byte stream nil nil)
         (error "Bytecode continues beyond end of instructions"))
       (check-initialization)))
   t)

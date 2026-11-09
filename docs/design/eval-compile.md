@@ -1,4 +1,4 @@
-# 运行期的 `eval`、`compile` 和 `load`
+# 运行期求值、编译和文件加载
 
 运行期求值有两层：eval 模块的 Maclina 字节码，和 compiler 模块载入后的原生编译。两者产出的函数都是真正的函数，可以和 AOT 代码互相调用。
 
@@ -26,7 +26,7 @@
    - `define-compiler-macro` 登记展开函数后，返回定义的函数名作为唯一值，包括 `(setf name)`；编译器是否使用展开函数遵循其编译策略。
    - `define-setf-expander` 和 `defsetf` 在载入时生效，展开函数记在符号的 plist 上。运行期的 `get-setf-expansion` 依次查展开函数、宏，最后用 setf 函数。
 3. Trucler（base，以及 trucler-native 的 client 类）。
-4. Maclina：base、compile、vm-shared、vm-native。
+4. Maclina：base、compile、vm-shared、vm-native，以及对象图的 FASL 编码器和加载器。文件读取沿用 kiln 的 CST reader，序列化器通过 `fasl-protocol.lisp` 获取包名和可选的源码信息。
 5. `lisp/target/eval/evaluator.lisp`：
    - kiln 的 Trucler client 继承 `trucler-native:client`（Maclina 的 native VM 就是为这类 client 写的）。它描述的全局环境是运行中的 image：special 变量来自运行期的 `proclaim`（`defvar` 的展开在载入时调用它，把变量记在 plist 上），常量来自 `defconstant`，函数和宏查符号本身。
    - `macro-function` 和 `macroexpand` 收到 Maclina 的词法环境时，经 Trucler 查局部宏。
@@ -92,13 +92,38 @@ compiler 模块载入后，`eval` 也走原生编译（`native-eval`，挂在 `k
 
 `symbol-macrolet` 在字节码和原生前端都拒绝常量、全局特殊变量，以及对自身绑定的 `special` 声明；内层自由声明和新变量绑定仍可遮蔽外层 symbol macro。IR 语法错误属于 `program-error`，同时保留编译器的错误信息和源码位置。
 
+## 原生 `compile-file` 和 FASL
+
+compiler 模块提供 `compile-file`。文件沿用原生前端处理顶层形式，读入从调用者的
+`*package*` 开始，使用调用者的 features 和指定的 external format。
+`eval-when`、宏定义和声明按文件编译规则生效，普通顶层代码留到加载时运行。
+编译期间绑定 `*compile-file-pathname*` 和 `*compile-file-truename*`，并保存调用者的
+package 和 readtable 绑定。编译期字节码求值使用运行期宏 client，原生前端的词法
+环境仍由 image client 处理。
+
+每个处理后的顶层形式生成一个 image 模式的 KIR 模块。FASL 使用 Maclina 的二进制
+对象图容器保存 KIR 字符串、字面量和加载调用，加载时通过 Cranelift 生成机器码并
+执行模块入口。后续形式的字面量在前一个模块入口执行后重建，因此文件里的
+`defpackage` 可以先建立后续符号所需的 package。编译器的字面量保持对象共享关系，
+cons 和数组可以自引用；用户对象经 `make-load-form` 重建。
+
+`compile-file` 返回产物的 truename、是否有告警、是否有非 style 告警。`:verbose`
+和 `:print` 动态绑定对应变量，并控制标准输出上的编译信息。读取或编译失败时，
+函数报告诊断并返回 NIL、T、T；文件访问错误仍正常报告。输出在成功生成完整
+对象图后才打开写入。
+`load` 检查文件头来区分 FASL 和源文件，也接受显式的二进制 FASL 输入流。
+FASL 的 `:print` 信息报告已加载的原生顶层入口；源文件则打印求值结果。原生
+FASL 加载需要 compiler 模块及 Cranelift；保存的是 KIR，机器码在加载时生成。
+源文件加载仍按形式求值，按调用者指定的 external format 解码。
+
 ## 顶层编译缓存
 
 原生 `eval` 和 `load` 保留最近使用的顶层原生产物。每次重放宏展开、前端和降级，只在 KIR、literal 身份及依赖版本相同时复用机器码；命中后仍执行该顶层形式。缓存默认至多 64 项，可通过 `kiln.sys:*compilation-cache-limit*`、`clear-compilation-cache` 和 `compilation-cache-statistics` 管理。调试元数据按结构比较，程序 literal 保持身份。详细协议见 [specialization.md](specialization.md)。
 
 ## 已知限制
 
-- `compile-file` 和 FASL：只有 `compile`、`eval`、`load` 源文件。
+- `make-load-form` 的交叉创建与初始化依赖尚有排序限制；部分合法对象图仍报告循环创建依赖。
+- FASL 的通用浮点编码器只处理有限浮点数。
 - 代码回收：函数对象不再被引用后，代码和它的表也不会释放。
 - `compile` 的前端开销：每次都新建 session。
 - `compile` 编出的函数名是 `(lambda)`；`load` 逐个读取形式再求值，没有文件和位置。

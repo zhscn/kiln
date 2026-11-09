@@ -524,6 +524,11 @@ Under `#+kiln`:
 
 ## Maclina patches
 
+- The object writer canonicalizes an absent pathname host to NIL rather
+  than an empty host name. The loader fills bytecode before asking the
+  client to construct a module, allowing the client to convert or copy it.
+  Container termination checks read binary EOF directly.
+
 - CATCH transfers a thrown value to the value stack when its caller
   receives one value, while normal completion keeps its existing stack
   result. MULTIPLE-VALUE-CALL always pushes its function designator,

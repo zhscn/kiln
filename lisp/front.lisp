@@ -410,19 +410,25 @@ host's: an #+SBCL branch must not be read into kiln code).")
 
 (defvar *source-reader-client* (make-instance 'source-reader-client))
 
+(defvar *file-reader-package* nil)
+(defvar *file-reader-external-format* :default)
+(defvar *file-form-hook* nil)
+(defvar *file-compilation-p* nil)
+
 (defun map-file-csts (function path)
   "Reads the forms of PATH one at a time and calls FUNCTION on each CST
 before reading the next, so that IN-PACKAGE takes effect for the rest of
 the file. Reading starts in KILN-USER, with the target's features."
-  (with-open-file (in path)
-    (let ((*package* (find-package #-kiln '#:kiln-user #+kiln '#:common-lisp-user))
-          (*read-eval* t)
+  (with-open-file (in path :external-format *file-reader-external-format*)
+    (let ((*package* (or *file-reader-package* (find-package #-kiln '#:kiln-user #+kiln '#:common-lisp-user)))
+          (*read-eval* (if *file-compilation-p* *read-eval* t))
           (eclector.base:*client* *source-reader-client*))
       (loop with eof = (list nil)
             for cst = (let ((*features* *target-features*))
                         (eclector.concrete-syntax-tree:read in nil eof))
             until (eq cst eof)
-            do (funcall function cst)))))
+            do (when *file-form-hook* (funcall *file-form-hook* (cst:raw cst)))
+               (funcall function cst)))))
 
 ;;; Top-level form processing (CLHS 3.2.3.1)
 
@@ -620,7 +626,7 @@ module).")
                 `(setq *package* (,(find-package-function)
                                   ',(package-name *package*)))
                 nil))))
-          ;; DEFPACKAGE creates the package in the host, so that the rest
+          ;; Cross compilation creates the package in the host, so that the rest
           ;; of the sources can be read. Nothing is compiled: the run-time
           ;; package is built from the module's symbol table, which
           ;; mirrors the host package. A package that
@@ -629,10 +635,14 @@ module).")
           ;; symbols are in the module whichever host compiles it (on
           ;; kiln, every package of kiln's sources exists).
           (defpackage
-           (let ((name (renamed-package-name (second form))))
-             (pushnew (or (find-package name)
-                          (eval `(defpackage ,name ,@(cddr form))))
-                      *defined-packages*)))
+           (if *file-compilation-p*
+               (multiple-value-bind (expansion expandedp) (macroexpand-toplevel form)
+                 (unless expandedp (error "No DEFPACKAGE expander is available."))
+                 (process-toplevel expansion compile-time-too))
+               (let ((name (renamed-package-name (second form))))
+                 (pushnew (or (find-package name)
+                              (eval `(defpackage ,name ,@(cddr form))))
+                          *defined-packages*))))
           ((locally macrolet symbol-macrolet)
            (process-toplevel-body cst compile-time-too))
           (t

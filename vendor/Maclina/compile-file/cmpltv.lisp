@@ -717,7 +717,8 @@
    value
    (make-instance 'pathname-creator
      :prototype value
-     :host (ensure-constant (host-namestring value))
+     :host (ensure-constant (let ((host (host-namestring value)))
+                              (unless (equal host "") host)))
      :device (ensure-constant (pathname-device value))
      :directory (ensure-constant (pathname-directory value))
      :name (ensure-constant (pathname-name value))

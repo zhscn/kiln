@@ -466,6 +466,13 @@ SESSION must have compiled the kernel and CLOS."
                  "compile/parse-macro" "compile/unknown-reference-conditions"
                  "compile/compilation-unit" "compile/environment" "compile/compile"
                  "vm-shared" "vm-native"))
+       (mapcar (lambda (name)
+                 (merge-pathnames (format nil "~A.lisp" name) (maclina-directory)))
+               '("compile-file/package" "compile-file/preliminaries"))
+       (list (eval-file "fasl-protocol"))
+       (mapcar (lambda (name)
+                 (merge-pathnames (format nil "~A.lisp" name) (maclina-directory)))
+               '("compile-file/cmpltv" "compile-file/encode" "loadltv"))
        (list (eval-file "evaluator")
              (eval-file "files")
              (eval-file "modules")
@@ -508,7 +515,8 @@ those whose names are in EXCLUDE."
              '("abi" "kir" "ir/data" "lower" "values" "primitives" "structures" "front" "cross"
                "ir/environment" "ir/convert" "ir/analyze" "ir/eval" "ir/lower"
                "target/compiler/client" "target/compiler/session"
-               "target/compiler/dependencies" "target/compiler/cache" "target/compiler/native"))))
+               "target/compiler/dependencies" "target/compiler/cache" "target/compiler/native"
+               "target/compiler/files"))))
 
 (defun compile-compiler (output &key (session (kiln.compiler:make-session)))
   "Compiles the compiler module to OUTPUT, loaded after the front-end and

@@ -1,0 +1,32 @@
+(defclass fasl-box () ((value :initarg :value)))
+(defmethod make-load-form ((object fasl-box) &optional environment)
+  (make-load-form-saving-slots object :environment environment))
+(let* ((source "build/test/co-fasl-objects-source.lisp")
+       (output (compile-file-pathname source)))
+  (unwind-protect
+       (progn
+         (with-open-file (stream source :direction :output :if-exists :supersede)
+           (write-string "(in-package :cl-user)
+(defun fasl-box-literal ()
+  '#.(let ((box (make-instance 'fasl-box)))
+       (setf (slot-value box 'value) box)
+       box))
+(defun fasl-array-literal ()
+  '#.(let ((array (make-array '(2 2))))
+       (setf (row-major-aref array 0) array
+             (row-major-aref array 1) 'shared
+             (row-major-aref array 2) 3/7
+             (row-major-aref array 3) 1.25d0)
+       array))
+" stream))
+         (compile-file source :verbose nil :print nil)
+         (load output :verbose nil :print nil)
+         (let ((box (funcall 'fasl-box-literal))
+               (array (funcall 'fasl-array-literal)))
+           (print (list (typep box 'fasl-box) (eq box (slot-value box 'value))
+                        (eq box (funcall 'fasl-box-literal))))
+           (print (list (array-dimensions array) (eq array (row-major-aref array 0))
+                        (row-major-aref array 1) (row-major-aref array 2)
+                        (row-major-aref array 3)))))
+    (when (probe-file source) (delete-file source))
+    (when (probe-file output) (delete-file output))))
