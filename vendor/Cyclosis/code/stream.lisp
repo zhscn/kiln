@@ -292,7 +292,7 @@
   (check-type if-exists (member :error :new-version :rename :rename-and-delete
                                 :overwrite :append :supersede nil))
   (check-type if-does-not-exist (member :error :create nil))
-  (let ((path (translate-logical-pathname (merge-pathnames (pathname filespec)))))
+  (let ((path (merge-pathnames (pathname filespec))))
     (when (wild-pathname-p path)
       (error 'file-error :pathname path))
     (unless if-exists-p

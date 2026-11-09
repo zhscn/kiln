@@ -97,7 +97,11 @@ if [[ ! -f "$IMAGE" || "$KILN_COMPILER" -nt "$IMAGE" || "$0" -nt "$IMAGE" ]]; th
         (eval-mode (ansi-getenv "ANSI_EVAL"))
         (sandbox (ansi-getenv "ANSI_SANDBOX")))
     (when sandbox
-      (setf regression-test::*sandbox-path* (pathname sandbox)))
+      (setf regression-test::*sandbox-path* (pathname sandbox))
+      (let ((target (merge-pathnames "**/*.*" (pathname sandbox))))
+        (dolist (host '("CLTEST" "CLTESTROOT"))
+          (setf (logical-pathname-translations host)
+                (list (list "**;*.*.*" target))))))
     (unless (and eval-mode (string= eval-mode "native"))
       (setf kiln.kernel::*eval-function* #'hybrid-eval))
     (if group

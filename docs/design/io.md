@@ -39,7 +39,7 @@
 **pathname**（`pathnames.lisp`）是标准对象，它的类以内建类 `pathname`（或 `logical-pathname`）为超类，做法和 Regalia 的数组一样。
 
 - 物理 pathname 按 SBCL 在 Unix 上的规则解析：`~/` 是 `(:absolute :home)`，`..` 是 `:up`；`*` 和 `**` 是 `:wild` 和 `:wild-inferiors`，名字里带 `*` 的串是通配模式；以点开头的文件名没有类型；有名字时版本是 `:newest`。`..` 作为文件名时名字就是 `".."`（SBCL 解析成名字 `"."`、类型 `""`）。
-- 逻辑 pathname：`logical-pathname-translations` 登记 host，`translate-logical-pathname` 按第一条匹配的转换翻译，翻译到物理 pathname 时转成小写。
+- 逻辑 pathname 的设备是 `:unspecific`，省略目录时为 `(:absolute)`，显式 `:newest` 版本保留在 namestring 中。`open` 后流的 pathname 保留逻辑组件；文件系统调用使用翻译后的物理名字。`logical-pathname-translations` 登记 host，`translate-logical-pathname` 按第一条匹配的转换翻译，翻译到物理 pathname 时转成小写。
 - `pathname-match-p`、`translate-pathname` 支持 `:wild`、`:wild-inferiors` 和名字里的 `*`。
 - `equal` 和 `equalp` 按分量比较 pathname（kernel 的 `equal` 对标准实例调用 `*instance-equal*`）。
 - 文件系统函数：`probe-file`、`truename`、`file-write-date`、`delete-file`、`rename-file`、`ensure-directories-exist`、`directory`、`user-homedir-pathname`。`*default-pathname-defaults*` 在启动时（包括从快照启动时）设为当前目录。

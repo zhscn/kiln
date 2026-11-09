@@ -1,0 +1,43 @@
+(defvar *pathname-contract-stream* nil)
+(let ((*pathname-contract-stream* (make-string-output-stream)))
+  (let ((stream (make-synonym-stream '*pathname-contract-stream*)))
+    (dolist (function (list #'pathname #'pathname-host #'pathname-device
+                            #'pathname-directory #'pathname-name #'pathname-type
+                            #'pathname-version
+                            (lambda (x) (pathname-match-p x ""))
+                            (lambda (x) (pathname-match-p "" x))))
+      (print (handler-case (funcall function stream)
+               (type-error (condition)
+                 (list (eq stream (type-error-datum condition))
+                       (typep stream (type-error-expected-type condition)))))))))
+(let ((path (make-pathname :directory '(:relative) :defaults "")))
+  (print (pathname-directory path)))
+(let ((path (make-pathname :name "" :defaults "")))
+  (print (handler-case
+             (equal path (read-from-string (write-to-string path :readably t)))
+           (print-not-readable () t))))
+(print (pathname-match-p (make-pathname :directory '(:relative :wild))
+                        (make-pathname :directory '(:relative))))
+(defvar *pathname-contract-root* (merge-pathnames "build/test/pathname-contracts/"))
+(ensure-directories-exist *pathname-contract-root*)
+(setf (logical-pathname-translations "KILNCONTRACT")
+      `(("**;*.*.*" ,(merge-pathnames "**/*.*" *pathname-contract-root*))))
+(dolist (string '("KILNCONTRACT:" "KILNCONTRACT:foo"
+                   "KILNCONTRACT:foo.txt.newest" "KILNCONTRACT:;foo.txt"))
+  (let ((path (pathname string)))
+    (print (list (pathname-device path) (pathname-directory path)
+                 (pathname-version path) (namestring path)))))
+(print (handler-case (logical-pathname "NO-HOST.TXT")
+         (type-error () :rejected)))
+(let ((logical (logical-pathname "KILNCONTRACT:SAMPLE.TXT.NEWEST"))
+      (physical (merge-pathnames "sample.txt" *pathname-contract-root*)))
+  (unwind-protect
+       (progn
+         (with-open-file (stream logical :direction :output :if-exists :supersede)
+           (print (equal logical (logical-pathname stream)))
+           (write-string "content" stream))
+         (print (equal (truename physical) (probe-file logical)))
+         (print (equal (truename logical) (probe-file physical)))
+         (with-open-file (stream logical)
+           (print (equal (read-line stream) "content"))))
+    (when (probe-file physical) (delete-file physical))))

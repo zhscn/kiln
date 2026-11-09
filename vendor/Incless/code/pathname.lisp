@@ -2,7 +2,7 @@
 
 (defun print-pathname (client path stream)
   (unless (circle-detection-p client stream)
-    (flet ((print-guts ()
+    (flet ((print-guts (&optional quote-directory)
              (write-object client :host stream)
              (write-char #\Space stream)
              (write-object client (pathname-host path) stream)
@@ -13,6 +13,7 @@
              (write-char #\Space stream)
              (write-object client :directory stream)
              (write-char #\Space stream)
+             (when quote-directory (write-char #\' stream))
              (write-object client (pathname-directory path) stream)
              (write-char #\Space stream)
              (write-object client :name stream)
@@ -29,8 +30,10 @@
       (let ((namestring (ignore-errors (namestring path))))
         (cond ((and namestring
                     #-ccl (or (not *print-readably*)
-                              (not (and (null (pathname-name path))
-                                        (pathname-type path)))))
+                              (and (not (and (null (pathname-name path))
+                                             (pathname-type path)))
+                                   (ignore-errors
+                                     (equal path (parse-namestring namestring))))))
                (when (or *print-escape* *print-readably*)
                  (write-string "#P" stream))
                (write-object client (namestring path) stream))
@@ -38,7 +41,7 @@
                (write-string "#.(" stream)
                (write-object client 'make-pathname stream)
                (write-char #\Space stream)
-               (print-guts)
+               (print-guts t)
                (write-char #\) stream))
               (t
                (write-unreadable-object client path stream t nil #'print-guts)))))))

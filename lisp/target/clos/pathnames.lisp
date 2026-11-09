@@ -6,8 +6,8 @@
 ;;;; A pathname is a standard object of a class with the built-in class
 ;;;; PATHNAME (or LOGICAL-PATHNAME) as a superclass, as Regalia's arrays.
 ;;;; Components: the host is NIL for physical pathnames and the host's
-;;;; name for logical ones; the device is always NIL. A name or type with a
-;;;; * in it is a wildcard pattern; a directory is a list (:ABSOLUTE or
+;;;; name for logical ones. The device is NIL for physical pathnames and
+;;;; :UNSPECIFIC for logical ones. A name or type with a * in it is a wildcard pattern; a directory is a list (:ABSOLUTE or
 ;;;; :RELATIVE, then strings, :WILD, :WILD-INFERIORS, :UP, :BACK or :HOME).
 
 (in-package #:kiln.kernel)
@@ -29,7 +29,7 @@
 
 (defun make-pathname-object (logicalp host device directory name type version)
   (make-instance (if logicalp 'logical-pathname-object 'physical-pathname)
-                 :host host :device device :directory directory
+                 :host host :device (if logicalp :unspecific device) :directory directory
                  :name name :type type :version version))
 
 (defun logical-pathname-p (object)
@@ -210,13 +210,14 @@ one: a string all in one case gets the other."
          (start (if colon (+ colon 1) start))
          (semicolon (position #\; string :start start :end end :from-end t))
          (directory
-           (when semicolon
+           (if semicolon
              (let ((relative (char= (char string start) #\;)))
                (cons (if relative :relative :absolute)
                      (mapcar (lambda (word)
                                (if (string= word "..") :back (logical-word word)))
                              (remove "" (split-string string #\; start semicolon)
-                                     :test #'string=))))))
+                                     :test #'string=))))
+             '(:absolute)))
          (file-start (if semicolon (+ semicolon 1) start))
          (parts (if (< file-start end) (split-string string #\. file-start end) '()))
          (name (and parts (logical-word (first parts))))
@@ -253,9 +254,15 @@ one: a string all in one case gets the other."
 (defmethod pathname ((pathspec pathname)) pathspec)
 (defmethod pathname ((pathspec string)) (values (parse-namestring pathspec)))
 (defmethod pathname ((pathspec synonym-stream))
-  (pathname (symbol-value (synonym-stream-symbol pathspec))))
+  (handler-case (pathname (symbol-value (synonym-stream-symbol pathspec)))
+    (type-error (condition)
+      (error 'type-error :datum pathspec
+             :expected-type (type-error-expected-type condition)))))
 
 (defun logical-pathname (pathspec)
+  (when (and (stringp pathspec)
+             (not (logical-namestring-p pathspec 0 (length pathspec))))
+    (error 'type-error :datum pathspec :expected-type 'logical-pathname))
   (let ((p (if (stringp pathspec)
                (parse-logical-namestring pathspec 0 (length pathspec) nil)
                (pathname pathspec))))
@@ -298,12 +305,12 @@ one: a string all in one case gets the other."
       (when (%type p)
         (write-char #\. s)
         (write-string (component-string (%type p)) s))
-      (when (and (logical-pathname-p p) (%type p) (%version p)
-                 (not (eq (%version p) :newest)))
+      (when (and (logical-pathname-p p) (%type p) (%version p))
         (write-char #\. s)
-        (if (eq (%version p) :wild)
-            (write-char #\* s)
-            (format s "~d" (%version p)))))))
+        (case (%version p)
+          (:wild (write-char #\* s))
+          (:newest (write-string "NEWEST" s))
+          (t (format s "~d" (%version p))))))))
 
 (defun host-namestring (pathname)
   (let ((p (pathname pathname)))
@@ -336,7 +343,7 @@ one: a string all in one case gets the other."
 ;;; Construction and merging
 
 (defun canonical-directory (directory)
-  (cond ((or (null directory) (equal directory '(:relative))) nil)
+  (cond ((null directory) nil)
         ((stringp directory) (list :absolute directory))
         ((eq directory :wild) (list :absolute :wild-inferiors))
         (t directory)))

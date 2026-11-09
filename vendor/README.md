@@ -332,6 +332,10 @@ Under `#+kiln` (simple vectors and strings stay native):
 
 ## Cyclosis patches
 
+- OPEN keeps the merged pathname as the stream's pathname, including
+  logical components. The kiln file client translates it when accessing
+  the physical file system.
+
 Under `#+kiln`:
 
 - The package does not shadow the names whose definitions in Cyclosis are
@@ -358,6 +362,10 @@ Under `#+kiln`:
   `cl:truename` in `lisp/target/clos/pathnames.lisp`).
 
 ## Incless patches
+
+- Readable pathname printing verifies that the namestring preserves
+  components. Constructor syntax quotes the directory list when a
+  namestring cannot represent those components.
 
 - `define-interface` defines `kiln.kernel::%print-unreadable-object` under
   `#+kiln` so `cl:print-unreadable-object` can be defined early in
