@@ -122,7 +122,8 @@
                      (eq (car (ir-raw (first forms))) 'declare))
           do (dolist (spec (rest (ir-parts (pop forms))))
                (let ((parts (mapcar #'ir-raw (ir-parts spec))))
-                 (unless (and parts (symbolp (car parts)))
+                 (unless (and parts (or (symbolp (car parts)) (consp (car parts))
+                                        (typep (car parts) 'class)))
                    (ir-error "Malformed declaration ~S" (ir-raw spec)))
                  (push parts declarations))))
     (values forms (nreverse declarations))))
@@ -155,10 +156,17 @@
              (when (ir-var-p var) (setf (ir-var-type var) (second spec))))))
         (otherwise
          ;; A type name in declaration position is shorthand for TYPE.
-         (unless (member (car spec) '(special optimize inline notinline ftype declaration))
-           (dolist (name (cdr spec))
-             (let ((var (ir-lookup env name :var)))
-               (when (ir-var-p var) (setf (ir-var-type var) (car spec)))))))))
+         (unless (or (member (car spec) '(special optimize inline notinline ftype declaration))
+                     (member (car spec)
+                             (trucler:declarations (trucler:describe-declarations *client* env))))
+           (cond
+             #+kiln
+             ((not (kiln.kernel::type-specifier-p (car spec)))
+              (warn 'unknown-declaration-warning :specifier spec))
+             (t
+              (dolist (name (cdr spec))
+                (let ((var (ir-lookup env name :var)))
+                  (when (ir-var-p var) (setf (ir-var-type var) (car spec)))))))))))
     env))
 
 (defun ir-evaluation-environment (environment)

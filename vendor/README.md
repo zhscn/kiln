@@ -434,6 +434,10 @@ Under `#+kiln`:
 
 ## Maclina patches
 
+- Unrecognized declaration identifiers signal style warnings. Global
+  `declaration` proclamations are available through Trucler, so custom
+  declarations are recognized without becoming type declarations.
+
 - The native VM captures the values of a native `throw` caught by a
   bytecode `catch`, including when cleanup code calls back into the VM.
 

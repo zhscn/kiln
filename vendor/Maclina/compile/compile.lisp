@@ -652,6 +652,14 @@
                 (trucler:describe-declarations client env))))
     (if (member id known)
         (values nil nil decl)
+        #+kiln
+        (if (kiln.kernel::type-specifier-p id)
+            (process-variable-declaration (cdr decl) 'cl:type id
+                                          :specifier decl :source source)
+            (progn
+              (warn 'unknown-declaration :specifier decl :source source)
+              (values nil nil nil)))
+        #-kiln
         ;; must be a type (CLHS 3.3.3.1)
         ;; FIXME: see if it's actually defined as a type.
         (process-variable-declaration (cdr decl) 'cl:type id

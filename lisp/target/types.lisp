@@ -180,6 +180,7 @@ any longer."
 (register-assumption-watcher :type #'type-assumption-changed)
 
 (defun kiln.sys::%deftype (name expander)
+  (check-type-name name)
   (setf (get name 'type-expander) expander)
   ;; A DEFTYPE of the same name changes what every use of it means.
   (change-assumption :type name)

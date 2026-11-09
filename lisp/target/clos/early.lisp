@@ -103,6 +103,7 @@ list, slots), the slots unbound."
 
 (defun (setf find-class) (class name &optional errorp environment)
   (declare (ignore errorp environment))
+  (when class (kiln.kernel::check-type-name name))
   ;; The name maps to CLASS (or to another class than before): a type fact.
   (let ((old (get name '%class)))
     (when (and old (not (eq old class)))
@@ -572,6 +573,7 @@ superclasses and metaclasses come first or are built already."
     (desc-class d)))
 
 (defun kiln.sys:%defclass (name &rest initargs)
+  (kiln.kernel::check-type-name name)
   (cond (*switched-p*
          (apply #'mop-ensure-class name initargs))
         (*braid-built-p*

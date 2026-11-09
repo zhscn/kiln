@@ -68,6 +68,12 @@ time only.")
              (format s "undefined function~P: ~{~S~^, ~}"
                      (length (undefined-function-names c))
                      (undefined-function-names c)))))
+(define-condition unknown-declaration-warning (style-warning)
+  ((specifier :initarg :specifier :reader unknown-declaration-specifier))
+  (:report (lambda (condition stream)
+             (format stream "Unrecognized declaration ~S"
+                     (unknown-declaration-specifier condition)))))
+
 (defvar *environment*)                  ; Trucler environment
 (defvar *structures*)                   ; DEFSTRUCT layouts (structures.lisp)
 

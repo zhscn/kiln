@@ -193,3 +193,9 @@
   (if (proper-list-p body)
       (apply #'alexandria:parse-body body :allow-other-keys t keys)
       (error 'improper-body :body body :source source)))
+
+#+kiln
+(define-condition unknown-declaration (compiler-program-style-warning)
+  ((%specifier :initarg :specifier :reader specifier))
+  (:report (lambda (condition stream)
+             (format stream "Unrecognized declaration ~S" (specifier condition)))))

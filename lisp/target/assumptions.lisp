@@ -66,23 +66,55 @@
     (when (eq (car l) indicator)
       (return t))))
 
-;;; Proclamations at run time: SPECIAL is recorded on the plist, for the
-;;; evaluator (the eval module). The others take effect at compile time
-;;; only: the compiler on kiln sees them through *PROCLAIM-HOOK*
-;;; (lisp/target/compiler/client.lisp).
+(defun type-name-p (name)
+  (and (symbolp name)
+       (or (member name '(nil t null atom cons list symbol keyword character function
+                         compiled-function string base-string simple-string simple-base-string
+                         vector simple-vector bit-vector simple-bit-vector array simple-array
+                         sequence number real rational integer fixnum bignum ratio float
+                         single-float double-float short-float long-float bit boolean
+                         standard-char base-char extended-char signed-byte unsigned-byte mod))
+           (get name 'type-expander)
+           (and (fboundp 'find-class) (find-class name nil)))))
+
+(defun type-specifier-p (specifier)
+  (cond ((symbolp specifier) (type-name-p specifier))
+        ((consp specifier)
+         (or (member (car specifier) '(and or not eql member satisfies))
+             (type-name-p (car specifier))))
+        (t (and (fboundp 'find-class) (find-class 'class nil)
+                (typep specifier 'class)))))
+
+(defun check-type-name (name)
+  (when (get name '%declaration)
+    (error "~S is a declaration name and cannot name a type." name))
+  name)
+
+;;; Runtime proclamations record special bindings and custom declaration
+;;; names. The compiler hook processes compilation-specific information.
 (defun proclaim (declaration)
-  (declare (special *proclaim-hook*))
+  (declare (special *proclaim-hook* *declaration-names*))
   (when (and (consp declaration) (eq (car declaration) 'special))
     (dolist (name (cdr declaration))
       (when (%has-property name '%symbol-macro)
         (error 'program-error))
       (%put name '%special t)))
+  (when (and (consp declaration) (eq (car declaration) 'declaration))
+    (dolist (name (cdr declaration))
+      (unless (symbolp name)
+        (error 'type-error :datum name :expected-type 'symbol))
+      (when (type-name-p name)
+        (error "~S names a type and cannot name a declaration." name))
+      (%put name '%declaration t)
+      (unless (member name *declaration-names*)
+        (push name *declaration-names*))))
   (when (and (boundp '*proclaim-hook*) *proclaim-hook*)
     (funcall *proclaim-hook* declaration))
   nil)
 
 ;;; (The first DEFVAR: its DECLAIM calls PROCLAIM, which is defined above.)
 (defvar *proclaim-hook* nil)
+(defvar *declaration-names* nil)
 
 ;;; The redefinition hook: the compiler module's dependency tracking
 ;;; (lisp/target/compiler/dependencies.lisp), NIL before it is loaded.

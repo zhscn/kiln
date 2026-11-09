@@ -52,7 +52,7 @@
   nil)
 
 (defmethod trucler:describe-declarations ((client client) (env null))
-  (make-instance 'trucler:declarations-description :declarations '()))
+  (make-instance 'trucler:declarations-description :declarations kiln.kernel::*declaration-names*))
 
 ;;; The macro functions of lexical environments, for MACRO-FUNCTION and
 ;;; MACROEXPAND with an environment (the kernel). Environments are Trucler

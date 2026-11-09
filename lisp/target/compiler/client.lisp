@@ -70,7 +70,7 @@
 
 (defmethod trucler:describe-declarations (client (environment run-time-environment))
   (declare (ignore client))
-  (make-instance 'trucler:declarations-description :declarations '()))
+  (make-instance 'trucler:declarations-description :declarations kiln.kernel::*declaration-names*))
 
 ;;; As Clostrum's environments with no OPTIMIZE proclamation (the host's).
 (defmethod trucler:describe-optimize (client (environment run-time-environment))
