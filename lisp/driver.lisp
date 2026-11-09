@@ -474,6 +474,7 @@ SESSION must have compiled the kernel and CLOS."
                  (merge-pathnames (format nil "~A.lisp" name) (maclina-directory)))
                '("compile-file/cmpltv" "compile-file/encode" "loadltv"))
        (list (eval-file "evaluator")
+             (eval-file "disassemble")
              (eval-file "files")
              (eval-file "modules")
              (eval-file "compilation-unit")

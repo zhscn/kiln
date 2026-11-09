@@ -242,3 +242,86 @@ unsafe fn list_frames(ctx: &Context, start: usize, vector: u64) -> u64 {
         }
     }
 }
+
+/// Disassembles a registered function entry. Code records live as long as the
+/// loaded code; no Lisp allocation or safepoint occurs while reading it.
+///
+/// # Safety
+/// `function` must be a valid, rooted Lisp object.
+pub unsafe fn disassemble(function: u64) -> Option<String> {
+    let mut current = function;
+    for _ in 0..32 {
+        if !object::is_general(current) {
+            return None;
+        }
+        let address = object::untag(current);
+        let kind = unsafe { *(address as *const u64) } & object::KIND_MASK;
+        if kind == object::KIND_FUNCALLABLE_INSTANCE {
+            current = unsafe { *((address + 24) as *const u64) };
+            continue;
+        }
+        if kind != object::KIND_FUNCTION {
+            return None;
+        }
+        let entry = unsafe { *((address + 8) as *const usize) };
+        let record = lookup(entry.checked_add(1)?)?;
+        if record.start != entry {
+            return None;
+        }
+        let length = usize::try_from(record.len).ok()?;
+        if length > isize::MAX as usize {
+            return None;
+        }
+        let code = unsafe { std::slice::from_raw_parts(entry as *const u8, length) };
+        return Some(disassemble_bytes(code, entry as u64));
+    }
+    None
+}
+
+fn disassemble_bytes(code: &[u8], address: u64) -> String {
+    use iced_x86::{Decoder, DecoderOptions, Formatter, IntelFormatter};
+    use std::fmt::Write;
+    let mut decoder = Decoder::with_ip(64, code, address, DecoderOptions::NONE);
+    let mut formatter = IntelFormatter::new();
+    let mut output = String::new();
+    let mut instruction_text = String::new();
+    while decoder.can_decode() {
+        let instruction = decoder.decode();
+        instruction_text.clear();
+        formatter.format(&instruction, &mut instruction_text);
+        let offset = (instruction.ip() - address) as usize;
+        let _ = write!(output, "{:016X}  ", instruction.ip());
+        for byte in &code[offset..offset + instruction.len()] {
+            let _ = write!(output, "{byte:02X}");
+        }
+        let _ = writeln!(output, "  {instruction_text}");
+    }
+    output
+}
+
+#[cfg(test)]
+mod disassembly_tests {
+    use super::*;
+
+    #[test]
+    fn rejects_unregistered_entries_and_callable_cycles() {
+        let function = [object::KIND_FUNCTION, 0u64];
+        let tagged = function.as_ptr() as u64 | object::TAG_GENERAL;
+        assert!(unsafe { disassemble(tagged) }.is_none());
+        let mut callable = [object::KIND_FUNCALLABLE_INSTANCE, 0, 0, 0];
+        let tagged = callable.as_ptr() as u64 | object::TAG_GENERAL;
+        callable[3] = tagged;
+        let tagged = std::hint::black_box(&callable).as_ptr() as u64 | object::TAG_GENERAL;
+        assert!(unsafe { disassemble(tagged) }.is_none());
+    }
+
+    #[test]
+    fn decodes_instruction_boundaries_and_addresses() {
+        let text = disassemble_bytes(&[0x55, 0x48, 0x89, 0xe5, 0xc3], 0x1000);
+        assert!(text.contains("0000000000001000  55  push rbp"));
+        assert!(text.contains("0000000000001001  4889E5  mov rbp,rsp"));
+        assert!(text.contains("0000000000001004  C3  ret"));
+        assert_eq!(text.lines().count(), 3);
+        assert!(!disassemble_bytes(&[0x0f], 0x2000).is_empty());
+    }
+}

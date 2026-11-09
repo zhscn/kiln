@@ -581,6 +581,10 @@ pub unsafe extern "C" fn kiln_rt_sys(_ctx: *mut Context, op: u64, a: u64, b: u64
                 Err(error) => -i64::from(error),
             },
         },
+        23 => match unsafe { crate::debug::disassemble(a) } {
+            Some(text) => unsafe { store_octets(b, text.as_bytes()) },
+            None => -(libc::ENOENT as i64),
+        },
         22 => crate::gc::heap_statistic(fixnum_value(a)).map_or(einval, |value| value as i64),
         _ => einval,
     };
