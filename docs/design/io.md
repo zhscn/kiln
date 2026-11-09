@@ -71,7 +71,7 @@ Incless 定义 `write`、`prin1`、`princ`、`print`、`print-object`、`print-u
 
 - 依赖：Quaviver（替身）、nontrivial-gray-streams（`ngray`）、Acclimation（English）、Inravina。
 - 补丁：
-  - `formatter` 展开成在运行期解释控制串的函数，返回 NIL 而不是剩余参数，因为 Invistra 的格式编译器是目标端代码，宏展开时不可用；
+  - `formatter` 在运行期解析控制串并创建解释执行的函数，返回未消费的参数；`~^` 提前退出后仍从当前参数游标取得返回值。Invistra 的格式编译器是目标端代码，宏展开时不可用；
   - 宏展开要用的 `unique-name` 在编译期也定义；
   - 浮点的无穷和 NaN 通过 `float-triple` 判断；
   - 输出到带 fill pointer 的字符串时，先在它上面开一个字符串输出流；

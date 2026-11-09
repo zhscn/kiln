@@ -292,6 +292,19 @@
       (go-to-argument (- (length (apply control
                                         *format-output* (pop-remaining-arguments)))))))
 
+#+kiln
+(defun make-interpreted-formatter (client control)
+  (unless (stringp control)
+    (error 'type-error :datum control :expected-type 'string))
+  (let ((items (parse-control-string client control)))
+    (lambda (stream &rest arguments)
+      (let ((*format-output* stream))
+        (with-arguments (client arguments)
+          ;; An escape leaves the cursor available for the result.
+          (with-remaining-arguments ()
+            (interpret-items client items))
+          (pop-remaining-arguments))))))
+
 (defun format-with-client (client destination control &rest args)
   ;; kiln: output to a string with a fill pointer goes through a string
   ;; output stream on it (upstream uses the string as the stream).

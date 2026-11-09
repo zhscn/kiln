@@ -322,7 +322,8 @@ Under `#+kiln`:
 
 - `formatter` expands into a function that interprets the control string
   (the format compiler is target code, not available when macros are
-  expanded); it returns NIL instead of the unused arguments.
+  expanded). It parses the control string when creating the function and
+  returns the unused arguments, including after an escape directive.
 - `unique-name` is defined at compile time too (macro expanders call it).
 - Infinities and NaNs are recognized through `quaviver:float-triple`.
 - Output to a string with a fill pointer goes through a string output
