@@ -2,6 +2,6 @@
 
 (defmethod reinitialize-instance :before
     ((slot-definition slot-definition)
-     &key &allow-other-keys)
+     &key)
   (error 'slot-definition-can-not-be-reininitialized
          :slot-definition slot-definition))

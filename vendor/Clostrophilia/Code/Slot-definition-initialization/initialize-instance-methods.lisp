@@ -18,8 +18,7 @@
        (initargs '())
        (readers '() readers-p)
        (writers '() writers-p)
-       (documentation nil)
-     &allow-other-keys)
+       (documentation nil))
   (unless name-p
     (error 'slot-definition-name-must-be-supplied))
   (unless (symbolp name)
@@ -76,8 +75,7 @@
        (type t)
        (allocation :instance)
        (initargs '())
-       (documentation nil)
-     &allow-other-keys)
+       (documentation nil))
   (apply #'call-next-method
          slot-definition
          :initform initform
@@ -93,8 +91,7 @@
      &rest keyword-arguments
      &key
        (readers '())
-       (writers '())
-     &allow-other-keys)
+       (writers '()))
   (apply #'call-next-method
          slot-definition
          :readers readers

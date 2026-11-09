@@ -4,8 +4,7 @@
     ((class class)
      &rest initargs
      &key
-       (direct-superclasses '() direct-superclasses-p)
-     &allow-other-keys)
+       (direct-superclasses '() direct-superclasses-p))
   (let ((*existing-superclasses* (class-direct-superclasses class)))
     (if direct-superclasses-p
         (if (null direct-superclasses)

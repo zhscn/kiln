@@ -331,7 +331,7 @@
    (list (kiln-clos-file "loop"))
    *alexandria-files*
    *eclector-files*
-   (list (kiln-clos-file "reader")))
+   (list (kiln-clos-file "reader") (kiln-clos-file "finish")))
   "Sources of the CLOS module, in load order.")
 
 (defun write-module (module output)

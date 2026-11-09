@@ -50,8 +50,7 @@
        (direct-default-initargs '())
        (direct-slots '())
        (direct-superclasses '())
-       (documentation nil)
-     &allow-other-keys)
+       (documentation nil))
   (check-direct-default-initargs direct-default-initargs)
   (check-superclass-list class direct-superclasses)
   (unless (or (null documentation)
@@ -78,8 +77,7 @@
      (slot-names t)
      &rest initargs
      &key
-       (direct-slots nil direct-slots-p)
-     &allow-other-keys)
+       (direct-slots nil direct-slots-p))
   ;; kiln: reinitializing other options preserves the direct slots.
   (if (not direct-slots-p)
       (call-next-method)
@@ -98,8 +96,7 @@
      (slot-names t)
      &key
        direct-superclasses
-       direct-slots
-     &allow-other-keys)
+       direct-slots)
   (let* ((old *existing-superclasses*)
          (obsolete (set-difference old direct-superclasses))
          (new (set-difference direct-superclasses old)))

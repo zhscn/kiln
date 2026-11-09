@@ -19,8 +19,7 @@
        (direct-default-initargs '())
        (direct-slots '())
        (direct-superclasses '())
-       (documentation nil)
-     &allow-other-keys)
+       (documentation nil))
   (let ((defaulted-direct-superclasses
           (if (null direct-superclasses)
               (default-superclasses class)
@@ -59,7 +58,7 @@
 (defmethod initialize-instance :after
     ((class built-in-class)
      &rest initargs
-     &key &allow-other-keys)
+     &key)
   (declare (ignore initargs))
   (setf (unique-number class) (new-unique-number))
   (setf (precedence-list class)

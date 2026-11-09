@@ -77,14 +77,66 @@
                   (svref cache index) number))
           fast-p)))))
 
+(define-condition invalid-initialization-arguments (program-error)
+  ((%class :initarg :class :reader invalid-initargs-class)
+   (%initargs :initarg :initargs :reader invalid-initargs))
+  (:report (lambda (condition stream)
+             (format stream "Invalid initialization arguments ~S for class ~S."
+                     (invalid-initargs condition)
+                     (class-name (invalid-initargs-class condition))))))
+
+(defun check-initarg-shape (class initargs)
+  (unless (evenp (length initargs))
+    (error 'invalid-initialization-arguments :class class :initargs initargs)))
+
+(defun initarg-key (name)
+  (if (keywordp name) (symbol-name name) name))
+
+(defvar *valid-initargs-cache* (kiln.kernel::make-simple-vector (* 4 256) nil))
+
+(defun valid-initialization-arguments (class)
+  (let* ((number (%slot class '%unique-number))
+         (version (construction-version))
+         (index (* 4 (kiln.sys:%primop :fixnum-logand number 255)))
+         (cache *valid-initargs-cache*))
+    (when (and (eql number (svref cache index))
+               (eql version (svref cache (+ index 1))))
+      (return-from valid-initialization-arguments
+        (values (svref cache (+ index 2)) (svref cache (+ index 3)))))
+    (let ((keys '()) (allow-other-keys nil))
+      (dolist (slot (class-slots class))
+        (dolist (key (slot-definition-initargs slot))
+          (pushnew (initarg-key key) keys :test #'equal)))
+      (dolist (methods (construction-methods class (class-prototype class)))
+        (dolist (method methods)
+          (multiple-value-bind (required optional restp keyp method-keys allowp)
+              (lambda-list-protocol (method-lambda-list method))
+            (declare (ignore required optional restp keyp))
+            (when allowp (setf allow-other-keys t))
+            (dolist (key method-keys) (pushnew key keys :test #'equal)))))
+      (when (and (eql number (%slot class '%unique-number))
+                 (eql version (construction-version)))
+        (setf (svref cache index) nil
+              (svref cache (+ index 1)) version
+              (svref cache (+ index 2)) keys
+              (svref cache (+ index 3)) allow-other-keys
+              (svref cache index) number))
+      (values keys allow-other-keys))))
+
+(defun check-initialization-arguments (class initargs)
+  (check-initarg-shape class initargs)
+  (unless (getf initargs :allow-other-keys)
+    (multiple-value-bind (keys allow-other-keys) (valid-initialization-arguments class)
+      (unless allow-other-keys
+        (loop for (key nil) on initargs by #'cddr
+              unless (or (eq key :allow-other-keys) (member (initarg-key key) keys :test #'equal))
+                do (error 'invalid-initialization-arguments :class class :initargs initargs))))))
+
 (defun construct-instance (class initargs)
   "What MAKE-INSTANCE does for a class with FAST-CONSTRUCTION-P."
-  (let ((defaults (%slot class '%default-initargs)))
-    (when defaults
-      (loop with default = '(nil)
-            for (name nil thunk) in defaults
-            do (when (eq (getf initargs name default) default)
-                 (setf initargs (append initargs (list name (funcall thunk))))))))
+  (when *check-initialization-arguments* (check-initarg-shape class initargs))
+  (setf initargs (default-instance-initargs class initargs))
+  (when *check-initialization-arguments* (check-initialization-arguments class initargs))
   (let ((instance (allocate-general-instance class (+ (%slot class '%instance-size) 2))))
     (setf (slot-value-using-location+1 instance -2) (%slot class '%unique-number)
           (slot-value-using-location+1 instance -1) (%slot class '%effective-slots))

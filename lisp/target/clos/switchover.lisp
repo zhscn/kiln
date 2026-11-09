@@ -18,15 +18,29 @@
 
 ;;; The MOP versions of the entry points.
 
+(defvar *check-initialization-arguments* nil)
+
+(defun default-instance-initargs (class initargs)
+  (let ((defaults (class-default-initargs class)))
+    (when defaults
+      (loop with absent = (list nil)
+            for (name nil thunk) in defaults
+            do (when (eq (getf initargs name absent) absent)
+                 (setf initargs (append initargs (list name (funcall thunk))))))))
+  initargs)
+
 (defun mop-make-instance (class &rest initargs)
   (when (symbolp class)
     (setf class (find-class class)))
+  (when *check-initialization-arguments* (check-initarg-shape class initargs))
   ;; The common case without the generic protocol (constructors.lisp).
   (when (and (fboundp 'cached-fast-construction-p) (cached-fast-construction-p class))
     (return-from mop-make-instance (construct-instance class initargs)))
-  (multiple-value-bind (instance defaulted-initargs)
-      (apply #'allocate-instance-using-class class initargs)
-    (apply #'initialize-instance instance defaulted-initargs)
+  (unless (class-finalized-p class) (finalize-inheritance class))
+  (setf initargs (default-instance-initargs class initargs))
+  (when *check-initialization-arguments* (check-initialization-arguments class initargs))
+  (let ((instance (apply #'allocate-instance class initargs)))
+    (apply #'initialize-instance instance initargs)
     instance))
 
 (defun remove-keys (plist keys)

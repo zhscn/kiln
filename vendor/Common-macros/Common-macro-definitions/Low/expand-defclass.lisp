@@ -168,9 +168,9 @@
               (add (process-documentation ht direct-slot-spec))
               (add (process-allocation ht direct-slot-spec))
               (add (process-type ht direct-slot-spec))
-              ;; Add remaining options without checking.
+              ;; Extra options are data; singleton values are passed directly.
               (maphash (lambda (name value)
-                         (add (list name (reverse value))))
+                         (add (list `',name `',(if (cdr value) value (car value)))))
                        ht))
             `(list ,@result))))))
 
@@ -268,7 +268,7 @@
                       (append result `(:metaclass ',(cadr option)))))
                (t
                 (setf result
-                      (append result `(,(car option) ,(cdr option)))))))
+                      (append result `(',(car option) ',(cdr option)))))))
     result))
 
 (defun expand-defclass

@@ -28,6 +28,10 @@ shows exactly what kiln changed. Changes are not sent upstream for now.
 
 ## Clostrophilia patches
 
+- Standard initialization methods declare the keys they accept, rather
+  than allowing every initarg. Kiln validates slot and applicable-method
+  initargs after bootstrap, including constructor fast paths.
+
 - `add-method` checks lambda-list congruence before changing either object
   and returns its generic function. Required and optional counts, rest/key
   acceptance and keyword names follow SBCL, including generic functions
@@ -361,6 +365,10 @@ Under `#+kiln`:
   not).
 
 ## Common-macros patches
+
+- Extra `defclass` options are quoted data. Singleton extra slot options
+  are unwrapped, and repeated values use SBCL's ordering, so custom
+  metaclasses and slot-definition classes receive their intended initargs.
 
 - `defclass` rejects duplicate direct slot names and default initarg names.
   Repeated singleton slot options signal `program-error` and retain their

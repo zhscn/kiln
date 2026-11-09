@@ -27,12 +27,11 @@
 
 (defmethod allocate-instance
     ((class regular-class)
-     &rest initargs
-     &key (additional-size 0)
-     &allow-other-keys)
+     &rest initargs)
+  (declare (ignore initargs))
   (unless (class-finalized-p class)
     (finalize-inheritance class))
-  (let* ((size (+ (instance-size class) additional-size 2))
+  (let* ((size (+ (instance-size class) 2))
          (stamp (unique-number class))
          (slots (class-slots class))
          (instance (allocate-general-instance class size)))

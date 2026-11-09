@@ -71,13 +71,19 @@ AMOP 的方法函数接收参数列表和后续方法，有效方法接收一个
 
 类重定义后，旧实例 rack 里的 stamp 和类当前的 unique number 不一致。Clostrophilia 的 `default-discriminating-function` 没有检查这一点（注释说要检查，代码没有），stamp 过时的实例会让分派死循环。kiln 的补丁在慢路径里先检查特化参数里有没有过时的实例，有就先更新再重新分派，这是重定义屏障（C4）在 CLOS 上的落实。
 
+## 初始化参数
+
+CLOS 模块完成引导后，`make-instance` 检查初始化参数的成对结构，再补上默认参数并验证名字。合法名字来自槽的 `:initarg`，以及适用的 `allocate-instance`、`initialize-instance`、`shared-initialize` 方法的关键字；适用方法声明 `&allow-other-keys`，或参数中最左边的 `:allow-other-keys` 值为真时，允许额外名字。非法参数报告 `program-error`。普通构造、编译器缓存的构造调用共用检查。
+
+合法参数集合按类的布局编号和初始化假设版本缓存，类重定义或初始化方法增删会使缓存失效。默认初始化方法的 lambda list 只声明它们接受的参数，方法函数仍可转交由槽或其他方法处理的参数。
+
 ## 方法加入
 
 `add-method` 在更新方法归属和分派缓存之前检查 lambda list，不相容时报告 `program-error`：必需参数与可选参数数目相同，双方对剩余参数的接受能力相容；方法通过关键字、rest 参数或 `&allow-other-keys` 接受通用函数声明的关键字。通用函数声明 `&allow-other-keys` 时按 SBCL 的规则放宽关键字集合检查。加入成功返回通用函数。
 
 ## 类定义检查
 
-`defclass` 在宏展开时检查直接槽名和默认 initarg 名的唯一性。槽的 `:initform`、`:allocation`、`:type` 和 `:documentation` 只能出现一次，重复时报告 `program-error`；`:initarg`、`:reader`、`:writer` 和 `:accessor` 可以重复，用于声明多个初始化入口或访问函数。
+`defclass` 在宏展开时检查直接槽名和默认 initarg 名的唯一性。槽的 `:initform`、`:allocation`、`:type` 和 `:documentation` 只能出现一次，重复时报告 `program-error`；`:initarg`、`:reader`、`:writer` 和 `:accessor` 可以重复，用于声明多个初始化入口或访问函数。额外类选项和槽选项作为数据传给元类与槽定义类；单次额外槽选项直接传值，重复选项按 SBCL 的顺序传递列表，由初始化参数协议检查是否支持。
 
 ## 类的重定义
 
