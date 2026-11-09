@@ -125,9 +125,10 @@ const fn static_string<const N: usize>(s: &str) -> StaticString<N> {
     }
 }
 
-static NIL_NAME: StaticString<4> = static_string("NIL");
-static T_NAME: StaticString<2> = static_string("T");
-static CL_NAME: StaticString<12> = static_string("COMMON-LISP");
+// Identity hashes occupy the header, so static Lisp strings must be writable.
+static mut NIL_NAME: StaticString<4> = static_string("NIL");
+static mut T_NAME: StaticString<2> = static_string("T");
+static mut CL_NAME: StaticString<12> = static_string("COMMON-LISP");
 
 /// NIL and T. Their name and package fields are filled in by
 /// `init_statics` (constant evaluation cannot tag pointers).
@@ -159,14 +160,14 @@ pub static mut kiln_t: SymbolObj = SymbolObj {
 pub fn init_statics() {
     unsafe {
         let nil = nil();
-        let cl = tag_general(&CL_NAME);
+        let cl = tag_general(&raw const CL_NAME);
         let n = &raw mut kiln_nil;
-        (*n).name = tag_general(&NIL_NAME);
+        (*n).name = tag_general(&raw const NIL_NAME);
         (*n).package = cl;
         (*n).value = nil;
         (*n).plist = nil;
         let t = &raw mut kiln_t;
-        (*t).name = tag_general(&T_NAME);
+        (*t).name = tag_general(&raw const T_NAME);
         (*t).package = cl;
         (*t).value = tag_general(&raw const kiln_t);
         (*t).plist = nil;

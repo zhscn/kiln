@@ -61,6 +61,7 @@
 - `value` 槽是全局值，未绑定时是 UNBOUND。NIL、T 和 keyword 的值都是它们自己。
 - **TLS 下标**按 fixnum 存放（下标 << 1），所以 symbol 的所有字段都是合法的 Lisp 值，GC 可以统一扫描堆上的 symbol。0 表示还没有分配。TLS 表项地址 = 表基址 + 存放的值 << 2。
 - `setf 函数` 槽存名为 `(setf symbol)` 的函数，`fdefinition`、`(setf fdefinition)`、`fboundp` 都接受 setf 名字。编译期已知的 `(setf f)` 也可以有单独的静态 cell。
+- 静态 Lisp 字符串的字符数据固定，但其 header 仍需可写，以便保存身份哈希；runtime 中 NIL、T 的名字和初始包名也遵守这一规则。
 - NIL 和 T 是 runtime 里的静态对象（`kiln_nil`、`kiln_t`）。名字字符串在 runtime 启动时填写（Rust 的常量求值不能做指针加 tag）；它们的 plist、包、函数槽登记为 GC root，函数槽在 kernel 启动时放上未定义函数对象。
 
 ### 函数和 funcallable instance
