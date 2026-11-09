@@ -159,10 +159,15 @@
 
 (defun gentemp (&optional (prefix "T") (package *package*))
   (check-type prefix string)
-  (loop (let ((name (format nil "~A~D" prefix (incf *gentemp-counter*))))
-          (multiple-value-bind (symbol status) (find-symbol name package)
-            (declare (ignore symbol))
-            (unless status (return (values (intern name package))))))))
+  ;; Lazy generic dispatch can generate internal names during package lookup.
+  (let ((*gensym-counter* *gensym-counter*))
+    (loop
+      (let ((name (concatenate 'string prefix
+                               (kiln.kernel::integer-to-decimal-string
+                                (incf *gentemp-counter*)))))
+        (multiple-value-bind (symbol status) (find-symbol name package)
+          (declare (ignore symbol))
+          (unless status (return (values (intern name package)))))))))
 
 (defun find-all-symbols (name)
   (let ((name (string name))

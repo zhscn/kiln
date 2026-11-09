@@ -1454,7 +1454,12 @@ there: -1, 0 or 1."
 ;;; Symbols
 
 (defun make-symbol (name)
-  (%primop :make-symbol (check-string name)))
+  (unless (stringp name) (%primop :type-error-string name))
+  (let ((simple-name
+          (if (%primop :stringp name) name
+              (let* ((length (length name)) (copy (make-string length)))
+                (dotimes (i length copy) (setf (schar copy i) (char name i)))))))
+    (%primop :make-symbol simple-name)))
 
 (defvar *gensym-counter* 0)
 
@@ -1465,10 +1470,13 @@ there: -1, 0 or 1."
                    (string (digit-char (mod n 10))))))
 
 (defun gensym (&optional (x "G"))
-  (if (integerp x)
-      (make-symbol (concatenate 'string "G" (integer-to-decimal-string x)))
-      (prog1 (make-symbol (concatenate 'string x (integer-to-decimal-string *gensym-counter*)))
-        (setq *gensym-counter* (+ *gensym-counter* 1)))))
+  (multiple-value-bind (prefix number)
+      (if (integerp x)
+          (values "G" x)
+          (values x (prog1 *gensym-counter* (incf *gensym-counter*))))
+    (check-type prefix string)
+    (check-type number (integer 0))
+    (make-symbol (concatenate 'string prefix (integer-to-decimal-string number)))))
 
 (defun symbol-name (s)
   (unless (symbolp s) (%primop :type-error-symbol s))
@@ -1482,6 +1490,29 @@ there: -1, 0 or 1."
 (defun (setf symbol-plist) (v s)
   (unless (symbolp s) (%primop :type-error-symbol s))
   (%primop :set-symbol-plist s v))
+(defun copy-symbol (symbol &optional copy-properties)
+  (let ((copy (make-symbol (symbol-name symbol))))
+    (when copy-properties
+      (when (boundp symbol) (setf (symbol-value copy) (symbol-value symbol)))
+      (setf (symbol-plist copy) (copy-list (symbol-plist symbol)))
+      (when (fboundp symbol)
+        (setf (symbol-function copy) (symbol-function symbol))))
+    copy))
+
+(defun set (symbol value)
+  (unless (symbolp symbol) (%primop :type-error-symbol symbol))
+  (setf (symbol-value symbol) value))
+
+(defun remprop (symbol indicator)
+  (do ((tail (symbol-plist symbol) (cddr tail))
+       (previous nil tail))
+      ((atom tail) nil)
+    (when (atom (cdr tail)) (error "Odd property list for ~S." symbol))
+    (when (eq (car tail) indicator)
+      (if previous (setf (cddr previous) (cddr tail))
+          (setf (symbol-plist symbol) (cddr tail)))
+      (return tail))))
+
 ;;; Each module's init pushes its symbol table here before anything else
 ;;; (lower.lisp); the package system registers the symbols.
 ;;; No initial value: the kernel's own table is pushed before this runs.
@@ -1625,6 +1656,7 @@ there: -1, 0 or 1."
        (setf form expansion expanded t)))))
 
 (defun special-operator-p (symbol)
+  (unless (symbolp symbol) (%primop :type-error-symbol symbol))
   (and (member symbol '(block catch eval-when flet function go if labels let let*
                         load-time-value locally macrolet multiple-value-call
                         multiple-value-prog1 progn progv quote return-from setq

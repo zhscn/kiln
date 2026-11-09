@@ -68,6 +68,10 @@ kernel 先给出简单的版本，后面的模块替换或扩充。钩子是 `ki
 - `replace` 对两个向量直接逐个复制，不经过列表；对列表也不用 `(setf nth)`。
 - 特化向量的复制（`subseq`、`copy-seq`、`reverse`、`remove`）保留元素类型。
 
+## 符号
+
+`make-symbol` 接受一般字符串，名称采用有效长度内的内容。`gensym` 使用非负整数后缀，并检查前缀和计数器；`gentemp` 使用独立计数器，不改变 `*gensym-counter*`。`copy-symbol` 返回未 intern 的新符号，可选复制值、函数和独立的属性列表脊。`set` 写入当前动态绑定，`remprop` 就地删除首个匹配属性并返回原列表对应的尾部，与 SBCL 一致。
+
 ## 运行期的宏环境
 
 - `(setf macro-function)` 把展开函数记在符号 plist 的 `macro-function` 下；`macro-function`、`macroexpand-1`、`macroexpand`、`*macroexpand-hook*`、`constantp` 都在 kernel 里。带 Maclina 或编译器前端的 Trucler 环境时，由造出这个环境的 client 查询局部宏（`kiln.eval:environment-client`）。

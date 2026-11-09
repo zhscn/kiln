@@ -1,0 +1,13 @@
+("abc" NIL)
+(T T T NIL T NIL NIL NIL)
+T
+(:CHANGED :CHANGED)
+:GLOBAL
+T
+(:B 2 :A 3)
+T
+(:B 2)
+NIL
+("G40" "G99" "X41" 42)
+T
+T
