@@ -1301,11 +1301,17 @@ apply."
 ;;; EQUAL and EQUALP of two standard instances: pathnames compare by
 ;;; components (lisp/target/clos/pathnames.lisp sets this).
 (defvar *instance-equal* nil)
+(defvar *instance-equalp* nil)
 
 (defun equal (a b)
   (cond ((eql a b) t)
         ((consp a) (and (consp b) (equal (car a) (car b)) (equal (cdr a) (cdr b))))
         ((stringp a) (and (stringp b) (%string= (string a) (string b))))
+        ((and (vectorp a) (eq (array-element-type a) 'bit))
+         (and (vectorp b) (eq (array-element-type b) 'bit)
+              (= (length a) (length b))
+              (dotimes (i (length a) t)
+                (unless (= (aref a i) (aref b i)) (return nil)))))
         ((and *instance-equal* (%primop :standard-instance-p a))
          (funcall *instance-equal* a b))
         (t nil)))

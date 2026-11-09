@@ -170,15 +170,21 @@
 
 (defun hash-array (accumulate object)
   (funcall accumulate +array-seed+)
-  (funcall accumulate (array-rank object))
-  (loop for dim in (array-dimensions object)
-        do (funcall accumulate dim))
-  (loop for i below (array-total-size object)
-        repeat *hash-limit*
-        do (equalp-hash accumulate (row-major-aref object i))))
+  (if (vectorp object)
+      (funcall accumulate (length object))
+      (progn
+        (funcall accumulate (array-rank object))
+        (dolist (dim (array-dimensions object)) (funcall accumulate dim))))
+  (let ((*hash-limit* (1- *hash-limit*)))
+    (when (plusp *hash-limit*)
+      (if (vectorp object)
+          (loop for i below (length object) repeat *hash-limit*
+                do (equalp-hash accumulate (aref object i)))
+          (loop for i below (array-total-size object) repeat *hash-limit*
+                do (equalp-hash accumulate (row-major-aref object i)))))))
 
+#-kiln
 (defun hash-hash-table (accumulate object)
-  ;; kiln: OBJECT, not the undefined TABLE.
   (funcall accumulate +hash-table-seed+)
   (funcall accumulate (hash-table-count object))
   (equalp-hash accumulate (hash-table-test object))
@@ -192,6 +198,15 @@
                      (t
                       (return-from hash-hash-table nil))))
              object)))
+
+#+kiln
+(defun hash-hash-table (accumulate object)
+  (funcall accumulate +hash-table-seed+)
+  (funcall accumulate (hash-table-count object))
+  (equalp-hash accumulate (hash-table-test object))
+  (let ((*hash-limit* (1- *hash-limit*)))
+    (when (plusp *hash-limit*)
+      (funcall accumulate (unordered-table-hash object)))))
 
 (defun hash-structure (accumulate object)
   (loop with class = (class-of object)

@@ -184,6 +184,10 @@ Each patched place is marked with a `kiln:` comment.
 
 ## Salmagundi patches
 
+- Array `equalp` hashes use active vector lengths and ignore storage element
+  types. Hash-table content hashes combine entries independently of iteration
+  order, with a depth budget for nested arrays and tables.
+
 Under `#+kiln` (kiln reads target sources with its own features):
 
 - The package shadows only `make-hash-table` and `sxhash` (their

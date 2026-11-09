@@ -31,6 +31,7 @@ Predicament 按 `predicament-common.asd` 的顺序加载。实现方要提供的
 - **迭代顺序**按插入顺序，和 SBCL 一样。宏展开函数会遍历哈希表（Khazern 的解构临时变量），kiln 编译 kiln 必须得到 SBCL 的 KIR；按哈希顺序遍历的话，身份哈希每次运行都不同。`tests/m4/clos-hash-model.lisp` 用一个模型和 SBCL 的迭代顺序检查表。
 - 查找要用的数据放在一个 simple vector 里，按固定位置从实例读出，eq、eql、equal 内联比较；`gethash`、`(setf gethash)`、`remhash` 遇到这种表时直接调用它的函数，不经过泛函。`(setf gethash)` 在探测过程中记下第一个墓碑槽，未命中时直接写入，不再二次探测。
 - 标准测试（`eq`、`eql`、`equal`、`equalp`）的 `make-hash-table` 直接分配实例并填写槽（`make-bucket-hash-table`），不走 `make-instance`；符号的 `equal` 哈希缓存在自身的身份哈希字段里；`sxhash` 直接调用 `kiln-equal-hash`。
+- `equalp` 哈希对向量使用活动长度，对其他数组使用维度；嵌套内容的散列受深度预算约束。哈希表的各键值对分别混合，再用可交换的累加方式合并，因此插入顺序和表容量不会影响结果。标准测试的键使用对应的散列函数，值按 `equalp` 散列。
 - 还没有弱表。
 
 ## 包（Parcl）

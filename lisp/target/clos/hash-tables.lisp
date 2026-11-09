@@ -142,3 +142,36 @@
     `(let ((,iterator (make-hash-table-iterator ,hash-table)))
        (macrolet ((,name () '(funcall ,iterator)))
          ,@body))))
+
+(defun instance-equalp (a b)
+  (if (hash-table-p a)
+      (and (hash-table-p b)
+           (eq (hash-table-test a) (hash-table-test b))
+           (= (hash-table-count a) (hash-table-count b))
+           (block entries
+             (maphash (lambda (key value)
+                        (multiple-value-bind (other present) (cl:gethash key b)
+                          (unless (and present (equalp value other))
+                            (return-from entries nil))))
+                      a)
+             t))
+      (and kiln.kernel::*instance-equal*
+           (funcall kiln.kernel::*instance-equal* a b))))
+
+(setf kiln.kernel::*instance-equalp* #'instance-equalp)
+
+(defun unordered-table-hash (table)
+  (let ((hash 0)
+        (key-hash (case (hash-table-test table)
+                    (eq #'kiln-eq-hash)
+                    (eql #'kiln-eql-hash)
+                    (equal #'kiln-equal-hash)
+                    (equalp #'kiln-equalp-hash)
+                    (t (lambda (key) (declare (ignore key)) 0)))))
+    (maphash (lambda (key value)
+               (setf hash (logxor hash
+                                 (kiln.sys:%primop :hash-mix
+                                                  (funcall key-hash key)
+                                                  (kiln-equalp-hash value)))))
+             table)
+    (logand hash +hash-mask+)))
