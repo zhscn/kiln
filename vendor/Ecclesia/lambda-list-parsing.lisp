@@ -336,7 +336,8 @@
     (check-aux tree)))
 
 (defun parse-pattern (tree-or-lambda-list)
-  (cond ((and (symbolp tree-or-lambda-list)
+  (cond ((null tree-or-lambda-list) nil)
+        ((and (symbolp tree-or-lambda-list)
 	      (not (constantp tree-or-lambda-list)))
 	 tree-or-lambda-list)
 	((consp tree-or-lambda-list)
@@ -751,7 +752,7 @@
 	(t
 	 (values :none positions))))
 
-(defun parse-rest/body (lambda-list positions)
+(defun parse-rest/body (lambda-list positions &optional destructuring-p)
   (cond ((and
 	  ;; there is a keyword yet to be processed.
 	  (not (null (cdr positions)))
@@ -761,11 +762,12 @@
 	 ;; The arity has already been checked so we know there is
 	 ;; something after it, but we don't know what.
 	 (let ((arg (elt lambda-list (1+ (car positions)))))
-	   (unless (and (symbolp arg)
-			(not (constantp arg)))
-	     (error 'rest/body-must-be-followed-by-variable
-		    :code lambda-list))
-	   (values arg (cdr positions))))
+           (if destructuring-p
+               (setf arg (parse-pattern arg))
+               (unless (and (symbolp arg) (not (constantp arg)))
+                 (error 'rest/body-must-be-followed-by-variable
+                        :code lambda-list)))
+           (values arg (cdr positions))))
 	(t
 	 (values :none positions))))
 
@@ -985,7 +987,7 @@
 		(setf (values (environment result) positions)
 		      (parse-environment lambda-list positions)))
 	      (setf (values (rest-body result) positions)
-		    (parse-rest/body lambda-list positions))
+		    (parse-rest/body lambda-list positions t))
 	      ;; The environment may follow the rest/body.
 	      (when (eq (environment result) :none)
 		(setf (values (environment result) positions)
@@ -1073,7 +1075,7 @@
 		    (parse-all-optionals
 		     lambda-list positions #'parse-destructuring-optional))
 	      (setf (values (rest-body result) positions)
-		    (parse-rest/body lambda-list positions))
+		    (parse-rest/body lambda-list positions t))
 	      (setf (values (keys result) positions)
 		    (parse-all-keys
 		     lambda-list positions #'parse-destructuring-key))
@@ -1199,7 +1201,7 @@
 		(setf (values (environment result) positions)
 		      (parse-environment lambda-list positions)))
 	      (setf (values (rest-body result) positions)
-		    (parse-rest/body lambda-list positions))
+		    (parse-rest/body lambda-list positions t))
 	      ;; The environment may follow the rest/body.
 	      (when (eq (environment result) :none)
 		(setf (values (environment result) positions)

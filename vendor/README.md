@@ -535,6 +535,14 @@ Under `#+kiln`:
 
 ## Ecclesia patches
 
+- Macro and DEFTYPE lambda lists accept destructuring patterns after
+  `&rest` and `&body`, including the empty pattern. Ordinary function
+  lambda lists still require a variable there. Empty required patterns
+  match only NIL.
+- DESTRUCTURING-BIND accepts `&whole` patterns, including nested and
+  dotted patterns. Its input form is evaluated once; whole-pattern
+  matching and the remaining parameters share that value.
+
 - DEFTYPE keyword parameters quote the implicit `*` default, matching the
   optional-parameter parser. Explicit initforms retain their evaluation
   semantics; ordinary destructuring continues to default to NIL.

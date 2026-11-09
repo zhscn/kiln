@@ -144,7 +144,7 @@
     (pattern variable &key operator)
   (let ((bindings '())
         (ignored-variables '()))
-    (if (symbolp pattern)
+    (if (and pattern (symbolp pattern))
         (push `(,pattern ,variable) bindings)
         (let ((temp (gensym)))
           (push `(,temp ,variable)
@@ -252,7 +252,11 @@
                        (list `(,original-arguments ,variable))))
          (ignored-variables '()))
     (when (first-group-is remaining '&whole)
-      (push `(,(second (pop remaining)) ,variable) bindings))
+      (multiple-value-bind (nested-bindings nested-ignored)
+          (destructure-canonicalized-rest/body
+           (second (pop remaining)) variable :operator operator)
+        (setf bindings (append nested-bindings bindings)
+              ignored-variables (append nested-ignored ignored-variables))))
     (unless (or (null remaining)
                 (member (first (first remaining)) (intrinsic-keywords)
                         :test #'eq))
@@ -466,22 +470,14 @@
 ;;; PARSE-DESTRUCTURING-BIND
 
 (defun parse-destructuring-bind (lambda-list form body)
-  (let* ((canonicalized-lambda-list
-           (canonicalize-destructuring-lambda-list lambda-list))
-         (whole-group
-           (extract-named-group canonicalized-lambda-list '&whole))
-         (whole-parameter
-           (if (null whole-group) (gensym) (second whole-group)))
-         (remaining
-           (remove '&whole canonicalized-lambda-list
-                   :key #'first :test #'eq))
-         (args-var (gensym)))
+  (let ((canonicalized-lambda-list
+          (canonicalize-destructuring-lambda-list lambda-list))
+        (args-var (gensym)))
     (multiple-value-bind (declarations forms)
         (separate-ordinary-body body)
       (multiple-value-bind (bindings ignored-variables)
-          (destructure-canonicalized-lambda-list remaining args-var)
-        `(let* ((,whole-parameter ,form)
-                (,args-var ,whole-parameter)
+          (destructure-canonicalized-lambda-list canonicalized-lambda-list args-var)
+        `(let* ((,args-var ,form)
                 ,@(reverse bindings))
            (declare (ignore ,@ignored-variables))
            ,@declarations

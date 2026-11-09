@@ -450,7 +450,7 @@
   (canonicalize-nontrivial-destructuring-optional optional ''*))
 
 (defun canonicalize-destructuring-rest (parameter)
-  (cond ((and (symbolp parameter) (not (constantp parameter)))
+  (cond ((and (symbolp parameter) (or (null parameter) (not (constantp parameter))))
          parameter)
         ((consp parameter)
          (canonicalize-destructuring-lambda-list parameter))
@@ -568,7 +568,7 @@
 
 (defparameter *destructuring-canonicalizers*
   `((nil . ,#'canonicalize-destructuring-required)
-    (&whole . ,#'canonicalize-whole)
+    (&whole . ,#'canonicalize-destructuring-required)
     (&optional . ,#'canonicalize-destructuring-optional)
     (&rest . ,#'canonicalize-destructuring-rest)
     (&body . ,#'canonicalize-destructuring-rest)
