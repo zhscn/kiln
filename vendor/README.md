@@ -306,6 +306,10 @@ functions); under `#+kiln`:
 
 ## Regalia patches
 
+- Storage class selection uses kiln's canonical upgraded element types,
+  including unsigned integer boundary types, fixnum, base-char, and NIL.
+
+
 - Array storage inherits the private slot-object root and the public array
   hierarchy, keeping arrays outside `standard-object`.
 

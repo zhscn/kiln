@@ -182,7 +182,7 @@ list, slots), the slots unbound."
         ((consp object) 2)
         ((null object) 3)
         ((symbolp object) 4)
-        ((kiln.kernel::simple-string-p object) 5)
+        ((kiln.sys:%primop :stringp object) 5)
         ((simple-vector-p object) 6)
         ((kiln.kernel::bignump object) 7)
         ((kiln.kernel::ratiop object) 8)

@@ -61,13 +61,14 @@ Parcl 以 intrinsic 方式加载：`parcl-low`（泛函协议和默认方法）�
 
 ## 数组（Regalia）
 
-**混合表示**：元素为 T 的一维 simple vector 和 simple string 是原生对象，`svref`、`schar` 和 kernel 的快路径不变；其余数组都是 Regalia 的标准类的实例。
+**混合表示**：元素为 T 的一维 simple vector 和 simple string 是原生对象，`svref`、`schar` 和 kernel 的快路径不变；其余数组都是 Regalia 的槽存储实例。
 
 - **类层次**：CL 的 `array`、`simple-array`、`vector`、`simple-vector`、`string`、`simple-string`、`bit-vector`、`simple-bit-vector` 都是内建类，原生对象的类是 `simple-vector` 和 `simple-string`。Regalia 的类在 `regalia` 包里，补丁遮蔽同名的 CL 符号；它的 `array` 以私有 `slot-object` 和 `cl:array` 为父类。存储类本身不区分简单性；公开 `class-of` 按实例的简单性、元素类型和秩返回内建数组类，内部槽访问及分派使用物理存储类。
 - **存储**：元素存在 `contents` 槽里的原生向量中（补丁加了 `%contents` 和 `%adjustable` 两个槽）。字符数组用字符串存，其他元素类型都用 simple-vector 存，特化类型在写入时检查元素类型。displaced 数组没有存储，读写时转到目标数组，加上偏移。
 - **kernel 的钩子**：kernel 的 `stringp`、`vectorp`、`arrayp`、`length`、`aref`、`char`、`row-major-aref`、`array-rank`、`array-dimensions` 等先处理原生向量，其余对象交给 `*complex-array-kind*`（把对象映射为 `:string`、`:vector`、`:array` 或 NIL）和 `*complex-array-op*`（按关键字执行操作）。kernel 在泛函分派内部也会问种类（`gethash` 的分派会调用 `stringp`），所以这里不能调用泛函：种类按 stamp 查一张向量。
 - kernel 内部用 `make-simple-vector` 构造向量；`make-array` 对元素类型为 T 或 character 的简单情况直接返回原生对象，不调用 `subtypep`。一维、没有位移的可调向量增长时直接换掉原生存储（`resize-vector`）。
-- **kiln 自己写的**（`arrays.lisp`，Regalia 的这些部分不完整或有错）：`make-array` 的全部关键字参数；`aref`/`row-major-aref` 及其 setf，检查下标；fill pointer 和 `vector-push-extend` 等；`adjust-array`；`array-displacement` 等查询；`bit`、`sbit`；`upgraded-array-element-type`（bit、8/16/32/64 位有符号和无符号整数、single-float、double-float、character，其余是 T）。从 Regalia 加载的是类层次、`class-name-from-element-type`、维度检查和 condition 类型。
+- **kiln 自己写的**（`arrays.lisp`，Regalia 的这些部分不完整或有错）：`make-array` 的全部关键字参数；`aref`/`row-major-aref` 及其 setf，检查下标；fill pointer 和 `vector-push-extend` 等；`adjust-array`；`array-displacement` 等查询；`bit`、`sbit`；`upgraded-array-element-type`。整数升级保留 unsigned-byte 的 2/4/7/8/15/16/31/32/62/63/64 位、signed-byte 的 8/16/32/64 位、fixnum 及 bit；空类型 NIL、base-char、character 和浮点类型分别保留。存储类按同一升级结果选择，缓存遵循类型假设版本和字面量身份；显式环境绕过缓存。从 Regalia 加载类层次、存储类选择、维度检查和 condition 类型。
+- base-char 使用独立的数组与字符串存储类，写入时检查字符范围；NIL 元素数组不允许读取或写入元素。原生字符串的存储元素类型为 character；simple-string 和 simple-base-string 谓词及 `schar` 同时支持原生与槽存储表示。`string` 保留已有字符串的对象身份；需要原生缓冲区的内部操作单独转换表示。`array-has-fill-pointer-p` 对非数组报告类型错误。
 - 限制：序列函数对非 simple 向量返回 simple 向量；没有 `bit-and` 等位数组运算。
 
 ## 结构（Anatomicl）

@@ -999,7 +999,13 @@
 (defun complex-array-op (op array &rest args)
   (apply *complex-array-op* op array args))
 
-(defun simple-string-p (x) (%primop :stringp x))
+(defun simple-string-p (x)
+  (or (%primop :stringp x)
+      (and (eq (complex-array-kind x) :string) (simple-array-p x))))
+(defun base-string-p (x)
+  (and (stringp x) (eq (array-element-type x) 'base-char)))
+(defun simple-base-string-p (x)
+  (and (simple-string-p x) (base-string-p x)))
 (defun simple-vector-p (x) (%primop :simple-vector-p x))
 (defun native-vector-p (x) (or (%primop :stringp x) (%primop :simple-vector-p x)))
 (defun stringp (x) (or (%primop :stringp x) (eq (complex-array-kind x) :string)))
@@ -1018,8 +1024,15 @@
   (unless (simple-vector-p v) (%primop :type-error-vector v))
   v)
 
-(defun schar (s i) (%primop :schar (check-string s) i))
-(defun (setf schar) (c s i) (%primop :set-schar (check-string s) i (check-character c)))
+(defun schar (s i)
+  (if (%primop :stringp s)
+      (%primop :schar s i)
+      (if (simple-string-p s) (complex-aref s i) (error 'type-error :datum s :expected-type 'simple-string))))
+(defun (setf schar) (c s i)
+  (if (%primop :stringp s)
+      (%primop :set-schar s i (check-character c))
+      (if (simple-string-p s) (setf (complex-aref s i) (check-character c))
+          (error 'type-error :datum s :expected-type 'simple-string))))
 (defun char (s i)
   (if (%primop :stringp s) (schar s i) (complex-aref (check-complex-string s) i)))
 (defun (setf char) (c s i)
@@ -1149,8 +1162,10 @@ apply."
                      ((and (consp dimensions) (null (cdr dimensions)))
                       (setq size (car dimensions)))
                      (t (setq valid nil)))))))
-      ((string simple-string base-string simple-base-string)
+      ((string simple-string)
        (setq element 'character size (if args (car args) '*)))
+      ((base-string simple-base-string)
+       (setq element 'base-char size (if args (car args) '*)))
       ((bit-vector simple-bit-vector)
        (setq element 'bit size (if args (car args) '*)))
       (simple-vector (setq size (if args (car args) '*)))
@@ -1175,13 +1190,16 @@ apply."
     (cond ((member head '(list cons null))
            (make-list n :initial-element initial-element))
           ((member head '(string simple-string base-string simple-base-string))
-           (make-string n :initial-element (if initial-element-p initial-element #\Space)))
+           (if (eq element 'base-char)
+               (make-array n :element-type 'base-char
+                             :initial-element (if initial-element-p initial-element #\Space))
+               (make-string n :initial-element (if initial-element-p initial-element #\Space))))
           ((eq element t) (make-simple-vector n initial-element))
           (initial-element-p (make-array n :element-type element :initial-element initial-element))
           (t (make-array n :element-type element)))))
 
 (defun make-sequence-like (seq n)
-  (cond ((stringp seq) (make-string n))
+  (cond ((stringp seq) (make-array n :element-type (array-element-type seq)))
         ((%primop :simple-vector-p seq) (make-simple-vector n))
         ;; Another vector: a simple vector of its element type.
         ((vectorp seq) (complex-array-op :make-like seq n))
@@ -1327,7 +1345,7 @@ apply."
 (defun equal (a b)
   (cond ((eql a b) t)
         ((consp a) (and (consp b) (equal (car a) (car b)) (equal (cdr a) (cdr b))))
-        ((stringp a) (and (stringp b) (%string= (string a) (string b))))
+        ((stringp a) (and (stringp b) (%string= (native-string a) (native-string b))))
         ((and (vectorp a) (eq (array-element-type a) 'bit))
          (and (vectorp b) (eq (array-element-type b) 'bit)
               (= (length a) (length b))
@@ -1339,9 +1357,8 @@ apply."
 
 ;;; Strings
 
-(defun string (x)
-  ;; A string that is not simple (Regalia) is copied into a simple one:
-  ;; the string functions use SCHAR.
+(defun native-string (x)
+  ;; Native string operations use a contiguous character buffer.
   (cond ((%primop :stringp x) x)
         ((stringp x)
          (let* ((n (length x)) (s (make-string n)))
@@ -1349,6 +1366,9 @@ apply."
         ((symbolp x) (symbol-name x))
         ((characterp x) (make-string 1 :initial-element x))
         (t (%primop :type-error-string x))))
+
+(defun string (x)
+  (if (stringp x) x (native-string x)))
 
 ;;; String comparison (CLHS string=, string<): the strings' designators,
 ;;; their bounds :START1 :END1 :START2 :END2.
@@ -1373,7 +1393,7 @@ or by CHAR-EQUAL if FOLD), or of the end of either string."
     (values i j)))
 
 (defun %string= (a b)
-  ;; Simple strings (STRING returns them): their characters are compared
+  ;; Native strings: their characters are compared
   ;; as immediates, without calls (EQUAL on strings, hash tables of names).
   (let ((n (%primop :length a)))
     (and (= n (%primop :length b))
@@ -1383,7 +1403,7 @@ or by CHAR-EQUAL if FOLD), or of the end of either string."
 (defun %string-compare (a b start1 end1 start2 end2 fold)
   "The index in A of the first difference, and how A compares with B
 there: -1, 0 or 1."
-  (let* ((a (string a)) (b (string b))
+  (let* ((a (native-string a)) (b (native-string b))
          (end1 (%string-bounds a start1 end1))
          (end2 (%string-bounds b start2 end2)))
     (multiple-value-bind (i j) (%string-mismatch a b start1 end1 start2 end2 fold)
@@ -1399,7 +1419,7 @@ there: -1, 0 or 1."
 
 (defun string= (a b &key (start1 0) end1 (start2 0) end2)
   (if (and (eql start1 0) (null end1) (eql start2 0) (null end2))
-      (%string= (string a) (string b))
+      (%string= (native-string a) (native-string b))
       (multiple-value-bind (i order) (%string-compare a b start1 end1 start2 end2 nil)
         (declare (ignore i))
         (= order 0))))

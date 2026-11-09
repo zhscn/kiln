@@ -525,8 +525,6 @@ operand N."
 
 (define-primitive characterp (a)
   (boolean-value `(:eq (:and ,a ,+immediate-mask+) ,+character-tag+)))
-(define-primitive simple-string-p (a)
-  (boolean-value (emit-kind-test a +kind-string+)))
 (define-primitive simple-vector-p (a)
   (boolean-value (emit-kind-test a +kind-simple-vector+)))
 (define-primitive kiln.kernel::fixnump (a)

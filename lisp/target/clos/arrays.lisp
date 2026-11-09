@@ -15,10 +15,41 @@
 (defconstant cl:array-total-size-limit (ash 1 32))
 (defconstant cl:array-rank-limit 64)
 
+;;; Additional storage classes retain the element-type boundaries used by SBCL.
+(defclass array-base-char (array-character) ())
+(defclass vector-base-char (string array-base-char) ())
+(defclass array-nil (array) ())
+(defclass vector-nil (vector array-nil) ())
+(defclass vector-signed-byte-8 (vector array-signed-byte-8) ())
+(defclass array-unsigned-byte-2 (array-unsigned-byte-8) ())
+(defclass vector-unsigned-byte-2 (vector-unsigned-byte-8 array-unsigned-byte-2) ())
+(defclass array-unsigned-byte-4 (array-unsigned-byte-8) ())
+(defclass vector-unsigned-byte-4 (vector-unsigned-byte-8 array-unsigned-byte-4) ())
+(defclass array-unsigned-byte-7 (array-unsigned-byte-8) ())
+(defclass vector-unsigned-byte-7 (vector-unsigned-byte-8 array-unsigned-byte-7) ())
+(defclass array-unsigned-byte-15 (array-unsigned-byte-16) ())
+(defclass vector-unsigned-byte-15 (vector-unsigned-byte-16 array-unsigned-byte-15) ())
+(defclass array-unsigned-byte-31 (array-unsigned-byte-32) ())
+(defclass vector-unsigned-byte-31 (vector-unsigned-byte-32 array-unsigned-byte-31) ())
+(defclass array-unsigned-byte-62 (array-unsigned-byte-64) ())
+(defclass vector-unsigned-byte-62 (vector-unsigned-byte-64 array-unsigned-byte-62) ())
+(defclass array-unsigned-byte-63 (array-unsigned-byte-64) ())
+(defclass vector-unsigned-byte-63 (vector-unsigned-byte-64 array-unsigned-byte-63) ())
+(defclass array-fixnum (array-signed-byte-64) ())
+(defclass vector-fixnum (vector-signed-byte-64 array-fixnum) ())
+
 ;;; Element types
 
 (defparameter *element-types*
   '((array-t . t) (array-bit . bit) (array-character . character)
+    (array-base-char . base-char) (array-nil . nil) (array-fixnum . fixnum)
+    (array-unsigned-byte-2 . (unsigned-byte 2))
+    (array-unsigned-byte-4 . (unsigned-byte 4))
+    (array-unsigned-byte-7 . (unsigned-byte 7))
+    (array-unsigned-byte-15 . (unsigned-byte 15))
+    (array-unsigned-byte-31 . (unsigned-byte 31))
+    (array-unsigned-byte-62 . (unsigned-byte 62))
+    (array-unsigned-byte-63 . (unsigned-byte 63))
     (array-unsigned-byte-8 . (unsigned-byte 8))
     (array-unsigned-byte-16 . (unsigned-byte 16))
     (array-unsigned-byte-32 . (unsigned-byte 32))
@@ -91,24 +122,43 @@
           (push (cons class type) *class-element-types*)
           type))))
 
-(defvar *upgraded-element-types* '())   ; (specifier . upgraded)
+(defvar *upgraded-element-types* '())
+(defvar *upgraded-element-types-version* -1)
+
+(defparameter *element-type-upgrades*
+  '(nil bit (unsigned-byte 2) (unsigned-byte 4) (unsigned-byte 7)
+    (signed-byte 8) (unsigned-byte 8) (unsigned-byte 15)
+    (signed-byte 16) (unsigned-byte 16) (unsigned-byte 31)
+    (signed-byte 32) (unsigned-byte 32) (unsigned-byte 62)
+    fixnum (unsigned-byte 63) (signed-byte 64) (unsigned-byte 64)
+    base-char character single-float double-float
+    (complex single-float) (complex double-float) t))
+
+(defun compute-upgraded-element-type (type environment)
+  (dolist (candidate *element-type-upgrades* t)
+    (when (subtypep type candidate environment)
+      (return candidate))))
 
 (defun upgraded-array-element-type (type &optional environment)
   (cond ((eq type '*) '*)
         ((eq type t) t)
         ((eq type 'character) 'character)
+        (environment (compute-upgraded-element-type type environment))
         (t
-         (let ((entry (assoc type *upgraded-element-types* :test #'equal)))
-           (if entry
-               (cdr entry)
-               (let* ((name (non-vector-class-name-from-element-type type environment))
-                      (upgraded (cdr (assoc name *element-types*))))
-                 (push (cons type upgraded) *upgraded-element-types*)
-                 upgraded))))))
+         (let ((version (kiln.kernel::type-assumption-version)))
+           (unless (eql version *upgraded-element-types-version*)
+             (setf *upgraded-element-types* nil *upgraded-element-types-version* version)))
+         (multiple-value-bind (key cachep) (ctype::type-cache-key type)
+           (let ((entry (and cachep (assoc key *upgraded-element-types* :test #'equal))))
+             (if entry (cdr entry)
+                 (let ((upgraded (compute-upgraded-element-type type nil)))
+                   (when cachep (push (cons key upgraded) *upgraded-element-types*))
+                   upgraded)))))))
 
 (defun default-element (element-type)
   ;; ELEMENT-TYPE is an upgraded element type (*ELEMENT-TYPES*).
-  (cond ((eq element-type 'character) #\Space)
+  (cond ((member element-type '(character base-char)) #\Space)
+        ((null element-type) nil)
         ((eq element-type 'double-float) 0d0)
         ((eq element-type 'single-float) 0f0)
         ((eq element-type t) nil)
@@ -127,6 +177,8 @@
       (setf size (* size d)))))
 
 (defun storage-ref (array index)
+  (when (null (element-type array))
+    (error 'type-error :datum nil :expected-type nil))
   (let ((target (underlying-array array)))
     (if (null target)
         (cl:aref (contents array) index)
@@ -224,10 +276,16 @@
 (defmethod ctype:simple-array-p ((client ctype::kiln-client) object)
   (kiln.kernel::simple-array-p object))
 
+(defmethod ctype:string-uaets ((client ctype::kiln-client))
+  '(base-char character))
+
 (defun cl:make-string (size &key (initial-element #\Space) (element-type 'character))
-  (unless (eq (upgraded-array-element-type element-type) 'character)
-    (error "Invalid string element type: ~S" element-type))
-  (kiln.sys:%primop :make-string size (kiln.kernel::check-character initial-element)))
+  (let ((upgraded (upgraded-array-element-type element-type)))
+    (unless (member upgraded '(base-char character))
+      (error 'type-error :datum element-type :expected-type '(member base-char character)))
+    (if (eq upgraded 'character)
+        (kiln.sys:%primop :make-string size (kiln.kernel::check-character initial-element))
+        (cl:make-array size :element-type upgraded :initial-element initial-element))))
 
 ;;; MAKE-ARRAY
 
@@ -235,7 +293,7 @@
   (check-and-canonicalize-dimensions dimensions))
 
 (defun make-storage (element-type size initial-element)
-  (if (eq element-type 'character)
+  (if (member element-type '(character base-char))
       (kiln.kernel::make-string size :initial-element initial-element)
       (kiln.kernel::make-array size :initial-element initial-element)))
 
@@ -290,6 +348,8 @@
       (error 'initial-contents-cannot-be-supplied-for-displaced-array))
     (when (and fill-pointer (not vectorp))
       (error "A fill pointer requires a vector: ~s" dimensions))
+    (when (and initial-element-p (not (typep initial-element uaet)))
+      (error 'type-error :datum initial-element :expected-type uaet))
     (let ((initial (if initial-element-p initial-element (default-element uaet))))
       (if (native-array-p dimensions uaet adjustable fill-pointer displaced-to)
           (let ((vector (make-storage uaet size initial)))
@@ -333,6 +393,8 @@
   vector)
 
 (defun cl:array-has-fill-pointer-p (array)
+  (unless (cl:arrayp array)
+    (error 'type-error :datum array :expected-type 'cl:array))
   (if (and (typep array 'vector) (vector-fill-pointer array)) t nil))
 
 (defun cl:fill-pointer (vector)

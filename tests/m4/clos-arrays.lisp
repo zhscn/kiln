@@ -53,7 +53,7 @@
   (print (string= s "hello"))
   (print (char s 1))
   (setf (char s 0) #\j)
-  (print (string s))
+  (print (copy-seq (string s)))
   (print (equal s "jello"))
   (print (string-upcase s)))
 
