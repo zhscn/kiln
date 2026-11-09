@@ -40,6 +40,12 @@
 
 未指定文件时，`require` 按顺序调用 `kiln.kernel::*module-provider-functions*`，直到某个函数返回真，传入原始名字设计符。该列表初始为空，找不到 provider 时报告错误。嵌套加载会检查循环依赖；错误或非局部退出会恢复当前加载栈。
 
+## 编译单元
+
+`with-compilation-unit` 将动态范围内原生编译器和 Maclina 的未知函数引用延迟到单元结束，再根据最终函数定义决定是否报告。Maclina 的未知变量警告延迟到结束；后来初始化变量不撤销先前缺失声明的警告。未知类型按最终类型定义复查。其他警告即时报告。普通嵌套单元共用外层队列，`:override` 为真时建立独立队列；重复函数引用合并，已经补齐的定义不再警告。
+
+单元返回主体的全部值。正常返回、错误或非局部退出都会结束当前单元并恢复外层状态；独立内层单元的结束警告直接报告，不重新加入外层队列。
+
 ## 原生 `compile`
 
 compiler 模块的最后一个文件 `lisp/target/compiler/native.lisp` 把 `kiln.kernel::*compile-function*` 设成 `native-compile`，此后的 `compile` 都编成机器码。这个变量为 NIL 时用 Maclina。compiler 模块自己载入时调用的 `compile` 仍是字节码。

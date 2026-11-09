@@ -17,7 +17,11 @@ running image, in the null lexical environment."
   (let* ((session (make-session))
          (name (kiln.kir::kir-name "compile-" (incf *native-compile-count*))))
     (multiple-value-bind (module literals)
-        (handler-bind ((undefined-function-warning #'muffle-warning))
+        (handler-bind ((undefined-function-warning
+                         (lambda (condition)
+                           (kiln.kernel::note-compilation-unit-functions
+                            (undefined-function-names condition))
+                           (muffle-warning condition))))
           (compile-module (front-end-forms `((setq *compiled-function* (function ,definition)))
                                            session)
                           name :session session :image t))
@@ -89,7 +93,11 @@ returns its values."
   (let* ((session (make-session))
          (name (kiln.kir::kir-name "eval-" (incf *native-compile-count*))))
     (multiple-value-bind (module literals)
-        (handler-bind ((undefined-function-warning #'muffle-warning))
+        (handler-bind ((undefined-function-warning
+                         (lambda (condition)
+                           (kiln.kernel::note-compilation-unit-functions
+                            (undefined-function-names condition))
+                           (muffle-warning condition))))
           (compile-module (front-end-forms `((setq *eval-values* (multiple-value-list ,form)))
                                            session)
                           name :session session :image t))
