@@ -11,7 +11,8 @@
 
 ;;; TYPEP of a class name or a class.
 (defun class-typep (object type)
-  (let ((class (if (symbolp type) (find-class type nil) type)))
+  (let ((class (cond ((symbolp type) (find-class type nil))
+                     ((typep type 'class) type))))
     (cond (class
            (if (eq (class-of class) (find-class 'structure-class nil))
                (structure-layout-typep object (ensure-structure-layout class))

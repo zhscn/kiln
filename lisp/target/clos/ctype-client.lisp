@@ -47,18 +47,15 @@
     ((double-float long-float) (kiln.kernel::double-float-p object))
     (t nil)))
 
-;;; There are no complexes yet; their parts would be of these types.
 (defmethod upgraded-complex-part-type ((client kiln-client) specifier &optional env)
-  (cond ((subctypep client (specifier-ctype client specifier env)
-                    (specifier-ctype client 'single-float env))
-         'single-float)
-        ((subctypep client (specifier-ctype client specifier env)
-                    (specifier-ctype client 'double-float env))
-         'double-float)
-        ((subctypep client (specifier-ctype client specifier env)
-                    (specifier-ctype client 'rational env))
-         'rational)
-        (t 'real)))
+  (let ((type (specifier-ctype client specifier env)))
+    (cond ((subctypep client type (specifier-ctype client nil env)) nil)
+          ((subctypep client type (specifier-ctype client 'single-float env)) 'single-float)
+          ((subctypep client type (specifier-ctype client 'double-float env)) 'double-float)
+          ((subctypep client type (specifier-ctype client 'rational env)) 'rational)
+          ((subctypep client type (specifier-ctype client 'float env)) 'float)
+          ((subctypep client type (specifier-ctype client 'real env)) 'real)
+          (t (error "~S is not a subtype of REAL." specifier)))))
 
 ;;; Arrays: these methods are for the time before Regalia is loaded,
 ;;; when there are only simple vectors of T and strings; arrays.lisp
