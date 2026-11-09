@@ -13,17 +13,18 @@
 | M4 | CLOS 引导和依赖 CLOS 的库：condition、哈希表、包、ctype、数组、结构、流、文件、打印、FORMAT、LOOP、reader（[clos.md](design/clos.md)、[stdlib.md](design/stdlib.md)、[io.md](design/io.md)） | 完成 |
 | M5 | 运行期 `eval`/`compile`/`load` 和 REPL；编译器在 kiln 上运行；自举闭合（kiln0 和 kiln1 逐字节相同）；原生 `compile`（[eval-compile.md](design/eval-compile.md)、[bootstrap.md](design/bootstrap.md)） | 完成 |
 | M6 | image 开发体验：堆快照（[heap-image.md](design/heap-image.md)）、原生 `eval`/`load`、帧的调试信息（[debugging.md](design/debugging.md)）、后端协议（[backend-protocol.md](design/backend-protocol.md)）、依赖追踪（[dependencies.md](design/dependencies.md)） | 前四项完成；剩下 AOT 模块的依赖和定义表、REPL 中断、SLYNK/Swank 接入 |
-| — | ANSI 补全：cl-bench 找到的缺口（`random`、`gentemp`、complex、位数组运算、`search` 的关键字、类的重定义、栈耗尽） | 这一批已补上，其余见“标准库和 ANSI 覆盖” |
-| — | 性能：CLOS 运行时编译化、调用点上的变换、数值（见下文“性能”） | 进行中 |
+| — | ANSI 补全：cl-bench 找到的缺口已补上；接入 `ansi-test` 系统排查并补齐标准覆盖度 | 进行中（见“当前优先级”与“标准库和 ANSI 覆盖”） |
+| — | 性能：自编译与基础代码生成已与 SBCL 持平（单阶段 5.0 s vs 4.63 s）；剩余编译器深度优化与库快路径见下文“性能” | 阶段一完成 |
 | — | seal、WPO 和 AOT 交付（[positioning.md](design/positioning.md)） | 未开始 |
 | — | 异步（[async.md](design/async.md)） | 未开始，ANSI 自举完成之前不做 |
 | — | Rust 宿主模块（[rust-interop.md](design/rust-interop.md)）、编辑器（[editor.md](design/editor.md)） | 设计草案 |
 
 ## 当前优先级
 
-1. **性能**。kiln 编译自己比 SBCL 慢约 6 倍，库、数值和 CLOS 运行时比 SBCL 慢一到三个数量级（[performance.md](research/performance.md)）。编辑器的布局和装饰提供者也撑不起来。用内建的采样分析器定位，按“性能”一节的顺序做。
-2. **M6 的剩余部分**：定义表和跳转到定义、who-calls，AOT 模块的依赖记录，打断正在运行的任务。它们是编辑器 IDE 阶段的前提。
-3. **构建期初始化和 seal**：决定 seal 的语义和目标文件格式。
+1. **ANSI 标准覆盖度（`ansi-test`）**。此前性能优化的主要目标是加快 kiln 自身的构建效率；现在自编译单阶段已从 845 秒降到 **5.0 秒**（SBCL 编同一份代码 4.63 秒），编译器自身和基础代码生成与 SBCL 差距已经很小。重心转向接入 `ansi-test` 测试套件，按模块分批跑通并修复与 ANSI CL 不一致的行为和缺失功能（见下文“标准库和 ANSI 覆盖”），为后续运行 ASDF/UIOP 和第三方库打底。
+2. **编译器自身的深度优化与库快路径**（见“性能”一节）：剩余性能差距集中在编译器的 Lisp 语义层优化（局部类型推导与浮点拆箱、不逃逸局部函数的 lambda lifting、高阶函数调用点展开与编译器宏、`dynamic-extent` 栈上分配）以及标准库协议层快路径（流/FORMAT/打印、bignum、多维数组、运行期 CLOS 编译化）。
+3. **M6 的剩余部分**：定义表和跳转到定义、who-calls，AOT 模块的依赖记录，打断正在运行的任务。它们是编辑器 IDE 阶段的前提。
+4. **构建期初始化和 seal**：决定 seal 的语义和目标文件格式。
 
 [modern-practices.md](research/modern-practices.md) 里各项的时机：
 
@@ -84,11 +85,14 @@
 
 ### 编译器
 
-- 编译器宏：编译期的 `define-compiler-macro` 被忽略，运行期只记在 plist 上（宿主库的除外）。
+- **局部类型推导与拆箱**：`ir-node` 和 `ir-var` 上已有 `type` 槽，但尚未做正向类型传播与区间分析；同一分支内已确认类型的变量仍会重复生成 tag 检查，`double-float` 在函数内每次运算仍在堆上装箱并调用 Rust runtime，已知元素类型的 `aref`/`length`/序列操作也还没按推导类型特化。
+- **局部函数的 lambda lifting 与多调用点小函数内联**：目前 `analyze-ir` 只内联无可选参数、仅调用一次的局部函数；多次调用但不逃逸的局部函数若捕获外层变量，仍会分配闭包并在循环头 spill。
+- **编译器宏与高阶序列函数展开**：编译期的 `define-compiler-macro` 被忽略，运行期只记在 plist 上（宿主库的除外）；`find`、`position`、`sort`、`map` 等高阶调用点尚未在编译期展开成内联循环（`funcall` 比较函数和运行期解析关键字参数仍是开销来源）。
+- **逃逸分析与 `dynamic-extent`**：`&rest` 列表、跨函数退出令牌、`handler-case` / `handler-bind` 的 handler 闭包和条目仍在堆上分配；带 `&key` 的全局函数尚未生成固定位置参数的内部入口。
 - 全局符号宏：image 里的编译器看不到 `define-symbol-macro`。
 - `defclass` 定义的访问函数在文件末尾被报成未定义函数。
 - 字面数据里未 intern 的符号，名字里带宿主的 gensym 计数时，两边的 KIR 可能不同。
-- 中端放在哪里（直接在 KIR 上，还是 AST 和 KIR 之间新加一层 SSA IR）待定，见 [modern-practices.md](research/modern-practices.md)。
+- 中端放在哪里（直接在 `ir-node` 上做类型推导与变换，还是在 IR 和 KIR 之间新加一层）待定，见 [modern-practices.md](research/modern-practices.md)。
 
 ### 运行期的 `eval`/`compile`
 
