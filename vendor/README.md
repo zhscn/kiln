@@ -31,7 +31,9 @@ shows exactly what kiln changed. Changes are not sent upstream for now.
 - A single-dispatch discriminating closure is a fast closure that probes
   the cache for an instance's stamp and tail-calls the effective method
   (`%primop :tail-funcall-function`), and a slow closure for everything
-  else; the closure wrapping a method's fast function tail-calls it.
+  else; the closure wrapping a method's fast function tail-calls it. A
+  double-dispatch closure is split the same way, and the list and
+  automaton closures tail-call the effective method they find.
 
 - Class `shared-initialize` preserves direct slots when the option is omitted,
   so reinitializing documentation or superclasses keeps the slot definitions.

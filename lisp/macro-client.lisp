@@ -59,7 +59,10 @@ compiler's client and the run-time macros."))
 ;;; function, of the next methods and the arguments themselves, which the
 ;;; discriminating function calls without making a list. The local
 ;;; functions CALL-NEXT-METHOD and NEXT-METHOD-P are only made when the
-;;; body mentions them: they are closures, allocated at each call.
+;;; body mentions them. When the body only calls them (no
+;;; #'CALL-NEXT-METHOD), they are local macros instead: local functions
+;;; would be closures, allocated at each call of the method, and
+;;; (CALL-NEXT-METHOD) calls the next method's fast function in place.
 
 (defconstant +max-fast-arity+ 6)
 
@@ -77,6 +80,25 @@ compiler's client and the run-time macros."))
 ;;; generic function checks them, CLHS 7.6.5): its lambda list gets
 ;;; &ALLOW-OTHER-KEYS. (Clostrophilia appends :ALLOW-OTHER-KEYS T to the
 ;;; arguments instead, which a &REST parameter would then see.)
+(defun only-called-p (symbols tree)
+  "True if SYMBOLS occur in TREE only as the first element of a list (the
+operator of a form), as far as a walk of the tree without macroexpansion
+can tell."
+  (let ((seen (make-hash-table :test 'eq)))
+    (labels ((walk (x)
+               (or (atom x)
+                   (gethash x seen)
+                   (progn
+                     (setf (gethash x seen) t)
+                     (and (walk (car x))
+                          (loop for tail = (cdr x) then (cdr tail)
+                                while (consp tail)
+                                always (let ((e (car tail)))
+                                         (if (consp e)
+                                             (walk e)
+                                             (not (member e symbols))))))))))
+      (walk tree))))
+
 (defun allow-other-keys-lambda-list (lambda-list)
   (if (and (member '&key lambda-list) (not (member '&allow-other-keys lambda-list)))
       (let ((aux (position '&aux lambda-list)))
@@ -101,39 +123,65 @@ LAMBDA-EXPRESSION."
                      (every #'symbolp lambda-list)
                      (notany (lambda (p) (member p lambda-list-keywords)) lambda-list)))
          (parameters (and fastp (loop repeat (length lambda-list) collect (gensym "ARG")))))
-    (flet ((with-next (call-next-method-body form)
-             (if nextp
-                 `(flet ((next-method-p ()
-                           (not (null ,next-methods)))
-                         (call-next-method (&rest arguments)
-                           (if (null ,next-methods)
-                               (error "no next method")
-                               ,call-next-method-body)))
-                    (declare (ignorable #'next-method-p #'call-next-method))
-                    ,form)
-                 form)))
+    ;; One string in every expansion: SBCL coalesces equal literals of a
+    ;; file, kiln does not, and the KIR must be the same.
+    (flet ((with-next (call-next-method-body no-arguments-body form
+                       &aux (message "no next method"))
+             ;; CALL-NEXT-METHOD-BODY calls the next method with ARGUMENTS
+             ;; (NIL: the method's own); NO-ARGUMENTS-BODY with the
+             ;; method's own.
+             (cond ((not nextp) form)
+                   ((only-called-p '(call-next-method next-method-p) (cddr lambda-expression))
+                    (let* ((with-arguments `(if (null ,next-methods)
+                                                (error ,message)
+                                                ,call-next-method-body))
+                           (without-arguments `(if (null ,next-methods)
+                                                   (error ,message)
+                                                   ,no-arguments-body)))
+                      `(macrolet ((next-method-p ()
+                                    '(not (null ,next-methods)))
+                                  (call-next-method (&rest arguments)
+                                    (if arguments
+                                        (list 'let (list (list 'arguments (cons 'list arguments)))
+                                              ',with-arguments)
+                                        ',without-arguments)))
+                         ,form)))
+                   (t
+                    `(flet ((next-method-p ()
+                              (not (null ,next-methods)))
+                            (call-next-method (&rest arguments)
+                              (if (null ,next-methods)
+                                  (error ,message)
+                                  ,call-next-method-body)))
+                       (declare (ignorable #'next-method-p #'call-next-method))
+                       ,form)))))
       (values
        `(lambda (,arguments ,next-methods)
           (declare (ignorable ,next-methods))
           ,(with-next `(funcall (kiln.sys:%method-function (first ,next-methods))
                                 (or arguments ,arguments)
                                 (rest ,next-methods))
+                      `(funcall (kiln.sys:%method-function (first ,next-methods))
+                                ,arguments
+                                (rest ,next-methods))
                       `(apply ,lambda-expression ,arguments)))
        (and fastp
             `(lambda (,next-methods ,@parameters)
                (declare (ignorable ,next-methods))
-               ,(with-next `(if arguments
-                                (funcall (kiln.sys:%method-function (first ,next-methods))
-                                         arguments (rest ,next-methods))
-                                (let ((fast (kiln.sys:%method-fast-function
-                                             (first ,next-methods))))
-                                  (if fast
-                                      (funcall fast (rest ,next-methods) ,@parameters)
-                                      (funcall (kiln.sys:%method-function
-                                                (first ,next-methods))
-                                               (list ,@parameters)
-                                               (rest ,next-methods)))))
-                           `(,lambda-expression ,@parameters))))))))
+               ,(let ((own `(let ((fast (kiln.sys:%method-fast-function
+                                          (first ,next-methods))))
+                               (if fast
+                                   (funcall fast (rest ,next-methods) ,@parameters)
+                                   (funcall (kiln.sys:%method-function
+                                             (first ,next-methods))
+                                            (list ,@parameters)
+                                            (rest ,next-methods))))))
+                  (with-next `(if arguments
+                                  (funcall (kiln.sys:%method-function (first ,next-methods))
+                                           arguments (rest ,next-methods))
+                                  ,own)
+                             own
+                             `(,lambda-expression ,@parameters)))))))))
 
 (defmethod cmd:make-method-lambda-wrapper ((client macro-client))
   (lambda (lambda-expression)

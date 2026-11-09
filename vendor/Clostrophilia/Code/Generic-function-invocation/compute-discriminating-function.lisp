@@ -928,7 +928,7 @@ fast function when its form has a spread closure (CALL-NEXT-METHOD in an
                                            (setf state (automaton-transition
                                                         state (argument-stamp ,parameter)))))
                         (if (consp state)
-                            (funcall (cdr state) ,@parameters)
+                            (kiln.sys:%primop :tail-funcall-function (cdr state) ,@parameters)
                             (let ((function
                                     (and eql-cache
                                          (let ,(loop for stamp in stamps
@@ -948,7 +948,7 @@ fast function when its form has a spread closure (CALL-NEXT-METHOD in an
                                                                              ,object)))
                                                    return (svref entry 0))))))
                               (if function
-                                  (funcall function ,@parameters)
+                                  (kiln.sys:%primop :tail-funcall-function function ,@parameters)
                                   (default-discriminating-function
                                    generic-function (list ,@parameters) profile)))))))))
       (ecase arity
@@ -1149,10 +1149,10 @@ structure (inline, no call); NIL for other objects."
                    (index (let ((i (kiln.sys:%primop :fixnum-logand stamp mask)))
                             (+ i i))))
               (if (eq (svref cache index) stamp)
-                  (funcall (svref cache (+ index 1)) arguments)
+                  (kiln.sys:%primop :tail-funcall-function (svref cache (+ index 1)) arguments)
                   (let ((function (single-dispatch-miss cache index stamp initial)))
                     (if function
-                        (funcall function arguments)
+                        (kiln.sys:%primop :tail-funcall-function function arguments)
                         (default-discriminating-function
                          generic-function arguments profile))))))))))
 
@@ -1163,7 +1163,8 @@ structure (inline, no call); NIL for other objects."
   (let* ((size (dispatch-cache-size history-length))
          (mask (- size 1))
          (cache (kiln.kernel::make-simple-vector (* 3 size) nil)))
-    (macrolet ((dispatcher (n j k)
+    ;; Fast and slow closures as in MAKE-SINGLE-DISPATCH-CLOSURE.
+    (macrolet ((slow-dispatcher (n j k)
                  (let ((parameters (spread-parameters n)))
                    `(lambda ,parameters
                       (let* ((s1 (argument-stamp ,(nth j parameters)))
@@ -1174,12 +1175,39 @@ structure (inline, no call); NIL for other objects."
                                           mask))))
                         (if (and (eq (svref cache index) s1)
                                  (eq (svref cache (+ index 1)) s2))
-                            (funcall (svref cache (+ index 2)) ,@parameters)
+                            (kiln.sys:%primop :tail-funcall-function
+                                              (svref cache (+ index 2)) ,@parameters)
                             (let ((function (double-dispatch-miss cache index s1 s2 initial)))
                               (if function
-                                  (funcall function ,@parameters)
+                                  (kiln.sys:%primop :tail-funcall-function function ,@parameters)
                                   (default-discriminating-function
                                    generic-function (list ,@parameters) profile))))))))
+               (dispatcher (n j k)
+                 (let ((parameters (spread-parameters n)))
+                   `(let ((slow (slow-dispatcher ,n ,j ,k)))
+                      (lambda ,parameters
+                        (let ((s1 (instance-stamp-or-nil ,(nth j parameters)))
+                              (s2 (instance-stamp-or-nil ,(nth k parameters))))
+                          (if (and s1 s2)
+                              (let* ((m (kiln.sys:%primop
+                                         :fixnum-logand
+                                         (kiln.sys:%primop
+                                          :fixnum-logxor
+                                          (kiln.sys:%primop :fixnum+ s1 (kiln.sys:%primop :fixnum+ s1 s1))
+                                          s2)
+                                         mask))
+                                     (index (kiln.sys:%primop :fixnum+ m (kiln.sys:%primop :fixnum+ m m))))
+                                (if (and (eq (kiln.sys:%primop :svref-unchecked cache index) s1)
+                                         (eq (kiln.sys:%primop :svref-unchecked cache
+                                                               (kiln.sys:%primop :fixnum+ index 1))
+                                             s2))
+                                    (kiln.sys:%primop
+                                     :tail-funcall-function
+                                     (kiln.sys:%primop :svref-unchecked cache
+                                                       (kiln.sys:%primop :fixnum+ index 2))
+                                     ,@parameters)
+                                    (kiln.sys:%primop :tail-funcall-function slow ,@parameters)))
+                              (kiln.sys:%primop :tail-funcall-function slow ,@parameters)))))))
                (dispatchers ()
                  `(ecase arity
                     ,@(loop for n from 2 to 6
@@ -1244,10 +1272,10 @@ structure (inline, no call); NIL for other objects."
                       do (setf state (automaton-transition
                                       state (argument-stamp (car remaining)))))
               (if (consp state)
-                  (funcall (cdr state) arguments)
+                  (kiln.sys:%primop :tail-funcall-function (cdr state) arguments)
                   (let ((function (and eql-cache (eql-dispatch-lookup eql-cache arguments))))
                     (if function
-                        (funcall function arguments)
+                        (kiln.sys:%primop :tail-funcall-function function arguments)
                         (default-discriminating-function
                          generic-function arguments specializer-profile)))))))))))
 

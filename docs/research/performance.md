@@ -171,6 +171,8 @@ kiln 编译自己的五个模块（一个阶段，见 [bootstrap.md](../design/b
 
 删掉旧前端（Iconoclast 的降级、`simplify-ast`、Common-boot 和 HIR 求值器，以及只有它们用的 s-expression-syntax、parser.packrat、builder 协议、let-plus、anaphora 等）以后，compiler 模块只剩 Trucler reference、Clostrum、Anatomicl 和 kiln 自己的编译器：完整自举每个阶段 32.4 → **18.4 秒**（2026-11-09），其中编 compiler 模块从约 17.2 秒降到 2.8 秒，其余模块不变。
 
+同一路线继续：按两个参数分派的判别闭包也拆成快、慢两个，带 `&optional` 等的单分派闭包和自动机闭包命中后尾调用；方法体只调用 `call-next-method`、`next-method-p`（没有 `#'call-next-method`）时，它们是局部宏而不是每次分配的闭包。`bench/compare.lisp`（AOT，各三次取中位数）：`call-next-method` **40.6 → 18.5 ns**，单态 7.3、多态 12.0 ns（多态里含 `(mod i 3)` 和 `svref`），读取器 6.2 ns，与之前持平。
+
 845 秒那次的 profile（按模块统计自身时间）：
 
 | 部分 | 占比 |
