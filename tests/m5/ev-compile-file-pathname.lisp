@@ -1,0 +1,27 @@
+(print (list *compile-file-pathname* *compile-file-truename* *compile-print*
+             (typep *compile-verbose* 'boolean)))
+(let ((*default-pathname-defaults* (parse-namestring "/tmp/kiln-input/default.lisp")))
+  (dolist (input '("source.lisp" "dir/source" "/another/source.lisp"))
+    (dolist (output '(nil "target" "target.obj" "obj/" "/out/renamed"))
+      (print (namestring
+              (if output
+                  (compile-file-pathname input :output-file output)
+                  (compile-file-pathname input)))))))
+(let ((*default-pathname-defaults* (parse-namestring "")))
+  (print (namestring (compile-file-pathname "relative.lisp" :verbose nil)))
+  (print (namestring (compile-file-pathname "relative.lisp" :output-file "")))
+  (print (namestring (compile-file-pathname "relative.lisp" :output-file "new."))))
+(setf (logical-pathname-translations "CFPTEST")
+      '(("**;*.*.*" "/tmp/kiln-compile/**/*.*")))
+(dolist (output '(nil "CFPTEST:OBJECT;NEW.OBJ" "/tmp/physical.obj"))
+  (let ((path (if output
+                  (compile-file-pathname "CFPTEST:SOURCES;INPUT.LISP" :output-file output)
+                  (compile-file-pathname "CFPTEST:SOURCES;INPUT.LISP"))))
+    (print (list (typep path 'logical-pathname) (namestring path)))))
+(dolist (input '(17 #\a (a b)))
+  (print (handler-case (compile-file-pathname input)
+           (type-error (condition) (eql input (type-error-datum condition)))))
+  (print (handler-case (compile-file-pathname "source.lisp" :output-file input)
+           (type-error (condition) (eql input (type-error-datum condition))))))
+(print (handler-case (compile-file-pathname "source.lisp" :output-file nil)
+         (type-error () :type-error)))

@@ -1,0 +1,29 @@
+(NIL NIL NIL T)
+"/tmp/kiln-input/source.fasl"
+"/tmp/kiln-input/target.fasl"
+"/tmp/kiln-input/target.obj"
+"/tmp/kiln-input/obj/source.fasl"
+"/out/renamed.fasl"
+"/tmp/kiln-input/dir/source.fasl"
+"/tmp/kiln-input/dir/target.fasl"
+"/tmp/kiln-input/dir/target.obj"
+"/tmp/kiln-input/obj/source.fasl"
+"/out/renamed.fasl"
+"/another/source.fasl"
+"/another/target.fasl"
+"/another/target.obj"
+"/tmp/kiln-input/obj/source.fasl"
+"/out/renamed.fasl"
+"relative.fasl"
+"relative.fasl"
+"new."
+(T "CFPTEST:SOURCES;INPUT.FASL.NEWEST")
+(T "CFPTEST:OBJECT;NEW.OBJ.NEWEST")
+(NIL "/tmp/physical.obj")
+T
+T
+T
+T
+T
+T
+:TYPE-ERROR

@@ -467,6 +467,7 @@ SESSION must have compiled the kernel and CLOS."
                  "compile/compilation-unit" "compile/environment" "compile/compile"
                  "vm-shared" "vm-native"))
        (list (eval-file "evaluator")
+             (eval-file "files")
              (eval-file "modules")
              (eval-file "compilation-unit")
              (eval-file "repl")

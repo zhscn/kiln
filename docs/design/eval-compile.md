@@ -47,6 +47,15 @@
 
 单元返回主体的全部值。正常返回、错误或非局部退出都会结束当前单元并恢复外层状态；独立内层单元的结束警告直接报告，不重新加入外层队列。
 
+## 编译文件的路径和动态状态
+
+`compile-file-pathname` 按输入路径、显式输出路径和 `*default-pathname-defaults*`
+计算产物名，默认类型为 `fasl`（逻辑路径为 `FASL`）。输出路径未指定目录时沿用
+输入目录；显式输出类型予以保留。函数接受编译器的其他关键字，不访问文件系统。
+
+这些接口随 eval 模块提供。`*compile-file-pathname*`、`*compile-file-truename*`
+初始为 NIL，`*compile-print*` 初始为 NIL，`*compile-verbose*` 初始为 T。
+
 ## 原生 `compile`
 
 compiler 模块的最后一个文件 `lisp/target/compiler/native.lisp` 把 `kiln.kernel::*compile-function*` 设成 `native-compile`，此后的 `compile` 都编成机器码。这个变量为 NIL 时用 Maclina。compiler 模块自己载入时调用的 `compile` 仍是字节码。
