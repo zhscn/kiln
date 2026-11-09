@@ -435,15 +435,15 @@ by ending the program."
     (emit-fatal-error code obj)))
 
 (defun emit-poll (&key stack)
-  "A poll point. With STACK (function entries), it also calls
-the slow path when the frame is below the context's stack limit; the slow
-path then returns true, and KILN.KERNEL::%STACK-EXHAUSTED signals the
-STORAGE-CONDITION."
+  "A poll point. With STACK (function entries), it compares the frame
+with the context's stack limit instead of reading the poll flag: a poll
+request raises the limit above every stack, so one
+comparison covers both. The slow path returns true when the stack is
+exhausted, and KILN.KERNEL::%STACK-EXHAUSTED signals the STORAGE-CONDITION."
   (let ((slow (new-block)) (overflow (new-block)) (cont (new-block))
         (exhausted (new-var :raw)))
     (br (if stack
-            `(:or (:ne (:load :ctx ,+ctx-poll-flag+) 0)
-                  (:lt (:fp) (:load :ctx ,+ctx-stack-limit+)))
+            `(:lt (:fp) (:load :ctx ,+ctx-stack-limit+))
             `(:load :ctx ,+ctx-poll-flag+))
         slow cont)
     (start-block slow)

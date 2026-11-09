@@ -102,7 +102,10 @@ pub unsafe fn error_with(_ctx: *mut Context, code: u64, obj: u64) -> ! {
 /// `ctx` must be valid.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn kiln_rt_poll(ctx: *mut Context, fp: usize) -> u64 {
-    unsafe { (*ctx).poll_flag = 0 };
+    unsafe {
+        (*ctx).poll_flag = 0;
+        (*ctx).stack_limit = (*ctx).stack_real_limit;
+    }
     crate::profile::poll(ctx, fp);
     // 1: the stack is exhausted; the caller signals it.
     unsafe { crate::stack::check_stack(&mut *ctx, fp) as u64 }

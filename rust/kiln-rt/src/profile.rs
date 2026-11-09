@@ -65,9 +65,9 @@ pub fn start(ctx: *mut Context, mode: u64, interval_us: u64) {
                 std::thread::sleep(interval);
                 TICKS.fetch_add(1, Ordering::Relaxed);
                 let ctx = CONTEXT.load(Ordering::Relaxed) as *mut Context;
-                // A plain store, as the poll points read it; a lost
+                // Plain stores, as the poll points read them; a lost
                 // update only delays the sample (its ticks are kept).
-                unsafe { core::ptr::write_volatile(&raw mut (*ctx).poll_flag, 1) };
+                unsafe { crate::context::request_poll(ctx) };
             }
         })
         .expect("cannot start the profiler thread");

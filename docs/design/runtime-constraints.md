@@ -70,7 +70,7 @@ handler 和 restart 是 Predicament 的 special 变量，所以也自然挂在 c
 | 重定义屏障 | 类或方法表更新时 stop-the-world |
 | 抢占 | fiber 时间片用完时让出 |
 
-同一套机制承担四件事。栈图也只需要在调用点和 poll 点生成。现在慢路径用于采样分析器（定时器设置标志，下一个 poll 点记录栈）和栈耗尽检查（函数入口顺带比较 `stack_limit`）；上表四种用途都还没有接上。
+同一套机制承担四件事。栈图也只需要在调用点和 poll 点生成。现在慢路径用于采样分析器（定时器设置标志，下一个 poll 点记录栈）和栈耗尽检查（函数入口只比较 `stack_limit`，poll 请求也抬高它）；上表四种用途都还没有接上。
 
 **配套约束**：提供 `without-interrupts` 和（以后的）`without-preemption`。持锁或修改 runtime 内部结构的代码在这些区域里只延迟处理标志，不响应。
 

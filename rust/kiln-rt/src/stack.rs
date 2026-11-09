@@ -42,20 +42,20 @@ pub fn set_stack_limits(ctx: &mut Context, low: usize, size: usize) {
     let soft_reserve = (size / 8).clamp(4 * HARD_RESERVE, 4 << 20);
     ctx.stack_hard_limit = low + HARD_RESERVE;
     ctx.stack_soft_limit = low + soft_reserve;
-    ctx.stack_limit = ctx.stack_soft_limit;
+    ctx.set_stack_limit(ctx.stack_soft_limit);
 }
 
 /// Called by the poll slow path: true (once) when `fp` is below the stack
 /// limit. Ends the program below the hard limit.
 pub fn check_stack(ctx: &mut Context, fp: usize) -> bool {
-    if fp >= ctx.stack_limit {
+    if fp >= ctx.stack_real_limit {
         restore_stack_limit(ctx, fp);
         return false;
     }
-    if ctx.stack_limit == ctx.stack_hard_limit {
+    if ctx.stack_real_limit == ctx.stack_hard_limit {
         crate::rtfun::error_exit("control stack exhausted while handling a stack exhaustion");
     }
-    ctx.stack_limit = ctx.stack_hard_limit;
+    ctx.set_stack_limit(ctx.stack_hard_limit);
     true
 }
 
@@ -63,8 +63,8 @@ pub fn check_stack(ctx: &mut Context, fp: usize) -> bool {
 /// (`fp`) is well above it again.
 pub fn restore_stack_limit(ctx: &mut Context, fp: usize) {
     let soft = ctx.stack_soft_limit;
-    if ctx.stack_limit != soft && fp > soft + (soft - ctx.stack_hard_limit) {
-        ctx.stack_limit = soft;
+    if ctx.stack_real_limit != soft && fp > soft + (soft - ctx.stack_hard_limit) {
+        ctx.set_stack_limit(soft);
     }
 }
 
@@ -181,7 +181,7 @@ pub unsafe extern "C" fn kiln_rt_call_on_new_stack(
             soft_limit: (*ctx).stack_soft_limit,
             hard_limit: (*ctx).stack_hard_limit,
         };
-        let limit = (*ctx).stack_limit;
+        let limit = (*ctx).stack_real_limit;
         set_stack_limits(&mut *ctx, (*stack).base as usize + GUARD_SIZE, STACK_SIZE);
         let mut boundary = DynEntry {
             kind: DYN_STACK_BOUNDARY,
@@ -199,7 +199,7 @@ pub unsafe extern "C" fn kiln_rt_call_on_new_stack(
         (*ctx).segments = seg.prev;
         (*ctx).stack_soft_limit = seg.soft_limit;
         (*ctx).stack_hard_limit = seg.hard_limit;
-        (*ctx).stack_limit = limit;
+        (*ctx).set_stack_limit(limit);
         drop(Box::from_raw(stack));
         ret
     }
@@ -218,7 +218,7 @@ pub unsafe fn leave_stack(ctx: *mut Context, entry: *mut DynEntry) -> usize {
         (*ctx).segments = (*seg).prev;
         (*ctx).stack_soft_limit = (*seg).soft_limit;
         (*ctx).stack_hard_limit = (*seg).hard_limit;
-        (*ctx).stack_limit = (*seg).soft_limit;
+        (*ctx).set_stack_limit((*seg).soft_limit);
         let stack = Box::from_raw((*entry).pend_target as *mut Stack);
         DEAD_STACKS.lock().unwrap().push(*stack);
         (*entry).fp
