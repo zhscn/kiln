@@ -26,3 +26,17 @@
 (defun short-site-name () *short-site-name*)
 
 (defun long-site-name () *long-site-name*)
+
+(defun room (&optional (detail :default))
+  (check-type detail (member nil t :default))
+  (let ((used (sys 22 0))
+        (free (sys 22 1))
+        (total (sys 22 2))
+        (collections (kiln.sys:%gc-count)))
+    (format t "~&Dynamic space: ~D bytes used.~%" used)
+    (when detail
+      (format t "Heap capacity: ~D bytes; free: ~D bytes.~%Completed collections: ~D~%"
+              total free collections))
+    (when (eq detail t)
+      (format t "Registered static root slots: ~D~%" (sys 22 3))))
+  (values))

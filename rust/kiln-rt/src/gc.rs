@@ -692,6 +692,17 @@ pub fn used_bytes() -> usize {
     memory_manager::used_bytes(mmtk())
 }
 
+/// Heap accounting in bytes, or the number of registered static root slots.
+pub fn heap_statistic(which: i64) -> Option<usize> {
+    match which {
+        0 => Some(used_bytes()),
+        1 => Some(memory_manager::free_bytes(mmtk())),
+        2 => Some(memory_manager::total_bytes(mmtk())),
+        3 => Some(STATIC_ROOTS.read().unwrap().len()),
+        _ => None,
+    }
+}
+
 /// Is the tagged heap pointer `v` an object in an MMTk space (as opposed
 /// to static data, which never moves)?
 pub fn in_mmtk_space(v: u64) -> bool {

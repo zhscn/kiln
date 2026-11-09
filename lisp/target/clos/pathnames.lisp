@@ -571,10 +571,10 @@ pieces left."
   (declare (ignore host))
   (let ((home (sys-string 10 (string-octets "HOME"))))
     (if (stringp home)
-        (parse-namestring (if (and (plusp (length home))
-                                   (char= (char home (- (length home) 1)) #\/))
-                              home
-                              (concatenate 'string home "/")))
+        (values (parse-namestring (if (and (plusp (length home))
+                                           (char= (char home (- (length home) 1)) #\/))
+                                      home
+                                      (concatenate 'string home "/"))))
         nil)))
 
 (defun current-directory ()

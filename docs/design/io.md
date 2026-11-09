@@ -17,6 +17,8 @@
 
 `lisp-implementation-type` 返回 `"kiln"`。`short-site-name` 和 `long-site-name` 返回各自的运行期配置变量，初始为 NIL。
 
+`room` 将运行中的 MMTk 堆统计写到 `*standard-output*`。NIL 只报告使用量，`:default` 增加堆容量、空闲页字节数和已完成的 GC 次数，T 再报告静态根槽数。系统接口 22 的选择器 0、1、2、3 分别返回使用字节数、空闲字节数、堆容量和静态根槽数；前三项按 MMTk 页粒度计量。`room` 返回零个值。
+
 ## 日期和时区
 
 `decode-universal-time` 和 `encode-universal-time` 在 Lisp 层做公历换算，支持秒精度的有理数时区。显式时区不应用夏令时；缺省时区通过系统接口 19 查询指定 Unix 秒的向西偏移（选择器 0）或夏令时标志（选择器 1），查询失败返回负 errno。解码返回的时区是标准时偏移，夏令时单独返回。

@@ -375,6 +375,7 @@ fn file_author(path: &std::ffi::CStr) -> Result<Vec<u8>, i32> {
 /// - 20 environment string selected by a into buffer b: 0 implementation version,
 ///   1 OS name, 2 OS release, 3 hostname, 4 architecture, 5 CPU model.
 /// - 21 file owner name for path a into buffer b; empty if its UID has no name.
+/// - 22 heap statistic a: 0 used bytes, 1 free bytes, 2 total bytes, 3 static roots.
 ///
 /// # Safety
 /// The arguments must be as described.
@@ -580,6 +581,7 @@ pub unsafe extern "C" fn kiln_rt_sys(_ctx: *mut Context, op: u64, a: u64, b: u64
                 Err(error) => -i64::from(error),
             },
         },
+        22 => crate::gc::heap_statistic(fixnum_value(a)).map_or(einval, |value| value as i64),
         _ => einval,
     };
     fixnum(result)
