@@ -524,6 +524,12 @@ Under `#+kiln`:
 
 ## Maclina patches
 
+- MAKE-LOAD-FORM initializers that reference an active creation are deferred
+  until its creator exists. Speculative initializer records use child
+  coalescence tables and commit only on success, so retries cannot retain
+  partially constructed constants. Genuine creation cycles signal
+  PROGRAM-ERROR.
+
 - The object writer canonicalizes an absent pathname host to NIL rather
   than an empty host name. The loader fills bytecode before asking the
   client to construct a module, allowing the client to convert or copy it.

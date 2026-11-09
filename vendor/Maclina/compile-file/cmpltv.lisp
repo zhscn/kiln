@@ -253,7 +253,9 @@
    ;; Since there's only ever at most one environment cell, it's just stored
    ;; directly in this variable rather than a table.
    ;; NIL means not initialized yet.
-   (%environment-coalesce :initform nil :accessor environment-coalesce)))
+   (%environment-coalesce :initform nil :accessor environment-coalesce)
+   (%parent :initarg :parent :initform nil :reader coalescence-parent)
+   (%pending-initializers :initform nil :accessor pending-initializers)))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 ;;;
@@ -401,22 +403,38 @@
 ;; On success returns the creator, otherwise NIL.
 ;; Could be extended with coalescence relations or made more efficient,
 ;; for example by multiple tables discriminated by type.
-(defun %find-constant (value)
-  (values (gethash value (coalesce *coalescence*)))
-  #+(or)
-  (find-if (lambda (c) (and (typep c 'creator) (similarp c value)))
-           sequence))
+(defun coalescence-lookup (key table-reader)
+  (loop for unit = *coalescence* then (coalescence-parent unit)
+        while unit
+        do (multiple-value-bind (value presentp) (gethash key (funcall table-reader unit))
+             (when presentp (return value)))))
 
-(defun find-oob (value)
-  (values (gethash value (oob-coalesce *coalescence*))))
+(defun %find-constant (value) (coalescence-lookup value #'coalesce))
+(defun find-oob (value) (coalescence-lookup value #'oob-coalesce))
+(defun find-fcell (name) (coalescence-lookup name #'fcell-coalesce))
+(defun find-vcell (name) (coalescence-lookup name #'vcell-coalesce))
 
-(defun find-fcell (name) (values (gethash name (fcell-coalesce *coalescence*))))
-(defun find-vcell (name) (values (gethash name (vcell-coalesce *coalescence*))))
+(defun find-environment ()
+  (loop for unit = *coalescence* then (coalescence-parent unit)
+        while unit thereis (environment-coalesce unit)))
 
-(defun find-environment () (environment-coalesce *coalescence*))
+(defun commit-coalescence (child parent)
+  (dolist (reader '(coalesce oob-coalesce fcell-coalesce vcell-coalesce))
+    (let ((target (funcall reader parent)))
+      (maphash (lambda (key value) (setf (gethash key target) value))
+               (funcall reader child))))
+  (setf (instructions parent) (nconc (instructions child) (instructions parent))
+        (pending-initializers parent)
+        (append (pending-initializers child) (pending-initializers parent)))
+  (when (environment-coalesce child)
+    (setf (environment-coalesce parent) (environment-coalesce child))))
 
 ;;; Should be called from within WITH-CONSTANTS, obviously.
 (defun finish-fasl-unit (&optional (coalescence *coalescence*))
+  (let ((*coalescence* coalescence))
+    (drain-object-initializers)
+    (when (pending-initializers coalescence)
+      (error 'circular-dependency :path (mapcar #'third (pending-initializers coalescence)))))
   (let* ((instructions (instructions coalescence))
          (nobjs (count-if (lambda (i) (typep i 'creator)) instructions)))
     (make-instance 'fasl-unit
@@ -725,8 +743,9 @@
      :type (ensure-constant (pathname-type value))
      :version (ensure-constant (pathname-version value)))))
 
-(define-condition circular-dependency (error)
-  ((%path :initarg :path :reader path))
+(define-condition circular-dependency (program-error)
+  ((%path :initarg :path :reader path)
+   (%object :initarg :object :initform nil :reader circular-object))
   (:report (lambda (condition stream)
              (format stream "~s circular dependency detected:~%~t~{~s~^ ~}"
                      'make-load-form (path condition)))))
@@ -842,13 +861,43 @@
                     :arguments (mapcar cre (rest form)))))))
            (t (default)))))
 
+(defvar *draining-object-initializers* nil)
+
+(defun add-object-initializer (form environment)
+  ;; A failed attempt must leave neither partially initialized constants nor
+  ;; literal references behind. The child records only new entries; existing
+  ;; creators remain visible through its parent.
+  (let* ((parent *coalescence*)
+         (child (make-instance 'coalescence :parent parent)))
+    (handler-case
+        (progn
+          (let ((*coalescence* child))
+            (add-initializer-form form environment))
+          (commit-coalescence child parent))
+      (circular-dependency (condition)
+        (if (member (circular-object condition) *creating* :test #'eq)
+            (push (list form environment (circular-object condition))
+                  (pending-initializers parent))
+            (error condition))))))
+
+(defun drain-object-initializers ()
+  (unless *draining-object-initializers*
+    (let ((*draining-object-initializers* t))
+      (loop for task = (find-if (lambda (task) (find-constant (third task)))
+                               (pending-initializers *coalescence*))
+            while task
+            do (setf (pending-initializers *coalescence*)
+                     (delete task (pending-initializers *coalescence*) :test #'eq))
+               (add-object-initializer (first task) (second task))))))
+
 (defmethod add-constant ((value t))
-  (when (member value *creating*)
-    (error 'circular-dependency :path *creating*))
+  (when (member value *creating* :test #'eq)
+    (error 'circular-dependency :path *creating* :object value))
   (multiple-value-bind (create initialize) (make-load-form m:*client* value)
-    (prog1
-        (add-creator value (creation-form-creator value create))
-      (add-initializer-form initialize))))
+    (let ((creator (add-creator value (creation-form-creator value create))))
+      (add-object-initializer initialize (cmp:make-null-lexical-environment *environment*))
+      (drain-object-initializers)
+      creator)))
 
 ;;; Loop over the instructions, assigning indices to the creators.
 ;;; This only affects their position in the similarity vector,

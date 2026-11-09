@@ -13,7 +13,7 @@
 | M4 | CLOS 引导和依赖 CLOS 的库：condition、哈希表、包、ctype、数组、结构、流、文件、打印、FORMAT、LOOP、reader（[clos.md](design/clos.md)、[stdlib.md](design/stdlib.md)、[io.md](design/io.md)） | 完成 |
 | M5 | 运行期 `eval`/`compile`/`load` 和 REPL；编译器在 kiln 上运行；自举闭合（kiln0 和 kiln1 逐字节相同）；原生 `compile`（[eval-compile.md](design/eval-compile.md)、[bootstrap.md](design/bootstrap.md)） | 完成 |
 | M6 | image 开发体验：堆快照（[heap-image.md](design/heap-image.md)）、原生 `eval`/`load`、帧的调试信息（[debugging.md](design/debugging.md)）、后端协议（[backend-protocol.md](design/backend-protocol.md)）、依赖追踪（[dependencies.md](design/dependencies.md)） | 前四项完成；剩下 AOT 模块的依赖和定义表、REPL 中断、SLYNK/Swank 接入 |
-| — | ANSI 补全：cl-bench 找到的缺口已补上；`ansi-test` 全部 24 组已跑通（21,829 / 21,876 = 99.8%，另跳过 77 项，见“标准库和 ANSI 覆盖”），持续补齐剩余缺口 | 进行中 |
+| — | ANSI 补全：cl-bench 找到的缺口已补上；`ansi-test` 全部 24 组已跑通（21,832 / 21,876 = 99.8%，另跳过 77 项，见“标准库和 ANSI 覆盖”），持续补齐剩余缺口 | 进行中 |
 | — | 性能：自编译与基础代码生成已与 SBCL 持平（单阶段 5.0 s vs 4.63 s）；剩余编译器深度优化与库快路径见下文“性能” | 阶段一完成 |
 | — | seal、WPO 和 AOT 交付（[positioning.md](design/positioning.md)） | 未开始 |
 | — | 异步（[async.md](design/async.md)） | 未开始，ANSI 自举完成之前不做 |
@@ -95,7 +95,6 @@
 
 ### 运行期的 `eval`/`compile`
 
-- FASL 中部分 `make-load-form` 对象的创建与初始化依赖排序。
 - `defsetf` 长形式在 image 里求值时出错（[eval-compile.md](design/eval-compile.md)），要在 vendor 的 Common-macros 上打补丁。
 - `compile` 的前端开销：每次新建 session。
 - `compile` 编出的函数名是 `(lambda)`；`load` 的函数没有文件和位置。
@@ -111,7 +110,7 @@
 
 ### 标准库和 ANSI 覆盖
 
-`ansi-test`（`tools/ansi-test.sh`）全部 24 个测试组已无崩溃跑通，当前实际执行用例的通过率为 **21,829 / 21,876（99.8%）**。共注册 21,953 项，另有 77 项因关闭 note 而跳过；跳过项不计入通过数或通过率的分母。测试套件根据未知声明告警启用 `DECLARATION.4–11`，检查声明名与类型名的冲突。关闭的 note 与 SBCL 一致：`:nil-vectors-are-strings` 和 `:open-if-exists-new-version-no-error`。
+`ansi-test`（`tools/ansi-test.sh`）全部 24 个测试组已无崩溃跑通，当前实际执行用例的通过率为 **21,832 / 21,876（99.8%）**。共注册 21,953 项，另有 77 项因关闭 note 而跳过；跳过项不计入通过数或通过率的分母。测试套件根据未知声明告警启用 `DECLARATION.4–11`，检查声明名与类型名的冲突。关闭的 note 与 SBCL 一致：`:nil-vectors-are-strings` 和 `:open-if-exists-new-version-no-error`。
 
 | 测试组 | 通过 | 失败 | 跳过 | 总计 | 通过率 | 主要未通过原因 |
 |---|---:|---:|---:|---:|---:|---|
@@ -119,7 +118,7 @@
 | `eval-and-compile` | 323 | 3 | 0 | 326 | 99.1% | 缺失的标准宏 `step` |
 | `data-and-control-flow` | 1425 | 1 | 2 | 1428 | 99.9% | `MACROLET.36`（`&whole` 解构模式，SBCL 同样失败） |
 | `iteration` | 843 | 0 | 0 | 843 | 100.0% | — |
-| `objects` | 856 | 6 | 0 | 862 | 99.3% | `make-load-form` 依赖排序，以及 SBCL 同样失败的 CLOS 边界 |
+| `objects` | 859 | 3 | 0 | 862 | 99.7% | `shared-initialize`、编译期类环境和长方法组合边界（SBCL 同样失败） |
 | `conditions` | 671 | 2 | 0 | 673 | 99.7% | `MAKE-CONDITION.3/4`（SBCL 同样失败） |
 | `cons` | 1882 | 0 | 0 | 1882 | 100.0% | — |
 | `types-and-classes` | 620 | 1 | 6 | 627 | 99.8% | `SUBTYPEP-COMPLEX.8`（SBCL 同样失败） |
@@ -139,7 +138,7 @@
 | `system-construction` | 77 | 0 | 0 | 77 | 100.0% | — |
 | `environment` | 189 | 21 | 0 | 210 | 90.0% | `disassemble`、`inspect`、`dribble`、`ed` |
 | `misc` | 739 | 1 | 0 | 740 | 99.9% | `MISC.598`（浮点 `imagpart` 的带符号零，SBCL 同样失败） |
-| **合计** | **21829** | **47** | **77** | **21953** | **99.8%** | |
+| **合计** | **21832** | **44** | **77** | **21953** | **99.8%** | |
 
 与 CL 不一致的行为：
 - `print`（编译器原语）：AOT 模块里先打印对象再换行，不经过 `*standard-output*`、`print-object` 和打印变量。要等测试的期望输出统一迁移。

@@ -53,6 +53,8 @@
                                            (setf failure-p t)))))
                   (with-compilation-unit ()
                     (handler-case (native-file-unit input external-format print)
+                      (maclina.compile-file::circular-dependency (condition)
+                        (error condition))
                       (error (condition)
                         (format *error-output* "~&; Compilation aborted: ~A~%" condition)
                         (setf warnings-p t failure-p t)
