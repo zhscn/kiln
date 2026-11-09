@@ -81,6 +81,9 @@
                 collect `(,(anatomicl::slot-name slot)
                           :initarg ,(keyword-of (anatomicl::slot-name slot))))
          (:metaclass structure-class))
+       (setf (get ',name 'kiln.sys::structure-reader-constructor)
+             ',(first (find-if (lambda (constructor) (null (cdr constructor)))
+                               (anatomicl::defstruct-constructors description))))
        ,@(structure-accessor-definitions name layout description)
        ,@(let ((print-object (anatomicl::defstruct-print-object description)))
            (when print-object

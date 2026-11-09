@@ -1,0 +1,30 @@
+(defstruct (readable-record (:constructor make-record-boa (x))
+                            (:constructor make-readable-record))
+  (x 3 :read-only t) (y 5))
+(defstruct (readable-child (:include readable-record)) (z 7))
+(defstruct (no-reader-record (:constructor make-no-reader (x))) x)
+(let ((*package* (symbol-package 'readable-record)))
+  (let ((object (read-from-string "#S(READABLE-RECORD :X 11)")))
+    (print (list (readable-record-x object) (readable-record-y object))))
+  (let ((object (read-from-string "#S(READABLE-CHILD :Y 13)")))
+    (print (list (readable-child-x object) (readable-child-y object) (readable-child-z object))))
+  (dolist (text '("#S(NO-READER-RECORD :X 1)" "#S(NOT-A-STRUCTURE)"))
+    (print (handler-case (progn (read-from-string text) nil)
+             (reader-error (condition) (streamp (stream-error-stream condition))))))
+  (let ((path "build/test/structure-reader-input.lisp")
+        (object (make-readable-record :x 17 :y 19)))
+    (unwind-protect
+         (progn
+           (with-open-file (stream path :direction :output :if-exists :supersede)
+             (with-standard-io-syntax
+               (format stream "(in-package ~S)~%(defun loaded-record () ~S)~%"
+                       (package-name (symbol-package 'readable-record)) object)))
+           (load path)
+           (let ((copy (funcall (symbol-function 'loaded-record))))
+             (print (list (readable-record-x copy) (readable-record-y copy)))))
+      (delete-file path))))
+(let* ((original (make-random-state nil))
+       (copy (with-standard-io-syntax
+               (read-from-string (write-to-string original :readably t)))))
+  (print (random-state-p copy))
+  (print (loop repeat 50 always (= (random 100000 original) (random 100000 copy)))))

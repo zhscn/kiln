@@ -1091,6 +1091,9 @@
 ;;; since a strict reading of this would also preclude "#S(…)" we
 ;;; assume that the intention is to allow whitespace after "#s".
 
+#+kiln
+(defvar *structure-input-stream*)
+
 (defun %sharpsign-s (stream char parameter allow-non-list)
   (declare (ignore char))
   (let ((client *client*))
@@ -1229,7 +1232,8 @@
                            do (collect-name name)
                               (collect-value value)))))))
         (if (not (null type))
-            (make-structure-instance client type (nreverse initargs))
+            (let (#+kiln (*structure-input-stream* stream))
+              (make-structure-instance client type (nreverse initargs)))
             nil)))))
 
 (defun sharpsign-s (stream char parameter)

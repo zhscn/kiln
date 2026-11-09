@@ -403,6 +403,10 @@ Under `#+kiln`:
 
 ## Eclector patches
 
+- The `#S` construction protocol binds its input stream while calling the
+  client, so invalid structure types and missing standard constructors
+  signal reader errors associated with that stream.
+
 - The class of simple readtables has the built-in class `cl:readtable` as
   a superclass too (with `standard-object`).
 - The replacement for a bad `#P` is `(pathname ".")`, not the literal

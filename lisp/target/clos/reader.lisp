@@ -14,6 +14,21 @@
 (defmethod find-character ((client kiln-client) (designator string))
   (cl:name-char designator))
 
+(define-condition invalid-structure-reader (cl:reader-error cl:simple-condition) ())
+
+(defmethod make-structure-instance ((client kiln-client) name initargs)
+  (let ((class (find-class name nil))
+        (constructor (get name 'kiln.sys::structure-reader-constructor)))
+    (unless (and class (typep class 'clostrophilia::structure-class) constructor)
+      (error 'invalid-structure-reader
+             :stream *structure-input-stream*
+             :format-control "Structure ~S has no standard constructor for #S."
+             :format-arguments (list name)))
+    (apply constructor
+           (loop for (slot value) on initargs by #'cddr
+                 collect (intern (string slot) :keyword)
+                 collect value))))
+
 ;;; Bound by the CL functions below, not set globally: Eclector's other
 ;;; entry points choose their client with (OR *CLIENT* default), as the
 ;;; CST reader does.

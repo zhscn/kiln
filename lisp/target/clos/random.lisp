@@ -6,6 +6,7 @@
 (in-package #:kiln.kernel)
 
 (defstruct (random-state (:constructor %make-random-state (a b c d))
+                         (:constructor %read-random-state)
                          (:copier nil))
   (a 0 :type fixnum) (b 0 :type fixnum) (c 0 :type fixnum) (d 0 :type fixnum))
 

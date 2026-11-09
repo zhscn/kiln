@@ -396,7 +396,8 @@ macro, or NIL (none, or the compiler macro declines)."
 host's: an #+SBCL branch must not be read into kiln code).")
 
 ;;; Reading target sources: #. evaluates in the compile-time environment.
-(defclass source-reader-client (eclector.concrete-syntax-tree::cst-client) ())
+(defclass source-reader-client (#+kiln eclector.reader::kiln-client
+                               eclector.concrete-syntax-tree::cst-client) ())
 
 (defmethod eclector.reader:evaluate-expression ((client source-reader-client) expression)
   (compile-time-eval expression))
