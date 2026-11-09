@@ -28,6 +28,11 @@ shows exactly what kiln changed. Changes are not sent upstream for now.
 
 ## Clostrophilia patches
 
+- `add-method` checks lambda-list congruence before changing either object
+  and returns its generic function. Required and optional counts, rest/key
+  acceptance and keyword names follow SBCL, including generic functions
+  declaring `&allow-other-keys`.
+
 - Slot reads and standard readers return only the primary value of
   `slot-unbound`, including cached and class-allocated slots.
 

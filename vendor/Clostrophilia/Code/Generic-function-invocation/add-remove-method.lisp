@@ -104,6 +104,45 @@
      out)
     (reverse result)))
 
+(defun lambda-list-protocol (lambda-list)
+  (let ((required 0) (optional 0) (restp nil) (keyp nil)
+        (keys '()) (allow-other-keys nil) (state :required))
+    (loop while lambda-list
+          for parameter = (pop lambda-list)
+          do (case parameter
+               (&optional (setf state :optional))
+               (&rest (setf restp t state :rest) (pop lambda-list))
+               (&key (setf keyp t state :key))
+               (&allow-other-keys (setf allow-other-keys t))
+               (&aux (loop-finish))
+               (t
+                (case state
+                  (:required (incf required))
+                  (:optional (incf optional))
+                  (:key
+                   (let ((name (if (consp parameter) (first parameter) parameter)))
+                     (push (if (consp name)
+                               (if (keywordp (first name)) (symbol-name (first name))
+                                   (first name))
+                               (symbol-name name))
+                           keys)))))))
+    (values required optional restp keyp keys allow-other-keys)))
+
+(defun check-method-lambda-list (generic-lambda-list method-lambda-list)
+  (multiple-value-bind (required optional restp keyp keys allow-other-keys)
+      (lambda-list-protocol generic-lambda-list)
+    (multiple-value-bind (method-required method-optional method-restp method-keyp
+                         method-keys method-allow-other-keys)
+        (lambda-list-protocol method-lambda-list)
+      (unless (and (= required method-required) (= optional method-optional)
+                   (eq (not (or restp keyp)) (not (or method-restp method-keyp)))
+                   (or (not keyp) allow-other-keys (and method-restp (not method-keyp))
+                       method-allow-other-keys
+                       (null (set-difference keys method-keys :test #'equal))))
+        (error 'method-lambda-list-mismatch
+               :method-lambda-list method-lambda-list
+               :generic-lambda-list generic-lambda-list)))))
+
 ;;; The specification includes a single method on ADD-METHOD function,
 ;;; specialized to STANDARD-GENERIC-FUNCTION and STANDARD-METHOD.
 ;;;
@@ -117,8 +156,8 @@
            :method-to-add method
            :its-generic-function (method-generic-function method)))
   (if (slot-boundp generic-function '%lambda-list)
-      ;; FIXME: check that the lambda lists are congruent.
-      nil
+      (check-method-lambda-list (generic-function-lambda-list generic-function)
+                                (method-lambda-list method))
       (reinitialize-instance generic-function
         :lambda-list
         (compute-congruent-lambda-list (method-lambda-list method))))
@@ -167,7 +206,8 @@
                     (update-dependent generic-function
                                       dependent
                                       'add-method
-                                      method))))
+                                      method)))
+  generic-function)
 
 ;;; The specification includes a single method on REMOVE-METHOD
 ;;; specialized to STANDARD-GENERIC-FUNCTION and STANDARD-METHOD.

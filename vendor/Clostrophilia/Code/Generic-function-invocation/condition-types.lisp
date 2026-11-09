@@ -16,3 +16,11 @@
                       to those arguments."
                      (no-applicable-method-error-function condition)
                      (arguments condition)))))
+
+(define-condition method-lambda-list-mismatch (program-error)
+  ((%generic-lambda-list :initarg :generic-lambda-list :reader mismatch-generic-lambda-list)
+   (%method-lambda-list :initarg :method-lambda-list :reader mismatch-method-lambda-list))
+  (:report (lambda (condition stream)
+             (format stream "Method lambda list ~S is not congruent with ~S."
+                     (mismatch-method-lambda-list condition)
+                     (mismatch-generic-lambda-list condition)))))
