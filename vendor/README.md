@@ -28,6 +28,9 @@ shows exactly what kiln changed. Changes are not sent upstream for now.
 
 ## Clostrophilia patches
 
+- Slot reads and standard readers return only the primary value of
+  `slot-unbound`, including cached and class-allocated slots.
+
 - Direct `allocate-instance` calls finalize the class before reading its
   layout. `remove-method` returns its generic function and leaves methods
   attached to other generic functions alone.
@@ -151,6 +154,10 @@ Each patched place is marked with a `kiln:` comment.
   name a class).
 
 ## Predicament patches
+
+- Arithmetic conditions share a report that prints the operation and operands
+  when an operation is provided. The operation defaults to NIL; default
+  conditions remain printable while their operand slot is unbound.
 
 - Simple conditions default their format arguments to `nil`. `error`,
   `signal` and `warn` accept function format controls through the condition

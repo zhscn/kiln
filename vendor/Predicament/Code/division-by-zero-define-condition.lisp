@@ -1,14 +1,7 @@
 (cl:in-package #:predicament)
 
 (define-condition division-by-zero (arithmetic-error)
-  ()
-  (:report (lambda (condition stream)
-             (format stream
-                     "The execution of the operation ~s~@
-                      with arguments ~s~@
-                      resulted in an attempt to divide by zero."
-                     (arithmetic-error-operation condition)
-                     (arithmetic-error-operands condition)))))
+  ())
 
 (setf (documentation 'division-by-zero 'type)
       (format nil

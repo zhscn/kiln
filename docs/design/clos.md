@@ -94,7 +94,7 @@ AMOP 的方法函数接收参数列表和后续方法，有效方法接收一个
 
 ## 实例
 
-直接调用 `allocate-instance` 也会先 finalize 类，随后按布局分配未绑定的槽。缺少槽时，`slot-missing` 的主值按对应访问操作返回；setter 传入 `setf` 和新值，`slot-makunbound` 返回原实例。`remove-method` 返回其泛函，并保留不属于该泛函的方法与原泛函的关联。
+直接调用 `allocate-instance` 也会先 finalize 类，随后按布局分配未绑定的槽。槽读取和标准读取器只保留 `slot-unbound` 的主值，包括缓存命中的路径和类槽；没有返回值时得到单个 NIL。缺少槽时，`slot-missing` 的主值按对应访问操作返回；setter 传入 `setf` 和新值，`slot-makunbound` 返回原实例。`remove-method` 返回其泛函，并保留不属于该泛函的方法与原泛函的关联。
 
 - **`shared-initialize` 的计划**（`support.lisp`，`shared-initialize-aux-1`）：元类是 `standard-class` 的类，切换之后不再调用 Clostrophilia 的 `shared-initialize-aux`（那里对每个槽调用 `slot-definition-initargs` 和 `(setf slot-value-using-class)`，两个都是泛函）。现在按类的槽列表做一个计划：每个槽四项（initargs、位置、名字、initfunction），存在 simple vector 里，初始化时按计划直接读写槽位置。计划放在直接映射的缓存里，以槽列表为键、按它的 identity hash 取下标，冲突时覆盖。类变化时槽列表会被整个换掉，所以缓存不会过时。不用哈希表，因为切换时 Salmagundi 还没有加载。
 - **`slot-value`**：对象是元类为 `standard-class` 的标准实例时，按 `%slot-location` 的缓存（键是槽列表和槽名）直接读写槽位置。槽名是常量的调用点由降级改写成带位置缓存的调用（`%slot-value-cached`，[specialization.md](specialization.md) 的“调用点特化”）：按对象的 stamp 直接找到位置，命中时和访问器方法一样快。

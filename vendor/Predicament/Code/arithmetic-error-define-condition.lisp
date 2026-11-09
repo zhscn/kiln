@@ -7,19 +7,17 @@
 (define-condition arithmetic-error (error)
   ((%operation
     :initarg :operation
+    :initform nil
     :reader arithmetic-error-operation)
    (%operands
     :initarg :operands
     :reader arithmetic-error-operands))
   (:report (lambda (condition stream)
-             (format stream
-                     "An arithemetic error has occurred as a result~@
-                      of invoking the operation:~@
-                      ~s~@
-                      with the arguments:~@
-                      ~s."
-                     (arithmetic-error-operation condition)
-                     (arithmetic-error-operands condition)))))
+             (format stream "arithmetic error ~S signalled" (type-of condition))
+             (when (arithmetic-error-operation condition)
+               (format stream "~%Operation was (~S ~{~S~^ ~})."
+                       (arithmetic-error-operation condition)
+                       (arithmetic-error-operands condition))))))
 
 (setf (documentation 'arithmetic-error 'type)
       (format nil

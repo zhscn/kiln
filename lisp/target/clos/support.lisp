@@ -142,7 +142,7 @@ else NIL."
     (if (eql (car cache) stamp)
         (let ((value (standard-instance-access object (cdr cache))))
           (if (eq value +unbound-slot-value+)
-              (slot-unbound (class-of object) object slot-name)
+              (values (slot-unbound (class-of object) object slot-name))
               value))
         (let ((location (fast-slot-location object slot-name)))
           (if (and location (not (consp location)))
@@ -153,7 +153,7 @@ else NIL."
                 (setf (car cache) stamp)
                 (let ((value (standard-instance-access object location)))
                   (if (eq value +unbound-slot-value+)
-                      (slot-unbound (class-of object) object slot-name)
+                      (values (slot-unbound (class-of object) object slot-name))
                       value)))
               (slot-value object slot-name))))))
 

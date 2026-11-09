@@ -12,7 +12,7 @@
                          (car location)
                          (standard-instance-access object location))))
           (if (eq value +unbound-slot-value+)
-              (slot-unbound (class-of object) object slot-name)
+              (values (slot-unbound (class-of object) object slot-name))
               value))
         (slot-value-using-only-class (class-of object) object slot-name))))
 

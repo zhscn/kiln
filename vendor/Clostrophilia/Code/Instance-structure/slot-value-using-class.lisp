@@ -11,7 +11,7 @@
                (car location)
                (slot-value-using-location+1 object location))))
     (if (eq value +unbound-slot-value+)
-        (slot-unbound class object (slot-definition-name slot))
+        (values (slot-unbound class object (slot-definition-name slot)))
         value)))
 
 (defmethod slot-value-using-class

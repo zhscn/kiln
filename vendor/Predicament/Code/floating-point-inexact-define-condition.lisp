@@ -1,15 +1,7 @@
 (cl:in-package #:predicament)
 
 (define-condition floating-point-inexact (arithmetic-error)
-  ()
-  (:report (lambda (condition stream)
-             (format stream
-                     "A floating-point trap has occurred.  The operation~@
-                      that triggered this trap was: ~s~@
-                      and the operands to that operation were:~@
-                      ~s"
-                     (arithmetic-error-operation condition)
-                     (arithmetic-error-operands condition)))))
+  ())
 
 (setf (documentation 'floating-point-inexact 'type)
       (format nil
