@@ -31,3 +31,7 @@ TYPE-ERROR
 (2 #\x)
 (2 #\x #\y)
 (2 7 7)
+20
+BOUNDS
+#\q
+BOUNDS

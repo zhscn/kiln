@@ -353,7 +353,7 @@ unsupported call. Arguments retain their evaluation order and effects."
              (t (boolean-value `(,(case name (< :lt) (> :gt) (<= :le) (>= :ge) (= :eq) (/= :ne))
                                  ,a ,b))))
            t))))
-    (when (and (= count 2) (member name '(aref svref))
+    (when (and (= count 2) (member name '(aref svref elt))
                (eq (ir-node-type (svref args 0)) 'simple-vector))
       (let* ((vals (lower-args (coerce args 'list))) (v (first vals)) (i (second vals)))
         (return-from ir-lower-typed-call
@@ -371,7 +371,7 @@ unsupported call. Arguments retain their evaluation order and effects."
                (member (ir-node-type (svref args 0)) '(simple-vector :native-string)))
       (let ((value (copy-to-var (ir-lower (svref args 0)))))
         (return-from ir-lower-typed-call (values (copy-to-var (vector-length value)) t))))
-    (when (or (and (= count 2) (member name '(aref char schar))
+    (when (or (and (= count 2) (member name '(aref char schar elt))
                    (eq (ir-node-type (svref args 0)) :native-string))
               (and (= count 3) (member name '((setf aref) (setf char) (setf schar)) :test #'equal)
                    (eq (ir-node-type (svref args 1)) :native-string)))

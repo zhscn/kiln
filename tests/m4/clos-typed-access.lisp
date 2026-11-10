@@ -46,3 +46,12 @@
     (declare (vector view))
     (setf (aref view 0) 7)
     (print (list (length view) (aref view 0) (aref base 1)))))
+
+(defun typed-vector-elt (vector index)
+  (declare (simple-vector vector))
+  (elt vector index))
+(print (typed-vector-elt #(10 20) 1))
+(print (handler-case (typed-vector-elt #(10) 1) (error () 'bounds)))
+(let ((text (kiln.sys:%primop :make-string 2 #\q)))
+  (print (elt text 1))
+  (print (handler-case (elt text 2) (error () 'bounds))))
