@@ -44,10 +44,9 @@
 
 ### CPU、分配与硬件采样（2026-11-10）
 
-在 `843e625` 的自举可执行文件上，用同一份模块清单、固定 8 GiB 堆顺序执行
-三次内置 CPU 采样、两次分配采样和一次 `perf record -F 499 -g`。六次运行的
-全部 KIR 都与 stage2 相同。内置 CPU 采样每次约 6,600–6,800 个 tick；硬件
-采样约 3,957 个样本，无丢失。剖析运行的时间包含分析器开销，不作为提速基准。
+在 IR 变量缓冲区采用直接遍历的编译器上，用同一份模块清单、固定 8 GiB 堆
+顺序执行三次内置 CPU 采样、两次分配采样和一次 `perf record -F 499 -g`。
+内置 CPU 采样每次约 6,600–6,800 个 tick，硬件采样约 3,957 个样本。剖析运行的时间包含分析器开销，不作为提速基准。
 
 | 阶段 | 内置 CPU 占比（三次中位数） | 分配采样权重 |
 |---|---:|---:|
@@ -117,7 +116,7 @@ cp build/boot/stage0/modules.lisp-expr build/compiler-profile-run/
 顶层分块改为单次顺序消费列表，消除剩余列表的重复 `length` 和 `nthcdr` 扫描。
 降级的动态调用位置保留打包 fixnum，仅在输出 `:loc` 时提取起止偏移；函数级
 调试记录仍按需生成范围。两个版本编译同一份修改后的源码，避免输入规模变化
-影响比较；全部六个模块的 KIR 逐字节一致。
+影响比较。
 
 固定 8 GiB 堆，先分别做一次预热和五次测量，再按旧、新、新、旧的顺序重复
 两轮，交替测量各四次。以下为交替运行的中位数：
@@ -139,11 +138,6 @@ cp build/boot/stage0/modules.lisp-expr build/compiler-profile-run/
 源码位置叶函数的权重大幅下降，且新的 CPU 采样已无顶层分块直接调用
 `length` 的路径（旧版此次采样为 147 / 6,886 tick）。
 
-验证包括完整自举闭合、IR 模型检查、顶层分块执行顺序、IR 前端、自编译及栈帧
-源码位置的 JIT、GC 压力和 AOT 回归。分块测试跨过两个完整块及一个部分块；
-所有重复测量和剖析产物也与旧编译器的 KIR 一致。栈帧测试中依赖源码的期望行号
-同时校准到当前源文件，三种模式输出一致。
-
 ### Reader 的普通列表 CST 构造（2026-11-10）
 
 Eclector 的普通列表路径用表达式与子结果的并行扫描替代 `list-length`、子结果
@@ -151,8 +145,8 @@ Eclector 的普通列表路径用表达式与子结果的并行扫描替代 `lis
 进入完整的重建路径。列表根 CST 在构造时直接设置 `:source`，保留尾节点的默认
 位置，省去对已构造根节点的 `reinitialize-instance`。
 
-使用 `4dba584` 的可执行文件作基线，旧、新 reader 都编译修改后的同一份源码。
-按旧、新、新、旧的顺序重复两轮，每版四次；固定 8 GiB 堆。此次机器有外部
+以顶层形式采用顺序分块、源码位置保持打包表示的编译器为基线，比较两种 reader
+对同一份源码的编译成本。按旧、新、新、旧的顺序重复两轮，每版四次；固定 8 GiB 堆。此次机器有外部
 并行 C++ 编译负载，以下时间只代表该轮竞争环境，不能与此前空闲机约 7 秒的
 基线直接比较，也不能视作空闲机器上的固定提速比例。
 
@@ -171,18 +165,12 @@ Eclector 的普通列表路径用表达式与子结果的并行扫描替代 `lis
 重新初始化路径占 CPU 采样 630 / 13,029 tick，新版该路径没有样本；
 其他 CLOS 操作仍有重新初始化，不应将整轮该协议的剩余成本也归给 reader。
 
-宿主 Eclector CST 套件 323 项检查通过，包括新增的重复符号源码位置和原始 cons
-身份检查；ANSI reader 组 673 项全部通过。`fe-read`、`clos-reader`、
-`clos-reader-state`、`co-structure-reader` 和 `clos-frames` 的 JIT、GC 压力、AOT
-回归通过，完整自举闭合。八次交替测量及旧、新版本的 CPU、分配剖析共十二次
-运行的六个模块 KIR 都逐字节一致。
-
 后续热点仍包括字符流与槽访问器分派、token 与符号查询，以及结构不匹配时的
 通用 CST 重建。先在空闲环境复测整轮时间，再针对这些路径分别做实验。
 
 ### 字符读取、token 与复杂 CST 重建（2026-11-10）
 
-以 `de34560` 的可执行文件为基线，落实三类热点处理：
+以普通列表 CST 构造时直接设置源码位置的 reader 为基线，比较三类热点处理：
 
 - 文件流将缓冲、输入起止、输出长度和 UTF-8 缓存集中到原生结构；ASCII 字符
   路径只获取一次状态对象，外层 unread 和游标协议保持不变。
@@ -198,7 +186,7 @@ Eclector 的普通列表路径用表达式与子结果的并行扫描替代 `lis
 共享索引保留了原有重建启发式，避免改动歧义原子的位置选择。
 
 固定 8 GiB 堆，两个版本编译同一份修改后的源码，分别预热一次、测量五次；
-此轮没有先前的外部并行 C++ 构建。所有运行的六个模块 KIR 逐字节一致。
+此轮没有外部并行 C++ 构建。
 
 | 指标 | 基线 | 三类优化后 |
 |---|---:|---:|
@@ -217,19 +205,6 @@ Eclector 的普通列表路径用表达式与子结果的并行扫描替代 `lis
 一次前后 CPU 采样中，文件 `stream-read-char` 内槽分派的叶权重由整轮约 1.76%
 降至 0.06%，`syntax-type` 内 `find-place` 的叶权重由约 0.43% 降到没有样本。
 这验证了具体路径变化；采样有 safepoint 偏差，时间收益以未剖析基准为准。
-
-验证结果：
-
-- 完整自举闭合；五次测量及四次 CPU/分配采样的 KIR 均与旧编译器一致。
-- 新增 UTF-8 跨缓冲边界、unread/peek、读写切换及共享索引的源码位置和别名对照，
-  加上文件位置、readtable 状态、CST 读入和栈帧回归，均通过 JIT、GC 压力和 AOT。
-- 宿主 CST 套件 323 项、readtable 套件 391 项及 token 缓冲专门测试 8 项通过。
-- ANSI 全量仍为 21,856 通过、20 失败、77 跳过，失败名单逐项与基线相同；
-  reader 673 项、streams 789 项全部通过。
-- 宿主完整 reader 套件另有一项既有的随机反引号宿主等价失败，报
-  `Comma not inside a backquote`。固定随机种子 20261110，以独立源码注册表载入
-  `de34560` 对照：旧版 4,105 项检查中 4,104 通过，新版 4,113 项中 4,112 通过，
-  失败测试名及错误相同；新增八项检查通过。该测试未被屏蔽。
 
 ## 和 SBCL 的对比（`bench/compare.lisp`）
 
@@ -343,14 +318,14 @@ Eclector 的普通列表路径用表达式与子结果的并行扫描替代 `lis
 
 ### cl-bench 全量复测与 SXHASH（2026-11-10）
 
-基线为 `b5b5805`，Rust 后端和 runtime 用 release 构建，SBCL 为
+Rust 后端和 runtime 用 release 构建，SBCL 为
 2.6.10-1.fc45。运行命令：
 
 ```sh
 BENCH_BUDGET=1 BENCH_TIMEOUT=30 tools/bench.sh
 ```
 
-kiln 有 66 项得到数值、6 项超时、2 项由 harness 跳过，无崩溃或运行错误。SBCL 额外跳过
+kiln 有 66 项得到数值、6 项超时、2 项由 harness 跳过。SBCL 额外跳过
 `walk-list/mess`，所以可直接计算比值的有 65 项。超时上限包含进程初始化和
 setup，不能按 30 秒直接推算每次运行耗时。
 
@@ -360,11 +335,11 @@ setup，不能按 30 秒直接推算每次运行耗时。
 `bignum/elem-10000-1`、`htable-string-fair`、`3d-arrays`、`bitvectors` 和
 `string-concat`。浮点拆箱、大整数、数组及流/字符串路径仍是主要性能工作。
 
-本批先处理可独立验证的 `sxhash`。旧路径对简单对象也创建累加和结束闭包，
+`sxhash` 的原实现对简单对象也创建累加和结束闭包，
 再经过类型分派、整数分段混合。仅看 CPU 样本中 `bench-sxhash` 的调用链，
 约 17% 的权重经过 `make-hash`；setup 的随机数生成不计入这个比例。
 现在 fixnum、字符、符号和原生简单字符串直接混合，其他对象保留原路径。
-使用相同种子、混合次序、结果掩码和动态字符预算，因此保持原有哈希值。
+字符预算保持不变，比较的是相同取样工作量。
 
 复测用保存的旧、新 AOT 可执行文件，固定 4 GiB 堆，`BENCH_BUDGET=3`，
 按旧、新、新、旧顺序运行。每个项目每次进程都完成相同的四轮，取每版两个
@@ -383,11 +358,6 @@ setup，不能按 30 秒直接推算每次运行耗时。
 另一次分配采样在短字符串和整数项目各四轮、相同 4 GiB 堆下，
 `bench-sxhash` 调用链的权重从约 384 MiB 降到没有样本；其中旧版约 360 MiB
 归到 `make-hash`。这是缓冲区加权采样，结果不作为逐对象精确统计。
-
-差分回归覆盖边界 fixnum、大整数、字符、符号、Unicode 简单字符串、带填充指针
-和 displaced 字符串，以及其他对象，并在五种字符预算下比较新旧哈希值。
-该回归与已有哈希表测试通过 JIT、GC 压力和 AOT；完整自举闭合，ANSI 哈希表组
-仍为 166 项通过、1 项 note 跳过、零失败。
 
 ## 自举的速度
 
@@ -413,7 +383,7 @@ kiln 编译自己的五个模块（一个阶段，见 [bootstrap.md](../design/b
 | 有效方法按展开的参数调用：标准方法组合的 `progn`、`multiple-value-prog1`、`call-method`、`make-method` 由有 fast function 的方法组成时，变成接受展开参数的闭包（原来只有单独一个 `call-method` 才行，一个具体方法加一个默认方法就要把参数建成列表、解释执行有效方法） | 和下一行一起测 | |
 | 上面四项合并之后，再加 GC 统计和去掉 `kiln_rt_alloc` 的重复清零（统一测量，机器空闲） | **125 秒** | 各模块：kernel 3.7 秒、CLOS 40.7 秒、frontend 1.6 秒、eval 12.4 秒、compiler 66.2 秒。SBCL 编同样的五个模块 47.5 秒（kernel 1.1、CLOS 12.6、frontend 0.4、eval 4.0、compiler 29.4），差距约 2.6 倍（本轮开始时约 6.8 倍）。GC：24 次回收，停顿 7.3 秒（墙钟的 5.8%），分配 99 GB，复制 6.3 GB，GC 线程 18 秒（CPU 的 13%） |
 
-2026-11-08，机器空闲时前后交替各测两次（同一份源码分别用两个前端构建 kiln0）：旧前端（s-expression-syntax、builder 协议、Iconoclast、simplify-ast）自编译 **128.0 秒**（其中 CLOS 模块 43.0 秒），新的 IR 前端（`KILN_FRONTEND=ir`，[ir.md](../design/ir.md)）**50.9 秒**（CLOS 模块 19.0 秒），快 2.5 倍。IR 前端下的完整自举闭合，每个阶段约 51 秒，峰值 RSS 约 9.2 GB。原生结构对象和 KIR `:switch` 两项前置改动在旧前端下看不出差别（128 秒前后）。这之前的一条记录（stage1 218.55 秒、stage2 169.49 秒）是和端到端测试同时跑的，不作数。
+2026-11-08，机器空闲时前后交替各测两次（同一份源码分别用两个前端构建 kiln0）：旧前端（s-expression-syntax、builder 协议、Iconoclast、simplify-ast）自编译 **128.0 秒**（其中 CLOS 模块 43.0 秒），新的 IR 前端（`KILN_FRONTEND=ir`，[ir.md](../design/ir.md)）**50.9 秒**（CLOS 模块 19.0 秒），快 2.5 倍。IR 前端下每个阶段约 51 秒，峰值 RSS 约 9.2 GB。原生结构对象和 KIR `:switch` 两项前置改动在旧前端下看不出差别（128 秒前后）。这之前的一条记录（stage1 218.55 秒、stage2 169.49 秒）是和端到端测试同时跑的，不作数。
 
 同一天在同一份代码上测 SBCL（跑的是同一个编译器，只是由 SBCL 执行）：旧前端 32.1 秒，IR 前端 **14.2 秒**（kernel 0.4、CLOS 3.9、frontend 0.0、eval 1.4、compiler 8.5）。kiln 的 IR 前端 50.6 秒（kernel 1.5、CLOS 17.9、frontend 0.6、eval 5.0、compiler 25.6），是 SBCL 的 **3.6 倍**；旧前端是 4.0 倍（128.0 / 32.1）。表里“SBCL 编同样的五个模块约 47.5 秒、差距约 2.6 倍”那一行，用的是本轮开始前测的 SBCL 时间：SBCL 执行的也是 kiln 的编译器代码，本轮对编译器算法的改进（一次遍历、少建表等）它同样受益，所以那个倍数偏低，应以这里的同代码对比为准。
 
@@ -421,13 +391,13 @@ kiln 编译自己的五个模块（一个阶段，见 [bootstrap.md](../design/b
 
 再加上 IR 求值器（编译期求值不再经过 Common-boot 的 HIR 求值器）和文件流记住文件偏移之后，机器空闲时完整自举每个阶段 **33.8 秒**（kernel 0.9、CLOS 10.7、frontend 0.5、eval 2.9、compiler 17.7 秒），峰值 RSS 8.7 GB。同一份代码上 SBCL 编五个模块 11.0 秒（kernel 0.2、CLOS 2.3、frontend 0.3、eval 0.7、compiler 7.5），kiln 是它的 **3.0 倍**。本轮开始时 kiln 是 293 秒，快了约 8.7 倍。
 
-再之后，cross-client 的编译期求值从 Common-boot 的 HIR 求值器换成 IR 求值器（[ir.md](../design/ir.md) 的“编译期求值”）。改动前的 profile 里编译期求值约占 15%（HIR 求值器要走 s-expression-syntax、builder 协议、Iconoclast AST、AST-to-HIR 和 thunk 构造），换成 IR 求值器后约 1%。和分支点的 kiln0 背靠背交替各测两次（2026-11-08，load 约 1–3）：**45.3 → 36.2 秒**（−20%；各模块累计：kernel 1.1、CLOS 14.0、frontend 14.6、eval 18.1、compiler 35.0 秒），峰值 RSS 8.8 → 8.7 GB，KIR 不变。完整自举闭合，每个阶段约 36 秒。
+再之后，cross-client 的编译期求值从 Common-boot 的 HIR 求值器换成 IR 求值器（[ir.md](../design/ir.md) 的“编译期求值”）。改动前的 profile 里编译期求值约占 15%（HIR 求值器要走 s-expression-syntax、builder 协议、Iconoclast AST、AST-to-HIR 和 thunk 构造），换成 IR 求值器后约 1%。和分支点的 kiln0 背靠背交替各测两次（2026-11-08，load 约 1–3）：**45.3 → 36.2 秒**（−20%；各模块累计：kernel 1.1、CLOS 14.0、frontend 14.6、eval 18.1、compiler 35.0 秒），峰值 RSS 8.8 → 8.7 GB，每个阶段约 36 秒。
 
-之后是统一的特化框架（[specialization.md](../design/specialization.md)：假设、版本格、失效的集中入口，现有的缓存改为经过它）和常量槽名 `slot-value` 的调用点缓存。上一提交的 kiln0 和这里的 kiln0 交替各测两次（2026-11-08，load 约 2–3）：自编译一个阶段 **38.4 / 38.2 → 37.9 / 38.2 秒**，不变——框架本身是纯重构，`slot-value` 的缓存只在命中路径加一次 stamp 比较。`bench/compare.lisp` 的 AOT 输出里 `slot-value` **24.7 → 9.9 ns**（同样三次，访问器方法 10.4 ns 不变），`make-instance` 和 `typep` 不变。完整自举闭合。
+之后是统一的特化框架（[specialization.md](../design/specialization.md)：假设、版本格、失效的集中入口，现有的缓存改为经过它）和常量槽名 `slot-value` 的调用点缓存。改动前后的 kiln0 交替各测两次（2026-11-08，load 约 2–3）：自编译一个阶段 **38.4 / 38.2 → 37.9 / 38.2 秒**，不变——框架本身是纯重构，`slot-value` 的缓存只在命中路径加一次 stamp 比较。`bench/compare.lisp` 的 AOT 输出里 `slot-value` **24.7 → 9.9 ns**（同样三次，访问器方法 10.4 ns 不变），`make-instance` 和 `typep` 不变。
 
-再之后是调用点特化（常量类名的构造器对象、已知泛函的调用点缓存、热点构造器和判别函数编成机器码）的第一版。第一版让自编译一个阶段从约 39 秒变成 **58 / 62 秒**（+55%，2026-11-08，和上一提交的 kiln0 交替各两次）。profile 里多出来的约 2 万 tick 几乎都在两处：泛函调用点在 CST 遍历这类多态调用点上每次未命中都重填（扫方法的特化参数、扫调用历史、分配描述符），约 20%；构造器反复晋升编译，约 15%，因为描述符检查共享的类型版本，而每个类第一次终结都会改变它，再加上只留 64 项的最近使用表。修正：只比较被特化参数的 stamp；重填达到 8 次的调用点转为 megamorphic；不能缓存的泛函（EQL 特化等）得到直接调用泛函的描述符；守卫改用只在已有类变化时才变的 `*class-change-version*`；类第一次终结不再算变化；构造器对象按类保存不淘汰；晋升阈值 32 → 1000。之后交替各两次：**35.7 / 37.6 → 35.8 / 38.5 秒**，持平。但 `bench/compare.lisp`（AOT，各三次取中位数）上泛函调用反而变慢：单态 13.7 → 28.6 ns，多态 18.9 → 25.7 ns，`call-next-method` 51.9 → 63.2 ns，因为多了选择器那一层调用和三组版本检查；泛函调用点缓存和生成的判别函数因此去掉，改按 PCL 的路线优化判别函数本身（[roadmap.md](../roadmap.md) 第 11 项）。保留的构造器对象：`make-instance`（2 个 initarg，未晋升的闭包路径）437 → 359 ns。去掉之后完整自举闭合，每个阶段 33.8 秒（load 约 1）。
+再之后是调用点特化（常量类名的构造器对象、已知泛函的调用点缓存、热点构造器和判别函数编成机器码）的第一版。第一版让自编译一个阶段从约 39 秒变成 **58 / 62 秒**（+55%，2026-11-08，与改动前的 kiln0 交替各两次）。profile 里多出来的约 2 万 tick 几乎都在两处：泛函调用点在 CST 遍历这类多态调用点上每次未命中都重填（扫方法的特化参数、扫调用历史、分配描述符），约 20%；构造器反复晋升编译，约 15%，因为描述符检查共享的类型版本，而每个类第一次终结都会改变它，再加上只留 64 项的最近使用表。修正：只比较被特化参数的 stamp；重填达到 8 次的调用点转为 megamorphic；不能缓存的泛函（EQL 特化等）得到直接调用泛函的描述符；守卫改用只在已有类变化时才变的 `*class-change-version*`；类第一次终结不再算变化；构造器对象按类保存不淘汰；晋升阈值 32 → 1000。之后交替各两次：**35.7 / 37.6 → 35.8 / 38.5 秒**，持平。但 `bench/compare.lisp`（AOT，各三次取中位数）上泛函调用反而变慢：单态 13.7 → 28.6 ns，多态 18.9 → 25.7 ns，`call-next-method` 51.9 → 63.2 ns，因为多了选择器那一层调用和三组版本检查；泛函调用点缓存和生成的判别函数因此去掉，改按 PCL 的路线优化判别函数本身（[roadmap.md](../roadmap.md) 第 11 项）。保留的构造器对象：`make-instance`（2 个 initarg，未晋升的闭包路径）437 → 359 ns。移除该缓存后，每个阶段 33.8 秒（load 约 1）。
 
-然后按 PCL 的路线改判别函数：单分派的判别闭包拆成快、慢两个，快闭包只就地取实例的 stamp、探表，命中时尾调用有效方法（KIR 新增 `tail-call-lisp`，即 Cranelift 的 `return_call_indirect`），因此没有普通调用，不保存 callee-saved 寄存器；包装方法快函数的闭包和 funcallable instance 的跳板也改成尾调用；IR 降级的测试位置不再把 `or`、`and`、`not` 里的谓词物化成 T/NIL。`bench/compare.lisp`（AOT，各三次取中位数，和 96052cf 比）：泛函单态 **13.7 → 7.4 ns**，多态 18.9 → 11.9，`call-next-method` 51.9 → 39.4，读取器 10.4 → 5.4，写入器 11.1 → 7.8；流和打印器内部也是泛函调用，`format nil ~a` 8738 → 7531，`read-from-string` 41043 → 32923，`intern` 303 → 227。自编译一个阶段 33.8 → **32.2 / 32.4 秒**。
+然后按 PCL 的路线改判别函数：单分派的判别闭包拆成快、慢两个，快闭包只就地取实例的 stamp、探表，命中时尾调用有效方法（KIR 新增 `tail-call-lisp`，即 Cranelift 的 `return_call_indirect`），因此没有普通调用，不保存 callee-saved 寄存器；包装方法快函数的闭包和 funcallable instance 的跳板也改成尾调用；IR 降级的测试位置不再把 `or`、`and`、`not` 里的谓词物化成 T/NIL。`bench/compare.lisp`（AOT，各三次取中位数，与采用普通调用的判别函数相比）：泛函单态 **13.7 → 7.4 ns**，多态 18.9 → 11.9，`call-next-method` 51.9 → 39.4，读取器 10.4 → 5.4，写入器 11.1 → 7.8；流和打印器内部也是泛函调用，`format nil ~a` 8738 → 7531，`read-from-string` 41043 → 32923，`intern` 303 → 227。自编译一个阶段 33.8 → **32.2 / 32.4 秒**。
 
 删掉旧前端（Iconoclast 的降级、`simplify-ast`、Common-boot 和 HIR 求值器，以及只有它们用的 s-expression-syntax、parser.packrat、builder 协议、let-plus、anaphora 等）以后，compiler 模块只剩 Trucler reference、Clostrum、Anatomicl 和 kiln 自己的编译器：完整自举每个阶段 32.4 → **18.4 秒**（2026-11-09），其中编 compiler 模块从约 17.2 秒降到 2.8 秒，其余模块不变。
 
@@ -622,8 +592,3 @@ CST 读取的耗时随堆大小（SemiSpace）：64 MiB 227 ms，256 MiB 203 ms�
 ## I/O
 
 接入流和 FORMAT 时：往字符串流或文件写一个字符要 1 ms 左右，`format` 一次 10 ms。泛函调用本身约 0.5 µs，慢在字符串输出流平方级的增长、可调数组的增长走完整的 `make-array`、每个字符都调用的 `check-character-stream` 里的 `subtypep`、Invistra 每次重新解析控制串。修掉之后往文件写一个字符约 30 µs，`format` 一次 0.3–0.7 ms，`princ-to-string` 约 0.4 ms。上面对比表里的 `format` 是这之后的数字。
-
-## 测量时发现的问题
-
-- **浮点解码函数缺失（已修复）**：kiln 原来没有 CLHS 12.2 的 `integer-decode-float`、`decode-float`、`scale-float`、`float-sign`、`float-digits`、`float-precision`、`float-radix`。kiln 的 Quaviver 替身（`lisp/target/clos/quaviver.lisp`）当时也只支持以 10 为底。Invistra 的 `~F` 在舍入遇到恰好是 5 的那一位时，要用以 2 为底的精确表示来判断，于是报错。现在这些函数按位实现在 kernel 里，以 2 为底时用 `integer-decode-float`。测试 `tests/m4/clos-float-decode`，结果和 SBCL 一致。非规格化数 kiln 打印成最短的等价形式（`5.0d-324`），SBCL 打印成 `4.9406564584124654d-324`。
-- **Invistra 的舍入 bug（上游，未修）**：`(format nil "~,1f" 0.05f0)` 和 `(format nil "~,1f" 0.05d0)` 给出 `"0.0"`，应该是 `"0.1"`：两者的精确值都略大于 0.05。在 SBCL 上配原版 Quaviver 运行 Invistra，结果也一样，所以不是 kiln 的问题（vendor/README.md）。
