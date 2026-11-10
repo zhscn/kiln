@@ -379,6 +379,15 @@ unsupported call. Arguments retain their evaluation order and effects."
              (string (if store (second vals) (first vals))) (index (if store (third vals) (second vals))))
         (return-from ir-lower-typed-call
           (values (emit-schar string index (and store (first vals)) name t) t))))
+    (when (or (and (= count 2) (eq name 'elt)
+                   (eq (ir-node-type (svref args 0)) :simple-array-vector))
+              (and (= count 3) (equal name '(setf elt))
+                   (eq (ir-node-type (svref args 1)) :simple-array-vector)))
+      (let* ((vals (lower-args (coerce args 'list))) (store (= count 3)))
+        (return-from ir-lower-typed-call
+          (values (emit-aref-1 (if store (second vals) (first vals))
+                              (if store (third vals) (second vals))
+                              (and store (first vals))) t))))
     (values nil nil)))
 
 (defun ir-lower-call (node)

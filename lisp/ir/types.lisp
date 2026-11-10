@@ -76,6 +76,7 @@
              (null '(null symbol list)) (symbol '(symbol)) (cons '(cons list))
              (character '(character)) (function '(function))
              (simple-vector '(simple-vector vector array))
+             (:simple-array-vector '(vector array))
              (:native-string '(simple-string string vector array))
              (simple-string '(simple-string string vector array))
              (string '(string vector array)) (vector '(vector array))
@@ -87,7 +88,7 @@
           ((and (eq wanted 'fixnum) (eq class 'integer)) (values nil nil))
           ;; Broad classes may overlap without containment (LIST and SYMBOL
           ;; both include NIL; ARRAY includes vectors and strings).
-          ((or (member class '(number real rational float array vector string simple-string list symbol))
+          ((or (member class '(number real rational float array vector :simple-array-vector string simple-string list symbol))
                (and (eq wanted 'null) (eq class 'list)))
            (values nil nil))
           (t (values nil t)))))
@@ -195,7 +196,7 @@
                            (and (consp dimensions) (ir-proper-list-p dimensions)
                                 (= (length dimensions) 1)))
                        (if (and (eq (car specifier) 'simple-array) (eq element t))
-                           'simple-vector 'vector))
+                           'simple-vector (if (eq (car specifier) 'simple-array) :simple-array-vector 'vector)))
                       (t 'array)))))
            (and
             (let ((type t))
@@ -214,6 +215,8 @@
   "A proof in the finite domain, independent of user-defined type aliases."
   (cond ((eq actual t) nil)
         ((equal actual required) t)
+        ((eq required :simple-array-vector)
+         (member actual '(simple-vector :native-string simple-string)))
         ((ir-range-p required)
          (cond ((ir-range-p actual)
                 (and (<= (second required) (second actual))

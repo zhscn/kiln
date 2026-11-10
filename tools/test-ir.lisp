@@ -493,7 +493,7 @@
 (assert (eq (ir-declaration-type '(simple-array t (*))) 'simple-vector))
 (assert (eq (ir-declaration-type '(simple-array t (3))) 'simple-vector))
 (assert (eq (ir-declaration-type '(array t (*))) 'vector))
-(assert (eq (ir-declaration-type '(simple-array base-char (*))) 'vector))
+(assert (eq (ir-declaration-type '(simple-array base-char (*))) :simple-array-vector))
 (assert (not (ir-declaration-proven-p 'simple-vector '(simple-array t (3)))))
 (assert (not (ir-declaration-proven-p 'vector '(array bit (*)))))
 
