@@ -218,7 +218,7 @@ used nowhere else: test and rest."
   "Lowers NODE for its truth only: a jump to THEN or ELSE. A test that is
 itself a conditional (IF, AND, OR, NOT) becomes branches, so that a
 predicate inside it is branched on, not made into T or NIL and compared."
-  (let ((*call-source* (or (ir-source-range (ir-node-source node)) *call-source*)))
+  (let ((*call-source* (or (ir-node-source node) *call-source*)))
     (ir-lower-branch-1 node then else)))
 
 (defun ir-lower-branch-1 (node then else)
@@ -294,7 +294,7 @@ predicate inside it is branched on, not made into T or NIL and compared."
                    (values r n))))))))
 
 (defun ir-lower-mv (node)
-  (let ((*call-source* (or (ir-source-range (ir-node-source node)) *call-source*)))
+  (let ((*call-source* (or (ir-node-source node) *call-source*)))
     (multiple-value-bind (value count)
         (case (ir-node-kind node)
           (0 (constant-object (ir-node-a node)))

@@ -614,12 +614,13 @@ outermost form as written (before macro expansion)."
 (defvar *function-name* nil)            ; name of the function being compiled; NIL at top level
 (defvar *debug-vars* '())               ; names of its variables, newest first
 (defvar *debug-var-count* 0)
-(defvar *call-source* nil)              ; source range of the innermost call form
+(defvar *call-source* nil)              ; packed source position of the innermost call form
 
 (defun call-loc ()
   "The (LOC START END) part of the call being emitted, as a list."
   (and *call-source* *toplevel* (toplevel-form-file *toplevel*)
-       `((:loc ,(car *call-source*) ,(cdr *call-source*)))))
+       `((:loc ,(ldb (byte 25 25) *call-source*)
+               ,(ldb (byte 25 0) *call-source*)))))
 
 (defun note-debug-var (var name cell)
   (when (and name (symbolp name) (symbol-package name))
@@ -1633,11 +1634,14 @@ returns the operand of its (static) function object."
 (defun compile-toplevel-function (asts)
   "The module's init function: registers the module's symbols, then runs
 the top-level forms in order, in chunks."
-  (let ((chunks (loop for i from 0
-                      for rest on asts by (lambda (l) (nthcdr *toplevel-chunk-size* l))
+  (let ((chunks (loop with remaining = asts
+                      for i from 0
+                      while remaining
                       collect (compile-toplevel-chunk
                                (format nil "kiln_toplevel_~A_~D" *module-label* i)
-                               (subseq rest 0 (min *toplevel-chunk-size* (length rest)))))))
+                               (loop repeat *toplevel-chunk-size*
+                                     while remaining
+                                     collect (pop remaining))))))
     (let ((*regions* '()))
       (with-function ((format nil "kiln_toplevel_~A" *module-label*))
         (let ((*self* (copy-to-var :self)))
