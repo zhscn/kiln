@@ -1089,9 +1089,13 @@
 ;;; standard instances (Regalia): once the array layer is
 ;;; loaded, *COMPLEX-ARRAY-KIND* maps such an object to :STRING, :VECTOR
 ;;; (another vector) or :ARRAY (not a vector), and other objects to NIL;
-;;; *COMPLEX-ARRAY-OP* performs an operation (a symbol) on it.
+;;; *COMPLEX-ARRAY-OP* performs an operation (a symbol) on it. The fixed-arity
+;;; *COMPLEX-ARRAY-REF-1* and *COMPLEX-ARRAY-SET-1* hooks read and write a
+;;; checked array at one subscript without allocating an argument list.
 (defvar *complex-array-kind* nil)
 (defvar *complex-array-op* nil)
+(defvar *complex-array-ref-1* nil)
+(defvar *complex-array-set-1* nil)
 
 (defun complex-array-kind (x)
   (if (and (%primop :standard-instance-p x) *complex-array-kind*)
@@ -1169,11 +1173,11 @@
 apply."
   (cond ((%primop :stringp a) (schar a i))
         ((%primop :simple-vector-p a) (svref a i))
-        (t (complex-aref a i))))
+        (t (funcall *complex-array-ref-1* (check-array a) i))))
 (defun %set-aref-1-slow (x a i)
   (cond ((%primop :stringp a) (setf (schar a i) x))
         ((%primop :simple-vector-p a) (setf (svref a i) x))
-        (t (setf (complex-aref a i) x))))
+        (t (funcall *complex-array-set-1* (check-array a) i x))))
 (defun (setf aref) (x a &rest subscripts)
   (cond ((%primop :stringp a)
          (unless (and subscripts (null (cdr subscripts))) (%primop :type-error-integer subscripts))

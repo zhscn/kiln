@@ -176,6 +176,8 @@
     (dolist (d (dimensions array) size)
       (setf size (* size d)))))
 
+(declaim (inline storage-ref storage-set check-vector-subscript))
+
 (defun storage-ref (array index)
   (when (null (element-type array))
     (error 'type-error :datum nil :expected-type nil))
@@ -217,6 +219,28 @@
       (setf result (+ (* result (car d)) (car s))
             number (+ number 1)))))
 
+;;; Fixed-arity access avoids allocating subscript lists for vectors. Bounds
+;;; use the dimension, not the fill pointer, as required by AREF.
+(defun check-vector-subscript (array index)
+  (let ((dimensions (dimensions array)))
+    (unless (and dimensions (null (cdr dimensions)))
+      (error 'number-of-subscripts-must-equal-array-rank
+             :subscripts (list index) :array array))
+    (unless (and (integerp index) (<= 0 index) (< index (car dimensions)))
+      (error 'subscript-must-be-non-negative-and-less-than-dimension
+             :array array :subscript-number 0))))
+
+(defun vector-ref (array index)
+  (check-vector-subscript array index)
+  (storage-ref array index))
+
+(defun vector-set (array index value)
+  (check-vector-subscript array index)
+  (storage-set array value index))
+
+;;; General array operations call the storage helpers out of line.
+(declaim (notinline storage-ref storage-set))
+
 (defun fill-pointer-of (array)
   (if (typep array 'vector) (vector-fill-pointer array) nil))
 
@@ -252,7 +276,9 @@
           (contents array)))))
 
 (setf kiln.kernel::*complex-array-kind* #'complex-array-kind
-      kiln.kernel::*complex-array-op* #'complex-array-op)
+      kiln.kernel::*complex-array-op* #'complex-array-op
+      kiln.kernel::*complex-array-ref-1* #'vector-ref
+      kiln.kernel::*complex-array-set-1* #'vector-set)
 
 (setf clostrophilia::*public-class-of*
       (lambda (object)
