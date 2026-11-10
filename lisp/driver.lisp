@@ -330,6 +330,7 @@
          (kiln-clos-file "documentation")
          (kiln-clos-file "describe")
          (kiln-clos-file "inspect")
+         (kiln-clos-file "editor")
          (kiln-clos-file "closer-mop")
          (kiln-clos-file "trivial-with-current-source-form"))
    *khazern-files*
