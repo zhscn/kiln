@@ -487,16 +487,10 @@
 
 (defun infer-ir-types (root)
   "Propagate pointwise facts and local function input/primary-result types."
-  (let ((functions nil) (members nil) (sites nil) (outgoing nil)
-        (pending nil) (tail nil) (queued nil) (captures nil)
-        (capture-candidates nil) (capture-order nil) (simple t) (local-calls nil))
-      (labels
-      ((enqueue (fun)
-         (unless (gethash fun queued)
-           (let ((cell (list fun)))
-             (if tail (setf (cdr tail) cell) (setf pending cell))
-             (setf tail cell (gethash fun queued) t))))
-       (function-types (fun environment)
+  (let ((members nil) (capture-candidates nil) (capture-order nil)
+        (simple t) (local-calls nil))
+    (labels
+      ((function-types (fun environment)
          (let ((environment
                  (loop for var across (ir-fun-free fun)
                        for entry = (assoc var environment :test #'eq)
@@ -510,43 +504,8 @@
                  (unless seen (push fun capture-order))
                  (setf (gethash fun capture-candidates)
                        (if seen (ir-join-type-environments old environment) environment))))))
-       (update-inputs (callee)
-         (let ((types (ir-fun-input-types callee)))
-           (when types
-             (let ((joined nil) (changed nil))
-               (dolist (site (gethash callee sites))
-                 (let ((args (ir-node-b (cdr site))))
-                   (when (= (length args) (length types))
-                     (if joined
-                         (loop for arg across args for i from 0
-                               do (setf (svref joined i) (ir-type-join (svref joined i) (ir-node-type arg))))
-                         (setf joined (map 'simple-vector #'ir-node-type args))))))
-               (when joined
-                 (loop for old across types for candidate across joined for i from 0
-                       for new = (ir-summary-narrow old candidate)
-                       unless (equal old new) do (setf (svref types i) new changed t)))
-               (when changed (enqueue callee))))))
-       (analyze-function (fun)
-         (let ((environment (gethash fun captures)) (inputs (ir-fun-input-types fun)))
-           (when inputs
-             (loop for var across (ir-lambda-list-required (ir-fun-lambda-list fun))
-                   for type across inputs do (setf environment (ir-bind-type var type environment))))
-           (setf capture-candidates (make-hash-table :test #'eq) capture-order nil)
-           (ir-map-function (lambda (node) (visit node environment)) fun)
-           (let* ((old (ir-fun-result-type fun))
-                  (new (ir-summary-narrow old (if (ir-fun-body fun) (ir-node-type (ir-fun-body fun)) t))))
-             (unless (equal old new)
-               (setf (ir-fun-result-type fun) new)
-               (dolist (site (gethash fun sites)) (enqueue (car site)))))
-           (dolist (child (nreverse capture-order))
-             (let* ((candidate (gethash child capture-candidates))
-                    (old (gethash child captures)) (new (ir-summary-environment old candidate)))
-               (unless (ir-type-environments-equal-p old new)
-                 (setf (gethash child captures) new) (enqueue child))))
-           ;; A callee's input joins every static call, including callers not
-           ;; yet analyzed, whose argument nodes still conservatively say T.
-           (dolist (callee (gethash fun outgoing))
-             (when (gethash callee members) (update-inputs callee)))))
+
+
        (many (nodes environment)
          (let ((type 'null) (written nil))
            (loop for node across nodes
@@ -667,20 +626,64 @@
         (function-types root nil)
         (when local-calls
           (setf simple nil)
-          (multiple-value-setq (functions members sites outgoing) (ir-summary-graph root))
-          (setf pending (copy-list functions) tail (last pending)
-                queued (make-hash-table :test #'eq) captures (make-hash-table :test #'eq))
-          (dolist (fun functions)
-            (setf (gethash fun queued) t (ir-fun-result-type fun) t
-                  (ir-fun-input-types fun)
-                  (when (ir-summary-inputs-p fun root)
-                    (make-array (length (ir-lambda-list-required (ir-fun-lambda-list fun)))
-                                :initial-element t))))
-          ;; FIFO order visits every function before repeated propagation can
-          ;; consume the budget. Every update remains a sound narrowing.
-          (loop repeat (* 8 (length functions)) while pending
-                for fun = (pop pending)
-                do (unless pending (setf tail nil))
-                   (remhash fun queued)
-                   (analyze-function fun))))
+          (multiple-value-bind (functions graph-members sites outgoing) (ir-summary-graph root)
+            (setf members graph-members)
+            (let* ((pending (copy-list functions)) (tail (last pending))
+                   (queued (make-hash-table :test #'eq)) (captures (make-hash-table :test #'eq)))
+              (dolist (fun functions)
+                (setf (gethash fun queued) t (ir-fun-result-type fun) t
+                      (ir-fun-input-types fun)
+                      (when (ir-summary-inputs-p fun root)
+                        (make-array (length (ir-lambda-list-required (ir-fun-lambda-list fun)))
+                                    :initial-element t))))
+              (labels
+                ((enqueue (fun)
+                   (unless (gethash fun queued)
+                     (let ((cell (list fun)))
+                       (if tail (setf (cdr tail) cell) (setf pending cell))
+                       (setf tail cell (gethash fun queued) t))))
+                 (update-inputs (callee)
+                   (let ((types (ir-fun-input-types callee)))
+                     (when types
+                       (let ((joined nil) (changed nil))
+                         (dolist (site (gethash callee sites))
+                           (let ((args (ir-node-b (cdr site))))
+                             (when (= (length args) (length types))
+                               (if joined
+                                   (loop for arg across args for i from 0
+                                         do (setf (svref joined i) (ir-type-join (svref joined i) (ir-node-type arg))))
+                                   (setf joined (map 'simple-vector #'ir-node-type args))))))
+                         (when joined
+                           (loop for old across types for candidate across joined for i from 0
+                                 for new = (ir-summary-narrow old candidate)
+                                 unless (equal old new) do (setf (svref types i) new changed t)))
+                         (when changed (enqueue callee))))))
+                 (analyze-function (fun)
+                   (let ((environment (gethash fun captures)) (inputs (ir-fun-input-types fun)))
+                     (when inputs
+                       (loop for var across (ir-lambda-list-required (ir-fun-lambda-list fun))
+                             for type across inputs do (setf environment (ir-bind-type var type environment))))
+                     (setf capture-candidates (make-hash-table :test #'eq) capture-order nil)
+                     (ir-map-function (lambda (node) (visit node environment)) fun)
+                     (let* ((old (ir-fun-result-type fun))
+                            (new (ir-summary-narrow old (if (ir-fun-body fun) (ir-node-type (ir-fun-body fun)) t))))
+                       (unless (equal old new)
+                         (setf (ir-fun-result-type fun) new)
+                         (dolist (site (gethash fun sites)) (enqueue (car site)))))
+                     (dolist (child (nreverse capture-order))
+                       (let* ((candidate (gethash child capture-candidates))
+                              (old (gethash child captures)) (new (ir-summary-environment old candidate)))
+                         (unless (ir-type-environments-equal-p old new)
+                           (setf (gethash child captures) new) (enqueue child))))
+                     ;; A callee's input joins every static call, including callers not
+                     ;; yet analyzed, whose argument nodes still conservatively say T.
+                     (dolist (callee (gethash fun outgoing))
+                       (when (gethash callee members) (update-inputs callee))))))
+                ;; FIFO order visits every function before repeated propagation
+                ;; can consume the budget. Every update is a sound narrowing.
+                (loop repeat (* 8 (length functions)) while pending
+                      for fun = (pop pending)
+                      do (unless pending (setf tail nil))
+                         (remhash fun queued)
+                         (analyze-function fun)))))))
     (values root local-calls)))
