@@ -45,10 +45,14 @@ known during its current call (those live after it)."
         (n (kiln.sys:%primop :frame 4 frame nil)))
     (loop for i below n
           for name = (svref (svref info 4) (kiln.sys:%primop :frame 5 frame i))
-          for value = (kiln.sys:%primop :frame 6 frame i)
-          collect (if (consp name)
-                      (cons (second name) (car value)) ; a cell
-                      (cons name value)))))
+          collect (if (and (consp name) (eq (first name) :double-bits))
+                      (let ((high (kiln.sys:%primop :frame 9 frame i))
+                            (low (kiln.sys:%primop :frame 10 frame i)))
+                        (cons (second name) (kiln.sys:%primop :make-double-float-bits high low)))
+                      (let ((value (kiln.sys:%primop :frame 6 frame i)))
+                        (if (consp name)
+                            (cons (second name) (car value))
+                            (cons name value)))))))
 
 (defun kiln.sys:frame-pc (frame)
   "The return address of FRAME's current call, and its offset in the

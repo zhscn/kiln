@@ -153,3 +153,12 @@ IR 前端转换 lambda list 之后（`lisp/ir/convert.lisp`），每个 `&option
 ## 运行期错误
 
 编译器生成的报错代码（类型检查、参数个数、未定义函数、未绑定变量、下标越界等）调用 kernel 的 `%runtime-error`，传入错误码（fixnum，定义在 `lisp/abi.lisp`）和出错的对象。CLOS 模块把它定义为按错误码 `error` 出对应的 condition（[kernel.md](kernel.md) 的“运行期错误”）。这是普通的 Lisp 调用，调用链上没有 Rust 帧，handler 的非局部退出照常工作。
+
+
+## 未装箱变量的帧取值
+
+`kiln_rt_frame` 操作 9、10 分别返回变量栈槽原始字的高、低 32 位，以非负 fixnum
+表示。两次读取均不分配，调用者在分配恢复对象之前先取齐两部分。操作 6 用于
+槽内已有 Lisp 对象的变量，不能用它把任意浮点位模式作为对象传回 Lisp。
+调试变量描述 `(:double-bits 名字)` 表示 binary64 位模式；调试器从两部分重建
+浮点对象，原始槽不作为 GC 引用扫描。

@@ -161,6 +161,8 @@ pub const FRAME_VAR_NAME: u64 = 5;
 pub const FRAME_VAR_VALUE: u64 = 6;
 pub const FRAME_PC: u64 = 7;
 pub const FRAME_OFFSET: u64 = 8;
+pub const FRAME_VAR_HIGH_BITS: u64 = 9;
+pub const FRAME_VAR_LOW_BITS: u64 = 10;
 
 /// Frame inspection for Lisp; `op` is a fixnum, the other arguments and
 /// the result Lisp values:
@@ -204,6 +206,10 @@ pub unsafe extern "C" fn kiln_rt_frame(ctx: *mut Context, op: u64, a: u64, b: u6
                 (FRAME_LOC_END, Some(Site { loc: Some((_, e)), .. })) => fixnum(*e),
                 (FRAME_NVARS, _) => fixnum(site.as_ref().map_or(0, |s| s.vars.len() as u64)),
                 (FRAME_VAR_NAME, _) => var(b >> 1).map_or(nil, |(n, _)| fixnum(n)),
+                (FRAME_VAR_HIGH_BITS | FRAME_VAR_LOW_BITS, _) => var(b >> 1).map_or(nil, |(_, off)| {
+                    let bits = unsafe { *((h + 16 + off as usize * 8) as *const u64) };
+                    fixnum(if op == FRAME_VAR_HIGH_BITS { bits >> 32 } else { bits & 0xffff_ffff })
+                }),
                 (FRAME_VAR_VALUE, _) => var(b >> 1)
                     .map_or(nil, |(_, off)| unsafe { *((h + 16 + off as usize * 8) as *const u64) }),
                 _ => nil,

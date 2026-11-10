@@ -24,3 +24,11 @@
 (let ((a 1d0))
   (declare (double-float a))
   (print (= (+ a (progn (setq a 2d0) a)) 3d0)))
+
+(dolist (value '(1.25d0 -0d0 least-positive-double-float))
+  (let* ((value (if (symbolp value) (symbol-value value) value))
+         (high (kiln.sys:%primop :double-float-high-bits value))
+         (low (kiln.sys:%primop :double-float-low-bits value))
+         (copy (kiln.sys:%primop :make-double-float-bits high low)))
+    (print (and (= high (kiln.sys:%primop :double-float-high-bits copy))
+                (= low (kiln.sys:%primop :double-float-low-bits copy))))))

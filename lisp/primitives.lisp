@@ -931,6 +931,12 @@ cells (both by default)."
 ;;; The bits of a float, as unsigned fixnums (lower.lisp writes float
 ;;; constants with them when it runs on kiln).
 (define-primop :single-float-bits (x) (copy-to-var `(:shl (:shr ,x 32) ,+fixnum-shift+)))
+(define-primop :make-double-float-bits (high low)
+  (let* ((bits (copy-to-var `(:or (:shl (:shr ,high ,+fixnum-shift+) 32)
+                                (:shr ,low ,+fixnum-shift+)) :raw))
+         (object (emit-alloc 16 +kind-double+)))
+    (emit `(:store ,object 8 ,bits))
+    (copy-to-var `(:add ,object ,+tag-general+))))
 (define-primop :double-float-high-bits (x)
   (copy-to-var `(:shl (:shr (:load ,x ,+vector-data+) 32) ,+fixnum-shift+)))
 (define-primop :double-float-low-bits (x)

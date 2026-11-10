@@ -95,7 +95,7 @@ key 和 value 的 cons。未绑定槽和无法读取的 NIL 元素类型数组�
 - `NAME`：backtrace 显示的名字。
 - `FILE`：源文件名（编译时的名字），`compile` 编的函数为 NIL。
 - `START`、`END`：函数所在顶层形式在文件中的范围。函数自己的 CST 不可靠：宏展开生成的 `lambda`（`defun` 的展开）的 CST 是 `cst:reconstruct` 造的，范围是宏调用形式的一部分。
-- `VARIABLES`：变量名的 simple-vector。闭包会赋值的变量放在 cell 里，记作 `(:cell 名字)`。
+- `VARIABLES`：变量名的 simple-vector。闭包会赋值的变量放在 cell 里，记作 `(:cell 名字)`。原始 binary64 位模式的变量描述为 `(:double-bits 名字)`，帧读取器先取齐高低位，再构造浮点对象。
 
 名字的规则（参照 SBCL 的写法）：
 
