@@ -341,6 +341,54 @@ Eclector 的普通列表路径用表达式与子结果的并行扫描替代 `lis
 - 递归很深的 walk-list/mess 仍要 1 GiB 的栈；栈不够时现在发出 `kiln.sys:stack-exhausted`。SBCL 跳过这一项。
 - compiler、load-fasl 需要 `compile-file`，harness 不运行。
 
+### cl-bench 全量复测与 SXHASH（2026-11-10）
+
+基线为 `b5b5805`，Rust 后端和 runtime 用 release 构建，SBCL 为
+2.6.10-1.fc45。运行命令：
+
+```sh
+BENCH_BUDGET=1 BENCH_TIMEOUT=30 tools/bench.sh
+```
+
+kiln 有 66 项得到数值、6 项超时、2 项由 harness 跳过，无崩溃或运行错误。SBCL 额外跳过
+`walk-list/mess`，所以可直接计算比值的有 65 项。超时上限包含进程初始化和
+setup，不能按 30 秒直接推算每次运行耗时。
+
+当前较大的已测差距包括 FFT（907×）、double-float Mandelbrot（486×）、
+`bignum/elem-100-1000`（351×）、二维数组（230×）、`slurp-lines`（113×）
+和 `search-sequence`（74×）。超时项为 `bignum/elem-1000-100`、
+`bignum/elem-10000-1`、`htable-string-fair`、`3d-arrays`、`bitvectors` 和
+`string-concat`。浮点拆箱、大整数、数组及流/字符串路径仍是主要性能工作。
+
+本批先处理可独立验证的 `sxhash`。旧路径对简单对象也创建累加和结束闭包，
+再经过类型分派、整数分段混合。仅看 CPU 样本中 `bench-sxhash` 的调用链，
+约 17% 的权重经过 `make-hash`；setup 的随机数生成不计入这个比例。
+现在 fixnum、字符、符号和原生简单字符串直接混合，其他对象保留原路径。
+使用相同种子、混合次序、结果掩码和动态字符预算，因此保持原有哈希值。
+
+复测用保存的旧、新 AOT 可执行文件，固定 4 GiB 堆，`BENCH_BUDGET=3`，
+按旧、新、新、旧顺序运行。每个项目每次进程都完成相同的四轮，取每版两个
+进程结果的中位数：
+
+| 项目 | 旧版 (ms/run) | 快路径 (ms/run) | 提速 |
+|---|---:|---:|---:|
+| sxhash-fixnum | 127.487 | 7.327 | 17.4× |
+| sxhash-string-small | 77.096 | 30.801 | 2.5× |
+| sxhash-string-large | 3.425 | 0.856 | 4.0× |
+
+全量扫描的默认堆配置下，整数项为 173.223 ms；固定堆复测为 127.487 ms，
+说明堆配置也会影响旧版大量分配的成本，不能混用两组数字计算提速。
+长字符串仍受原有字符预算约束，上表不是完整扫描 4096 字符的吞吐比较。
+
+另一次分配采样在短字符串和整数项目各四轮、相同 4 GiB 堆下，
+`bench-sxhash` 调用链的权重从约 384 MiB 降到没有样本；其中旧版约 360 MiB
+归到 `make-hash`。这是缓冲区加权采样，结果不作为逐对象精确统计。
+
+差分回归覆盖边界 fixnum、大整数、字符、符号、Unicode 简单字符串、带填充指针
+和 displaced 字符串，以及其他对象，并在五种字符预算下比较新旧哈希值。
+该回归与已有哈希表测试通过 JIT、GC 压力和 AOT；完整自举闭合，ANSI 哈希表组
+仍为 166 项通过、1 项 note 跳过、零失败。
+
 ## 自举的速度
 
 kiln 编译自己的五个模块（一个阶段，见 [bootstrap.md](../design/bootstrap.md)）：

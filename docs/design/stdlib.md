@@ -30,7 +30,8 @@ Predicament 按 `predicament-common.asd` 的顺序加载。实现方要提供的
 - **开放寻址**，和 CPython 的 dict 一样：条目按插入顺序放在三个向量里（键、值、哈希）；一个索引向量，长度是 2 的幂、至多用一半，按哈希线性探测映射到条目，探测时先比较存下的哈希。每个条目不分配任何对象；向量满了就加倍（`make-hash-table` 的 rehash size 和 threshold 只是提示，CLHS 允许）。
 - **迭代顺序**按插入顺序，和 SBCL 一样。宏展开函数会遍历哈希表（Khazern 的解构临时变量），kiln 编译 kiln 必须得到 SBCL 的 KIR；按哈希顺序遍历的话，身份哈希每次运行都不同。`tests/m4/clos-hash-model.lisp` 用一个模型和 SBCL 的迭代顺序检查表。
 - 查找要用的数据放在一个 simple vector 里，按固定位置从实例读出，eq、eql、equal 内联比较；`gethash`、`(setf gethash)`、`remhash` 遇到这种表时直接调用它的函数，不经过泛函。`(setf gethash)` 在探测过程中记下第一个墓碑槽，未命中时直接写入，不再二次探测。
-- 标准测试（`eq`、`eql`、`equal`、`equalp`）的 `make-hash-table` 直接分配实例并填写槽（`make-bucket-hash-table`），不走 `make-instance`；符号的 `equal` 哈希缓存在自身的身份哈希字段里；`sxhash` 直接调用 `kiln-equal-hash`。
+- 标准测试（`eq`、`eql`、`equal`、`equalp`）的 `make-hash-table` 直接分配实例并填写槽（`make-bucket-hash-table`），不走 `make-instance`；符号的 `equal` 哈希缓存在自身的身份哈希字段里。
+- `sxhash` 对 fixnum、字符、符号和原生简单字符串直接混合，不分配累加闭包；复合对象和其他字符串保留累加实现。快慢路径使用相同种子、混合顺序、字符预算和结果掩码，哈希值保持一致。
 - `equalp` 哈希对向量使用活动长度，对其他数组使用维度；嵌套内容的散列受深度预算约束。哈希表的各键值对分别混合，再用可交换的累加方式合并，因此插入顺序和表容量不会影响结果。标准测试的键使用对应的散列函数，值按 `equalp` 散列。
 - 还没有弱表。
 

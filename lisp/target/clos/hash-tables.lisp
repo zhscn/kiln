@@ -83,7 +83,43 @@
 (defun kiln-equal-hash (object)
   (equal-hash-1 object 0))
 (define-hash-function kiln-equalp-hash equalp-hash)
-(define-hash-function cl:sxhash sxhash)
+(define-hash-function slow-sxhash sxhash)
+
+(defun sxhash-string-1 (string prefix)
+  (let* ((length (kiln.sys:%primop :length string))
+         (budget *hash-limit*)
+         (limit (if (< length budget) length budget))
+         (hash (kiln.sys:%primop :hash-mix
+                                (kiln.sys:%primop :hash-mix prefix +string-seed+)
+                                length)))
+    (dotimes (i limit
+                (kiln.sys:%primop :fixnum-logand hash +hash-mask+))
+      (setf hash (kiln.sys:%primop :hash-mix
+                                  hash (kiln.sys:%primop :char-code
+                                                        (kiln.sys:%primop :schar string i)))))))
+
+(defun cl:sxhash (object)
+  (cond ((kiln.sys:%primop :fixnump object)
+         (kiln.sys:%primop :fixnum-logand
+                          (kiln.sys:%primop :hash-mix
+                                            (kiln.sys:%primop :hash-mix
+                                                              #x0bf29ce484222325 +integer-seed+)
+                                            (kiln.sys:%primop :fixnum-logand object +hash-mask+))
+                          +hash-mask+))
+        ((kiln.sys:%primop :stringp object)
+         (sxhash-string-1 object (kiln.sys:%primop :hash-mix
+                                                 #x0bf29ce484222325 +string-seed+)))
+        ((symbolp object)
+         (sxhash-string-1 (symbol-name object)
+                         (kiln.sys:%primop :hash-mix #x0bf29ce484222325 +symbol-seed+)))
+        ((characterp object)
+         (kiln.sys:%primop :fixnum-logand
+                          (kiln.sys:%primop :hash-mix
+                                            (kiln.sys:%primop :hash-mix
+                                                              #x0bf29ce484222325 +character-seed+)
+                                            (kiln.sys:%primop :char-code object))
+                          +hash-mask+))
+        (t (slow-sxhash object))))
 
 (defmethod default-hash-function ((client kiln-client) (name (eql 'eq))) 'kiln-eq-hash)
 (defmethod default-hash-function ((client kiln-client) (name (eql 'eql))) 'kiln-eql-hash)
