@@ -538,6 +538,9 @@ Under `#+kiln`:
 
 ## Maclina patches
 
+- The target VM declares bytecode as a simple vector, matching kiln’s bytecode
+  storage. The host VM retains its specialized octet-array declaration.
+
 - STEP scopes instrument calls after callee and argument evaluation, using
   the shared source wrapper also used by the native compiler. Private
   compilation markers preserve lexical context and suppress instrumentation

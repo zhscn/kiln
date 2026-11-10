@@ -91,7 +91,7 @@
             (subseq stack frame-end (max sp frame-end)))))
 
 (defun vm (bytecode closure constants frame-size)
-  (declare (type (simple-array (unsigned-byte 8) (*)) bytecode)
+  (declare (type #+kiln simple-vector #-kiln (simple-array (unsigned-byte 8) (*)) bytecode)
            (type (simple-array t (*)) closure constants)
            (type (unsigned-byte 16) frame-size)
            (optimize speed))
