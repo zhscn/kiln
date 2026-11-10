@@ -80,3 +80,18 @@
   (print (handler-case (incf value)
            (type-error (condition) (type-error-datum condition))))
   (print value))
+(defun declared-arithmetic-write (value other operation)
+  (declare (fixnum value other))
+  (handler-case
+      (case operation
+        (+ (setq value (+ value other)))
+        (- (setq value (- value other)))
+        (* (setq value (* value other)))
+        (1- (setq value (1- value))))
+    (type-error (condition) (list (type-error-datum condition) value))))
+(print (declared-arithmetic-write 2 3 '+))
+(print (declared-arithmetic-write 2 3 '-))
+(print (declared-arithmetic-write 2 3 '*))
+(print (declared-arithmetic-write -4611686018427387904 1 '-))
+(print (declared-arithmetic-write -4611686018427387904 1 '1-))
+(print (declared-arithmetic-write 4611686018427387903 2 '*))

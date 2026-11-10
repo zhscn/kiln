@@ -280,7 +280,7 @@ predicate inside it is branched on, not made into T or NIL and compared."
     (start-block join)
     (values r n)))
 
-(defun ir-lower-fixnum-arithmetic (name a b bounded)
+(defun ir-lower-fixnum-arithmetic (name a b bounded &optional error-on-overflow)
   (if bounded
       (copy-to-var (case name
                      (+ `(:add ,a ,b)) (- `(:sub ,a ,b))
@@ -298,6 +298,8 @@ predicate inside it is branched on, not made into T or NIL and compared."
                          (case name (+ 'kiln.kernel::two-arg-+)
                                     (- 'kiln.kernel::two-arg--)
                                     (* 'kiln.kernel::two-arg-*)) a b)))
+        (when error-on-overflow
+          (emit-slow-call 'kiln.kernel::%declared-type-error r (constant-object 'fixnum)))
         (jump done) (start-block done) r)))
 
 (defun ir-lower-typed-call (node)
@@ -390,14 +392,31 @@ unsupported call. Arguments retain their evaluation order and effects."
     (when (ir-node-c node) (ir-check-declaration value (ir-node-b node)))
     value))
 
+(defun ir-lower-assignment (node)
+  (let* ((var (ir-node-a node)) (init (ir-node-b node))
+         (*call-source* (or (ir-node-source init) *call-source*)))
+    ;; A checked fixnum destination can share arithmetic's overflow edge.
+    ;; Construct the full result there so TYPE-ERROR retains its datum.
+    (when (and (eq (ir-var-type var) 'fixnum) (= (ir-node-kind init) 7))
+      (let* ((name (ir-node-a init)) (args (ir-node-b init)) (count (length args)))
+        (when (and (or (and (= count 1) (member name '(1+ 1-)))
+                       (and (= count 2) (member name '(+ - *))))
+                   (every (lambda (arg) (ir-fixnum-type-p (ir-node-type arg))) args))
+          (let* ((values (lower-args (coerce args 'list)))
+                 (a (first values)) (b (if (= count 1) (ash 1 +fixnum-shift+) (second values)))
+                 (op (case name (1+ '+) (1- '-) (otherwise name)))
+                 (value (ir-lower-fixnum-arithmetic op a b
+                                                  (ir-fixnum-type-p (ir-node-type init)) t)))
+            (return-from ir-lower-assignment (ir-set-variable var value 'fixnum))))))
+    (ir-set-variable var (copy-to-var (ir-lower init)) (ir-node-type init))))
+
 (defun ir-lower-mv (node)
   (let ((*call-source* (or (ir-node-source node) *call-source*)))
     (multiple-value-bind (value count)
         (case (ir-node-kind node)
           (0 (constant-object (ir-node-a node)))
           (1 (ir-lower-reference node))
-          (2 (ir-set-variable (ir-node-a node) (copy-to-var (ir-lower (ir-node-b node)))
-                              (ir-node-type (ir-node-b node))))
+          (2 (ir-lower-assignment node))
           (3 (let* ((symbol (constant-object (ir-node-a node))) (value (emit-symbol-value symbol)))
                (emit-check-bound value symbol) value))
           (4 (let ((value (copy-to-var (ir-lower (ir-node-b node)))))
