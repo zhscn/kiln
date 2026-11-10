@@ -108,3 +108,25 @@
      (setq value (progn (go use) "unreachable"))
    use
      (print (1+ value))))
+
+(defun loop-minus-one-limit (n)
+  (declare (fixnum n))
+  (let ((limit (- n 1)) (counter 0))
+    (tagbody top
+       (if (>= counter limit) (go done))
+       (setq counter (1+ counter))
+       (go top)
+     done)
+    counter))
+(print (mapcar #'loop-minus-one-limit '(-4611686018427387904 -4611686018427387903 0 1 5)))
+
+(let ((counter 4611686018427387902) (limit 4611686018427387904))
+  (tagbody top
+     (if (>= counter limit) (go done))
+     (setq counter (1+ counter))
+     (go top)
+   done)
+  (print counter))
+(print (list (integerp 4611686018427387904)
+             (rationalp -4611686018427387905)
+             (= (+ 4611686018427387904 1) 4611686018427387905)))

@@ -189,7 +189,7 @@
     (assert (equal (ir-node-type call) '(integer 1 256))))
   (let ((call (first (calls '(lambda (x) (if (typep x 'fixnum) (+ x 1) nil)) '+))))
     (assert (eq (ir-node-type (svref (ir-node-b call) 0)) 'fixnum))
-    (assert (eq (ir-node-type call) 'integer)))
+    (assert (equal (ir-node-type call) '(integer -4611686018427387903 4611686018427387904))))
   (let ((call (first (calls '(lambda (x) (if (not (typep x 'fixnum)) nil (+ x 1))) '+))))
     (assert (eq (ir-node-type (svref (ir-node-b call) 0)) 'fixnum)))
   (let ((call (first (calls '(let ((x 1)) (funcall (lambda () (setq x "changed")))
@@ -204,9 +204,10 @@
                               (+ x 1)) '+))))
     (assert (eq (ir-node-type (svref (ir-node-b call) 0)) t)))
   (let ((call (first (calls '(+ 4611686018427387903 1) '+))))
-    (assert (eq (ir-node-type call) 'integer))))
+    (assert (equal (ir-node-type call) '(integer 4611686018427387904 4611686018427387904)))))
 
-(dolist (value (list nil t 'sample 0 -1 123456789012345678901234567890
+(dolist (value (list nil t 'sample 0 -1 4611686018427387904 -4611686018427387905
+                     123456789012345678901234567890
                      1/3 1f0 1d0 #c(1 2) #\a "text" #(1 2) '(1 . 2)))
   (dolist (predicate '(integerp rationalp realp numberp floatp consp symbolp characterp
                       simple-vector-p stringp simple-string-p vectorp arrayp functionp null not listp))
@@ -363,5 +364,30 @@
                                         (eq (ir-node-b node) 'fixnum))) (ir-test-nodes root))))
   ;; A checked backedge cannot justify removing the unknown entry check.
   (assert (ir-node-c ref)))
+
+(let* ((root (ir-test-form '(lambda (n)
+                             (declare (fixnum n))
+                             (let ((limit (- n 1)) (counter 0))
+                               (tagbody top
+                                  (if (>= counter limit) (go done))
+                                  (setq counter (1+ counter))
+                                  (go top)
+                                done)
+                               counter))))
+       (step (find-if (lambda (node) (and (= (ir-node-kind node) 7)
+                                         (eq (ir-node-a node) '1+))) (ir-test-nodes root))))
+  (assert (equal (ir-node-type step) `(integer 1 ,(1- +ir-fixnum-max+)))))
+
+(dolist (bounds '((-4611686018427387905 -4611686018427387904)
+                  (-4611686018427387904 0) (0 4611686018427387903)
+                  (4611686018427387903 4611686018427387904)))
+  (let* ((var (make-ir-var)) (old (apply #'ir-integer-range bounds))
+         (new (ir-integer-range (1- (first bounds)) (1+ (second bounds))))
+         (state (ir-widen-type-environment (list (cons var old)) (list (cons var new))))
+         (type (cdar state)))
+    (dolist (value (list (1- (first bounds)) (first bounds) (second bounds) (1+ (second bounds))))
+      (assert (typep value type)))))
+(assert (not (ir-fixnum-type-p (ir-integer-range 4611686018427387903 4611686018427387904))))
+(assert (not (ir-fixnum-type-p (ir-integer-range -4611686018427387905 -4611686018427387904))))
 
 (format t "IR model and diagnostics passed.~%")

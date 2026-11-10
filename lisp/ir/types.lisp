@@ -1,13 +1,15 @@
 (in-package #:kiln.compiler)
 
 ;;; The domain is deliberately bounded: canonical value classes and finite
-;;; target-fixnum intervals. T means unknown, not an assertion. Host FIXNUM
+;;; machine-word integer intervals. T means unknown, not an assertion. Host FIXNUM
 ;;; bounds need not match the target's and must not determine inferred types.
 (defconstant +ir-fixnum-min+ (- (ash 1 62)))
 (defconstant +ir-fixnum-max+ (1- (ash 1 62)))
+(defconstant +ir-bound-min+ (- (ash 1 63)))
+(defconstant +ir-bound-max+ (1- (ash 1 63)))
 
 (defun ir-integer-range (low high)
-  (if (and (<= +ir-fixnum-min+ low) (<= high +ir-fixnum-max+))
+  (if (and (<= +ir-bound-min+ low) (<= high +ir-bound-max+))
       (list 'integer low high)
       'integer))
 
@@ -15,15 +17,25 @@
   (and (consp type) (eq (car type) 'integer)))
 
 (defun ir-fixnum-type-p (type)
-  (or (eq type 'fixnum) (ir-range-p type)))
+  (or (eq type 'fixnum)
+      (and (ir-range-p type) (<= +ir-fixnum-min+ (second type))
+           (<= (third type) +ir-fixnum-max+))))
+
+(defun ir-integer-type-p (type)
+  (or (eq type 'integer) (eq type 'fixnum) (ir-range-p type)))
+
+(defun ir-type-range (type)
+  (cond ((ir-range-p type) type)
+        ((eq type 'fixnum) (ir-integer-range +ir-fixnum-min+ +ir-fixnum-max+))))
+
 
 (defun ir-type-join (a b)
   (cond ((equal a b) a)
         ((and (ir-range-p a) (ir-range-p b))
          (ir-integer-range (min (second a) (second b)) (max (third a) (third b))))
         ((and (ir-fixnum-type-p a) (ir-fixnum-type-p b)) 'fixnum)
-        ((and (or (ir-fixnum-type-p a) (eq a 'integer))
-              (or (ir-fixnum-type-p b) (eq b 'integer))) 'integer)
+        ((and (ir-integer-type-p a)
+              (ir-integer-type-p b)) 'integer)
         ((and (member a '(null symbol)) (member b '(null symbol))) 'symbol)
         (t t)))
 
@@ -54,7 +66,7 @@
   "Return a predicate's result and whether it is known for TYPE."
   (when (or (eq type t) (eq type 'boolean))
     (return-from ir-type-predicate (values nil nil)))
-  (let* ((class (if (ir-fixnum-type-p type) 'integer type))
+  (let* ((class (if (ir-integer-type-p type) 'integer type))
          (supers
            (case class
              (integer '(integer rational real number))
@@ -91,7 +103,8 @@
       ((and (eq name 'char-code) (= count 1)) (ir-integer-range 0 #x10ffff))
       ((and (eq name 'values) (plusp count)) (ir-node-type (svref args 0)))
       ((and (member name '(+ - *)) (= count 2))
-       (let ((a (ir-node-type (svref args 0))) (b (ir-node-type (svref args 1))))
+       (let* ((at (ir-node-type (svref args 0))) (bt (ir-node-type (svref args 1)))
+              (a (or (ir-type-range at) at)) (b (or (ir-type-range bt) bt)))
          (when (and (ir-range-p a) (ir-range-p b))
            (return-from ir-call-type
              (case name
@@ -100,14 +113,15 @@
                (* (let ((products (list (* (second a) (second b)) (* (second a) (third b))
                                         (* (third a) (second b)) (* (third a) (third b)))))
                     (ir-integer-range (apply #'min products) (apply #'max products)))))))
-         (if (and (or (ir-fixnum-type-p a) (eq a 'integer))
-                  (or (ir-fixnum-type-p b) (eq b 'integer)))
+         (if (and (ir-integer-type-p a)
+                  (ir-integer-type-p b))
              'integer t)))
       ((and (member name '(1+ 1-)) (= count 1))
-       (let ((type (ir-node-type (svref args 0))) (delta (if (eq name '1+) 1 -1)))
+       (let* ((actual (ir-node-type (svref args 0))) (type (or (ir-type-range actual) actual))
+              (delta (if (eq name '1+) 1 -1)))
          (cond ((ir-range-p type)
                 (ir-integer-range (+ (second type) delta) (+ (third type) delta)))
-               ((or (ir-fixnum-type-p type) (eq type 'integer)) 'integer)
+               ((ir-integer-type-p type) 'integer)
                (t t))))
       ((and (member name '(logand logior logxor)) (= count 2))
        (let ((a (ir-node-type (svref args 0))) (b (ir-node-type (svref args 1))))
@@ -121,8 +135,8 @@
                 (ir-integer-range 0 (1- (ash 1 (max (integer-length (third a))
                                                   (integer-length (third b)))))))
                ((and (ir-fixnum-type-p a) (ir-fixnum-type-p b)) 'fixnum)
-               ((and (or (ir-fixnum-type-p a) (eq a 'integer))
-                     (or (ir-fixnum-type-p b) (eq b 'integer))) 'integer)
+               ((and (ir-integer-type-p a)
+                     (ir-integer-type-p b)) 'integer)
                (t t))))
       (t t))))
 
@@ -141,6 +155,10 @@
 (defun ir-type-intersection (a b)
   (cond ((eq b t) a)
         ((ir-known-subtype-p a b) a)
+        ((and (ir-range-p a) (eq b 'fixnum))
+         (ir-type-intersection a (ir-integer-range +ir-fixnum-min+ +ir-fixnum-max+)))
+        ((and (eq a 'fixnum) (ir-range-p b))
+         (ir-type-intersection (ir-integer-range +ir-fixnum-min+ +ir-fixnum-max+) b))
         ((and (ir-range-p a) (ir-range-p b))
          (let ((low (max (second a) (second b))) (high (min (third a) (third b))))
            ;; An empty intersection has no normal return after the check.
@@ -182,8 +200,8 @@
                 (and (<= (second required) (second actual))
                      (<= (third actual) (third required))))
                ((eq actual 'fixnum)
-                (and (= (second required) +ir-fixnum-min+)
-                     (= (third required) +ir-fixnum-max+)))))
+                (and (<= (second required) +ir-fixnum-min+)
+                     (<= +ir-fixnum-max+ (third required))))))
         (t
          (let ((predicate (case required
                             (fixnum 'kiln.kernel::fixnump) (integer 'integerp)
@@ -230,9 +248,6 @@
                                       (or (cdr (assoc var right :test #'eq)) t))))
                 (unless (eq type t) (push (cons var type) result)))))))))
 
-(defun ir-comparison-range (type)
-  (cond ((ir-range-p type) type)
-        ((eq type 'fixnum) (ir-integer-range +ir-fixnum-min+ +ir-fixnum-max+))))
 
 (defun ir-refine-comparison (test environment positive)
   (let* ((name (ir-node-a test)) (args (ir-node-b test)))
@@ -244,8 +259,8 @@
       (setf name (case name (< '>=) (<= '>) (> '<=) (>= '<) (= '/=) (/= '=))))
     (when (eq name '/=) (return-from ir-refine-comparison environment))
     (let* ((a (svref args 0)) (b (svref args 1))
-           (left (ir-comparison-range (ir-node-type a)))
-           (right (ir-comparison-range (ir-node-type b))))
+           (left (ir-type-range (ir-node-type a)))
+           (right (ir-type-range (ir-node-type b))))
       (unless (and left right) (return-from ir-refine-comparison environment))
       (when (member name '(> >=))
         (rotatef a b) (rotatef left right)
@@ -295,9 +310,14 @@
             (let ((old (cdr (assoc (car entry) previous :test #'eq))) (new (cdr entry)))
               (if (and (ir-range-p old) (ir-range-p new))
                   (cons (car entry)
-                        (ir-integer-range
-                         (if (< (second new) (second old)) +ir-fixnum-min+ (second new))
-                         (if (> (third new) (third old)) +ir-fixnum-max+ (third new))))
+                        (let ((lower (< (second new) (second old)))
+                              (upper (> (third new) (third old))))
+                          (if (or (and lower (< (second new) +ir-fixnum-min+))
+                                  (and upper (> (third new) +ir-fixnum-max+)))
+                              'integer
+                              (ir-integer-range
+                               (if lower +ir-fixnum-min+ (second new))
+                               (if upper +ir-fixnum-max+ (third new))))))
                   entry))) joined))
 
 (defun ir-tagbody-types (node environment visit)
