@@ -84,3 +84,29 @@
           ("foo"   t   0)
           (" foo"  t   1)
           ("  foo" t   2))))
+
+(test token-buffer/nesting-ownership-and-unwind
+  "Nested token readers have independent storage and release buffers on exit."
+  (let ((eclector.reader::*token-buffer-pool* nil))
+    (flet ((token (text)
+             (eclector.reader::with-token-info (push-char () finalize)
+               (map nil #'push-char text)
+               (finalize))))
+      (let ((first (token "abcdefghij")))
+        (is (string= "klmnopqrst" (token "klmnopqrst")))
+        (is (string= "abcdefghij" first)))
+      (is (string= "ab"
+                   (eclector.reader::with-token-info (push-char () finalize)
+                     (push-char #\a)
+                     (is (string= "nested" (token "nested")))
+                     (push-char #\b)
+                     (finalize))))
+      (catch 'done
+        (eclector.reader::with-token-info (push-char () finalize)
+          (push-char #\x)
+          (throw 'done nil)))
+      (is-true eclector.reader::*token-buffer-pool*)
+      (is (string= "after" (token "after")))
+      (is (= 5000 (length (token (make-string 5000 :initial-element #\x)))))
+      (is-true (every (lambda (buffer) (<= (length buffer) 4096))
+                      eclector.reader::*token-buffer-pool*)))))

@@ -34,6 +34,11 @@ tools/bench-compiler.py --output build/compiler-candidate
 IR 分析直接遍历变量缓冲区的有效区间；降级保留打包的源码位置，仅在输出调用
 记录时提取偏移。这些改动减少遍历和临时分配，并保留 KIR 中的执行顺序与源码记录。
 
+reader 的文件缓冲状态集中在原生结构中，字符快路径获取一次状态后直接操作字段。
+readtable 的 ASCII 分类使用同步更新的向量；token 临时数组有界复用，输出字符串
+独立持有。编译器的复杂 CST 重建在 car、cdr 间共享只读子 cons 索引，各自保留
+可变结果表和原子来源选择。
+
 ## 实施顺序
 
 1. 建立阶段计时与可重复基准，用 CPU 和分配 profile 确认热点。

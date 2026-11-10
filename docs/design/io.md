@@ -69,6 +69,11 @@ echo stream 记录，两个输出通过 broadcast stream 复制，原有流保�
 
 **时间**（`time.lisp`）：`get-internal-real-time` 和 `get-internal-run-time` 以微秒计；`get-universal-time`、公历换算和本地时区查询使用上文的日期接口。`time` 将实际经过时间和进程 CPU 时间写到 `*trace-output*`，保留原形式的词法环境和全部返回值，正常返回与非局部退出时都会报告。`sleep` 期间其他线程不能做 GC（现在还没有其他线程）。
 
+文件流把字节缓冲、输入起止、待输出长度和 UTF-8 分类缓存放在原生结构
+`file-buffer-state` 中。ASCII 字符快路径只获取一次该结构，直接读取或更新字段；
+Cyclosis 的外层方法仍负责 unread 和游标，非 ASCII、缓冲补充及其他外部格式仍走
+转换器。文件位置、读写切换和输出刷新共享同一份缓冲状态。
+
 ## 读入（Eclector）
 
 Eclector 同时是宿主前端的 reader 和目标端的 reader。CLOS 模块里有 base、readtable、simple readtable 和 reader；parse result 和 CST 读取器在 frontend 模块。kiln 的接口在 `reader.lisp`。
@@ -78,6 +83,10 @@ Eclector 同时是宿主前端的 reader 和目标端的 reader。CLOS 模块里
 - simple readtable 的类以内建类 `cl:readtable` 为超类，`readtablep` 成立。
 - 读入的 `` ` `` 形式是 Eclector 的 `quasiquote` 宏调用，运行期可以展开。
 - CST reader 对普通列表并行检查表达式和子结果，避免重复求长度和异常处理。根节点在构造时获得源码位置，尾节点保留默认位置；原始列表与子 CST 的身份保持不变。点列表、循环引用及结构不匹配的 reader macro 结果继续使用完整的重建路径。
+- 简单 readtable 的 ASCII 语法类型存放在每实例向量里；修改语法、安装宏字符和复制时同步更新，非 ASCII 仍走哈希查询。可变 readtable 之间不共享分类向量。
+- token 临时数组使用有界池，借出后从池中移除，嵌套读入使用不同数组；非局部退出归还数组。池最多保存八个不超过 4096 字符的数组，最终 token 始终复制成独立字符串。
+- 编译器的 CST client 在重建 car、cdr 时共享只读的子 cons 索引，各自保留引用筛选、原子选择和构造表。其他 client 使用默认重建协议。
+
 
 ## 打印器（Incless）
 

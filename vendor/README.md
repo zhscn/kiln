@@ -493,6 +493,16 @@ Under `#+kiln`:
 
 ## Eclector patches
 
+- Simple readtables keep a per-instance ASCII syntax vector synchronized
+  by syntax mutations, macro installation and copying. Non-ASCII queries
+  retain the hash representation, and client methods remain extensible.
+- Token scratch buffers are borrowed from a pool of at most eight arrays,
+  each at most 4096 characters, and returned on nonlocal exits too. Every
+  finalized token owns its storage so recursive clients can retain tokens.
+- CST clients can reconstruct expression parts through a dedicated protocol.
+  The compiler client shares the read-only child-cons index between parts;
+  atom selection and constructed results remain separate for each part.
+
 - Ordinary list CSTs match their child results in one traversal bounded
   by those results; dotted and cyclic expressions retain reconstruction. The
   outer node receives its source during construction instead of running
@@ -517,10 +527,6 @@ Under `#+kiln`:
   `(append (list 'if) (list '(null x)) (list y))`) and a tail
   (`` `(a ,x b c) `` ends in `'(b c)`, shared). Each expansion has the
   same constant parts.
-- `read-token` accumulates characters into a reusable buffer
-  (`*token-buffer*`) instead of allocating an adjustable vector per token,
-  and `char-syntax-type` handles ASCII characters in the standard
-  readtable inline before calling `eclector.readtable:syntax-type`.
 
 ## Inravina patches
 

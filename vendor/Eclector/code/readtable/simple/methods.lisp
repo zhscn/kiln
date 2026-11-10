@@ -61,7 +61,7 @@
 
 (defmethod eclector.readtable:make-dispatch-macro-character
     ((readtable readtable) char &optional non-terminating-p)
-  (setf (gethash char (syntax-types readtable))
+  (setf (eclector.readtable:syntax-type readtable char)
         (if non-terminating-p
             :non-terminating-macro
             :terminating-macro))
@@ -79,7 +79,7 @@
 
 (defmethod eclector.readtable:set-macro-character
     ((readtable readtable) char function &optional non-terminating-p)
-  (setf (gethash char (syntax-types readtable))
+  (setf (eclector.readtable:syntax-type readtable char)
         (if non-terminating-p
             :non-terminating-macro
             :terminating-macro))
@@ -112,11 +112,16 @@
     (setf (gethash sub-char subtable) function)))
 
 (defmethod eclector.readtable:syntax-type ((readtable readtable) char)
-  (let ((type (gethash char (syntax-types readtable))))
-    (if (null type) :constituent type)))
+  (let ((code (char-code char)))
+    (if (< code 128)
+        (svref (ascii-syntax-types readtable) code)
+        (or (gethash char (syntax-types readtable)) :constituent))))
 
 (defmethod (setf eclector.readtable:syntax-type)
     (syntax-type (readtable readtable) char)
+  (let ((code (char-code char)))
+    (when (< code 128)
+      (setf (svref (ascii-syntax-types readtable) code) syntax-type)))
   (if (eq syntax-type :constituent)
       (remhash char (syntax-types readtable))
       (setf (gethash char (syntax-types readtable)) syntax-type))
@@ -124,10 +129,11 @@
 
 (defmethod eclector.readtable:copy-readtable-into
     ((from-readtable readtable) (to-readtable readtable))
+  (fill (ascii-syntax-types to-readtable) :constituent)
   (clrhash (syntax-types to-readtable))
   (clrhash (macro-characters to-readtable))
   (maphash (lambda (key value)
-             (setf (gethash key (syntax-types to-readtable)) value))
+             (setf (eclector.readtable:syntax-type to-readtable key) value))
            (syntax-types from-readtable))
   (maphash
    (lambda (char entry)

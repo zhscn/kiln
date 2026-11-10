@@ -6,6 +6,9 @@
   ((%syntax-types
     :initform (make-hash-table)
     :reader syntax-types)
+   (%ascii-syntax-types
+    :initform (make-array 128 :initial-element :constituent)
+    :reader ascii-syntax-types)
    (%macro-characters
     :initform (make-hash-table)
     :reader macro-characters)

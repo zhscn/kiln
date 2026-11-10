@@ -408,6 +408,20 @@ host's: an #+SBCL branch must not be read into kiln code).")
 (defmethod eclector.reader:evaluate-expression ((client source-reader-client) expression)
   (compile-time-eval expression))
 
+(defmethod eclector.concrete-syntax-tree::reconstruct-expression-parts
+    ((client source-reader-client) expression children)
+  (let* ((cons-table (reduce #'cst::cons-table children
+                             :initial-value (make-hash-table :test #'eq)
+                             :from-end t))
+         (count (hash-table-count cons-table)))
+    (flet ((reconstruct-part (part)
+             (let ((table (cst::referenced-cons-table part cons-table)))
+               (reduce (lambda (child table) (cst::add-atoms child table count))
+                       children :initial-value table :from-end t)
+               (cst:cst-from-expression part :source nil :expression->cst table))))
+      (values (reconstruct-part (car expression))
+              (reconstruct-part (cdr expression))))))
+
 (defvar *source-reader-client* (make-instance 'source-reader-client))
 
 (defvar *file-reader-package* nil)

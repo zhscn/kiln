@@ -28,6 +28,10 @@ IR 的词法绑定、自由变量、赋值、退出点和闭包布局直接记�
 | `lisp/cross.lisp` | 两边共用 | `cross-client`：交叉编译用的编译期环境 |
 | `lisp/target/compiler/client.lisp` | 只在 kiln 上 | `image-client`：在运行中的 image 里编译 |
 
+`source-reader-client` 对结构不匹配的 CST 重建复用子树索引：先按原有顺序建立
+raw cons 到 CST 的只读映射，再分别为 car、cdr 筛选引用、登记原子和构造结果。
+两个分支不共享可变结果表，保留歧义原子的位置选择和循环结构的处理。
+
 `make-session` 的 `:client-class` 选择 client。宿主默认 `cross-client`，kiln 上默认 `image-client`。少量差异在 `front.lisp` 里用 `#+kiln` 区分（宿主为目标端编译时读入用的是目标的 features）：client 的超类、目标端读入的包是 CL-USER 而宿主是 KILN-USER、Common-macros 的包名等。
 
 ### cross-client：交叉编译

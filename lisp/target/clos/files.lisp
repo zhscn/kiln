@@ -8,23 +8,37 @@
 
 (defconstant +file-buffer-size+ 8192)
 
+(defstruct (file-buffer-state (:conc-name buffer-state-))
+  (buffer (kiln.kernel::make-simple-vector +file-buffer-size+ 0))
+  (in-start 0) (in-end 0) (out-end 0) (utf-8-characters :unknown))
+
 (defclass kiln-file-stream (posix-file-stream)
-  ((%buffer :initform (kiln.kernel::make-simple-vector +file-buffer-size+ 0)
-            :reader file-buffer)
-   ;; Output not written yet: the first OUT-END octets of the buffer.
-   (%out-end :initform 0 :accessor out-end)
-   ;; Input read but not consumed: the octets from IN-START to IN-END.
-   (%in-start :initform 0 :accessor in-start)
-   (%in-end :initform 0 :accessor in-end)
+  ((%buffer-state :initform (make-file-buffer-state) :reader file-state)
    ;; The descriptor's file offset, kept by the reads, writes and seeks
    ;; below, so that FILE-POSITION (asked at every form the reader makes
    ;; a CST of) needs no system call; NIL until first asked.
    (%os-position :initform nil :accessor os-position)
    (%octets-per-element :initform nil :accessor %octets-per-element)
-   (%utf-8-characters :initform :unknown :accessor %utf-8-characters)
    ;; Opened with O_APPEND: each write moves the offset to the end, so it
    ;; is not kept across writes.
    (%append :initform nil :initarg :append :reader file-append-p)))
+
+(declaim (inline file-buffer in-start in-end out-end %utf-8-characters
+                 (setf in-start) (setf in-end) (setf out-end)
+                 (setf %utf-8-characters)))
+(defun file-buffer (stream) (buffer-state-buffer (file-state stream)))
+(defun in-start (stream) (buffer-state-in-start (file-state stream)))
+(defun in-end (stream) (buffer-state-in-end (file-state stream)))
+(defun out-end (stream) (buffer-state-out-end (file-state stream)))
+(defun %utf-8-characters (stream) (buffer-state-utf-8-characters (file-state stream)))
+(defun (setf in-start) (value stream)
+  (setf (buffer-state-in-start (file-state stream)) value))
+(defun (setf in-end) (value stream)
+  (setf (buffer-state-in-end (file-state stream)) value))
+(defun (setf out-end) (value stream)
+  (setf (buffer-state-out-end (file-state stream)) value))
+(defun (setf %utf-8-characters) (value stream)
+  (setf (buffer-state-utf-8-characters (file-state stream)) value))
 
 (defun note-written (stream count)
   (cond ((file-append-p stream) (setf (os-position stream) nil))
@@ -140,13 +154,17 @@
 ;;; are nearly all ASCII. CHARACTER-INPUT-MIXIN's :AROUND method still
 ;;; handles UNREAD-CHAR and the cursor.
 (defmethod stream-read-char ((stream kiln-file-stream))
-  (let ((start (in-start stream)))
-    (if (and (< start (in-end stream))
-             (zerop (out-end stream))
-             (utf-8-characters-p stream)
-             (< (svref (file-buffer stream) start) #x80))
-        (progn (setf (in-start stream) (+ start 1))
-               (code-char (svref (file-buffer stream) start)))
+  (let* ((state (file-state stream))
+         (start (buffer-state-in-start state))
+         (buffer (buffer-state-buffer state)))
+    (if (and (< start (buffer-state-in-end state))
+             (zerop (buffer-state-out-end state))
+             (if (eq (buffer-state-utf-8-characters state) :unknown)
+                 (utf-8-characters-p stream)
+                 (buffer-state-utf-8-characters state))
+             (< (svref buffer start) #x80))
+        (progn (setf (buffer-state-in-start state) (+ start 1))
+               (code-char (svref buffer start)))
         (call-next-method))))
 
 (defun utf-8-characters-p (stream)

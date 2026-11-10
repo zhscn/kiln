@@ -14,6 +14,12 @@
                       (not (eql (car tail) (cst:raw (car remaining)))))
                   (return nil)))))
 
+(defgeneric reconstruct-expression-parts (client expression children))
+
+(defmethod reconstruct-expression-parts ((client t) expression children)
+  (values (cst:reconstruct client (car expression) children)
+          (cst:reconstruct client (cdr expression) children)))
+
 ;;; This method is responsible for constructing CST results from
 ;;; ordinary s-expression results.  It can do this by itself for a
 ;;; number of simple cases and it calls
@@ -106,9 +112,7 @@
            ;;
            ;; because we want SOURCE for the outer `cons-cst' but not
            ;; any of its children.
-           (destructuring-bind (car . cdr) expression
-             (make-instance 'cst:cons-cst
-                            :raw expression
-                            :first (cst:reconstruct client car children)
-                            :rest (cst:reconstruct client cdr children)
-                            :source source)))))
+           (multiple-value-bind (first rest)
+               (reconstruct-expression-parts client expression children)
+             (make-instance 'cst:cons-cst :raw expression :first first :rest rest
+                                           :source source)))))

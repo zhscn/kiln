@@ -29,6 +29,16 @@
               '(simple-array character 1)))
    t))
 
+(defvar *token-buffer-pool* nil)
+
+(defun acquire-token-buffer ()
+  (or (pop *token-buffer-pool*) (make-array 64 :element-type 'character)))
+
+(defun release-token-buffer (buffer)
+  (when (and buffer (<= (length buffer) 4096) (< (length *token-buffer-pool*) 8))
+    (push buffer *token-buffer-pool*))
+  nil)
+
 ;;; This macro binds the names PUSH-CHAR, {START,END}-ESCAPE and
 ;;; FINALIZE to local functions that perform the accumulation of token
 ;;; characters and, optionally, escape ranges. If LAZY is true, the
@@ -38,16 +48,17 @@
      &body body)
   `(let ((token ,(if lazy
                      'nil
-                     '(make-array 10 :element-type 'character)))
+                     '(acquire-token-buffer)))
          (index 0)
          ,@(when start-escape
              `((escape-ranges '()))))
      (declare (type ,(if lazy '(or null token-string) 'token-string) token)
               (type array-index index))
-     (labels ((,push-char (char)
+     (unwind-protect
+       (labels ((,push-char (char)
                 (cond ,@(when lazy
                           `(((null token)
-                             (setf token (make-array 10 :element-type 'character)))))
+                             (setf token (acquire-token-buffer)))))
                       ((let ((length (length token)))
                          (unless (< index length)
                            (let ((new (make-array (* 2 length) :element-type 'character)))
@@ -64,14 +75,13 @@
                   `((,end-escape ()
                       (setf (cdr (first escape-ranges)) index))))
               (,finalize ()
-                (values (if (= index (length token))
-                            token
-                            (subseq token 0 index))
+                (values (and token (subseq token 0 index))
                         ,@(when start-escape
                             `((if (null escape-ranges)
                                   escape-ranges
                                   (nreverse escape-ranges)))))))
-       ,@body)))
+       ,@body)
+       (release-token-buffer token))))
 
 ;;; This macro generates a state machine for reading a token and in
 ;;; particular handles single and multiple escapes and
