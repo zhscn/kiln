@@ -27,7 +27,11 @@
 (defun ir-inline-call (node caller)
   (let ((fun (ir-node-a node)))
     (when (and (ir-fun-p fun) (ir-inline-candidate-p fun caller))
-      (loop for var across (ir-vector (ir-fun-vars fun))
+      (loop with buffer = (ir-fun-vars fun)
+            with data = (ir-buffer-data buffer)
+            with count = (ir-buffer-count buffer)
+            for index below count
+            for var = (svref data index)
             do (setf (ir-var-owner var) caller
                      (ir-var-flags var) (logandc2 (ir-var-flags var) 6))
                (ir-push var (ir-fun-vars caller)))
@@ -46,7 +50,11 @@ recorded against their final owners in the same traversal."
       ((analyze (fun)
          (let ((*ir-function* fun) (free (make-ir-buffer)))
            (setf (ir-fun-flags fun) (logior 32 (ir-fun-flags fun)))
-           (loop for var across (ir-vector (ir-fun-vars fun))
+           (loop with buffer = (ir-fun-vars fun)
+                 with data = (ir-buffer-data buffer)
+                 with count = (ir-buffer-count buffer)
+                 for index below count
+                 for var = (svref data index)
                  do (setf (ir-var-flags var) (logandc2 (ir-var-flags var) 6)))
            (setf (ir-fun-exits fun) (make-ir-buffer))
            (labels
@@ -102,7 +110,11 @@ recorded against their final owners in the same traversal."
              (setf (ir-fun-flags fun) (logior 2 (ir-fun-flags fun))))
            (when (= (ir-fun-calls fun) 1)
              (setf (ir-fun-flags fun) (logior 4 (ir-fun-flags fun))))
-           (loop for var across (ir-vector (ir-fun-vars fun))
+           (loop with buffer = (ir-fun-vars fun)
+                 with data = (ir-buffer-data buffer)
+                 with count = (ir-buffer-count buffer)
+                 for index below count
+                 for var = (svref data index)
                  when (= (logand (ir-var-flags var) 3) 3)
                    do (setf (ir-var-flags var) (logior 4 (ir-var-flags var)))))))
     (analyze root))
