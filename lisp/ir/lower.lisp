@@ -273,6 +273,26 @@ predicate inside it is branched on, not made into T or NIL and compared."
     (start-block join)
     (values r n)))
 
+(defun ir-lower-fixnum-arithmetic (name a b bounded)
+  (if bounded
+      (copy-to-var (case name
+                     (+ `(:add ,a ,b)) (- `(:sub ,a ,b))
+                     (* `(:mul (:sar ,a ,+fixnum-shift+) ,b))))
+      ;; Input types do not prove that the result fits. Keep the overflow
+      ;; edge and its arbitrary-precision result.
+      (let ((r (new-var)) (ovf (new-var :raw)) (slow (new-block)) (done (new-block)))
+        (emit (case name
+                (+ `(:add-ovf ,r ,ovf ,a ,b))
+                (- `(:sub-ovf ,r ,ovf ,a ,b))
+                (* `(:mul-ovf ,r ,ovf (:sar ,a ,+fixnum-shift+) ,b))))
+        (br ovf slow done)
+        (start-block slow)
+        (emit `(:set ,r ,(emit-slow-call
+                         (case name (+ 'kiln.kernel::two-arg-+)
+                                    (- 'kiln.kernel::two-arg--)
+                                    (* 'kiln.kernel::two-arg-*)) a b)))
+        (jump done) (start-block done) r)))
+
 (defun ir-lower-typed-call (node)
   "Return a primary value and a success flag without partially lowering an
 unsupported call. Arguments retain their evaluation order and effects."
@@ -282,6 +302,13 @@ unsupported call. Arguments retain their evaluation order and effects."
         (when known
           (ir-lower (svref args 0))
           (return-from ir-lower-typed-call (values (constant-object truth) t)))))
+    (when (and (= count 1) (member name '(1+ 1-))
+               (ir-fixnum-type-p (ir-node-type (svref args 0))))
+      (let ((value (copy-to-var (ir-lower (svref args 0)))))
+        (return-from ir-lower-typed-call
+          (values (ir-lower-fixnum-arithmetic
+                   (if (eq name '1+) '+ '-) value (ash 1 +fixnum-shift+)
+                   (ir-fixnum-type-p (ir-node-type node))) t))))
     (when (and (= count 2)
                (ir-fixnum-type-p (ir-node-type (svref args 0)))
                (ir-fixnum-type-p (ir-node-type (svref args 1)))
@@ -291,25 +318,7 @@ unsupported call. Arguments retain their evaluation order and effects."
           (values
            (cond
              ((member name '(+ - *))
-              (if (ir-fixnum-type-p (ir-node-type node))
-                  (copy-to-var (case name
-                                 (+ `(:add ,a ,b)) (- `(:sub ,a ,b))
-                                 (* `(:mul (:sar ,a ,+fixnum-shift+) ,b))))
-                  ;; Input types do not prove that the result fits. Keep
-                  ;; the overflow edge and its arbitrary-precision result.
-                  (let ((r (new-var)) (ovf (new-var :raw))
-                        (slow (new-block)) (done (new-block)))
-                    (emit (case name
-                            (+ `(:add-ovf ,r ,ovf ,a ,b))
-                            (- `(:sub-ovf ,r ,ovf ,a ,b))
-                            (* `(:mul-ovf ,r ,ovf (:sar ,a ,+fixnum-shift+) ,b))))
-                    (br ovf slow done)
-                    (start-block slow)
-                    (emit `(:set ,r ,(emit-slow-call
-                                     (case name (+ 'kiln.kernel::two-arg-+)
-                                                (- 'kiln.kernel::two-arg--)
-                                                (* 'kiln.kernel::two-arg-*)) a b)))
-                    (jump done) (start-block done) r)))
+              (ir-lower-fixnum-arithmetic name a b (ir-fixnum-type-p (ir-node-type node))))
              ((member name '(logand logior logxor))
               (copy-to-var `(,(case name (logand :and) (logior :or) (logxor :xor)) ,a ,b)))
              (t (boolean-value `(,(case name (< :lt) (> :gt) (<= :le) (>= :ge) (= :eq) (/= :ne))
