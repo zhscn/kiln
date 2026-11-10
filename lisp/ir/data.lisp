@@ -50,7 +50,7 @@
   (name nil) (owner nil) (group nil) (token nil) (flags 0) (index 0) (lowering nil))
 
 (defstruct (ir-env (:constructor make-ir-env (parent base &key vars funcs blocks tags declarations)))
-  (parent nil) (base nil) (vars nil) (funcs nil) (blocks nil) (tags nil) (declarations nil))
+  (parent nil) (base nil) (vars nil) (funcs nil) (blocks nil) (tags nil) (declarations nil) (types nil))
 
 (declaim (inline ir-env ir-raw ir-new-var))
 (defun ir-env (parent &key vars funcs blocks tags declarations)

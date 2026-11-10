@@ -138,6 +138,72 @@
                             simple-vector string simple-string vector array function null list)))
              (values (svref args 0) (ir-node-a (svref args 1))))))))
 
+(defun ir-type-intersection (a b)
+  (cond ((ir-known-subtype-p a b) a)
+        ((and (ir-range-p a) (ir-range-p b))
+         (let ((low (max (second a) (second b))) (high (min (third a) (third b))))
+           ;; An empty intersection has no normal return after the check.
+           ;; Keep a safe overapproximation until the domain has bottom.
+           (if (<= low high) (ir-integer-range low high) b)))
+        (t b)))
+
+(defun ir-declaration-type (specifier)
+  "Project supported declarations into the value domain; T is unsupported."
+  (cond ((member specifier '(fixnum integer rational real number float single-float double-float
+                            cons symbol character simple-vector simple-string string vector array
+                            function null list)) specifier)
+        ((member specifier '(short-float long-float))
+         (if (eq specifier 'short-float) 'single-float 'double-float))
+        ((nth-value 2 (type-fixnum-bounds specifier))
+         (multiple-value-bind (low high) (type-fixnum-bounds specifier)
+           (ir-integer-range low high)))
+        ((and (consp specifier) (ir-proper-list-p specifier))
+         (case (car specifier)
+           (and
+            (let ((type t))
+              (dolist (part (cdr specifier) type)
+                (let ((next (ir-declaration-type part)))
+                  (when (eq next t) (return-from ir-declaration-type t))
+                  (setf type (ir-type-intersection type next))))))
+           (or
+            (let ((parts (cdr specifier)))
+              (if (null parts) t
+                  (reduce #'ir-type-join (mapcar #'ir-declaration-type parts)))))
+           (otherwise t)))
+        (t t)))
+
+(defun ir-known-subtype-p (actual required)
+  "A proof in the finite domain, independent of user-defined type aliases."
+  (cond ((eq actual t) nil)
+        ((equal actual required) t)
+        ((ir-range-p required)
+         (cond ((ir-range-p actual)
+                (and (<= (second required) (second actual))
+                     (<= (third actual) (third required))))
+               ((eq actual 'fixnum)
+                (and (= (second required) +ir-fixnum-min+)
+                     (= (third required) +ir-fixnum-max+)))))
+        (t
+         (let ((predicate (case required
+                            (fixnum 'kiln.kernel::fixnump) (integer 'integerp)
+                            (rational 'rationalp) (real 'realp) (number 'numberp)
+                            (float 'floatp) (cons 'consp) (symbol 'symbolp)
+                            (character 'characterp) (simple-vector 'simple-vector-p)
+                            (simple-string 'simple-string-p) (string 'stringp)
+                            (vector 'vectorp) (array 'arrayp) (function 'functionp)
+                            (null 'null) (list 'listp))))
+           (and predicate
+                (multiple-value-bind (truth known) (ir-type-predicate predicate actual)
+                  (and truth known)))))))
+
+(defun ir-declaration-proven-p (actual specifier)
+  (cond ((and (consp specifier) (eq (car specifier) 'and))
+         (every (lambda (part) (ir-declaration-proven-p actual part)) (cdr specifier)))
+        ((and (consp specifier) (eq (car specifier) 'or))
+         (some (lambda (part) (ir-declaration-proven-p actual part)) (cdr specifier)))
+        (t (let ((required (ir-declaration-type specifier)))
+             (and (not (eq required t)) (ir-known-subtype-p actual required))))))
+
 (defun ir-trackable-type-var-p (var)
   ;; A captured writer can run from an arbitrary call or a nonlocal exit.
   (/= (logand (ir-var-flags var) 3) 3))
@@ -206,8 +272,17 @@ and a flag for local writes. Captured writers never acquire binding facts."
          (let ((type t) (written nil))
            (case (ir-node-kind node)
              (0 (setf type (ir-constant-type (ir-node-a node))))
-             (1 (when (ir-trackable-type-var-p (ir-node-a node))
-                  (setf type (or (cdr (assoc (ir-node-a node) environment :test #'eq)) t))))
+             (1
+              (let ((var (ir-node-a node)) (declared (ir-node-b node)))
+                (when (ir-trackable-type-var-p var)
+                  (setf type (or (cdr (assoc var environment :test #'eq)) t)))
+                (setf (ir-node-c node) nil)
+                (when declared
+                  (let ((required (ir-declaration-type declared)))
+                    (unless (eq required t)
+                      (setf (ir-node-c node) (not (ir-declaration-proven-p type declared)))
+                      (setf type (ir-type-intersection type required))
+                      (setf environment (ir-bind-type var type environment)))))))
              ((2 4)
               (multiple-value-setq (type environment written) (visit (ir-node-b node) environment))
               (when (and (= (ir-node-kind node) 2) (ir-trackable-type-var-p (ir-node-a node)))

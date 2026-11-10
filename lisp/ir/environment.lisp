@@ -37,12 +37,23 @@
 (defun ir-base-environment (environment)
   (if (ir-env-p environment) (ir-env-base environment) environment))
 
+(defun ir-declared-variable-type (environment variable)
+  "Intersect declarations on this binding identity in the current scope."
+  (let ((types nil))
+    (loop for env = environment then (ir-env-parent env) while (ir-env-p env)
+          do (dolist (entry (ir-env-types env))
+               (when (and (eq (car entry) variable)
+                          (not (member (cdr entry) types :test #'equal)))
+                 (push (cdr entry) types))))
+    (cond ((null types) t) ((null (cdr types)) (car types))
+          (t (cons 'and (nreverse types))))))
+
 (defmethod trucler:describe-variable (client (environment ir-env) name)
   (multiple-value-bind (binding found) (ir-lookup environment name :var)
     (if found
         (cond ((ir-var-p binding)
                (make-instance 'trucler:lexical-variable-description
-                              :name name :identity binding :type (ir-var-type binding)
+                              :name name :identity binding :type (ir-declared-variable-type environment binding)
                               :ignore (and (logtest 8 (ir-var-flags binding)) 'ignorable)
                               :dynamic-extent (logtest 16 (ir-var-flags binding))))
               ((eq (car binding) :special)
@@ -153,7 +164,7 @@
         (type
          (dolist (name (cddr spec))
            (let ((var (ir-lookup env name :var)))
-             (when (ir-var-p var) (setf (ir-var-type var) (second spec))))))
+             (when (ir-var-p var) (push (cons var (second spec)) (ir-env-types env))))))
         (otherwise
          ;; A type name in declaration position is shorthand for TYPE.
          (unless (or (member (car spec) '(special optimize inline notinline ftype declaration))
@@ -166,8 +177,21 @@
              (t
               (dolist (name (cdr spec))
                 (let ((var (ir-lookup env name :var)))
-                  (when (ir-var-p var) (setf (ir-var-type var) (car spec)))))))))))
+                  (when (ir-var-p var) (push (cons var (car spec)) (ir-env-types env)))))))))))
     env))
+
+(defun ir-declare-binding (environment name declarations)
+  "A binding declaration also applies to later sequential initializers.
+Names not bound yet must not attach to an outer binding of the same name."
+  (let ((selected nil))
+    (dolist (spec declarations)
+      (cond ((and (eq (car spec) 'type) (member name (cddr spec)))
+             (push (list 'type (second spec) name) selected))
+            ((and (not (member (car spec) '(type special optimize inline notinline ftype
+                                           declaration ignore ignorable dynamic-extent)))
+                  (member name (cdr spec)))
+             (push (list (car spec) name) selected))))
+    (if selected (ir-declare environment (nreverse selected)) environment)))
 
 (defun ir-evaluation-environment (environment)
   "Compile local macro expanders in the retained compile-time evaluator.

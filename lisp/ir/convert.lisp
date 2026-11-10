@@ -44,7 +44,9 @@
   (when (constant-symbol-p name)
     (return-from ir-convert-symbol (ir-node 0 *ir-source* name)))
   (multiple-value-bind (binding found) (ir-lookup environment name :var)
-    (cond ((ir-var-p binding) (ir-node 1 *ir-source* (ir-note-ref binding)))
+    (cond ((ir-var-p binding)
+           (let ((type (ir-declared-variable-type environment binding)))
+             (ir-node 1 *ir-source* (ir-note-ref binding) (unless (eq type t) type))))
           ((and found (eq (car binding) :symbol-macro))
            (ir-convert (second binding) environment))
           ((and found (eq (car binding) :special)) (ir-node 3 *ir-source* name))
@@ -232,7 +234,8 @@
                   (progn
                     (push (cons name variable) specials)
                     (setf env (ir-env env :vars (list (cons name '(:special))))))
-                  (setf env (ir-env env :vars (list (cons name variable))))))))
+                  (setf env (ir-env env :vars (list (cons name variable)))))
+              (when sequential (setf env (ir-declare-binding env name declarations))))))
         ;; LET* dynamic bindings surround all subsequent initializers, so
         ;; construct their scopes as nested LET/BIND pairs.
         (let* ((env (ir-declare env declarations))
@@ -286,6 +289,7 @@
                        (progn (push (cons name var) specials)
                               (setf env (ir-env env :vars (list (cons name '(:special))))))
                        (setf env (ir-env env :vars (list (cons name var)))))
+                   (setf env (ir-declare-binding env name declarations))
                    var)))
         (dolist (input (ir-parts (first parts)))
           (let ((item (ir-raw input)))

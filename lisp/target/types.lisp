@@ -13,6 +13,9 @@
 (defun double-float-p (x) (%primop :double-float-p x))
 (defun ratiop (x) (%primop :ratiop x))
 
+(defun %declared-type-error (value type)
+  (error 'type-error :datum value :expected-type type))
+
 (defun in-range-p (x low high)
   ;; LOW and HIGH are bounds as in (INTEGER LOW HIGH): *, a number, or a
   ;; list of one number for an exclusive bound.
