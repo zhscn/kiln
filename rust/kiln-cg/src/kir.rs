@@ -104,6 +104,11 @@ pub enum BinOp {
     /// 0, and not -1 with i64::MIN as the dividend.
     Sdiv,
     Srem,
+    /// IEEE binary64 operations on unboxed bit patterns.
+    F64Add,
+    F64Sub,
+    F64Mul,
+    F64Div,
     /// Shifts by a count in a value, which must be in 0..64.
     Shlv,
     Sarv,
@@ -603,7 +608,7 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
     let (h, r) = head(list(s)?)?;
     let e = |i: usize| -> R<Box<Expr>> { Ok(Box::new(parse_expr(&r[i])?)) };
     Ok(match h {
-        "add" | "sub" | "mul" | "and" | "or" | "xor" | "sdiv" | "srem" | "shlv" | "sarv" => {
+        "add" | "sub" | "mul" | "and" | "or" | "xor" | "sdiv" | "srem" | "shlv" | "sarv" | "f64-add" | "f64-sub" | "f64-mul" | "f64-div" => {
             arity(h, r, 2)?;
             let op = match h {
                 "add" => BinOp::Add,
@@ -613,6 +618,10 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
                 "or" => BinOp::Or,
                 "sdiv" => BinOp::Sdiv,
                 "srem" => BinOp::Srem,
+                "f64-add" => BinOp::F64Add,
+                "f64-sub" => BinOp::F64Sub,
+                "f64-mul" => BinOp::F64Mul,
+                "f64-div" => BinOp::F64Div,
                 "shlv" => BinOp::Shlv,
                 "sarv" => BinOp::Sarv,
                 _ => BinOp::Xor,

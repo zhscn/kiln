@@ -1201,6 +1201,18 @@ impl<M: Module> FuncLowering<'_, M> {
                     BinOp::Srem => b.ins().srem(x, y),
                     BinOp::Shlv => b.ins().ishl(x, y),
                     BinOp::Sarv => b.ins().sshr(x, y),
+                    BinOp::F64Add | BinOp::F64Sub | BinOp::F64Mul | BinOp::F64Div => {
+                        let x = b.ins().bitcast(ir::types::F64, MemFlagsData::new(), x);
+                        let y = b.ins().bitcast(ir::types::F64, MemFlagsData::new(), y);
+                        let result = match op {
+                            BinOp::F64Add => b.ins().fadd(x, y),
+                            BinOp::F64Sub => b.ins().fsub(x, y),
+                            BinOp::F64Mul => b.ins().fmul(x, y),
+                            BinOp::F64Div => b.ins().fdiv(x, y),
+                            _ => unreachable!(),
+                        };
+                        b.ins().bitcast(I64, MemFlagsData::new(), result)
+                    }
                 }
             }
             Expr::Shift(op, x, n) => {
