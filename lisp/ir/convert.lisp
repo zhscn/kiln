@@ -235,14 +235,19 @@
                     (push (cons name variable) specials)
                     (setf env (ir-env env :vars (list (cons name '(:special))))))
                   (setf env (ir-env env :vars (list (cons name variable)))))
-              (when sequential (setf env (ir-declare-binding env name declarations))))))
+              (when sequential
+                (setf env (ir-declare-binding env name declarations)
+                      (ir-var-type variable) (ir-declared-variable-type env variable))))))
         ;; LET* dynamic bindings surround all subsequent initializers, so
         ;; construct their scopes as nested LET/BIND pairs.
         (let* ((env (ir-declare env declarations))
                (*local-notinline* (append (loop for spec in declarations
                                                when (eq (car spec) 'notinline) append (cdr spec))
                                           *local-notinline*))
-               (result (ir-progn body env))
+               (result (progn
+                         (loop for var across (ir-vector variables)
+                               do (setf (ir-var-type var) (ir-declared-variable-type env var)))
+                         (ir-progn body env)))
                (vars (ir-vector variables)) (inits (ir-vector initializers)))
           (if sequential
               (loop for i downfrom (1- (length vars)) to 0
@@ -289,7 +294,8 @@
                        (progn (push (cons name var) specials)
                               (setf env (ir-env env :vars (list (cons name '(:special))))))
                        (setf env (ir-env env :vars (list (cons name var)))))
-                   (setf env (ir-declare-binding env name declarations))
+                   (setf env (ir-declare-binding env name declarations)
+                         (ir-var-type var) (ir-declared-variable-type env var))
                    var)))
         (dolist (input (ir-parts (first parts)))
           (let ((item (ir-raw input)))
@@ -491,7 +497,10 @@ as MULTIPLE-VALUE-BIND expands into: the variable inputs, FORM, and BODY."
                (*local-notinline* (append (loop for spec in declarations
                                                 when (eq (car spec) 'notinline) append (cdr spec))
                                            *local-notinline*))
-               (result (ir-progn body env))
+               (result (progn
+                         (loop for var across (ir-vector variables)
+                               do (setf (ir-var-type var) (ir-declared-variable-type env var)))
+                         (ir-progn body env)))
                (vars (ir-vector variables)))
           (if (zerop (length vars))
               (ir-node 10 *ir-source* (vector init result))
