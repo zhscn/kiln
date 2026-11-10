@@ -1,0 +1,11 @@
+;;; A stable recurrence exposes arithmetic calls and intermediate boxes.
+(declaim (notinline benchmark-double-tree))
+(defun benchmark-double-tree (count)
+  (declare (type (integer 0 1048576) count))
+  (let ((value 1.25d0))
+    (declare (double-float value))
+    (dotimes (index count value)
+      (setq value (+ (* value 0.5d0) (* value 0.5d0))))))
+(let ((value (benchmark-double-tree 1000000)))
+  (unless (= value 1.25d0) (error "Unexpected double-tree result: ~S" value))
+  (print (= value 1.25d0)))
