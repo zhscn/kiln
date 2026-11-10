@@ -95,3 +95,9 @@
   (print (typed-simple-bit-elt bits 1))
   (print (handler-case (typed-simple-bit-elt bits 2) (error () 'bounds)))
   (print (handler-case (typed-simple-bit-set-elt bits 0 3) (type-error () 'element-error))))
+
+(let ((bits (make-array 2 :element-type 'bit :initial-element 1)))
+  (print (elt bits 0))
+  (print (funcall #'(setf elt) 0 bits 1))
+  (print (elt bits 1))
+  (print (handler-case (funcall #'(setf elt) 3 bits 1) (type-error () 'element-error))))

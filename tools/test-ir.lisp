@@ -497,4 +497,17 @@
 (assert (not (ir-declaration-proven-p 'simple-vector '(simple-array t (3)))))
 (assert (not (ir-declaration-proven-p 'vector '(array bit (*)))))
 
+(dolist (entry '(((make-array 3) . simple-vector)
+                 ((make-array '(3) :element-type 'bit) . :simple-array-vector)
+                 ((make-array 3 :fill-pointer 1) . vector)
+                 ((make-array 3 :adjustable t) . vector)
+                 ((make-array '(2 3)) . array)
+                 ((make-array 3 :element-type 'bit :element-type t) . :simple-array-vector)))
+  (let* ((root (ir-test-form (car entry)))
+         (call (find-if (lambda (node) (and (= (ir-node-kind node) 7)
+                                           (eq (ir-node-a node) 'make-array)))
+                        (ir-test-nodes root))))
+    (assert call)
+    (assert (eq (ir-node-type call) (cdr entry)))))
+
 (format t "IR model and diagnostics passed.~%")

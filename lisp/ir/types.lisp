@@ -93,6 +93,33 @@
            (values nil nil))
           (t (values nil t)))))
 
+(defun ir-make-array-type (args)
+  (let* ((count (length args)) (dimension (and (plusp count) (svref args 0)))
+         (rank-one (and dimension
+                        (or (ir-integer-type-p (ir-node-type dimension))
+                            (and (= (ir-node-kind dimension) 0)
+                                 (consp (ir-node-a dimension))
+                                 (ir-proper-list-p (ir-node-a dimension))
+                                 (= (length (ir-node-a dimension)) 1)))))
+         (simple t) (general-elements t))
+    (unless rank-one (return-from ir-make-array-type 'array))
+    (unless (oddp count) (return-from ir-make-array-type 'vector))
+    (loop for i from 1 below count by 2
+          for key = (svref args i) for value = (svref args (1+ i))
+          do (unless (= (ir-node-kind key) 0) (return-from ir-make-array-type 'vector))
+             (case (ir-node-a key)
+               ((:adjustable :fill-pointer :displaced-to)
+                (unless (and (= (ir-node-kind value) 0) (null (ir-node-a value)))
+                  (setf simple nil)))
+               (:element-type
+                (unless (and (= (ir-node-kind value) 0) (eq (ir-node-a value) t))
+                  (setf general-elements nil)))
+               ((:initial-element :initial-contents :displaced-index-offset :allow-other-keys))
+               (otherwise (return-from ir-make-array-type 'vector))))
+    (cond ((not simple) 'vector)
+          (general-elements 'simple-vector)
+          (t :simple-array-vector))))
+
 (defun ir-call-type (name args)
   (let ((count (length args)))
     (cond
@@ -101,6 +128,7 @@
       ((eq name 'cons) 'cons)
       ((eq name 'list) (if (zerop count) 'null 'cons))
       ((eq name 'vector) 'simple-vector)
+      ((eq name 'make-array) (ir-make-array-type args))
       ((and (eq name 'length) (= count 1)
             (member (ir-node-type (svref args 0)) '(simple-vector :native-string)))
        (ir-integer-range 0 #xffffffff))
