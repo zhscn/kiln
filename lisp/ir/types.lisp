@@ -230,6 +230,39 @@
                                       (or (cdr (assoc var right :test #'eq)) t))))
                 (unless (eq type t) (push (cons var type) result)))))))))
 
+(defun ir-comparison-range (type)
+  (cond ((ir-range-p type) type)
+        ((eq type 'fixnum) (ir-integer-range +ir-fixnum-min+ +ir-fixnum-max+))))
+
+(defun ir-refine-comparison (test environment positive)
+  (let* ((name (ir-node-a test)) (args (ir-node-b test)))
+    (unless (and (member name '(< <= > >= = /=)) (= (length args) 2)
+                 ;; Evaluating the later operand must not overwrite the first.
+                 (every (lambda (arg) (member (ir-node-kind arg) '(0 1))) args))
+      (return-from ir-refine-comparison environment))
+    (unless positive
+      (setf name (case name (< '>=) (<= '>) (> '<=) (>= '<) (= '/=) (/= '=))))
+    (when (eq name '/=) (return-from ir-refine-comparison environment))
+    (let* ((a (svref args 0)) (b (svref args 1))
+           (left (ir-comparison-range (ir-node-type a)))
+           (right (ir-comparison-range (ir-node-type b))))
+      (unless (and left right) (return-from ir-refine-comparison environment))
+      (when (member name '(> >=))
+        (rotatef a b) (rotatef left right)
+        (setf name (if (eq name '>) '< '<=)))
+      (let ((al (second left)) (ah (third left)) (bl (second right)) (bh (third right)))
+        (if (eq name '=)
+            (setf al (max al bl) ah (min ah bh) bl al bh ah)
+            (let ((strict (if (eq name '<) 1 0)))
+              (setf ah (min ah (- bh strict)) bl (max bl (+ al strict)))))
+        ;; Impossible branches remain conservative until the domain has bottom.
+        (when (or (> al ah) (> bl bh)) (return-from ir-refine-comparison environment))
+        (when (= (ir-node-kind a) 1)
+          (setf environment (ir-bind-type (ir-node-a a) (ir-integer-range al ah) environment)))
+        (when (= (ir-node-kind b) 1)
+          (setf environment (ir-bind-type (ir-node-a b) (ir-integer-range bl bh) environment)))
+        environment))))
+
 (defun ir-refine-types (test environment &optional (positive t))
   (when (and (= (ir-node-kind test) 7)
              (member (ir-node-a test) '(not null))
@@ -237,6 +270,8 @@
              (= (ir-node-kind (svref (ir-node-b test) 0)) 7))
     (return-from ir-refine-types
       (ir-refine-types (svref (ir-node-b test) 0) environment (not positive))))
+  (when (= (ir-node-kind test) 7)
+    (setf environment (ir-refine-comparison test environment positive)))
   (unless positive (return-from ir-refine-types environment))
   (multiple-value-bind (arg type) (ir-test-type test)
     (if (and type (= (ir-node-kind arg) 1))
@@ -250,7 +285,7 @@
 
 (defun infer-ir-types (root)
   "Propagate types in evaluation order. Return a type, a persistent state,
-and a flag for local writes. Captured writers never acquire binding facts."
+and a flag for local writes. Captured writers never acquire pointwise facts."
   (labels
       ((function-types (fun environment)
          (let ((environment (ir-immutable-types environment)))

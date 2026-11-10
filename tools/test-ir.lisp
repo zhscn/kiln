@@ -298,4 +298,30 @@
     (assert (eq (ir-node-type ref) 'fixnum))
     (assert (null (ir-node-c ref)))))
 
+(dolist (name '(< <= > >= = /=))
+  (dolist (positive '(t nil))
+    (loop for al from -2 to 2 do
+      (loop for ah from al to 2 do
+        (loop for bl from -2 to 2 do
+          (loop for bh from bl to 2 do
+            (let* ((av (make-ir-var :name 'a)) (bv (make-ir-var :name 'b))
+                   (a (ir-node 1 nil av)) (b (ir-node 1 nil bv))
+                   (at (ir-integer-range al ah)) (bt (ir-integer-range bl bh))
+                   (environment (list (cons av at) (cons bv bt))))
+              (setf (ir-node-type a) at (ir-node-type b) bt)
+              (let* ((state (ir-refine-comparison (ir-node 7 nil name (vector a b)) environment positive))
+                     (ar (cdr (assoc av state))) (br (cdr (assoc bv state))))
+                (loop for x from al to ah do
+                  (loop for y from bl to bh
+                        when (eq (not (null (funcall name x y))) positive)
+                          do (assert (<= (second ar) x (third ar)))
+                             (assert (<= (second br) y (third br)))))))))))))
+
+(dolist (form '((lambda (x y) (declare (fixnum x y)) (if (< x y) (1+ x) nil))
+                (lambda (x y) (declare (fixnum x y)) (if (> x y) (1+ y) nil))
+                (lambda (x y) (declare (fixnum x y)) (if (>= x y) nil (1+ x)))))
+  (let ((call (find-if (lambda (node) (and (= (ir-node-kind node) 7) (eq (ir-node-a node) '1+)))
+                       (ir-test-nodes (ir-test-form form)))))
+    (assert (equal (ir-node-type call) `(integer ,(1+ +ir-fixnum-min+) ,+ir-fixnum-max+)))))
+
 (format t "IR model and diagnostics passed.~%")
