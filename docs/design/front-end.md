@@ -20,17 +20,13 @@ KIR
 
 IR 的词法绑定、自由变量、赋值、退出点和闭包布局直接记录在结构中；宏展开结果直接转换，不重建 CST，源码位置按顶层形式 CST 里记下的位置取。编译期求值按 client 分派（`evaluate-at-compile-time`）：cross-client 用 IR 求值器（`lisp/ir/eval.lisp`），image-client 用 Maclina。数据结构、源码位置和分析规则见 [ir.md](ir.md)。
 
-## 文件划分和三种 client
+## 编译 client 与会话
 
 | 文件 | 在哪里 | 内容 |
 |---|---|---|
 | `lisp/front.lisp` | 两边共用 | 顶层形式处理、inline 展开、读入、session |
 | `lisp/cross.lisp` | 两边共用 | `cross-client`：交叉编译用的编译期环境 |
 | `lisp/target/compiler/client.lisp` | 只在 kiln 上 | `image-client`：在运行中的 image 里编译 |
-
-`source-reader-client` 对结构不匹配的 CST 重建复用子树索引：先按原有顺序建立
-raw cons 到 CST 的只读映射，再分别为 car、cdr 筛选引用、登记原子和构造结果。
-两个分支不共享可变结果表，保留歧义原子的位置选择和循环结构的处理。
 
 `make-session` 的 `:client-class` 选择 client。宿主默认 `cross-client`，kiln 上默认 `image-client`。少量差异在 `front.lisp` 里用 `#+kiln` 区分（宿主为目标端编译时读入用的是目标的 features）：client 的超类、目标端读入的包是 CL-USER 而宿主是 KILN-USER、Common-macros 的包名等。
 
@@ -76,7 +72,13 @@ raw cons 到 CST 的只读映射，再分别为 car、cdr 筛选引用、登记�
 
 **文件项**：模块的文件列表里除了路径，还有 `(:compile-time-too 路径)`（文件里的形式都当作在 `(eval-when (:compile-toplevel :load-toplevel :execute))` 里处理，用于定义宏的展开函数要调用同文件里的函数的库）和 `(:renames 别名表 路径)`（读入时按别名换包名，作用于 `in-package` 和 `defpackage`；这样的文件里对编译期已有宏的重新定义只在载入时生效）。
 
-**包和读入**：
+## 源码读入
+
+`source-reader-client` 对结构不匹配的 CST 重建复用子树索引：先按原有顺序建立
+raw cons 到 CST 的只读映射，再分别为 car、cdr 筛选引用、登记原子和构造结果。
+两个分支不共享可变结果表，保留歧义原子的位置选择和循环结构的处理。
+
+读入使用编译会话的包与 feature 环境：
 
 - 顶层的 `defpackage` 和 `in-package` 在编译期执行（宿主上在宿主里），影响后面的读入；运行期的包从模块的符号表得到（[modules.md](modules.md)）。包系统存在之后编译的文件里，顶层 `in-package` 在载入时也设置 `*package*`，文件末尾恢复成 CL-USER，和 `load` 一样。
 - 读目标源码时 `*features*` 绑定为 kiln 的列表（`:kiln :common-lisp :64-bit :x86-64 ...`），编译期环境里的 `*features*` 也是它，所以 `#+sbcl` 的分支不会读进 kiln 的代码。

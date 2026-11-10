@@ -8,20 +8,20 @@
 |---|---|---|
 | M0 | SBCL 生成 KIR，kiln-cg 用 Cranelift 编译，定下调用约定、context、非局部退出（[abi.md](design/abi.md)） | 完成 |
 | M1 | 对象表示、MMTk 移动式 GC、精确栈图、多栈段和跨栈展开（[gc.md](design/gc.md)） | 完成 |
-| M2 | Common-boot 前端、Clostrum 编译期环境、全部特殊操作符的降级（[front-end.md](design/front-end.md)、[lowering.md](design/lowering.md)） | 完成 |
+| M2 | 源码前端、Clostrum 编译期环境、全部特殊操作符的降级（[front-end.md](design/front-end.md)、[lowering.md](design/lowering.md)） | 完成 |
 | M3 | kernel：数值塔、Unicode 字符和字符串、`typep`、序列函数、多模块（[kernel.md](design/kernel.md)） | 完成 |
 | M4 | CLOS 引导和依赖 CLOS 的库：condition、哈希表、包、ctype、数组、结构、流、文件、打印、FORMAT、LOOP、reader（[clos.md](design/clos.md)、[stdlib.md](design/stdlib.md)、[io.md](design/io.md)） | 完成 |
-| M5 | 运行期 `eval`/`compile`/`load` 和 REPL；编译器在 kiln 上运行；自举闭合（kiln0 和 kiln1 逐字节相同）；原生 `compile`（[eval-compile.md](design/eval-compile.md)、[bootstrap.md](design/bootstrap.md)） | 完成 |
+| M5 | 运行期 `eval`/`compile`/`load` 和 REPL；编译器在 kiln 上运行；编译器自举；原生 `compile`（[eval-compile.md](design/eval-compile.md)、[bootstrap.md](design/bootstrap.md)） | 完成 |
 | M6 | image 开发体验：堆快照（[heap-image.md](design/heap-image.md)）、原生 `eval`/`load`、帧的调试信息（[debugging.md](design/debugging.md)）、后端协议（[backend-protocol.md](design/backend-protocol.md)）、依赖追踪（[dependencies.md](design/dependencies.md)） | 前四项完成；剩下 AOT 模块的依赖和定义表、REPL 中断、SLYNK/Swank 接入 |
-| — | ANSI 补全：cl-bench 找到的缺口已补上；`ansi-test` 全部 24 组已跑通（21,856 / 21,876 = 99.9%，另跳过 77 项，见“标准库和 ANSI 覆盖”），持续补齐剩余缺口 | 进行中 |
-| — | 性能：自编译与基础代码生成已与 SBCL 持平（单阶段 5.0 s vs 4.63 s）；剩余编译器深度优化与库快路径见下文“性能” | 阶段一完成 |
+| — | ANSI 兼容性：以 SBCL 行为为参照，维护标准接口并支持 ASDF/UIOP 和第三方库（见“标准库和 ANSI 覆盖”） | 进行中 |
+| — | 性能：降低编译延迟，优化数值、数组、流和字符串等运行期热点；见下文“性能” | 阶段一完成 |
 | — | seal、WPO 和 AOT 交付（[positioning.md](design/positioning.md)） | 未开始 |
 | — | 异步（[async.md](design/async.md)） | 未开始，ANSI 自举完成之前不做 |
 | — | Rust 宿主模块（[rust-interop.md](design/rust-interop.md)）、编辑器（[editor.md](design/editor.md)） | 设计草案 |
 
 ## 当前优先级
 
-1. **ANSI 标准覆盖度（`ansi-test`）**。此前性能优化的主要目标是加快 kiln 自身的构建效率；现在自编译单阶段已从 845 秒降到 **5.0 秒**（SBCL 编同一份代码 4.63 秒），编译器自身和基础代码生成与 SBCL 差距已经很小。重心转向接入 `ansi-test` 测试套件，以同一套测试下 SBCL 的行为为参照，按模块逐项修复语义差异和缺失功能（见下文“标准库和 ANSI 覆盖”），为后续运行 ASDF/UIOP 和第三方库打底。
+1. **ANSI 兼容性与库支持**。标准行为以 SBCL 为参照，用 `ansi-test` 和实际库运行定位语义差异。重点是支持 ASDF/UIOP 与第三方库，并维护 reader、编译期环境、对象系统和文件接口的一致语义。
 2. **编译器自身的深度优化与库快路径**（见“性能”一节）：剩余性能差距集中在编译器的 Lisp 语义层优化（局部类型推导与浮点拆箱、不逃逸局部函数的 lambda lifting、高阶函数调用点展开与编译器宏、`dynamic-extent` 栈上分配）以及标准库协议层快路径（流/FORMAT/打印、bignum、多维数组、运行期 CLOS 编译化）。
 3. **M6 的剩余部分**：定义表和跳转到定义、who-calls，AOT 模块的依赖记录，打断正在运行的任务。它们是编辑器 IDE 阶段的前提。
 4. **构建期初始化和 seal**：决定 seal 的语义和目标文件格式。
@@ -51,7 +51,7 @@
 编译器自身的速度以缩短开发迭代为目标，和生成代码的运行效率分别衡量。
 [编译延迟计划](design/compiler-performance.md)规定阶段基准与实施顺序：先测量，
 再减少临时分配与查询，按热点推进紧凑容器、KIR 内存交接、interning 和增量分析。
-首批已接入自举程序的模块阶段计时及 `tools/bench-compiler.py`。
+编译延迟的基准入口是 `tools/bench-compiler.py`，运行期基准入口是 `tools/bench.sh`。
 
 按收益排。SBCL 快在 Lisp 语义层的变换和类型推导，不在通用中端，所以这里没有“加一层通用 SSA 优化”。
 
@@ -115,39 +115,13 @@
 
 ### 标准库和 ANSI 覆盖
 
-`ansi-test`（`tools/ansi-test.sh`）全部 24 个测试组已无崩溃跑通，当前实际执行用例的通过率为 **21,856 / 21,876（99.9%）**。共注册 21,953 项，另有 77 项因关闭 note 而跳过；跳过项不计入通过数或通过率的分母。测试套件根据未知声明告警启用 `DECLARATION.4–11`，检查声明名与类型名的冲突。关闭的 note 与 SBCL 一致：`:nil-vectors-are-strings` 和 `:open-if-exists-new-version-no-error`。
+标准接口以 ANSI CL 为基础，边界行为参照 SBCL。`tools/ansi-test.sh` 支持按组或
+单个文件检查标准语义；ASDF/UIOP 和第三方库用于补充实际使用场景。
 
-| 测试组 | 通过 | 失败 | 跳过 | 总计 | 通过率 | 主要未通过原因 |
-|---|---:|---:|---:|---:|---:|---|
-| `symbols` | 1144 | 0 | 1 | 1145 | 100.0% | — |
-| `eval-and-compile` | 326 | 0 | 0 | 326 | 100.0% | — |
-| `data-and-control-flow` | 1425 | 1 | 2 | 1428 | 99.9% | `MACROLET.36`（`&whole` 解构模式，SBCL 同样失败） |
-| `iteration` | 843 | 0 | 0 | 843 | 100.0% | — |
-| `objects` | 859 | 3 | 0 | 862 | 99.7% | `shared-initialize`、编译期类环境和长方法组合边界（SBCL 同样失败） |
-| `conditions` | 671 | 2 | 0 | 673 | 99.7% | `MAKE-CONDITION.3/4`（SBCL 同样失败） |
-| `cons` | 1882 | 0 | 0 | 1882 | 100.0% | — |
-| `types-and-classes` | 620 | 1 | 6 | 627 | 99.8% | `SUBTYPEP-COMPLEX.8`（SBCL 同样失败） |
-| `arrays` | 1356 | 0 | 0 | 1356 | 100.0% | — |
-| `hash-tables` | 166 | 0 | 1 | 167 | 100.0% | — |
-| `packages` | 499 | 0 | 1 | 500 | 100.0% | — |
-| `numbers` | 1434 | 9 | 1 | 1444 | 99.4% | 浮点下溢与 `IMAGPART.4`（SBCL 同样失败） |
-| `sequences` | 3283 | 1 | 3 | 3287 | 100.0% | `MAP.48`（SBCL 同样失败） |
-| `structures` | 1394 | 0 | 0 | 1394 | 100.0% | — |
-| `strings` | 464 | 0 | 45 | 509 | 100.0% | — |
-| `characters` | 259 | 0 | 0 | 259 | 100.0% | — |
-| `pathnames` | 215 | 0 | 0 | 215 | 100.0% | — |
-| `files` | 87 | 0 | 0 | 87 | 100.0% | — |
-| `streams` | 789 | 0 | 14 | 803 | 100.0% | — |
-| `printer` | 2443 | 0 | 3 | 2446 | 100.0% | — |
-| `reader` | 673 | 0 | 0 | 673 | 100.0% | — |
-| `system-construction` | 77 | 0 | 0 | 77 | 100.0% | — |
-| `environment` | 208 | 2 | 0 | 210 | 99.0% | `APROPOS.ERROR.2` 和 `APROPOS-LIST.ERROR.2`（SBCL 同样失败） |
-| `misc` | 739 | 1 | 0 | 740 | 99.9% | `MISC.598`（浮点 `imagpart` 的带符号零，SBCL 同样失败） |
-| **合计** | **21856** | **20** | **77** | **21953** | **99.9%** | |
-
-当前套件按 SBCL 2.6.10 的行为复核，kiln 独有的失败为 0，剩余 20 项在 SBCL 中也失败。两边注册用例均为 21,953 项，跳过的 77 项完全相同；由 `char-name` 派生的测试名按字符码点对应。原始失败数继续保留，不将这些用例改记为通过或跳过。
-
-共同未通过项包括：`MACROLET.36`；CLOS 的 `SHARED-INITIALIZE.ERROR.4`、`FIND-CLASS.24`、`DEFINE-METHOD-COMBINATION-LONG.11.4`；`MAKE-CONDITION.3/4`；`SUBTYPEP-COMPLEX.8`；`EXP.ERROR.8–11`、`EXPT.ERROR.8–11`、`IMAGPART.4`；`MAP.48`；`APROPOS.ERROR.2`、`APROPOS-LIST.ERROR.2`；以及 `MISC.598`。
+测试配置关闭 `:nil-vectors-are-strings` 和 `:open-if-exists-new-version-no-error`
+两个 note，与 SBCL 的配置保持一致。未知声明检查还需区分声明名与类型名的冲突。
+浮点异常、复数类型关系、条件类型名和宏解构等规范边界应按具体行为核对，
+避免把套件期望直接当作实现缺口。
 
 与 CL 不一致的行为：
 - `print`（编译器原语）：AOT 模块里先打印对象再换行，不经过 `*standard-output*`、`print-object` 和打印变量。要等测试的期望输出统一迁移。

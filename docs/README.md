@@ -29,7 +29,7 @@ kiln 是一个现代 Common Lisp 实现：开发时是完整的活 image，交�
 | [eval-compile.md](design/eval-compile.md) | eval 模块（Maclina）、原生 `compile`/`eval`/`load`、image 模式的 KIR |
 | [bootstrap.md](design/bootstrap.md) | 自举（stage0 → kiln0 → kiln1）、构建程序和清单、测试方式、仓库结构 |
 | [heap-image.md](design/heap-image.md) | 堆快照：固定地址、静态根、运行期代码区、GC 扫描快照区 |
-| [debugging.md](design/debugging.md) | 函数和调用点的调试信息、变量的栈槽、走栈接口、采样和分配分析器、定义记录和单步的方案 |
+| [debugging.md](design/debugging.md) | 函数和调用点的调试信息、变量的栈槽、走栈接口、采样和分配分析器、单步执行、对象检查、编辑器接口和定义记录规划 |
 | [backend-protocol.md](design/backend-protocol.md) | `kiln.sys:serve`：任务、嵌套的 debug 层、消息格式、`tools/kiln-server.sh` |
 | [dependencies.md](design/dependencies.md) | image 里定义的依赖追踪：依赖的种类、失效、提前截断 |
 | [specialization.md](design/specialization.md) | 推测、守卫和失效：假设和版本格、现有的各种缓存经过它、生成代码代替手写闭包（计划）、编译结果的缓存（计划）、seal 时折叠（计划） |
