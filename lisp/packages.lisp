@@ -58,6 +58,8 @@
            #:*compilation-cache-limit* #:clear-compilation-cache #:compilation-cache-statistics
            #:dependents #:dependencies #:*recompile-verbose* #:stale-definition
            #:stack-exhausted #:*inspected* #:*ed-functions*
+           #:*stepper-hook* #:step-form-condition #:step-form #:step-args #:step-finished-condition
+           #:step-into #:step-next #:step-out #:step-continue
            ;; The sampling profiler (lisp/target/clos/profile.lisp).
            #:start-profiler #:stop-profiler #:profile-samples #:profile-report
            #:write-folded-stacks #:with-profiling))

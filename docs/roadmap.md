@@ -13,7 +13,7 @@
 | M4 | CLOS 引导和依赖 CLOS 的库：condition、哈希表、包、ctype、数组、结构、流、文件、打印、FORMAT、LOOP、reader（[clos.md](design/clos.md)、[stdlib.md](design/stdlib.md)、[io.md](design/io.md)） | 完成 |
 | M5 | 运行期 `eval`/`compile`/`load` 和 REPL；编译器在 kiln 上运行；自举闭合（kiln0 和 kiln1 逐字节相同）；原生 `compile`（[eval-compile.md](design/eval-compile.md)、[bootstrap.md](design/bootstrap.md)） | 完成 |
 | M6 | image 开发体验：堆快照（[heap-image.md](design/heap-image.md)）、原生 `eval`/`load`、帧的调试信息（[debugging.md](design/debugging.md)）、后端协议（[backend-protocol.md](design/backend-protocol.md)）、依赖追踪（[dependencies.md](design/dependencies.md)） | 前四项完成；剩下 AOT 模块的依赖和定义表、REPL 中断、SLYNK/Swank 接入 |
-| — | ANSI 补全：cl-bench 找到的缺口已补上；`ansi-test` 全部 24 组已跑通（21,852 / 21,876 = 99.9%，另跳过 77 项，见“标准库和 ANSI 覆盖”），持续补齐剩余缺口 | 进行中 |
+| — | ANSI 补全：cl-bench 找到的缺口已补上；`ansi-test` 全部 24 组已跑通（21,856 / 21,876 = 99.9%，另跳过 77 项，见“标准库和 ANSI 覆盖”），持续补齐剩余缺口 | 进行中 |
 | — | 性能：自编译与基础代码生成已与 SBCL 持平（单阶段 5.0 s vs 4.63 s）；剩余编译器深度优化与库快路径见下文“性能” | 阶段一完成 |
 | — | seal、WPO 和 AOT 交付（[positioning.md](design/positioning.md)） | 未开始 |
 | — | 异步（[async.md](design/async.md)） | 未开始，ANSI 自举完成之前不做 |
@@ -110,12 +110,12 @@
 
 ### 标准库和 ANSI 覆盖
 
-`ansi-test`（`tools/ansi-test.sh`）全部 24 个测试组已无崩溃跑通，当前实际执行用例的通过率为 **21,852 / 21,876（99.9%）**。共注册 21,953 项，另有 77 项因关闭 note 而跳过；跳过项不计入通过数或通过率的分母。测试套件根据未知声明告警启用 `DECLARATION.4–11`，检查声明名与类型名的冲突。关闭的 note 与 SBCL 一致：`:nil-vectors-are-strings` 和 `:open-if-exists-new-version-no-error`。
+`ansi-test`（`tools/ansi-test.sh`）全部 24 个测试组已无崩溃跑通，当前实际执行用例的通过率为 **21,856 / 21,876（99.9%）**。共注册 21,953 项，另有 77 项因关闭 note 而跳过；跳过项不计入通过数或通过率的分母。测试套件根据未知声明告警启用 `DECLARATION.4–11`，检查声明名与类型名的冲突。关闭的 note 与 SBCL 一致：`:nil-vectors-are-strings` 和 `:open-if-exists-new-version-no-error`。
 
 | 测试组 | 通过 | 失败 | 跳过 | 总计 | 通过率 | 主要未通过原因 |
 |---|---:|---:|---:|---:|---:|---|
-| `symbols` | 1143 | 1 | 1 | 1145 | 99.9% | 尚未实现的标准函数和宏汇总 |
-| `eval-and-compile` | 323 | 3 | 0 | 326 | 99.1% | 缺失的标准宏 `step` |
+| `symbols` | 1144 | 0 | 1 | 1145 | 100.0% | — |
+| `eval-and-compile` | 326 | 0 | 0 | 326 | 100.0% | — |
 | `data-and-control-flow` | 1425 | 1 | 2 | 1428 | 99.9% | `MACROLET.36`（`&whole` 解构模式，SBCL 同样失败） |
 | `iteration` | 843 | 0 | 0 | 843 | 100.0% | — |
 | `objects` | 859 | 3 | 0 | 862 | 99.7% | `shared-initialize`、编译期类环境和长方法组合边界（SBCL 同样失败） |
@@ -138,7 +138,11 @@
 | `system-construction` | 77 | 0 | 0 | 77 | 100.0% | — |
 | `environment` | 208 | 2 | 0 | 210 | 99.0% | `APROPOS.ERROR.2` 和 `APROPOS-LIST.ERROR.2`（SBCL 同样失败） |
 | `misc` | 739 | 1 | 0 | 740 | 99.9% | `MISC.598`（浮点 `imagpart` 的带符号零，SBCL 同样失败） |
-| **合计** | **21852** | **24** | **77** | **21953** | **99.9%** | |
+| **合计** | **21856** | **20** | **77** | **21953** | **99.9%** | |
+
+当前套件按 SBCL 2.6.10 的行为复核，kiln 独有的失败为 0，剩余 20 项在 SBCL 中也失败。两边注册用例均为 21,953 项，跳过的 77 项完全相同；由 `char-name` 派生的测试名按字符码点对应。原始失败数继续保留，不将这些用例改记为通过或跳过。
+
+共同未通过项包括：`MACROLET.36`；CLOS 的 `SHARED-INITIALIZE.ERROR.4`、`FIND-CLASS.24`、`DEFINE-METHOD-COMBINATION-LONG.11.4`；`MAKE-CONDITION.3/4`；`SUBTYPEP-COMPLEX.8`；`EXP.ERROR.8–11`、`EXPT.ERROR.8–11`、`IMAGPART.4`；`MAP.48`；`APROPOS.ERROR.2`、`APROPOS-LIST.ERROR.2`；以及 `MISC.598`。
 
 与 CL 不一致的行为：
 - `print`（编译器原语）：AOT 模块里先打印对象再换行，不经过 `*standard-output*`、`print-object` 和打印变量。要等测试的期望输出统一迁移。
@@ -165,7 +169,7 @@
 
 - 定义表（dspec 和位置）、跳转到定义、who-calls、重定义警告（[debugging.md](design/debugging.md) 的定义记录）。
 - 宏展开的事件流和查看器。
-- 单步和断点；从帧返回、重新执行帧。
+- 为已有编译代码补充单步观察点和断点；从帧返回、重新执行帧。
 - 调试优化级别：`(optimize (debug 2))` 下让变量活过出错路径上的调用。
 - 闭包从静态环境读的变量在帧里显示。
 - 后端协议：打断正在运行的任务、流式输出；SLYNK/Swank、LSP、DAP 接在它上面。

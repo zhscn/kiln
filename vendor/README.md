@@ -524,6 +524,11 @@ Under `#+kiln`:
 
 ## Maclina patches
 
+- STEP scopes instrument calls after callee and argument evaluation, using
+  the shared source wrapper also used by the native compiler. Private
+  compilation markers preserve lexical context and suppress instrumentation
+  of the stepper and compile-time local macro expanders.
+
 - MAKE-LOAD-FORM initializers that reference an active creation are deferred
   until its creator exists. Speculative initializer records use child
   coalescence tables and commit only on success, so retries cannot retain

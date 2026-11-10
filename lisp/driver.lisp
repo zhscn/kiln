@@ -331,6 +331,7 @@
          (kiln-clos-file "describe")
          (kiln-clos-file "inspect")
          (kiln-clos-file "editor")
+         (kiln-clos-file "step")
          (kiln-clos-file "closer-mop")
          (kiln-clos-file "trivial-with-current-source-form"))
    *khazern-files*
@@ -442,7 +443,8 @@ SESSION must have compiled the kernel and CLOS."
                  "push" "pushnew" "remf" "rotatef" "setf" "shiftf" "define-modify-macro"))
        (list (list :renames '(("KILN.MACROS" . "KILN.MACROS-TARGET"))
                    (asdf:system-relative-pathname "kiln" "lisp/macro-client.lisp"))
-             (eval-file "macros"))
+             (eval-file "macros")
+             (asdf:system-relative-pathname "kiln" "lisp/step-forms.lisp"))
        ;; Trucler (trucler-base.asd, and the client class of
        ;; trucler-native.asd), then Maclina (maclina.asd: base, compile,
        ;; vm-shared, vm-native).

@@ -15,6 +15,7 @@
   :pathname "lisp/"
   :serial t
   :components ((:file "packages")
+               (:file "step-forms")
                (:file "abi")
                (:file "kir")
                (:file "ir/data")

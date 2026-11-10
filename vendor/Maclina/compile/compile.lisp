@@ -945,7 +945,26 @@
 (defun eval (form &optional environment (m:*client* m:*client*))
   (eval-progn `(,form) environment))
 
+(defvar *step-recording* nil)
+(defvar *step-skip* nil)
+
 (defun compile-form (form env context)
+  (when (consp form)
+    (when (member (car form) '(kiln.sys::%step-body kiln.sys::%step-original kiln.sys::%step-quiet))
+      (unless (and (consp (cdr form)) (null (cddr form)))
+        (error 'program-error))
+      (let ((*step-recording* (not (eq (car form) 'kiln.sys::%step-quiet)))
+            (*step-skip* (and (eq (car form) 'kiln.sys::%step-original) (second form))))
+        (return-from compile-form (compile-form (second form) env context))))
+    (when (and *step-recording* (not (eq form *step-skip*))
+               (or (and (consp (car form)) (eq (caar form) 'lambda))
+                   (and (symbolp (car form))
+                        (not (typep (fun-info (car form) env)
+                                    '(or trucler:macro-description trucler:special-operator-description))))))
+      (let ((*step-recording* nil))
+        (return-from compile-form
+          (compile-form (kiln.compiler::step-call-form form) env context)))))
+  (let ((*step-skip* nil))
   (let* ((source-location (expr-source-location form))
          end
          (context (if source-location
@@ -964,7 +983,7 @@
        (compile-combination (fun-info (car form) env) form env context))
       (cons (compile-lambda-form form env context))
       (t (compile-literal form env context)))
-    (when source-location (emit-label context end))))
+    (when source-location (emit-label context end)))))
 
 (defun compile-literal (form env context)
   (declare (ignore env))
@@ -1924,8 +1943,9 @@
                             (unless (symbolp name)
                               (error 'macro-not-symbol
                                      :name name :source source))
-                            (let ((macrof (compute-macroexpander
-                                            name lambda-list body env source)))
+                            (let ((macrof (let ((*step-recording* nil))
+                                            (compute-macroexpander
+                                             name lambda-list body env source))))
                               (make-local-macro name macrof))))))
       (compile-locally body (make-lexical-environment
                              env :funs (append macros (funs env)))
