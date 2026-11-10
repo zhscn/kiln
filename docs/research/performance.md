@@ -42,6 +42,76 @@
 而不是仅根据容器名称更换整个 IR 表示。可重复测量流程见
 [编译延迟与迭代效率](../design/compiler-performance.md)。
 
+### CPU、分配与硬件采样（2026-11-10）
+
+在 `843e625` 的自举可执行文件上，用同一份模块清单、固定 8 GiB 堆顺序执行
+三次内置 CPU 采样、两次分配采样和一次 `perf record -F 499 -g`。六次运行的
+全部 KIR 都与 stage2 相同。内置 CPU 采样每次约 6,600–6,800 个 tick；硬件
+采样约 3,957 个样本，无丢失。剖析运行的时间包含分析器开销，不作为提速基准。
+
+| 阶段 | 内置 CPU 占比（三次中位数） | 分配采样权重 |
+|---|---:|---:|
+| 前端 | 55.50% | 1,528,506,152 B（48.95%） |
+| 降级 | 31.92% | 1,438,189,296 B（46.06%） |
+| KIR 输出 | 8.52% | 104,352 B |
+| 启动、准备及其他 | 4.00% | 155,901,832 B（4.99%） |
+
+阶段按采样栈中 `print-module`、`compile-module`、`front-end` 的归属分类，
+和墙钟阶段边界不完全相同。两次分配采样的权重与归因相同，总计约 3.12 GB；
+这是分配慢路径按缓冲区消耗加权的估计，不是存活对象大小，也不是逐对象统计。
+
+**已定位的具体路径：**
+
+- **顶层分块存在平方级遍历。** `lisp/lower.lisp` 的
+  `compile-toplevel-function` 每处理 16 个形式，都对整个剩余列表调用 `length`，
+  形成 O(n² / 16) 的列表扫描。这条直接调用链占内置 CPU 采样约 1.63%。
+  外部采样中全部 `length` 的自身周期占比为 4.59%，其中还包含其他调用点，
+  不能全部归给顶层分块。优先改成单次顺序分块。
+- **reader 的协议成本高。** 顶层读入链约占内置 CPU 的 33.52%；其中单参数和
+  多参数分派闭包自身占整轮采样约 5.4% 和 3.7%（首轮）。典型路径是
+  `read-char` / `peek-char` → `stream-read-char :around` → 文件流方法 →
+  槽访问器分派。文件流已有缓冲和 ASCII 快路径，继续优化应合并内部读取状态
+  的访问，保留 unread、游标、外部格式和自定义流行为。
+- **CST 构造触发通用重建和重新初始化。** reader 的 `make-expression-result`
+  会调用 CST 的通用 `reconstruct`；该路径包含约 137 MB 的分配采样权重、
+  约 2.0% 的 CPU。它来自 reader 构造 CST，并不是已删除的宏展开后 CST 重建。
+  正常列表构造末尾还会 `reinitialize-instance` 设置源码位置，引入初始化协议。
+  整轮重新初始化路径约占 5.1% CPU、200 MB 分配权重，后两项含其他调用者。
+- **降级反复展开源码位置。** `ir-lower-mv` 和 `ir-lower-branch` 调用
+  `ir-source-range`，把打包 fixnum 拆成新 cons；这一叶函数分得约 42.7 MB。
+  可以让动态调用位置保持打包表示，只在实际发射调用或调试记录时展开。
+- **KIR 的构造与最终表示重复分配。** `new-var`、`copy-to-var`、
+  `var-declaration` 的叶权重分别约 97、80、73 MB；`finish-function` 再用
+  `mapcar` 构造声明列表。适合尝试让后端直接消费紧凑的变量记录，避免为文本
+  表示提前构造列表；这些是各叶的采样归因，并非对象大小清单。
+- **哈希访问同时影响前端与降级。** 名字驻留、readtable 的 `syntax-type`、
+  `declare-once` 都出现在 `find-place` / `equal-hash-1` 的调用者中。
+  外部周期采样两者各约占 2.3%。应先缩小到具体表的键和访问模式，再决定缓存、
+  专用索引或替换哈希实现。
+
+外部硬件采样还把 `kirtext::write_form` 定位为约 5.83% 的自身周期，说明内置
+分析器把大部分输出时间归到 `check-sys` 只是调用栈归因，不是该 Lisp 检查函数
+本身昂贵。内置分析器具有 safepoint 偏差；硬件周期占比、墙钟 tick 占比和
+分配权重是三种不同指标，不能相加，也不能直接作为优化后的加速预测。
+
+可重复的单次采样：
+
+```sh
+mkdir -p build/compiler-profile-run
+cp build/boot/stage0/modules.lisp-expr build/compiler-profile-run/
+(cd build/compiler-profile-run &&
+ MMTK_GC_TRIGGER=FixedHeapSize:8589934592 KILN_PROFILE=cpu \
+ KILN_PROFILE_OUT=cpu.folded ../boot/kiln1 >cpu.log 2>&1)
+# 将 cpu 改为 alloc，输出到另一份文件，进行分配采样。
+(cd build/compiler-profile-run &&
+ MMTK_GC_TRIGGER=FixedHeapSize:8589934592 KILN_FUNCTION_MAP=functions.map \
+ perf record -F 499 -g -o perf.data -- ../boot/kiln1)
+```
+
+优先顺序是消除顶层分块的重复扫描，再减少源码位置的临时 cons，随后对 reader
+的字符读取、CST 构造及初始化协议分别做受控实验。较大的容器和 KIR 表示改动
+需要在这些基线上验证时间、分配和内存收益。
+
 ## 和 SBCL 的对比（`bench/compare.lisp`）
 
 ### 编译器生成的基础代码：和 SBCL 持平
