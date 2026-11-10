@@ -311,6 +311,11 @@ unsupported call. Arguments retain their evaluation order and effects."
         (when known
           (ir-lower (svref args 0))
           (return-from ir-lower-typed-call (values (constant-object truth) t)))))
+    (when (and (= count 1) (member name '(zerop plusp minusp))
+               (ir-fixnum-type-p (ir-node-type (svref args 0))))
+      (let ((value (copy-to-var (ir-lower (svref args 0)))))
+        (return-from ir-lower-typed-call
+          (values (boolean-value `(,(case name (zerop :eq) (plusp :gt) (minusp :lt)) ,value 0)) t))))
     (when (and (= count 1) (member name '(car cdr))
                (member (ir-node-type (svref args 0)) '(cons null)))
       (let ((value (copy-to-var (ir-lower (svref args 0)))))

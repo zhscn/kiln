@@ -104,3 +104,13 @@
   (declare (fixnum value))
   (if (< value (setq value 4611686018427387903)) (1+ value) nil))
 (print (declared-comparison-effects 0))
+
+(defun declared-numeric-predicates (value)
+  (declare (fixnum value))
+  (list (zerop value) (plusp value) (minusp value)))
+(print (mapcar #'declared-numeric-predicates '(0 1 -1 4611686018427387903 -4611686018427387904)))
+(let ((count 0))
+  (print (zerop (progn (incf count) 0)))
+  (print count))
+(print (list (zerop 4611686018427387904) (minusp -4611686018427387905)
+             (plusp 0.5d0) (zerop 0d0)))
