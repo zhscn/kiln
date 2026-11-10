@@ -39,6 +39,7 @@
   (free #()) (exits (make-ir-buffer)) (vars (make-ir-buffer))
   (flags 8) (calls 0) (value-refs 0) (caller nil) (call-site nil) (policy nil)
   (source nil) (binding nil) (label nil) (lowering-epoch nil)
+  (input-types nil) (result-type t)
   (load-time-values (make-ir-buffer)))
 
 (defstruct ir-lambda-list

@@ -73,7 +73,11 @@
             (jump next)
             (start-block next)))
         (unless (eq (ir-declaration-type (ir-var-type var)) t)
-          (ir-check-declaration (ir-variable-value var) (ir-var-type var)))
+          (let* ((inputs (ir-fun-input-types fun))
+                 (index (and inputs (position var (ir-lambda-list-required (ir-fun-lambda-list fun))
+                                              :test #'eq))))
+            (ir-check-declaration (ir-variable-value var) (ir-var-type var)
+                                  (if index (svref inputs index) t))))
         (when (and supplied (not (eq (ir-declaration-type (ir-var-type supplied)) t)))
           (ir-check-declaration (ir-variable-value supplied) (ir-var-type supplied)))
         (if special
