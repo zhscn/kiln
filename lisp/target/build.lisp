@@ -20,7 +20,10 @@
 (defun build-module (entry manifest session start)
   (let ((name (first entry))
         (files (rest entry))
-        (extra-symbols '()))
+        (extra-symbols '())
+        (phase-start (get-internal-real-time))
+        (front-end-end nil)
+        (lower-end nil))
     ;; As kiln:compile-kernel, kiln:compile-clos and kiln:compile-compiler.
     (when (string= name "kernel")
       (do-external-symbols (s '#:common-lisp) (push s extra-symbols)))
@@ -47,12 +50,20 @@
                                         (when r (invoke-restart r))))))
               (multiple-value-bind (asts packages)
                   (kiln.compiler:front-end files session)
-                (kiln.compiler:compile-module asts name :session session
+                (setf front-end-end (get-internal-real-time))
+                (prog1 (kiln.compiler:compile-module asts name :session session
                                                         :defined-packages packages
-                                                        :extra-symbols extra-symbols)))))
+                                                        :extra-symbols extra-symbols)
+                  (setf lower-end (get-internal-real-time)))))))
       (with-open-file (out (concatenate 'string name ".kir")
                            :direction :output :if-exists :supersede)
         (kiln.kir:print-module module out)))
+    (when (getenv "KILN_BUILD_TIMING")
+      (format t "build-timing ~A ~D ~D ~D ~D~%" name
+              (- front-end-end phase-start)
+              (- lower-end front-end-end)
+              (- (get-internal-real-time) lower-end)
+              internal-time-units-per-second))
     (format t "~A ~,1Fs~%" name
             (/ (- (get-internal-real-time) start) internal-time-units-per-second))
     (finish-output)))

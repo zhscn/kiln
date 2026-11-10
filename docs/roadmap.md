@@ -48,6 +48,11 @@
 
 ## 性能
 
+编译器自身的速度以缩短开发迭代为目标，和生成代码的运行效率分别衡量。
+[编译延迟计划](design/compiler-performance.md)规定阶段基准与实施顺序：先测量，
+再减少临时分配与查询，按热点推进紧凑容器、KIR 内存交接、interning 和增量分析。
+首批已接入自举程序的模块阶段计时及 `tools/bench-compiler.py`。
+
 按收益排。SBCL 快在 Lisp 语义层的变换和类型推导，不在通用中端，所以这里没有“加一层通用 SSA 优化”。
 
 1. **kiln 自己的 IR**（[ir.md](design/ir.md)）：原生结构对象（单个对象、O(1) 的类型检查、内联构造）和 KIR 的 `:switch` 已接入。CST → IR → KIR 是唯一的前端，cross-client 的编译期求值用 IR 求值器；旧的 Iconoclast 前端、HIR 求值器及其依赖（Common-boot、Iconoclast、s-expression-syntax、parser.packrat、builder 协议）已删除。剩下在内存里交接 KIR。
