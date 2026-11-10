@@ -166,6 +166,9 @@
             (setf (ir-fun-flags callee) (logior 8 (logandc2 (ir-fun-flags callee) 1))))
           (ir-note-call callee)))
       (let ((node (ir-node 7 *ir-source* callee arguments)))
+        (when (member (if (ir-fun-p callee) (ir-fun-name callee) callee)
+                      *local-notinline* :test #'equal)
+          (setf (ir-node-d node) :notinline))
         (when (ir-fun-p callee) (setf (ir-fun-call-site callee) node))
         node))))
 
@@ -346,7 +349,10 @@
               (ir-lambda-list-keys ll) (ir-vector keys)
               (ir-fun-lambda-list fun) ll
               (ir-fun-policy fun) (trucler:describe-optimize *client* (ir-declare env declarations)))
-        (let ((result (if aux
+        (let* ((*local-notinline* (append (loop for spec in declarations
+                                               when (eq (car spec) 'notinline) append (cdr spec))
+                                          *local-notinline*))
+               (result (if aux
                           (ir-convert `(let* ,(mapcar #'ir-raw (nreverse aux))
                                          (declare ,@declarations)
                                          ,@(mapcar #'ir-raw body))

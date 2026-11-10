@@ -105,8 +105,8 @@ raw cons 到 CST 的只读映射，再分别为 car、cdr 筛选引用、登记�
   - 有覆盖这个调用的 `notinline` 声明；
   - 调用处的局部函数、局部宏或局部 symbol macro 遮蔽了函数体里出现的某个名字；
   - 实参个数不对，这时照常调用，由运行期报错。
-- **局部 `notinline`**：转换主体（`lambda`、`let`、`locally` 等）时，收集其开头的 `notinline` 声明，在转换主体期间生效（`*local-notinline*`）。
-- **编译期的代码不展开**：展开式里可能用到 kernel 的内部函数和 `%primop`，它们在编译期并不存在。只有把形式转成目标端 IR 时才打开展开（`*inline-enabled*`）。
+- **局部 `notinline`**：转换主体（`lambda`、`let`、`locally` 等）时，收集其开头的 `notinline` 声明，在转换主体期间生效（`*local-notinline*`）。局部函数调用也记录该限制，供后续 IR 内联和调用点特化使用。
+- **编译期求值不做全局 CST 展开**：展开式里可能用到 kernel 的内部函数和 `%primop`，它们在编译期并不存在。只有把形式转成目标端 IR 时才打开展开（`*inline-enabled*`）。
 - kernel 和 CLOS 里声明为 inline 的：一行的类型谓词、`char-code`、`acons`、`identity`、cXXr，`standard-instance-access`、`instancep`、`class-of+1`、`stamp+1`，结构的访问器等。
 
 ## 编译器宏

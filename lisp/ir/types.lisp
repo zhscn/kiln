@@ -101,7 +101,7 @@
       ((eq name 'list) (if (zerop count) 'null 'cons))
       ((eq name 'vector) 'simple-vector)
       ((and (eq name 'char-code) (= count 1)) (ir-integer-range 0 #x10ffff))
-      ((and (eq name 'values) (plusp count)) (ir-node-type (svref args 0)))
+      ((eq name 'values) (if (plusp count) (ir-node-type (svref args 0)) 'null))
       ((and (member name '(+ - *)) (= count 2))
        (let* ((at (ir-node-type (svref args 0))) (bt (ir-node-type (svref args 1)))
               (a (or (ir-type-range at) at)) (b (or (ir-type-range bt) bt)))
@@ -486,18 +486,10 @@
          (not (ir-lambda-list-rest ll)) (not (ir-lambda-list-key-p ll)))))
 
 (defun infer-ir-types (root)
-  "Propagate types in evaluation order. Return a type, a persistent state,
-and a flag for local writes. Captured writers never acquire pointwise facts."
-  (multiple-value-bind (functions members sites outgoing) (ir-summary-graph root)
-    (let* ((pending (copy-list functions)) (tail (last pending))
-           (queued (make-hash-table :test #'eq))
-           (captures (make-hash-table :test #'eq)) (capture-candidates nil) (capture-order nil))
-      (dolist (fun functions)
-        (setf (gethash fun queued) t (ir-fun-result-type fun) t
-              (ir-fun-input-types fun)
-              (when (ir-summary-inputs-p fun root)
-                (make-array (length (ir-lambda-list-required (ir-fun-lambda-list fun)))
-                            :initial-element t))))
+  "Propagate pointwise facts and local function input/primary-result types."
+  (let ((functions nil) (members nil) (sites nil) (outgoing nil)
+        (pending nil) (tail nil) (queued nil) (captures nil)
+        (capture-candidates nil) (capture-order nil) (simple t) (local-calls nil))
       (labels
       ((enqueue (fun)
          (unless (gethash fun queued)
@@ -505,11 +497,19 @@ and a flag for local writes. Captured writers never acquire pointwise facts."
              (if tail (setf (cdr tail) cell) (setf pending cell))
              (setf tail cell (gethash fun queued) t))))
        (function-types (fun environment)
-         (let ((environment (ir-immutable-types environment)))
-           (multiple-value-bind (old seen) (gethash fun capture-candidates)
-             (unless seen (push fun capture-order))
-             (setf (gethash fun capture-candidates)
-                   (if seen (ir-join-type-environments old environment) environment)))))
+         (let ((environment
+                 (loop for var across (ir-fun-free fun)
+                       for entry = (assoc var environment :test #'eq)
+                       when (and entry (not (logtest 1 (ir-var-flags var))) (not (eq (cdr entry) t)))
+                         collect (cons var (cdr entry)))))
+           (if simple
+               (progn
+                 (setf (ir-fun-input-types fun) nil (ir-fun-result-type fun) t)
+                 (ir-map-function (lambda (node) (visit node environment)) fun))
+               (multiple-value-bind (old seen) (gethash fun capture-candidates)
+                 (unless seen (push fun capture-order))
+                 (setf (gethash fun capture-candidates)
+                       (if seen (ir-join-type-environments old environment) environment))))))
        (update-inputs (callee)
          (let ((types (ir-fun-input-types callee)))
            (when types
@@ -593,9 +593,10 @@ and a flag for local writes. Captured writers never acquire pointwise facts."
                   (multiple-value-bind (ignored next-env next-write) (many (ir-node-b node) environment)
                     (declare (ignore ignored))
                     (setf environment next-env written (or written next-write)
-                          type (if (and (ir-fun-p callee) (gethash callee members))
-                                   (ir-fun-result-type callee)
-                                   (ir-call-type callee (ir-node-b node))))))))
+                          type (cond ((and simple (ir-fun-p callee)) (setf local-calls t) t)
+                                     ((and (ir-fun-p callee) (gethash callee members))
+                                      (ir-fun-result-type callee))
+                                     (t (ir-call-type callee (ir-node-b node)))))))))
              (9
               (multiple-value-setq (type environment written) (visit (ir-node-a node) environment))
               (multiple-value-bind (yes yes-env yes-write)
@@ -661,11 +662,25 @@ and a flag for local writes. Captured writers never acquire pointwise facts."
              (otherwise (multiple-value-setq (type environment written) (children node environment))))
            (setf (ir-node-type node) type)
            (values type environment written))))
-        ;; FIFO order visits every function before repeated propagation can
-        ;; consume the budget. Every update remains a sound narrowing.
-        (loop repeat (* 8 (length functions)) while pending
-              for fun = (pop pending)
-              do (unless pending (setf tail nil))
-                 (remhash fun queued)
-                 (analyze-function fun)))))
-  root)
+        ;; Most forms contain no retained direct local call. Analyze those
+        ;; once without allocating a function graph or its worklist tables.
+        (function-types root nil)
+        (when local-calls
+          (setf simple nil)
+          (multiple-value-setq (functions members sites outgoing) (ir-summary-graph root))
+          (setf pending (copy-list functions) tail (last pending)
+                queued (make-hash-table :test #'eq) captures (make-hash-table :test #'eq))
+          (dolist (fun functions)
+            (setf (gethash fun queued) t (ir-fun-result-type fun) t
+                  (ir-fun-input-types fun)
+                  (when (ir-summary-inputs-p fun root)
+                    (make-array (length (ir-lambda-list-required (ir-fun-lambda-list fun)))
+                                :initial-element t))))
+          ;; FIFO order visits every function before repeated propagation can
+          ;; consume the budget. Every update remains a sound narrowing.
+          (loop repeat (* 8 (length functions)) while pending
+                for fun = (pop pending)
+                do (unless pending (setf tail nil))
+                   (remhash fun queued)
+                   (analyze-function fun))))
+    (values root local-calls)))
