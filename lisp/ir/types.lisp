@@ -187,6 +187,16 @@
            (ir-integer-range low high)))
         ((and (consp specifier) (ir-proper-list-p specifier))
          (case (car specifier)
+           ((array simple-array)
+            (if (> (length specifier) 3) t
+              (let ((element (if (cdr specifier) (second specifier) '*))
+                    (dimensions (if (cddr specifier) (third specifier) '*)))
+                (cond ((or (eql dimensions 1)
+                           (and (consp dimensions) (ir-proper-list-p dimensions)
+                                (= (length dimensions) 1)))
+                       (if (and (eq (car specifier) 'simple-array) (eq element t))
+                           'simple-vector 'vector))
+                      (t 'array)))))
            (and
             (let ((type t))
               (dolist (part (cdr specifier) type)
@@ -225,7 +235,11 @@
                   (and truth known)))))))
 
 (defun ir-declaration-proven-p (actual specifier)
-  (cond ((and (consp specifier) (eq (car specifier) 'and))
+  (cond ((and (consp specifier) (member (car specifier) '(array simple-array)))
+         ;; A projected class does not prove element or extent constraints.
+         (and (equal specifier '(simple-array t (*)))
+              (ir-known-subtype-p actual 'simple-vector)))
+        ((and (consp specifier) (eq (car specifier) 'and))
          (every (lambda (part) (ir-declaration-proven-p actual part)) (cdr specifier)))
         ((and (consp specifier) (eq (car specifier) 'or))
          (some (lambda (part) (ir-declaration-proven-p actual part)) (cdr specifier)))
