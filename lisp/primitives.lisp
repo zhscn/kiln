@@ -670,11 +670,12 @@ of it, SLOW-FN otherwise; both return an operand. Returns the result."
                         (lambda () (emit `(:store (:add ,v (:shl ,i 2)) ,+vector-data+ ,x)) x)
                         (lambda () (emit-slow-call '(setf svref) x v i))))
 
-(defun emit-schar (s i c slow-name)
+(defun emit-schar (s i c slow-name &optional known-string)
   (let ((r (new-var)) (string (new-block)) (fast (new-block)) (slow (new-block))
         (done (new-block))
         (bad-index `(:or (:and ,i 1) (:or (:lt ,i 0) (:ge ,i ,(vector-length s))))))
-    (br (emit-kind-test s +kind-string+) string slow)
+    (if known-string (jump string)
+        (br (emit-kind-test s +kind-string+) string slow))
     (start-block string)
     (br (if c
             `(:or ,bad-index (:ne (:and ,c ,+immediate-mask+) ,+character-tag+))
