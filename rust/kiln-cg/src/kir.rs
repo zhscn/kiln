@@ -57,6 +57,8 @@ pub enum VarKind {
     Obj,
     /// Holds a raw machine word.
     Raw,
+    /// Unboxed binary64, spilled at safepoints for debugging but not traced.
+    F64,
 }
 
 #[derive(Debug)]
@@ -452,6 +454,7 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                     let kind = match sym(&pair[1])? {
                         "obj" => VarKind::Obj,
                         "raw" => VarKind::Raw,
+                        "f64" => VarKind::F64,
                         k => return Err(format!("vars: unknown kind {k}")),
                     };
                     let name = sym(&pair[0])?.to_string();

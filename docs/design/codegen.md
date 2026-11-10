@@ -37,7 +37,7 @@ kiln-launcher               staticlib，提供 C main，链接 kiln-rt 和 kiln-
   (root "数据名" 字下标)            ; 静态 GC root
   (shared "名字" ...)               ; 可被多个模块以相同内容定义的数据和函数
   (func "名字"
-    (vars (v obj|raw [下标]) ...)  ; obj 会登记进栈图；下标：源码变量名（debugging.md）
+    (vars (v obj|raw|f64 [下标]) ...)  ; obj 会登记进栈图；下标：源码变量名（debugging.md）
     (slots (s 字节数) ...)
     [(debug W) | (debug-ref "数据名" 偏移)]  ; 函数的调试信息对象
     (block b 语句...) ...))        ; 第一个 block 是入口
@@ -73,7 +73,10 @@ kiln-launcher               staticlib，提供 C main，链接 kiln-rt 和 kiln-
 | `(slot s)` | 栈槽地址 |
 | `(select C A B)` | |
 
-`obj` 变量登记进栈图，`raw` 变量不登记，GC 规则见 [gc.md](gc.md)。
+`obj` 变量登记为 GC 根，`raw` 变量不登记。`f64` 保存 binary64 位模式，
+在后端使用浮点寄存器；表达式读取和赋值仍交换 64 位位模式。带调试名字且活过调用的 `f64`
+通过前端的 safepoint spill 机制保存，供调试器读取，但其槽从运行期 GC 根表排除。
+带源码名字的此类变量使用 `(:double-bits 名字)` 调试描述。GC 规则见 [gc.md](gc.md)。
 
 ## 多模块
 

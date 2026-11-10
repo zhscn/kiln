@@ -587,7 +587,7 @@ fn encode_debug_sites(ctx: &Context, locs: &[Option<Loc>], slots: &[Vec<(u32, ir
         let vars: Vec<(u32, u32)> = slots[index]
             .iter()
             .map(|&(n, slot)| (n, layout.stackslots[slot].offset))
-            // Only slots of the call's stack map: what the GC updates.
+            // Keep slots live at this call, including untraced float debug spills.
             .filter(|(_, off)| maps.get(&ret).is_some_and(|m| m.contains(off)))
             .collect();
         if call_loc.is_none() && vars.is_empty() {
@@ -642,7 +642,10 @@ fn collect_stackmaps(ctx: &Context, func: FuncId, out: &mut Vec<StackMapInfo>) -
         if !call_rets.contains(offset) {
             return Err(format!("stack map at {offset:#x} is not at a call return address"));
         }
-        let offsets: Vec<u32> = map.entries().map(|(_ty, off)| off).collect();
+        // Float entries preserve debug values; only object words are GC roots.
+        let offsets: Vec<u32> = map.entries()
+            .filter(|(ty, _)| *ty == I64)
+            .map(|(_, off)| off).collect();
         if !offsets.is_empty() {
             out.push(StackMapInfo {
                 func,
@@ -864,8 +867,8 @@ impl<M: Module> FuncLowering<'_, M> {
             if self.vars.contains_key(&name) {
                 return Err(format!("duplicate variable {name}"));
             }
-            let v = b.declare_var(I64);
-            if kind == VarKind::Obj {
+            let v = b.declare_var(if kind == VarKind::F64 { ir::types::F64 } else { I64 });
+            if kind == VarKind::Obj || (kind == VarKind::F64 && self.labels.contains_key(&name)) {
                 b.declare_var_needs_stack_map(v);
             }
             self.vars.insert(name.clone(), v);
@@ -927,6 +930,9 @@ impl<M: Module> FuncLowering<'_, M> {
 
     /// Assigns `val` to the variable `name`.
     fn def(&mut self, b: &mut FunctionBuilder, name: &str, val: Value) -> R<()> {
+        let val = if self.var_kinds.get(name) == Some(&VarKind::F64) {
+            b.ins().bitcast(ir::types::F64, MemFlagsData::new(), val)
+        } else { val };
         b.def_var(self.var(name)?, val);
         if let Some(&n) = self.labels.get(name) {
             self.value_labels.entry(val).or_default().push(n);
@@ -1186,7 +1192,12 @@ impl<M: Module> FuncLowering<'_, M> {
     fn expr(&mut self, b: &mut FunctionBuilder, e: &Expr) -> R<Value> {
         Ok(match e {
             Expr::Int(n) => b.ins().iconst(I64, *n),
-            Expr::Var(v) => b.use_var(self.var(v)?),
+            Expr::Var(v) => {
+                let value = b.use_var(self.var(v)?);
+                if b.func.dfg.value_type(value) == ir::types::F64 {
+                    b.ins().bitcast(I64, MemFlagsData::new(), value)
+                } else { value }
+            },
             Expr::Bin(op, x, y) => {
                 let x = self.expr(b, x)?;
                 let y = self.expr(b, y)?;

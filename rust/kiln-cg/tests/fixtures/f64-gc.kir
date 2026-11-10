@@ -1,0 +1,11 @@
+(module "f64-gc"
+ (init "init")
+ (data "init" (words 258 (func "body")))
+ (import-func "kiln_rt_gc" 1 1 unwinds)
+ (func "body" (vars (value f64 0) (ignored raw)) (slots) (debug 0)
+  (block entry
+   (set value 4608308318706860037)
+   (call-rt "kiln_rt_gc" (ignored) (ctx) nil (loc 0 1))
+   (br (eq value 4608308318706860037) good bad))
+  (block good (return 0 1))
+  (block bad (trap))))
