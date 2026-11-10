@@ -338,6 +338,21 @@ predicate inside it is branched on, not made into T or NIL and compared."
       (start-block done)
       (values result t))))
 
+(defun ir-double-arithmetic-p (node)
+  (and (= (ir-node-kind node) 7) (member (ir-node-a node) '(+ - *))
+       (= (length (ir-node-b node)) 2)
+       (every (lambda (arg) (eq (ir-node-type arg) 'double-float)) (ir-node-b node))))
+
+(defun ir-lower-double-bits (node)
+  (if (ir-double-arithmetic-p node)
+      (let* ((args (ir-node-b node))
+             (left (ir-lower-double-bits (svref args 0)))
+             (right (ir-lower-double-bits (svref args 1))))
+        (copy-to-var `(,(case (ir-node-a node) (+ :f64-add) (- :f64-sub) (* :f64-mul))
+                      ,left ,right) :raw))
+      (let ((object (ir-lower node)))
+        (copy-to-var `(:load ,object ,(- 8 +tag-general+)) :raw))))
+
 (defun ir-lower-typed-call (node)
   "Return a primary value and a success flag without partially lowering an
 unsupported call. Arguments retain their evaluation order and effects."
@@ -373,6 +388,12 @@ unsupported call. Arguments retain their evaluation order and effects."
           (values (ir-lower-fixnum-arithmetic
                    (if (eq name '1+) '+ '-) value (ash 1 +fixnum-shift+)
                    (ir-fixnum-type-p (ir-node-type node))) t))))
+    (when (and (= count 2) (member name '(+ - *)) (ir-double-arithmetic-p node))
+      (let* ((bits (ir-lower-double-bits node))
+             (object (emit-alloc 16 +kind-double+)))
+        (emit `(:store ,object 8 ,bits))
+        (return-from ir-lower-typed-call
+          (values (copy-to-var `(:add ,object ,+tag-general+)) t))))
     (when (and (= count 2)
                (ir-fixnum-type-p (ir-node-type (svref args 0)))
                (ir-fixnum-type-p (ir-node-type (svref args 1)))

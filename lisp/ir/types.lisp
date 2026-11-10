@@ -143,6 +143,8 @@
       ((and (member name '(+ - *)) (= count 2))
        (let* ((at (ir-node-type (svref args 0))) (bt (ir-node-type (svref args 1)))
               (a (or (ir-type-range at) at)) (b (or (ir-type-range bt) bt)))
+         (when (and (eq at 'double-float) (eq bt 'double-float))
+           (return-from ir-call-type 'double-float))
          (when (and (ir-range-p a) (ir-range-p b))
            (return-from ir-call-type
              (case name
