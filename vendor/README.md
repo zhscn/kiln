@@ -527,6 +527,8 @@ Under `#+kiln`:
   `(append (list 'if) (list '(null x)) (list y))`) and a tail
   (`` `(a ,x b c) `` ends in `'(b c)`, shared). Each expansion has the
   same constant parts.
+  Constant-template recognition also traverses non-string vectors, so
+  commas nested in vectors inside lists are expanded rather than quoted.
 
 ## Inravina patches
 

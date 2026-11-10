@@ -34,7 +34,12 @@
   ;; quasiquotes are expanded already, EXPAND).
   (let ((seen '()))
     (labels ((walk (x)
-               (cond ((not (consp x)) t)
+               (cond ((and (vectorp x) (not (stringp x)))
+                      (if (member x seen :test #'eq)
+                          t
+                          (progn (push x seen)
+                                 (every #'walk x))))
+                     ((not (consp x)) t)
                      ((member x seen :test #'eq) t)
                      ((member (car x) '(unquote unquote-splicing)) nil)
                      (t (push x seen)

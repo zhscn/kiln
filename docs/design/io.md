@@ -81,7 +81,7 @@ Eclector 同时是宿主前端的 reader 和目标端的 reader。CLOS 模块里
 - Eclector 的源码读进宿主里已有的 Eclector 包，其中 `eclector.readtable` 遮蔽了 CL 的 readtable 函数和 `*readtable*`。所以 CL 的 `read`、`read-from-string`、`read-preserving-whitespace`、`read-delimited-list` 和各个 readtable 函数都转调 Eclector 的同名函数；kiln 的 Eclector client 让 `cl:*readtable*` 读写和绑定 CL 的变量；`get-macro-character` 和 `get-dispatch-macro-character` 把 Eclector 存的符号换成函数；`with-standard-io-syntax` 绑定 Eclector 的标准 readtable。
 - kiln 的 Eclector client 只在 CL 的读入函数里绑定，不全局设置：Eclector 的其他入口用 `(or *client* 默认 client)` 选 client，全局设置会让 CST 读取器用错 client。
 - simple readtable 的类以内建类 `cl:readtable` 为超类，`readtablep` 成立。
-- 读入的 `` ` `` 形式是 Eclector 的 `quasiquote` 宏调用，运行期可以展开。
+- 读入的 `` ` `` 形式是 Eclector 的 `quasiquote` 宏调用，运行期可以展开。常量模板识别同时遍历列表和非字符串向量，保留嵌套向量中逗号及拼接形式的求值。
 - CST reader 对普通列表并行检查表达式和子结果，避免重复求长度和异常处理。根节点在构造时获得源码位置，尾节点保留默认位置；原始列表与子 CST 的身份保持不变。点列表、循环引用及结构不匹配的 reader macro 结果继续使用完整的重建路径。
 - 简单 readtable 的 ASCII 语法类型存放在每实例向量里；修改语法、安装宏字符和复制时同步更新，非 ASCII 仍走哈希查询。可变 readtable 之间不共享分类向量。
 - token 临时数组使用有界池，借出后从池中移除，嵌套读入使用不同数组；非局部退出归还数组。池最多保存八个不超过 4096 字符的数组，最终 token 始终复制成独立字符串。
