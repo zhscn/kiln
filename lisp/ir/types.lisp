@@ -107,7 +107,7 @@
             (or (member name '(char schar))
                 (and (member name '(aref elt)) (eq (ir-node-type (svref args 0)) :native-string))))
        'character)
-      ((and (= count 3) (member name '((setf aref) (setf svref) (setf char) (setf schar)) :test #'equal))
+      ((and (= count 3) (member name '((setf aref) (setf svref) (setf char) (setf schar) (setf elt)) :test #'equal))
        (ir-node-type (svref args 0)))
       ((and (eq name 'char-code) (= count 1)) (ir-integer-range 0 #x10ffff))
       ((eq name 'values) (if (plusp count) (ir-node-type (svref args 0)) 'null))

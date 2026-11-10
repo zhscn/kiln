@@ -360,7 +360,7 @@ unsupported call. Arguments retain their evaluation order and effects."
           (values (emit-svref-fast-path
                    v i (lambda () `(:load (:add ,v (:shl ,i 2)) ,+vector-data+))
                    (lambda () (emit-slow-call 'svref v i)) t) t))))
-    (when (and (= count 3) (member name '((setf aref) (setf svref)) :test #'equal)
+    (when (and (= count 3) (member name '((setf aref) (setf svref) (setf elt)) :test #'equal)
                (eq (ir-node-type (svref args 1)) 'simple-vector))
       (let* ((vals (lower-args (coerce args 'list))) (x (first vals)) (v (second vals)) (i (third vals)))
         (return-from ir-lower-typed-call
@@ -373,7 +373,7 @@ unsupported call. Arguments retain their evaluation order and effects."
         (return-from ir-lower-typed-call (values (copy-to-var (vector-length value)) t))))
     (when (or (and (= count 2) (member name '(aref char schar elt))
                    (eq (ir-node-type (svref args 0)) :native-string))
-              (and (= count 3) (member name '((setf aref) (setf char) (setf schar)) :test #'equal)
+              (and (= count 3) (member name '((setf aref) (setf char) (setf schar) (setf elt)) :test #'equal)
                    (eq (ir-node-type (svref args 1)) :native-string)))
       (let* ((vals (lower-args (coerce args 'list))) (store (= count 3))
              (string (if store (second vals) (first vals))) (index (if store (third vals) (second vals))))
