@@ -1,6 +1,6 @@
 # Benchmarks
 
-- `compare.lisp`, `micro*.lisp`, `gf*.lisp`, `fe-read.lisp`, `local-calls.lisp`: kiln's own.
+- `compare.lisp`, `micro*.lisp`, `gf*.lisp`, `fe-read.lisp`, `local-calls.lisp`, `captured-calls.lisp`: kiln's own.
 - `cl-bench/`: cl-bench (Eric Marsden, maintained by Daniel Kochmański; public domain per its `cl-bench.asd`; `files/deflate.lisp` is copyright Gilbert Baumann), from https://gitlab.common-lisp.net/ansi-test/cl-bench at commit a054e5f (2026-10-29): the benchmark sources, `misc/gabriel.lisp` and `misc/message.gz`; not the report generator.
 - `benchmarksgame/`: the SBCL programs of the Computer Language Benchmarks Game (revised BSD license, `benchmarksgame/LICENSE`), from its source archive (https://benchmarksgame-team.pages.debian.net/benchmarksgame/download/benchmarksgame-sourcecode.zip, downloaded 2026-11-07).
 
@@ -16,6 +16,11 @@ as a program after the kernel, or run it with `sbcl --script`. The outer
 fixed workload prints a checksum of `2`. Count that function's entry-to-return
 region to exclude startup. This focused workload measures local-call overhead; cl-bench covers broader
 application kernels.
+
+`captured-calls.lisp` uses two local call sites to update a shared mutable
+accumulator. It exercises inlining that can eliminate closures and cells.
+Run it the same way as `local-calls.lisp`, counting the entry-to-return region
+of `benchmark-captured-calls`. Its fixed workload prints `2097150`.
 
 ## Changes
 
