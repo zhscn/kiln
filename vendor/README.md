@@ -493,6 +493,12 @@ Under `#+kiln`:
 
 ## Eclector patches
 
+- Ordinary list CSTs match their child results in one traversal bounded
+  by those results; dotted and cyclic expressions retain reconstruction. The
+  outer node receives its source during construction instead of running
+  `reinitialize-instance` after the list is built. Tail nodes keep their
+  default source and the original raw cons identities.
+
 - The `#S` construction protocol binds its input stream while calling the
   client, so invalid structure types and missing standard constructors
   signal reader errors associated with that stream.

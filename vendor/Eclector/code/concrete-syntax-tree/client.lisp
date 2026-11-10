@@ -5,6 +5,15 @@
 
 (defvar *cst-client* (make-instance 'cst-client))
 
+(defun list-matches-children-p (expression children)
+  "True when EXPRESSION is a proper list of the children's raw values."
+  (loop for tail = expression then (cdr tail)
+        for remaining = children then (cdr remaining)
+        do (cond ((null tail) (return (null remaining)))
+                 ((or (not (consp tail)) (null remaining)
+                      (not (eql (car tail) (cst:raw (car remaining)))))
+                  (return nil)))))
+
 ;;; This method is responsible for constructing CST results from
 ;;; ordinary s-expression results.  It can do this by itself for a
 ;;; number of simple cases and it calls
@@ -58,31 +67,29 @@
   ;; 2. `concrete-syntax-tree:reconstruct' is an expensive operation.
   ;;    Special-casing common expression shapes improves performance
   ;;    for typical inputs.
-  (let (children-length)
-    (cond ((atom expression)
+  (cond ((atom expression)
            (make-instance 'cst:atom-cst :raw expression :source source))
           ;; EXPRESSION has a list structure with elements
           ;; corresponding to the elements of CHILDREN.
-          ((and (eql (ignore-errors (list-length expression))
-                     (setf children-length (length children)))
-                (every (lambda (sub-expression child)
-                         (eql sub-expression (cst:raw child)))
-                       expression children))
-           (loop for expression in (loop with reversed = '()
-                                         for sub-expression on expression
-                                         do (push sub-expression reversed)
-                                         finally (return reversed))
+          ((list-matches-children-p expression children)
+           (loop for tail in (loop for tail on expression collect tail into tails
+                                  finally (return (nreverse tails)))
                  for child in (reverse children)
                  for previous = (make-instance 'cst:atom-cst :raw nil) then node
-                 for node = (make-instance 'cst:cons-cst :raw expression
-                                                         :first child
-                                                         :rest previous)
-                 finally (return (reinitialize-instance node :source source))))
+                 for node = (if (eq tail expression)
+                                (make-instance 'cst:cons-cst :raw tail
+                                                            :first child
+                                                            :rest previous
+                                                            :source source)
+                                (make-instance 'cst:cons-cst :raw tail
+                                                            :first child
+                                                            :rest previous))
+                 finally (return node)))
           ;; EXPRESSION is a CONS that resulted from reading a dotted
           ;; list such that the elements of CHILDREN correspond to car
           ;; of EXPRESSION, the consing dot and the cdr of EXPRESSION.
           ((and (not (consp (cdr expression)))
-                (= 3 children-length)
+                (= 3 (length children))
                 (destructuring-bind (car dot cdr) children
                   (eql (car expression)               (cst:raw car))
                   (eql eclector.reader::*consing-dot* (cst:raw dot))
@@ -104,4 +111,4 @@
                             :raw expression
                             :first (cst:reconstruct client car children)
                             :rest (cst:reconstruct client cdr children)
-                            :source source))))))
+                            :source source)))))

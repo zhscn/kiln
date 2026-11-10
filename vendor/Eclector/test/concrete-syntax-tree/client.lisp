@@ -3,6 +3,24 @@
 (def-suite* :eclector.concrete-syntax-tree.client
   :in :eclector.concrete-syntax-tree)
 
+(test proper-list/source-and-identity
+  "List construction preserves raw tails and distinct occurrence locations."
+  (let* ((input "(a (b c) a)")
+         (root (eclector.concrete-syntax-tree:read-from-string input))
+         (nested (cst:first (cst:rest root)))
+         (last (cst:first (cst:rest (cst:rest root)))))
+    (is (equal (cons 0 (length input)) (cst:source root)))
+    (is (equal '(1 . 2) (cst:source (cst:first root))))
+    (is (equal '(3 . 8) (cst:source nested)))
+    (is (equal '(9 . 10) (cst:source last)))
+    (is (eq (cst:raw (cst:first root)) (cst:raw last)))
+    (is-false (eq (cst:first root) last))
+    (loop for tail = root then (cst:rest tail)
+          for raw on (cst:raw root)
+          do (is (eq raw (cst:raw tail)))
+             (is-false (cst:source (cst:rest tail))))
+    (is-consistent-with-raw root)))
+
 ;;; Test annotating labeled object references
 
 (defclass annotating-cst-client (eclector.reader.test::label-reference-annotation-mixin

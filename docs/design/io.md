@@ -77,6 +77,7 @@ Eclector 同时是宿主前端的 reader 和目标端的 reader。CLOS 模块里
 - kiln 的 Eclector client 只在 CL 的读入函数里绑定，不全局设置：Eclector 的其他入口用 `(or *client* 默认 client)` 选 client，全局设置会让 CST 读取器用错 client。
 - simple readtable 的类以内建类 `cl:readtable` 为超类，`readtablep` 成立。
 - 读入的 `` ` `` 形式是 Eclector 的 `quasiquote` 宏调用，运行期可以展开。
+- CST reader 对普通列表并行检查表达式和子结果，避免重复求长度和异常处理。根节点在构造时获得源码位置，尾节点保留默认位置；原始列表与子 CST 的身份保持不变。点列表、循环引用及结构不匹配的 reader macro 结果继续使用完整的重建路径。
 
 ## 打印器（Incless）
 
