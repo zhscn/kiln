@@ -642,12 +642,13 @@ operand N."
 ;;; strings, for LENGTH); anything else, and a bad index, takes the slow
 ;;; path: a call to the kernel's function, which signals the error or
 ;;; handles the other sequences.
-(defun emit-svref-fast-path (v i fast-fn slow-fn)
+(defun emit-svref-fast-path (v i fast-fn slow-fn &optional known-vector)
   "Calls FAST-FN in a block where V is a simple vector and I a valid index
 of it, SLOW-FN otherwise; both return an operand. Returns the result."
   (let ((r (new-var)) (vector (new-block)) (fast (new-block)) (slow (new-block))
         (done (new-block)))
-    (br (emit-kind-test v +kind-simple-vector+) vector slow)
+    (if known-vector (jump vector)
+        (br (emit-kind-test v +kind-simple-vector+) vector slow))
     (start-block vector)
     (br `(:or (:and ,i 1) (:or (:lt ,i 0) (:ge ,i ,(vector-length v)))) slow fast)
     (start-block fast)

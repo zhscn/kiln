@@ -53,6 +53,11 @@
 再减少临时分配与查询，按热点推进紧凑容器、KIR 内存交接、interning 和增量分析。
 编译延迟的基准入口是 `tools/bench-compiler.py`，运行期基准入口是 `tools/bench.sh`。
 
+当前重点是前端的通用优化能力：以保守类型传播和整数区间为基础，推进声明的
+作用域与检查、可变变量和循环的数据流分析、函数摘要、数组与序列访问特化，
+再做机器值表示选择和逃逸分析。分析成本与生成代码的收益分别测量，覆盖整数、
+对象和集合操作以及浮点运算。
+
 按收益排。SBCL 快在 Lisp 语义层的变换和类型推导，不在通用中端，所以这里没有“加一层通用 SSA 优化”。
 
 1. **kiln 自己的 IR**（[ir.md](design/ir.md)）：原生结构对象（单个对象、O(1) 的类型检查、内联构造）和 KIR 的 `:switch` 已接入。CST → IR → KIR 是唯一的前端，cross-client 的编译期求值用 IR 求值器；旧的 Iconoclast 前端、HIR 求值器及其依赖（Common-boot、Iconoclast、s-expression-syntax、parser.packrat、builder 协议）已删除。剩下在内存里交接 KIR。

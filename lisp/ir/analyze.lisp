@@ -118,4 +118,4 @@ recorded against their final owners in the same traversal."
                  when (= (logand (ir-var-flags var) 3) 3)
                    do (setf (ir-var-flags var) (logior 4 (ir-var-flags var)))))))
     (analyze root))
-  root)
+  (infer-ir-types root))

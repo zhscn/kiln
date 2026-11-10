@@ -273,7 +273,60 @@ predicate inside it is branched on, not made into T or NIL and compared."
     (start-block join)
     (values r n)))
 
+(defun ir-lower-typed-call (node)
+  "Return a primary value and a success flag without partially lowering an
+unsupported call. Arguments retain their evaluation order and effects."
+  (let* ((name (ir-node-a node)) (args (ir-node-b node)) (count (length args)))
+    (when (= count 1)
+      (multiple-value-bind (truth known) (ir-type-predicate name (ir-node-type (svref args 0)))
+        (when known
+          (ir-lower (svref args 0))
+          (return-from ir-lower-typed-call (values (constant-object truth) t)))))
+    (when (and (= count 2)
+               (ir-fixnum-type-p (ir-node-type (svref args 0)))
+               (ir-fixnum-type-p (ir-node-type (svref args 1)))
+               (member name '(+ - * < > <= >= = /= logand logior logxor)))
+      (let* ((vals (lower-args (coerce args 'list))) (a (first vals)) (b (second vals)))
+        (return-from ir-lower-typed-call
+          (values
+           (cond
+             ((member name '(+ - *))
+              (if (ir-fixnum-type-p (ir-node-type node))
+                  (copy-to-var (case name
+                                 (+ `(:add ,a ,b)) (- `(:sub ,a ,b))
+                                 (* `(:mul (:sar ,a ,+fixnum-shift+) ,b))))
+                  ;; Input types do not prove that the result fits. Keep
+                  ;; the overflow edge and its arbitrary-precision result.
+                  (let ((r (new-var)) (ovf (new-var :raw))
+                        (slow (new-block)) (done (new-block)))
+                    (emit (case name
+                            (+ `(:add-ovf ,r ,ovf ,a ,b))
+                            (- `(:sub-ovf ,r ,ovf ,a ,b))
+                            (* `(:mul-ovf ,r ,ovf (:sar ,a ,+fixnum-shift+) ,b))))
+                    (br ovf slow done)
+                    (start-block slow)
+                    (emit `(:set ,r ,(emit-slow-call
+                                     (case name (+ 'kiln.kernel::two-arg-+)
+                                                (- 'kiln.kernel::two-arg--)
+                                                (* 'kiln.kernel::two-arg-*)) a b)))
+                    (jump done) (start-block done) r)))
+             ((member name '(logand logior logxor))
+              (copy-to-var `(,(case name (logand :and) (logior :or) (logxor :xor)) ,a ,b)))
+             (t (boolean-value `(,(case name (< :lt) (> :gt) (<= :le) (>= :ge) (= :eq) (/= :ne))
+                                 ,a ,b))))
+           t))))
+    (when (and (= count 2) (member name '(aref svref))
+               (eq (ir-node-type (svref args 0)) 'simple-vector))
+      (let* ((vals (lower-args (coerce args 'list))) (v (first vals)) (i (second vals)))
+        (return-from ir-lower-typed-call
+          (values (emit-svref-fast-path
+                   v i (lambda () `(:load (:add ,v (:shl ,i 2)) ,+vector-data+))
+                   (lambda () (emit-slow-call 'svref v i)) t) t))))
+    (values nil nil)))
+
 (defun ir-lower-call (node)
+  (multiple-value-bind (value specialized) (ir-lower-typed-call node)
+    (when specialized (return-from ir-lower-call (values value 1))))
   (let ((callee (ir-node-a node)) (args (coerce (ir-node-b node) 'list)))
     (cond ((or (symbolp callee) (consp callee)) (lower-global-call callee args))
           (t
