@@ -213,7 +213,8 @@
                   (list (ir-variable-name (first parts)) (second parts)))))
           (ir-parts input)))
 
-(defun ir-convert-let (parts environment sequential)
+(defun ir-convert-let (parts environment sequential &optional body-builder)
+  "BODY-BUILDER receives body forms and the extended binding environment."
   (ir-arity (if sequential 'let* 'let) parts 1 nil)
   (let ((bindings (ir-bindings (first parts))))
     (unless sequential
@@ -250,7 +251,7 @@
                (result (progn
                          (loop for var across (ir-vector variables)
                                do (setf (ir-var-type var) (ir-declared-variable-type env var)))
-                         (ir-progn body env)))
+                         (if body-builder (funcall body-builder body env) (ir-progn body env))))
                (vars (ir-vector variables)) (inits (ir-vector initializers)))
           (when (loop for var across vars for init across inits
                       thereis (and (= (ir-node-kind init) 6) (not (logtest 1 (ir-var-flags var)))))
@@ -283,14 +284,19 @@
   (let* ((fun (or existing (make-ir-fun :name name :parent *ir-function* :source *ir-source*)))
          (*ir-function* fun)
          (function-exit (and name (ir-new-exit (if (consp name) (second name) name))))
-         (env (if function-exit
-                  (ir-env environment :blocks (list (cons (ir-exit-name function-exit) function-exit)))
-                  environment))
+         ;; The function's implicit block encloses the body, not initializers.
+         (env environment)
          (specials '()) (aux '())
          (ll (make-ir-lambda-list)) (required (make-ir-buffer))
          (optional (make-ir-buffer)) (keys (make-ir-buffer)) (state :required) (names '()))
     (multiple-value-bind (body declarations) (ir-split-body (rest parts) t)
-      (labels ((parameter (input)
+      (labels ((function-body (forms environment)
+                 (let* ((env (if function-exit
+                                 (ir-env environment :blocks (list (cons (ir-exit-name function-exit) function-exit)))
+                                 environment))
+                        (result (ir-convert-body forms env)))
+                   (if function-exit (ir-wrap-block function-exit result) result)))
+               (parameter (input)
                  (let* ((name (ir-variable-name input))
                         (special (ir-special-binding-p name declarations environment))
                         (var (ir-new-var (if special (gensym "ARG") name))))
@@ -356,14 +362,13 @@
                                                when (eq (car spec) 'notinline) append (cdr spec))
                                           *local-notinline*))
                (result (if aux
-                          (ir-convert `(let* ,(mapcar #'ir-raw (nreverse aux))
-                                         (declare ,@declarations)
-                                         ,@(mapcar #'ir-raw body))
-                                      env)
-                          (ir-convert-body body (ir-declare env declarations)))))
-          (setf (ir-fun-parameter-specials fun) specials)
-          (setf (ir-fun-body fun)
-                (if function-exit (ir-wrap-block function-exit result) result))))
+                           (ir-convert-let
+                            (ir-parts `(,(mapcar #'ir-raw (nreverse aux))
+                                        (declare ,@declarations) ,@(mapcar #'ir-raw body)))
+                            env t (lambda (forms environment) (function-body forms environment)))
+                           (function-body body (ir-declare env declarations)))))
+          (setf (ir-fun-parameter-specials fun) specials
+                (ir-fun-body fun) result)))
       fun)))
 
 (define-ir-converter function (parts environment)

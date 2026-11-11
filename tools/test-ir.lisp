@@ -2517,3 +2517,22 @@
                   (or (and (eq (first form) :call-rt) (equal (second form) "kiln_rt_alloc"))
                       (some #'heap-allocation-p form)))))
     (assert (not (heap-allocation-p function)))))
+
+(dolist (form
+         '((block done (flet ((done (&optional (x (return-from done :optional))) x)) (done) :bad))
+           (block done (labels ((done (&key (x (return-from done :keyword))) x)) (done) :bad))
+           (block done (flet ((done (&aux (x (return-from done :aux))) x)) (done) :bad))
+           (block done (flet ((done (&aux (x (return-from done :aux-frame))) x))
+                         (declare (notinline done)) (done) :bad))
+           (block done (flet ((done (&aux (x 1)) (return-from done x))) (list (done) :caller)))
+           (let ((s :outer)) (declare (special s))
+             (list (block done
+                     (flet ((done (s &optional (x (return-from done s))) (declare (special s)) x))
+                       (done :parameter) :bad)) s))))
+  (let* ((*source-file* "default-exit-scope") (*toplevel-source* nil)
+         (session (make-session)) (forms (front-end-forms (list form) session))
+         (root (toplevel-form-ast (first forms)))
+         (*ir-eval-client* (session-client session))
+         (*ir-eval-global* (trucler:global-environment *ir-eval-client* (session-environment session))))
+    (assert (equal (eval form) (funcall (funcall (ir-eval-function root) #()))) ()
+            "Unexpected default exit scope in ~S" form)))
