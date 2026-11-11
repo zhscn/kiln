@@ -252,6 +252,9 @@
                                do (setf (ir-var-type var) (ir-declared-variable-type env var)))
                          (ir-progn body env)))
                (vars (ir-vector variables)) (inits (ir-vector initializers)))
+          (when (loop for var across vars for init across inits
+                      thereis (and (= (ir-node-kind init) 6) (not (logtest 1 (ir-var-flags var)))))
+            (ir-note-function-aliases *ir-function*))
           (if sequential
               (loop for i downfrom (1- (length vars)) to 0
                     for var = (svref vars i)
@@ -552,6 +555,7 @@ as MULTIPLE-VALUE-BIND expands into: the variable inputs, FORM, and BODY."
                       (ir-env (make-instance 'trucler-reference:environment
                                 :global-environment (trucler:global-environment *client* environment)))))
     (when (logtest 64 (ir-fun-flags fun)) (ir-note-local-functions outer))
+    (when (logtest 256 (ir-fun-flags fun)) (ir-note-function-aliases outer))
     (ir-node 24 *ir-source* fun (ir-raw (second parts)))))
 
 (define-ir-converter symbol-macrolet (parts environment)

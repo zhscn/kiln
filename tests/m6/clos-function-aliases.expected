@@ -1,0 +1,20 @@
+(("named" 1) ("named" 2))
+(("anonymous" 3) ("anonymous" 4))
+("first" "second")
+("escaped" 5)
+("escaped" 6)
+(1 2)
+(4 3)
+"old"
+"new"
+(("key" "key") ("key" 9))
+:TYPE-ERROR
+(:BEFORE "changed")
+(:AFTER :INSIDE :BEFORE)
+(1 2 3)
+(:AFTER :INSIDE :BEFORE)
+(:UNUSED :AFTER :INSIDE :BEFORE)
+5
+(:UNUSED :AFTER :INSIDE :BEFORE)
+17
+(10 20)
