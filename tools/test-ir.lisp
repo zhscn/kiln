@@ -1404,7 +1404,7 @@
               (let ((f nil))
                 (block done
                   (unwind-protect (setq f #'target) (setq f #'other)))
-                (funcall f 3))) 1)))
+                (funcall f 3))) 0)))
   (let* ((nodes (ir-test-nodes (ir-test-form (first entry))))
          (indirect (count-if (lambda (node)
                                (and (= (ir-node-kind node) 7)
@@ -1568,3 +1568,59 @@
                                   (= (ir-node-kind (ir-node-a node)) 1)))
                            (ir-test-nodes root))))
   (assert (zerop indirect)))
+
+(dolist (entry
+         '(((flet ((target (x) (+ x 7)) (other (x) (- x 7)))
+              (declare (notinline target other))
+              (let ((f nil))
+                (tagbody
+                   (unwind-protect (progn (setq f #'target) (go use)) (setq f #'other))
+                 use (funcall f 3)))) 0)
+           ((flet ((target (x) (+ x 7)) (other (x) (- x 7)))
+              (declare (notinline target other))
+              (let ((f nil))
+                (unwind-protect
+                     (tagbody
+                        (setq f #'target) (go use)
+                      use (funcall f 3))
+                  (setq f #'other))
+                (funcall f 4))) 0)
+           ((flet ((target (x) (+ x 7)) (other (x) (- x 7)))
+              (declare (notinline target other))
+              (let ((f nil))
+                (let ((chosen
+                        (block done
+                          (unwind-protect (return-from done #'target)
+                            (setq f #'other) (return-from done #'other)))))
+                  (funcall chosen 3) (funcall f 4)))) 0)
+           ((flet ((target (x) (+ x 7)) (other (x) (- x 7)))
+              (declare (notinline target other))
+              (let ((f #'other))
+                (tagbody
+                   (unwind-protect (progn (unknown-thrower) (setq f #'target)) (go use))
+                 use (funcall f 3)))) 1)
+           ((flet ((target (x) (+ x 7)) (other (x) (- x 7)))
+              (declare (notinline target other))
+              (let ((f #'other))
+                (unwind-protect (setq f #'target) (funcall f 3)))) 1)))
+  (let* ((nodes (ir-test-nodes (ir-test-form (first entry))))
+         (indirect (count-if (lambda (node)
+                               (and (= (ir-node-kind node) 7)
+                                    (ir-node-p (ir-node-a node))
+                                    (= (ir-node-kind (ir-node-a node)) 1))) nodes)))
+    (assert (= indirect (second entry)) () "Unexpected cleanup calls in ~S" (first entry))))
+
+(let* ((root (ir-test-form
+              '(let ((saved nil))
+                 (unwind-protect (identity nil)
+                   (let ((counter 0))
+                     (flet ((next (x) (incf counter x)))
+                       (declare (notinline next))
+                       (setq saved #'next))))
+                 (funcall saved 3))))
+       (indirect (count-if (lambda (node)
+                             (and (= (ir-node-kind node) 7)
+                                  (ir-node-p (ir-node-a node))
+                                  (= (ir-node-kind (ir-node-a node)) 1)))
+                           (ir-test-nodes root))))
+  (assert (= 1 indirect)))
