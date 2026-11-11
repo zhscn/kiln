@@ -9,13 +9,24 @@
     (otherwise (ir-map-children function node))))
 
 (defun ir-cons-borrow-call-p (fun summary count)
-  (and summary (>= count (length summary))
-       (or (= count (length summary)) (ir-lambda-list-rest (ir-fun-lambda-list fun)))))
+  (and summary (>= count (length (ir-lambda-list-required (ir-fun-lambda-list fun))))
+       (or (<= count (length summary)) (ir-lambda-list-rest (ir-fun-lambda-list fun)))))
+
+(defun ir-cons-borrow-parameters (fun)
+  (let* ((ll (ir-fun-lambda-list fun)) (required (ir-lambda-list-required ll))
+         (optional (ir-lambda-list-optional ll)))
+    (if (zerop (length optional)) required
+        (concatenate 'simple-vector required
+                     (map 'simple-vector (lambda (parameter) (svref parameter 0)) optional)))))
 
 (defun ir-cons-borrow-variables (fun)
-  (let* ((ll (ir-fun-lambda-list fun)) (required (ir-lambda-list-required ll))
+  (let* ((ll (ir-fun-lambda-list fun)) (parameters (ir-cons-borrow-parameters fun))
+         (supplied (loop for parameter across (ir-lambda-list-optional ll)
+                         when (svref parameter 2) collect (svref parameter 2)))
          (rest (ir-lambda-list-rest ll)))
-    (if rest (concatenate 'simple-vector required (vector rest)) required)))
+    (if (or supplied rest)
+        (concatenate 'simple-vector parameters supplied (when rest (list rest)))
+        parameters)))
 
 (defun ir-cons-extent-proof (fun body variables var budget borrows &optional binding result-mode)
   "Return success and primary aliasing; RESULT-MODE :ONLY skips escape checks."
@@ -154,6 +165,10 @@
                        (check-use (ir-node-c node) usage))
                    (otherwise (fail)))))
         (catalog body)
+        (unless binding
+          (loop for parameter across (ir-lambda-list-optional (ir-fun-lambda-list fun))
+                do (catalog (svref parameter 1))
+                   (push (cons (svref parameter 0) (svref parameter 1)) sources)))
         ;; May-alias propagation includes every lexical write. A value
         ;; may leave this binding only through one of the inspected uses.
         (loop with changed = t while changed
@@ -174,7 +189,7 @@
         (when (and (null binding) visible)
           ;; Rest entries poll after parameters become visible.
           (when (ir-lambda-list-rest (ir-fun-lambda-list fun)) (fail))
-          (when (> (+ (length variables) (length (ir-lifted-environment fun))) +reg-args+) (fail))
+          (when (> (+ (length (ir-cons-borrow-parameters fun)) (length (ir-lifted-environment fun))) +reg-args+) (fail))
           (loop for v across variables
                 when (or (logtest 4 (ir-var-flags v))
                          (and (not (eq v var)) (not (eq (ir-var-type v) t))))
@@ -185,6 +200,9 @@
                          (and (not (eq (ir-var-type v) t))
                               (not (ir-declaration-proven-p (ir-node-type init) (ir-var-type v)))))
                   do (fail)))
+        (unless binding
+          (loop for parameter across (ir-lambda-list-optional (ir-fun-lambda-list fun))
+                do (check-use (svref parameter 1) :flow)))
         (check-use body (if result-mode :result :escape))
         (values t returned)))))
 
@@ -213,10 +231,9 @@
     (dolist (fun functions)
       (let ((ll (ir-fun-lambda-list fun)))
         (when (and ll (ir-fun-body fun) (null (ir-fun-parameter-specials fun))
-                   (zerop (length (ir-lambda-list-optional ll)))
                    (not (ir-lambda-list-key-p ll)))
           (setf (gethash fun summaries)
-                (make-array (length (ir-lambda-list-required ll)) :initial-element :borrow)))))
+                (make-array (length (ir-cons-borrow-parameters fun)) :initial-element :borrow)))))
     ;; Primary aliases grow from empty assumptions. Starting from "may return"
     ;; would lose field-only results in recursive groups.
     (loop with changed = t while changed
@@ -224,7 +241,7 @@
              (dolist (fun functions)
                (let ((summary (gethash fun summaries)))
                  (when summary
-                   (let ((parameters (ir-lambda-list-required (ir-fun-lambda-list fun)))
+                   (let ((parameters (ir-cons-borrow-parameters fun))
                          (variables (ir-cons-borrow-variables fun)))
                      (loop for var across parameters for i from 0
                            unless (eq (svref summary i) :return)
@@ -239,7 +256,7 @@
              (dolist (fun functions)
                (let ((summary (gethash fun summaries)))
                  (when summary
-                   (let ((parameters (ir-lambda-list-required (ir-fun-lambda-list fun)))
+                   (let ((parameters (ir-cons-borrow-parameters fun))
                          (variables (ir-cons-borrow-variables fun)))
                      (loop for var across parameters for i from 0
                            when (svref summary i)
