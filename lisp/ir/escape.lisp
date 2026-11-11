@@ -103,7 +103,8 @@
                       (when (and (gethash (ir-node-a node) aliases) (ir-node-b node)
                                  (not (ir-declaration-proven-p 'cons (ir-node-b node)))) (fail)))
                    (2 (when (and visible
-                                 (eq (ir-declaration-type (ir-var-type (ir-node-a node))) 'double-float)) (fail))
+                                 (or (eq (ir-node-type (ir-node-b node)) 'double-float)
+                                     (eq (ir-declaration-type (ir-var-type (ir-node-a node))) 'double-float))) (fail))
                       (when (and visible
                                  (not (ir-declaration-proven-p (ir-node-type (ir-node-b node))
                                                               (ir-var-type (ir-node-a node))))
@@ -499,6 +500,8 @@
                                      (escape result))
                                    result))
                               (2 (let ((result (value (ir-node-b node))))
+                                   ;; A raw local may box an assignment result used as an object.
+                                   (when (eq (ir-node-type (ir-node-b node)) 'double-float) (setf effects t))
                                    (when (and (not (eq (ir-var-type (ir-node-a node)) t))
                                               (not (ir-declaration-proven-p (ir-node-type (ir-node-b node))
                                                                            (ir-var-type (ir-node-a node)))))
