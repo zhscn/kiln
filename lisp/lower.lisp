@@ -1564,6 +1564,7 @@ after a LIST call."
   exit            ; BLOCK: exit block
   result          ; BLOCK: result variable
   count           ; BLOCK: raw variable, number of values
+  double-primary  ; BLOCK: local exits carry binary64 bits
   block)          ; TAGBODY: KIR block of the tag
 
 (defun emit-exit-token ()

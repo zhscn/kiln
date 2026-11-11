@@ -1298,3 +1298,21 @@
                              (eql (fourth form) +kind-double+)) 1 0)
                     (reduce #'+ form :key #'boxes :initial-value 0)) 0)))
     (assert (= 1 (boxes (kiln.kir::kmodule-funcs module))))))
+
+(dolist (body
+         '((block done (if flag (return-from done (1+ value)) (1- value)))
+           (block done (unwind-protect (return-from done (1+ value)) (opaque-effect)))
+           (block done (unwind-protect (return-from done (1+ value))
+                         (return-from done (1- value))))))
+  (let* ((*source-file* "double-block-layout") (*toplevel-source* nil)
+         (session (make-session))
+         (forms (front-end-forms
+                 `((lambda (flag value) (declare (double-float value)) (* ,body 2d0))) session))
+         (module (compile-module forms "double-block-layout" :session session)))
+    (labels ((boxes (form)
+               (if (consp form)
+                   (+ (if (and (eq (first form) :store) (eql (third form) 0)
+                               (eql (fourth form) +kind-double+)) 1 0)
+                      (reduce #'+ form :key #'boxes :initial-value 0)) 0)))
+      (assert (= 1 (boxes (kiln.kir::kmodule-funcs module))) ()
+              "Extra double boxing in ~S" body))))
