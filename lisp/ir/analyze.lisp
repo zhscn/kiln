@@ -175,35 +175,59 @@ Backward liveness preserves objects that a debugger could observe at a safepoint
                                              (loop for i downfrom (1- (length nodes)) to 0
                                                    do (setf needed (walk (svref nodes i) needed)))
                                              needed)
-                                           (walk (form needed)
+                                           (sequence (nodes needed discarded)
+                                             (loop for i downfrom (1- (length nodes)) to 0
+                                                   do (setf needed (walk (svref nodes i) needed
+                                                                         (or discarded (< i (1- (length nodes)))))))
+                                             needed)
+                                           (walk (form needed &optional discarded)
                                              (when (or (> (incf steps) 256) (minusp (decf budget))) (fail))
                                              (case (ir-node-kind form)
                                                ((0 5) needed)
                                                (1 (when (or (eq (ir-node-a form) var)
                                                             (and needed (or (ir-node-c form)
                                                                             (eq (ir-node-type form) 'double-float)))) (fail)) needed)
+                                               (2
+                                                (let ((target (ir-node-a form)) (value (ir-node-b form)))
+                                                  (when (or (eq target var)
+                                                            (and needed
+                                                                 (or (logtest 6 (ir-var-flags target))
+                                                                     (eq (ir-declaration-type (ir-var-type target)) 'double-float)
+                                                                     (and (not (eq (ir-var-type target) t))
+                                                                          (not (ir-declaration-proven-p (ir-node-type value) (ir-var-type target)))))))
+                                                    (fail))
+                                                  (walk value needed)))
                                                (7
                                                 (let ((args (ir-node-b form)))
-                                                  (if (and (member (ir-node-a form) '(car cdr)) (= (length args) 1)
+                                                  (cond
+                                                    ((and discarded (member (ir-node-a form) '(rplaca rplacd))
+                                                          (= (length args) 2)
+                                                          (= (ir-node-kind (svref args 0)) 1)
+                                                          (eq (ir-node-a (svref args 0)) var)
+                                                          (not (ir-node-c (svref args 0)))
+                                                          (not (eq (ir-node-d form) :notinline)))
+                                                     (push (list form (if (eq (ir-node-a form) 'rplaca) 0 1) (svref args 1)) rewrites)
+                                                     (walk (svref args 1) t))
+                                                    ((and (member (ir-node-a form) '(car cdr)) (= (length args) 1)
                                                            (= (ir-node-kind (svref args 0)) 1)
                                                            (eq (ir-node-a (svref args 0)) var)
                                                            (not (ir-node-c (svref args 0)))
                                                            (not (eq (ir-node-d form) :notinline)))
-                                                      (progn (push (cons form (if (eq (ir-node-a form) 'car) 0 1)) rewrites) t)
-                                                      (progn
+                                                     (push (list form (if (eq (ir-node-a form) 'car) 0 1)) rewrites) t)
+                                                    (t
                                                         (when needed (fail))
                                                         (setf needed (many args needed))
                                                         (when (and needed (ir-own-function form)
                                                                    (plusp (length (ir-fun-free (ir-node-a form))))) (fail))
                                                         (if (ir-node-p (ir-node-a form))
                                                             (walk (ir-node-a form) needed) needed)))))
-                                               (9 (let ((yes (walk (ir-node-b form) needed))
-                                                        (no (walk (ir-node-c form) needed)))
+                                               (9 (let ((yes (walk (ir-node-b form) needed discarded))
+                                                        (no (walk (ir-node-c form) needed discarded)))
                                                     (walk (ir-node-a form) (or yes no))))
-                                               (10 (many (ir-node-a form) needed))
+                                               (10 (sequence (ir-node-a form) needed discarded))
                                                (11
                                                 (when (ir-node-d form) (fail))
-                                                (setf needed (walk (ir-node-c form) needed))
+                                                (setf needed (walk (ir-node-c form) needed discarded))
                                                 (when needed
                                                   (loop for binding across (ir-node-a form)
                                                         for value across (ir-node-b form)
@@ -228,10 +252,12 @@ Backward liveness preserves objects that a debugger could observe at a safepoint
                                          (vars (ir-node-a node)) (inits (ir-node-b node))
                                          (buffer (ir-fun-vars fun)))
                                     (dolist (rewrite rewrites)
-                                      (let ((field (svref fields (cdr rewrite))) (read (car rewrite)))
+                                      (let ((field (svref fields (second rewrite))) (read (first rewrite))
+                                            (value (third rewrite)))
                                         (incf (ir-var-refs field))
-                                        (setf (ir-node-kind read) 1 (ir-node-a read) field
-                                              (ir-node-b read) nil (ir-node-c read) nil (ir-node-d read) nil)))
+                                        (when value (setf (ir-var-flags field) (logior 1 (ir-var-flags field))))
+                                        (setf (ir-node-kind read) (if value 2 1) (ir-node-a read) field
+                                              (ir-node-b read) value (ir-node-c read) nil (ir-node-d read) nil)))
                                     (setf (ir-node-a node) (concatenate 'simple-vector (subseq vars 0 index) fields (subseq vars (1+ index)))
                                           (ir-node-b node) (concatenate 'simple-vector (subseq inits 0 index) (ir-node-b init) (subseq inits (1+ index))))
                                     (setf (ir-var-refs var) 0
