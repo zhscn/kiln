@@ -8,10 +8,10 @@
     (13 (funcall function (ir-node-b node)))
     (otherwise (ir-map-children function node))))
 
-(defun ir-cons-extent-proof (fun body variables var budget borrows &optional binding)
-  "Prove a cons identity is neither retained nor returned from BODY."
+(defun ir-cons-extent-proof (fun body variables var budget borrows &optional binding result-mode)
+  "Return success and primary aliasing; RESULT-MODE :ONLY skips escape checks."
   (let ((eligible (make-hash-table :test #'eq)) (aliases (make-hash-table :test #'eq))
-        (returns (make-hash-table :test #'eq)) (sources nil) (blocks nil) (visible nil))
+        (returns (make-hash-table :test #'eq)) (sources nil) (blocks nil) (visible nil) (returned nil))
     (loop for v across variables do (setf (gethash v eligible) t))
     (setf (gethash var aliases) t)
     (block proof
@@ -44,12 +44,22 @@
                            (some #'tainted (gethash (ir-node-a node) returns))))
                    ((20 22) (tainted (ir-node-a node)))
                    (18 (tainted (ir-node-b node)))
-                   (7 (and (member (ir-node-a node) '(rplaca rplacd))
-                           (plusp (length (ir-node-b node))) (tainted (svref (ir-node-b node) 0))))
+                   (7 (let* ((name (ir-node-a node)) (args (ir-node-b node))
+                             (local (and borrows (ir-fun-p name) (gethash name borrows))))
+                        (cond ((member name '(rplaca rplacd values))
+                               (and (plusp (length args)) (tainted (svref args 0))))
+                              ;; Field projections rely on rejecting stores of this identity below.
+                              ((member name '(car cdr first rest consp listp atom null not eq eql cons list vector)) nil)
+                              ((and local (= (length local) (length args)))
+                               (loop for arg across args for state across local
+                                     thereis (and (not (eq state :borrow)) (tainted arg))))
+                              (t (some #'tainted args)))))
                    (otherwise nil)))
                (check-use (node usage)
                  (tick)
-                 (when (and (eq usage :escape) (tainted node)) (fail))
+                 (when (and (member usage '(:escape :result)) (tainted node))
+                   (when (eq usage :escape) (fail))
+                   (when (eq usage :result) (setf returned t)))
                  (case (ir-node-kind node)
                    ((0 5) nil)
                    ((6 24) (when visible (fail)))
@@ -73,6 +83,12 @@
                                        (and (= count 2) (member name '(eq eql)))))
                            (mutate (and (= count 2) (member name '(rplaca rplacd))))
                            (local-borrows (and borrows (ir-fun-p name) (gethash name borrows))))
+                      (when (eq name 'values)
+                        ;; Other value counts may be saved in a heap list.
+                        (when (and visible (/= count 1)) (fail))
+                        (loop for arg across args for i from 0
+                              do (check-use arg (if (and (= count 1) (zerop i)) usage :escape)))
+                        (return-from check-use nil))
                       (when (and visible
                                  (not (or (and borrow (member name '(consp listp atom null not eq)))
                                           (and (eq name 'eql) (= count 2)
@@ -127,8 +143,10 @@
               do (setf changed nil)
                  (dolist (source sources)
                    (when (and (tainted (cdr source)) (not (gethash (car source) aliases)))
-                     (unless (gethash (car source) eligible) (fail))
+                     (unless (or (eq result-mode :only) (gethash (car source) eligible)) (fail))
                      (setf (gethash (car source) aliases) t changed t))))
+        (when (eq result-mode :only)
+          (return-from proof (values t (tainted body))))
         (maphash (lambda (alias value)
                    (declare (ignore value))
                    (when (source-variable-name alias) (setf visible t))
@@ -148,8 +166,8 @@
                          (and (not (eq (ir-var-type v) t))
                               (not (ir-declaration-proven-p (ir-node-type init) (ir-var-type v)))))
                   do (fail)))
-        (check-use body :escape)
-        t))))
+        (check-use body (if result-mode :result :escape))
+        (values t returned)))))
 
 (defun ir-stack-cons-candidates (fun &optional borrows)
   "Prove cons identities remain within the binding that creates each one."
@@ -171,7 +189,7 @@
     (unless tail-call (nreverse candidates))))
 
 (defun ir-cons-borrow-summaries (functions)
-  "Infer parameters that borrow fresh conses, including recursive call groups."
+  "Infer nonretaining cons parameters and their primary result aliases."
   (let ((summaries (make-hash-table :test #'eq)) (budget (list 65536)))
     (dolist (fun functions)
       (let ((ll (ir-fun-lambda-list fun)))
@@ -179,9 +197,9 @@
                    (zerop (length (ir-lambda-list-optional ll)))
                    (not (ir-lambda-list-rest ll)) (not (ir-lambda-list-key-p ll)))
           (setf (gethash fun summaries)
-                (make-array (length (ir-lambda-list-required ll)) :initial-element t)))))
-    ;; Start with conditional borrowing assumptions, and retract any parameter
-    ;; whose body can retain its identity. No provisional result is published.
+                (make-array (length (ir-lambda-list-required ll)) :initial-element :borrow)))))
+    ;; Primary aliases grow from empty assumptions. Starting from "may return"
+    ;; would lose field-only results in recursive groups.
     (loop with changed = t while changed
           do (setf changed nil)
              (dolist (fun functions)
@@ -189,9 +207,26 @@
                  (when summary
                    (let ((parameters (ir-lambda-list-required (ir-fun-lambda-list fun))))
                      (loop for var across parameters for i from 0
-                           when (and (svref summary i)
-                                     (not (ir-cons-extent-proof fun (ir-fun-body fun) parameters var budget summaries)))
-                             do (setf (svref summary i) nil changed t)
+                           unless (eq (svref summary i) :return)
+                             do (when (nth-value 1 (ir-cons-extent-proof fun (ir-fun-body fun) parameters
+                                                                       var budget summaries nil :only))
+                                  (setf (svref summary i) :return changed t))
+                           do (when (minusp (car budget)) (return-from ir-cons-borrow-summaries nil))))))))
+    ;; Then retract any retaining parameter. Projections remain fixed, and no
+    ;; provisional borrowing assumption is used for allocation decisions.
+    (loop with changed = t while changed
+          do (setf changed nil)
+             (dolist (fun functions)
+               (let ((summary (gethash fun summaries)))
+                 (when summary
+                   (let ((parameters (ir-lambda-list-required (ir-fun-lambda-list fun))))
+                     (loop for var across parameters for i from 0
+                           when (svref summary i)
+                             do (multiple-value-bind (safe returned)
+                                    (ir-cons-extent-proof fun (ir-fun-body fun) parameters
+                                                          var budget summaries nil :allow)
+                                  (unless (and safe (or (eq (svref summary i) :return) (not returned)))
+                                    (setf (svref summary i) nil changed t)))
                            do (when (minusp (car budget)) (return-from ir-cons-borrow-summaries nil))))))))
     summaries))
 
