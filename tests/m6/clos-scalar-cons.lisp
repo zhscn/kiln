@@ -95,3 +95,20 @@
       (scalar-cons-alias-probe)
       (+ (car pair) (cdr alias)))))
 (print (scalar-cons-alias-visible))
+
+(defun scalar-cons-block (flag)
+  (let ((pair (cons 3 4)))
+    (block done
+      (if flag (return-from done (values (car pair) (cdr pair))) (cdr pair)))))
+(multiple-value-call (lambda (&rest values) (print values)) (scalar-cons-block t))
+(multiple-value-call (lambda (&rest values) (print values)) (scalar-cons-block nil))
+(print (block done (let ((pair (cons 5 6))) (return-from done (car pair)))))
+(let ((pair (cons 7 8)))
+  (block done (return-from done (car pair)) (error "Unreachable" pair))
+  (print (cdr pair)))
+(print (let ((pair (cons 1 2))) (block done (return-from done pair))))
+(let ((pair (cons 1 2)))
+  (block done
+    (block done (return-from done (car pair)))
+    (rplacd pair 9)
+    (return-from done (print (cdr pair)))))

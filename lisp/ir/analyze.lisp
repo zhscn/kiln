@@ -161,7 +161,7 @@ Backward liveness preserves objects that a debugger could observe at a safepoint
                    (labels ((candidate (node index)
                               (let* ((var (svref (ir-node-a node) index))
                                      (init (svref (ir-node-b node) index))
-                                     (rewrites nil) (steps 0) (aliases nil) (alias-lets nil))
+                                     (rewrites nil) (steps 0) (aliases nil) (alias-lets nil) (exits nil) (truncated nil))
                                 (unless (and (= (ir-node-kind init) 7) (eq (ir-node-a init) 'cons)
                                              (= (length (ir-node-b init)) 2)
                                              (not (eq (ir-node-d init) :notinline))
@@ -176,10 +176,16 @@ Backward liveness preserves objects that a debugger could observe at a safepoint
                                              (loop for i downfrom (1- (length nodes)) to 0
                                                    do (setf needed (walk (svref nodes i) needed)))
                                              needed)
-                                           (sequence (nodes needed discarded)
-                                             (loop for i downfrom (1- (length nodes)) to 0
-                                                   do (setf needed (walk (svref nodes i) needed
-                                                                         (or discarded (< i (1- (length nodes)))))))
+                                           (sequence (form needed discarded)
+                                             (let* ((nodes (ir-node-a form))
+                                                    (end (loop for i below (length nodes)
+                                                               do (when (or (> (incf steps) 256) (minusp (decf budget))) (fail))
+                                                               when (= (ir-node-kind (svref nodes i)) 15) return i
+                                                               finally (return (1- (length nodes))))))
+                                               (when (< end (1- (length nodes))) (push (cons form (1+ end)) truncated))
+                                               (loop for i downfrom end to 0
+                                                     do (setf needed (walk (svref nodes i) needed
+                                                                           (or discarded (< i end))))))
                                              needed)
                                            (walk (form needed &optional discarded)
                                              (when (or (> (incf steps) 256) (minusp (decf budget))) (fail))
@@ -225,7 +231,7 @@ Backward liveness preserves objects that a debugger could observe at a safepoint
                                                (9 (let ((yes (walk (ir-node-b form) needed discarded))
                                                         (no (walk (ir-node-c form) needed discarded)))
                                                     (walk (ir-node-a form) (or yes no))))
-                                               (10 (sequence (ir-node-a form) needed discarded))
+                                               (10 (sequence form needed discarded))
                                                (11
                                                 (when (ir-node-d form) (fail))
                                                 (let ((bindings (ir-node-a form)) (values (ir-node-b form))
@@ -254,6 +260,18 @@ Backward liveness preserves objects that a debugger could observe at a safepoint
                                                         unless (member (svref bindings i) new :test #'eq)
                                                         do (setf needed (walk (svref values i) needed)))
                                                   needed))
+                                               (14
+                                                (let ((exit (ir-node-a form)))
+                                                  (when (logtest 1 (ir-exit-flags exit)) (fail))
+                                                  (push (list exit needed discarded) exits)
+                                                  (prog1 (walk (ir-node-b form) needed discarded)
+                                                    (pop exits))))
+                                               (15
+                                                (let* ((exit (ir-node-a form))
+                                                       (target (assoc exit exits :test #'eq)))
+                                                  (when (or (logtest 1 (ir-exit-flags exit))
+                                                            (not (eq (ir-exit-owner exit) fun))) (fail))
+                                                  (walk (ir-node-b form) (second target) (third target))))
                                                (otherwise (fail)))))
                                     (let ((needed (walk (ir-node-c node) nil)))
                                       (when needed
@@ -276,6 +294,8 @@ Backward liveness preserves objects that a debugger could observe at a safepoint
                                         (when value (setf (ir-var-flags field) (logior 1 (ir-var-flags field))))
                                         (setf (ir-node-kind read) (if value 2 1) (ir-node-a read) field
                                               (ir-node-b read) value (ir-node-c read) nil (ir-node-d read) nil)))
+                                    (dolist (entry truncated)
+                                      (setf (ir-node-a (car entry)) (subseq (ir-node-a (car entry)) 0 (cdr entry))))
                                     (dolist (entry alias-lets)
                                       (let* ((binding-node (car entry)) (discard (cdr entry))
                                              (bindings (ir-node-a binding-node)) (values (ir-node-b binding-node))
