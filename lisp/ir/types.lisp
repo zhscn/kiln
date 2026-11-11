@@ -541,6 +541,70 @@
          (zerop (length (ir-lambda-list-optional ll)))
          (not (ir-lambda-list-rest ll)) (not (ir-lambda-list-key-p ll)))))
 
+(defun ir-block-result-type (node)
+  "Join reachable primary values at local block exits using pointwise facts."
+  (block analysis
+    (let ((steps 0) (exits nil) (written nil))
+      (labels ((join (a b)
+                 (cond ((eq a :no-normal-value) b) ((eq b :no-normal-value) a)
+                       (t (ir-type-join a b))))
+               (many (nodes)
+                 (let ((type 'null))
+                   (loop for child across nodes
+                         until (eq type :no-normal-value)
+                         do (setf type (walk child)))
+                   type))
+               (walk (form)
+                 (when (> (incf steps) 256) (return-from analysis (values t t)))
+                 (case (ir-node-kind form)
+                   ((0 1 3 5 6 24) (ir-node-type form))
+                   ((2 4 23)
+                    (when (= (ir-node-kind form) 2) (setf written t))
+                    (let ((value (walk (ir-node-b form))))
+                      (if (eq value :no-normal-value) value
+                          (ir-type-intersection value (ir-node-type form)))))
+                   (7
+                    (if (or (and (ir-node-p (ir-node-a form))
+                                 (eq (walk (ir-node-a form)) :no-normal-value))
+                            (eq (many (ir-node-b form)) :no-normal-value))
+                        :no-normal-value (ir-node-type form)))
+                   (9
+                    (if (eq (walk (ir-node-a form)) :no-normal-value) :no-normal-value
+                        (let ((yes (walk (ir-node-b form))) (no (walk (ir-node-c form))))
+                          (join yes no))))
+                   (10 (many (ir-node-a form)))
+                   (11 (if (eq (many (ir-node-b form)) :no-normal-value) :no-normal-value
+                           (walk (ir-node-c form))))
+                   (12 (if (eq (walk (ir-node-b form)) :no-normal-value) :no-normal-value
+                           (walk (ir-node-c form))))
+                   (13 (walk (ir-node-b form)))
+                   (14
+                    (let ((exit (ir-node-a form)))
+                      (when (logtest 1 (ir-exit-flags exit)) (return-from analysis (values t t)))
+                      (let ((entry (cons exit :no-normal-value)))
+                        (push entry exits)
+                        (let ((normal (walk (ir-node-b form))))
+                          (pop exits)
+                          (join normal (cdr entry))))))
+                   (15
+                    (let* ((value (walk (ir-node-b form)))
+                           (entry (assoc (ir-node-a form) exits :test #'eq)))
+                      (when entry (setf (cdr entry) (join (cdr entry) value)))
+                      :no-normal-value))
+                   ((16 17 18 19 20 25) (return-from analysis (values t t)))
+                   (22
+                    (let ((value (walk (ir-node-a form))))
+                      (if (or (eq value :no-normal-value)
+                              (eq (walk (ir-node-b form)) :no-normal-value))
+                          :no-normal-value value)))
+                   (otherwise
+                    (let ((normal t))
+                      (ir-map-children (lambda (child)
+                                         (when (and normal (eq (walk child) :no-normal-value))
+                                           (setf normal nil))) form)
+                      (if normal (ir-node-type form) :no-normal-value))))))
+        (let ((type (walk node))) (values (if (eq type :no-normal-value) t type) written))))))
+
 (defun infer-ir-types (root)
   "Propagate pointwise facts and local function input/primary-result types."
   (let ((members nil) (capture-candidates nil) (capture-order nil)
@@ -674,7 +738,14 @@
                 (setf environment next-env written (or written next-write))))
              (23 (multiple-value-setq (type environment written) (visit (ir-node-b node) environment)))
              (24 (function-types (ir-node-a node) nil))
-             ((14 15 17 18 19 25)
+             (14
+              (multiple-value-bind (ignored next-env next-write) (visit (ir-node-b node) environment)
+                (declare (ignore ignored next-env))
+                (multiple-value-bind (result actual-write) (ir-block-result-type node)
+                  (setf type result)
+                  (when (and next-write actual-write)
+                    (setf environment (ir-immutable-types environment) written t)))))
+             ((15 17 18 19 25)
               (let ((base (if (= (ir-node-kind node) 17) (ir-immutable-types environment) environment)))
                 (multiple-value-bind (ignored next-env next-write) (children node base)
                   (declare (ignore ignored next-env))
