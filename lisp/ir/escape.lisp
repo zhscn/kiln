@@ -305,10 +305,11 @@
                  (and (ir-fun-p callee) (not (eq callee fun))
                       (let ((ll (ir-fun-lambda-list callee)))
                         (and ll (ir-fun-body callee) (null (ir-fun-parameter-specials callee))
-                             (zerop (length (ir-lambda-list-optional ll)))
                              (not (ir-lambda-list-key-p ll))
                              (>= count (length (ir-lambda-list-required ll)))
-                             (or (ir-lambda-list-rest ll) (= count (length (ir-lambda-list-required ll))))))
+                             (or (ir-lambda-list-rest ll)
+                                 (<= count (+ (length (ir-lambda-list-required ll))
+                                              (length (ir-lambda-list-optional ll)))))))
                       (case (gethash callee checked)
                         (:yes t) (:no nil)
                         (otherwise
@@ -329,6 +330,11 @@
                    (unless (eq callee fun)
                      (loop for var across (ir-lambda-list-required (ir-fun-lambda-list callee))
                            do (setf (gethash var variables) (if (logtest 1 (ir-fun-flags callee)) 1 0)))
+                     (loop for parameter across (ir-lambda-list-optional (ir-fun-lambda-list callee))
+                           do (setf (gethash (svref parameter 0) variables)
+                                    (if (logtest 1 (ir-fun-flags callee)) 1 0))
+                              (when (svref parameter 2)
+                                (setf (gethash (svref parameter 2) variables) 1)))
                      (let ((rest (ir-lambda-list-rest (ir-fun-lambda-list callee))))
                        (when rest (setf (gethash rest variables) 1))))
                    (let ((saved current) (saved-depth repeated-depth))
@@ -432,8 +438,12 @@
                                     (let ((parameters (ir-lambda-list-required (ir-fun-lambda-list name))))
                                       (loop for parameter across parameters for argument across values
                                             do (assign parameter argument))
-                                      (loop for i from (length parameters) below count
-                                            do (escape (svref values i))))
+                                      (let* ((optional (ir-lambda-list-optional (ir-fun-lambda-list name)))
+                                             (start (length parameters)))
+                                        (loop for parameter across optional for i from start below count
+                                              do (assign (svref parameter 0) (svref values i)))
+                                        (loop for i from (+ start (length optional)) below count
+                                              do (escape (svref values i)))))
                                     (gethash name results 0))
                                    (t (setf effects t) (loop for v across values do (escape v)) 1))))
                               (8 (setf effects t) (loop for arg across (ir-node-a node) do (escape (value arg))) 1)
@@ -471,9 +481,13 @@
                    (dolist (callee functions)
                      (if (eq callee fun)
                          (ir-map-function (lambda (node) (escape (value node))) callee)
-                         (let* ((old (gethash callee results 0))
-                                (new (logior old (value (ir-fun-body callee)))))
-                           (unless (= old new) (setf (gethash callee results) new changed t))))))))
+                         (progn
+                           ;; Join every default entry: callers may supply different optional prefixes.
+                           (loop for parameter across (ir-lambda-list-optional (ir-fun-lambda-list callee))
+                                 do (assign (svref parameter 0) (value (svref parameter 1))))
+                           (let* ((old (gethash callee results 0))
+                                  (new (logior old (value (ir-fun-body callee)))))
+                             (unless (= old new) (setf (gethash callee results) new changed t)))))))))
         (catalog-function fun)
         (setf functions (nreverse functions))
         (unless objects (fail))
