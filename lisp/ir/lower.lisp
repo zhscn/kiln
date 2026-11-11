@@ -570,6 +570,8 @@ predicate inside it is branched on, not made into T or NIL and compared."
 
 (defun ir-lower-double-bits (node)
   (case (ir-node-kind node)
+    (2 (when (ir-raw-double-variable-p (ir-node-a node))
+         (return-from ir-lower-double-bits (ir-lower-assignment node t t))))
     (7 (when (and (eq (ir-node-a node) 'values) (not (eq (ir-node-d node) :notinline))
                   (plusp (length (ir-node-b node))))
          (let* ((args (ir-node-b node)) (result (ir-lower-double-bits (svref args 0))))
@@ -770,7 +772,7 @@ unsupported call. Arguments retain their evaluation order and effects."
     (when (ir-node-c node) (ir-check-declaration value (ir-node-b node)))
     value))
 
-(defun ir-lower-assignment (node &optional (value-needed t))
+(defun ir-lower-assignment (node &optional (value-needed t) double-primary)
   (let* ((var (ir-node-a node)) (init (ir-node-b node))
          (*call-source* (or (ir-node-source init) *call-source*)))
     (when (ir-raw-double-variable-p var)
@@ -780,7 +782,8 @@ unsupported call. Arguments retain their evaluation order and effects."
                         (ir-check-declaration value (ir-var-type var) (ir-node-type init))
                         (copy-to-var `(:load ,value ,(- 8 +tag-general+)) :raw)))))
         (emit `(:set ,(ir-variable-operand var) ,bits))
-        (return-from ir-lower-assignment (if value-needed (ir-box-double-bits bits) (nil-value)))))
+        (return-from ir-lower-assignment
+          (cond (double-primary bits) (value-needed (ir-box-double-bits bits)) (t (nil-value))))))
     ;; A checked fixnum destination can share arithmetic's overflow edge.
     ;; Construct the full result there so TYPE-ERROR retains its datum.
     (when (and (eq (ir-var-type var) 'fixnum) (= (ir-node-kind init) 7))
