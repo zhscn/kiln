@@ -140,6 +140,8 @@
        (ir-node-type (svref args 0)))
       ((and (eq name 'char-code) (= count 1)) (ir-integer-range 0 #x10ffff))
       ((eq name 'values) (if (plusp count) (ir-node-type (svref args 0)) 'null))
+      ((and (= count 1) (member name '(- abs 1+ 1-))
+            (eq (ir-node-type (svref args 0)) 'double-float)) 'double-float)
       ((and (member name '(+ - *)) (= count 2))
        (let* ((at (ir-node-type (svref args 0))) (bt (ir-node-type (svref args 1)))
               (a (or (ir-type-range at) at)) (b (or (ir-type-range bt) bt)))

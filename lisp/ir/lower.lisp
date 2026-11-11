@@ -545,8 +545,10 @@ predicate inside it is branched on, not made into T or NIL and compared."
       (values result t))))
 
 (defun ir-double-arithmetic-p (node)
-  (and (= (ir-node-kind node) 7) (member (ir-node-a node) '(+ - *))
-       (= (length (ir-node-b node)) 2)
+  (and (= (ir-node-kind node) 7)
+       (let ((name (ir-node-a node)) (count (length (ir-node-b node))))
+         (or (and (= count 2) (member name '(+ - *)))
+             (and (= count 1) (member name '(- abs 1+ 1-)))))
        (every (lambda (arg) (eq (ir-node-type arg) 'double-float)) (ir-node-b node))))
 
 (defun ir-lower-double-bits (node)
@@ -554,11 +556,18 @@ predicate inside it is branched on, not made into T or NIL and compared."
              (ir-raw-double-variable-p (ir-node-a node)))
     (return-from ir-lower-double-bits (copy-to-var (ir-variable-operand (ir-node-a node)) :f64)))
   (if (ir-double-arithmetic-p node)
-      (let* ((args (ir-node-b node))
-             (left (ir-lower-double-bits (svref args 0)))
-             (right (ir-lower-double-bits (svref args 1))))
-        (copy-to-var `(,(case (ir-node-a node) (+ :f64-add) (- :f64-sub) (* :f64-mul))
-                      ,left ,right) :f64))
+      (let* ((args (ir-node-b node)) (name (ir-node-a node))
+             (left (ir-lower-double-bits (svref args 0))))
+        (if (= (length args) 2)
+            (let ((right (ir-lower-double-bits (svref args 1))))
+              (copy-to-var `(,(case name (+ :f64-add) (- :f64-sub) (* :f64-mul))
+                            ,left ,right) :f64))
+            (case name
+              (- (copy-to-var `(:xor ,left ,(- #x8000000000000000)) :f64))
+              (abs (copy-to-var `(:and ,left #x7fffffffffffffff) :f64))
+              (otherwise
+               (copy-to-var `(,(if (eq name '1+) :f64-add :f64-sub)
+                             ,left #x3ff0000000000000) :f64)))))
       (let ((object (ir-lower node)))
         (copy-to-var `(:load ,object ,(- 8 +tag-general+)) :f64))))
 
@@ -597,7 +606,7 @@ unsupported call. Arguments retain their evaluation order and effects."
           (values (ir-lower-fixnum-arithmetic
                    (if (eq name '1+) '+ '-) value (ash 1 +fixnum-shift+)
                    (ir-fixnum-type-p (ir-node-type node))) t))))
-    (when (and (= count 2) (member name '(+ - *)) (ir-double-arithmetic-p node))
+    (when (ir-double-arithmetic-p node)
       (let* ((bits (ir-lower-double-bits node))
              (object (emit-alloc 16 +kind-double+)))
         (emit `(:store ,object 8 ,bits))
