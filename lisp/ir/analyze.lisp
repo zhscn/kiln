@@ -260,6 +260,13 @@ Backward liveness preserves objects that a debugger could observe at a safepoint
                                                         unless (member (svref bindings i) new :test #'eq)
                                                         do (setf needed (walk (svref values i) needed)))
                                                   needed))
+                                               (13
+                                                (setf needed (walk (ir-node-b form) needed discarded))
+                                                (when needed
+                                                  (loop for nested across (ir-node-a form)
+                                                        do (when (or (> (incf steps) 256) (minusp (decf budget))
+                                                                     (plusp (length (ir-fun-free nested)))) (fail))))
+                                                needed)
                                                (14
                                                 (let ((exit (ir-node-a form)))
                                                   (when (logtest 1 (ir-exit-flags exit)) (fail))

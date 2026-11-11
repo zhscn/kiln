@@ -541,7 +541,7 @@
          (zerop (length (ir-lambda-list-optional ll)))
          (not (ir-lambda-list-rest ll)) (not (ir-lambda-list-key-p ll)))))
 
-(defun ir-block-types (node environment visit)
+(defun ir-block-types (node environment visit function-types)
   "Merge pointwise states at local block exits. Value four reports success."
   (let ((size 0) (exits nil) (written nil))
     (labels ((children (function form)
@@ -564,6 +564,7 @@
                  (10 (every #'supported (ir-node-a form)))
                  (11 (and (every #'plain (ir-node-b form)) (supported (ir-node-c form))))
                  (12 (and (plain (ir-node-b form)) (supported (ir-node-c form))))
+                 (13 (supported (ir-node-b form)))
                  ((14 15)
                   (and (not (logtest 1 (ir-exit-flags (ir-node-a form))))
                        (if (= (ir-node-kind form) 14) (supported (ir-node-b form)) (plain (ir-node-b form)))))
@@ -609,6 +610,9 @@
                    (12
                     (multiple-value-setq (type state) (leaf (ir-node-b form) state))
                     (multiple-value-setq (type state) (walk (ir-node-c form) state)))
+                   (13
+                    (loop for fun across (ir-node-a form) do (funcall function-types fun state))
+                    (multiple-value-setq (type state) (walk (ir-node-b form) state)))
                    (14
                     (let ((entry (vector (ir-node-a form) t :unreachable)))
                       (push entry exits)
@@ -826,7 +830,7 @@
              (23 (multiple-value-setq (type environment written) (visit (ir-node-b node) environment)))
              (24 (function-types (ir-node-a node) nil))
              (14
-              (multiple-value-bind (result state write solved) (ir-block-types node environment #'visit)
+              (multiple-value-bind (result state write solved) (ir-block-types node environment #'visit #'function-types)
                 (if solved
                     (setf type result environment state written write)
                     (multiple-value-bind (ignored next-env next-write) (visit (ir-node-b node) environment)
