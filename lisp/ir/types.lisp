@@ -544,7 +544,7 @@
 (defun infer-ir-types (root)
   "Propagate pointwise facts and local function input/primary-result types."
   (let ((members nil) (capture-candidates nil) (capture-order nil)
-        (simple t) (local-calls nil))
+        (simple t) (local-calls nil) (conses nil))
     (labels
       ((function-types (fun environment)
          (let ((environment
@@ -600,6 +600,8 @@
                       environment (ir-bind-type (ir-node-a node) type environment) written t)))
              ((6 7)
               (let ((callee (ir-node-a node)))
+                (when (and (= (ir-node-kind node) 7) (eq callee 'cons)
+                           (= (length (ir-node-b node)) 2)) (setf conses t))
                 (cond ((ir-node-p callee)
                        (multiple-value-setq (type environment written) (visit callee environment)))
                       ((ir-own-function node) (function-types callee environment)))
@@ -748,4 +750,4 @@
                       do (unless pending (setf tail nil))
                          (remhash fun queued)
                          (analyze-function fun)))))))
-    (values root local-calls)))
+    (values root local-calls conses)))
