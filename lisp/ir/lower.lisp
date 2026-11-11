@@ -2,18 +2,37 @@
 
 (defvar *ir-lowering-function*)
 
+(defun ir-raw-double-variable-p (var)
+  (let ((value (ir-var-lowering var)))
+    (and (consp value) (eq (car value) :double-bits))))
+
+(defun ir-box-double-bits (bits)
+  (let* ((bits (copy-to-var bits :raw)) (object (emit-alloc 16 +kind-double+)))
+    (emit `(:store ,object 8 ,bits))
+    (copy-to-var `(:add ,object ,+tag-general+))))
+
 (defun ir-variable-operand (var)
   (if (eq (ir-var-owner var) *ir-lowering-function*)
-      (or (ir-var-lowering var) (fail "IR variable ~S is not bound" (ir-var-name var)))
+      (let ((value (or (ir-var-lowering var) (fail "IR variable ~S is not bound" (ir-var-name var)))))
+        (if (ir-raw-double-variable-p var) (cdr value) value))
       (let ((index (position var (ir-fun-free *ir-lowering-function*) :test #'eq)))
         (unless index (fail "IR variable ~S is missing from closure layout" (ir-var-name var)))
         (copy-to-var `(:load ,*self* ,(+ +fobj-env+ (* 8 index)))))))
 
 (defun ir-variable-value (var)
   (let ((value (ir-variable-operand var)))
-    (if (logtest 4 (ir-var-flags var)) (copy-to-var `(:load ,value ,+cons-car+)) (copy-to-var value))))
+    (cond ((ir-raw-double-variable-p var) (ir-box-double-bits value))
+          ((logtest 4 (ir-var-flags var)) (copy-to-var `(:load ,value ,+cons-car+)))
+          (t (copy-to-var value)))))
 
-(defun ir-bind-variable (var value)
+(defun ir-bind-variable (var value &optional raw-local)
+  (when (and raw-local (ir-var-type var) (not (eq (ir-var-type var) t))
+             (not (logtest 6 (ir-var-flags var)))
+             (eq (ir-declaration-type (ir-var-type var)) 'double-float))
+    (let ((operand (copy-to-var `(:load ,value ,(- 8 +tag-general+)) :f64)))
+      (setf (ir-var-lowering var) (cons :double-bits operand))
+      (note-debug-var operand (source-variable-name var) nil :double-bits)
+      (return-from ir-bind-variable operand)))
   (let* ((cell (logtest 4 (ir-var-flags var)))
          (operand (copy-to-var (if cell (emit-cons value (nil-value)) value))))
     (setf (ir-var-lowering var) operand)
@@ -22,9 +41,11 @@
 
 (defun ir-set-variable (var value &optional (actual t) (check t))
   (when check (ir-check-declaration value (ir-var-type var) actual))
-  (if (logtest 4 (ir-var-flags var))
-      (emit `(:store ,(ir-variable-operand var) ,+cons-car+ ,value))
-      (emit `(:set ,(ir-variable-operand var) ,value)))
+  (cond ((ir-raw-double-variable-p var)
+         (emit `(:set ,(ir-variable-operand var) (:load ,value ,(- 8 +tag-general+)))))
+        ((logtest 4 (ir-var-flags var))
+         (emit `(:store ,(ir-variable-operand var) ,+cons-car+ ,value)))
+        (t (emit `(:set ,(ir-variable-operand var) ,value))))
   value)
 
 (defun ir-parameter-list (fun)
@@ -155,10 +176,17 @@
 (defun ir-lower (node)
   (values (ir-lower-mv node)))
 
+(defun ir-lower-effect (node)
+  (case (ir-node-kind node)
+    (2 (if (ir-raw-double-variable-p (ir-node-a node))
+           (ir-lower-assignment node nil) (ir-lower node)))
+    (10 (loop for form across (ir-node-a node) do (ir-lower-effect form)))
+    (otherwise (ir-lower node))))
+
 (defun ir-lower-sequence (nodes)
   (if (zerop (length nodes))
       (values (nil-value) 1)
-      (progn (loop for i below (1- (length nodes)) do (ir-lower (svref nodes i)))
+      (progn (loop for i below (1- (length nodes)) do (ir-lower-effect (svref nodes i)))
              (ir-lower-mv (svref nodes (1- (length nodes)))))))
 
 (defun ir-ref-to-p (node var)
@@ -219,11 +247,11 @@ used nowhere else: test and rest."
                                                ,(nil-value)))))))
             (loop for var across vars for value across values
                   do (ir-check-declaration value (ir-var-type var))
-                     (ir-bind-variable var value))))
+                     (ir-bind-variable var value t))))
         (let ((values (map 'simple-vector (lambda (init) (copy-to-var (ir-lower init))) inits)))
           (loop for var across vars for value across values for init across inits
                 do (ir-check-declaration value (ir-var-type var) (ir-node-type init))
-                   (ir-bind-variable var value))))))
+                   (ir-bind-variable var value t))))))
 
 (defun ir-lower-branch (node then else)
   "Lowers NODE for its truth only: a jump to THEN or ELSE. A test that is
@@ -344,14 +372,17 @@ predicate inside it is branched on, not made into T or NIL and compared."
        (every (lambda (arg) (eq (ir-node-type arg) 'double-float)) (ir-node-b node))))
 
 (defun ir-lower-double-bits (node)
+  (when (and (= (ir-node-kind node) 1) (not (ir-node-c node))
+             (ir-raw-double-variable-p (ir-node-a node)))
+    (return-from ir-lower-double-bits (copy-to-var (ir-variable-operand (ir-node-a node)) :f64)))
   (if (ir-double-arithmetic-p node)
       (let* ((args (ir-node-b node))
              (left (ir-lower-double-bits (svref args 0)))
              (right (ir-lower-double-bits (svref args 1))))
         (copy-to-var `(,(case (ir-node-a node) (+ :f64-add) (- :f64-sub) (* :f64-mul))
-                      ,left ,right) :raw))
+                      ,left ,right) :f64))
       (let ((object (ir-lower node)))
-        (copy-to-var `(:load ,object ,(- 8 +tag-general+)) :raw))))
+        (copy-to-var `(:load ,object ,(- 8 +tag-general+)) :f64))))
 
 (defun ir-lower-typed-call (node)
   "Return a primary value and a success flag without partially lowering an
@@ -485,9 +516,17 @@ unsupported call. Arguments retain their evaluation order and effects."
     (when (ir-node-c node) (ir-check-declaration value (ir-node-b node)))
     value))
 
-(defun ir-lower-assignment (node)
+(defun ir-lower-assignment (node &optional (value-needed t))
   (let* ((var (ir-node-a node)) (init (ir-node-b node))
          (*call-source* (or (ir-node-source init) *call-source*)))
+    (when (ir-raw-double-variable-p var)
+      (let ((bits (if (ir-declaration-proven-p (ir-node-type init) (ir-var-type var))
+                      (ir-lower-double-bits init)
+                      (let ((value (ir-lower init)))
+                        (ir-check-declaration value (ir-var-type var) (ir-node-type init))
+                        (copy-to-var `(:load ,value ,(- 8 +tag-general+)) :raw)))))
+        (emit `(:set ,(ir-variable-operand var) ,bits))
+        (return-from ir-lower-assignment (if value-needed (ir-box-double-bits bits) (nil-value)))))
     ;; A checked fixnum destination can share arithmetic's overflow edge.
     ;; Construct the full result there so TYPE-ERROR retains its datum.
     (when (and (eq (ir-var-type var) 'fixnum) (= (ir-node-kind init) 7))
@@ -727,7 +766,7 @@ unsupported call. Arguments retain their evaluation order and effects."
       (loop for segment across segments for block across blocks for i from 0
             do (start-block block)
                (emit-poll)
-               (ir-lower (cdr segment))
+               (ir-lower-effect (cdr segment))
                (jump (if (< (1+ i) (length blocks)) (svref blocks (1+ i)) exit))))
     (when region
       (let ((land (new-block)) (bad (new-block)))

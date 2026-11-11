@@ -622,9 +622,12 @@ outermost form as written (before macro expansion)."
        `((:loc ,(ldb (byte 25 25) *call-source*)
                ,(ldb (byte 25 0) *call-source*)))))
 
-(defun note-debug-var (var name cell)
+(defun note-debug-var (var name cell &optional representation)
   (when (and name (symbolp name) (symbol-package name))
-      (push (if cell (list :cell name) name) *debug-vars*)
+    (push (cond (cell (list :cell name))
+                (representation (list representation name))
+                (t name))
+          *debug-vars*)
     (kiln.kir::label-var var *debug-var-count*)
     (incf *debug-var-count*)))
 

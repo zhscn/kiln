@@ -930,7 +930,8 @@ impl<M: Module> FuncLowering<'_, M> {
 
     /// Assigns `val` to the variable `name`.
     fn def(&mut self, b: &mut FunctionBuilder, name: &str, val: Value) -> R<()> {
-        let val = if self.var_kinds.get(name) == Some(&VarKind::F64) {
+        let val = if self.var_kinds.get(name) == Some(&VarKind::F64)
+            && b.func.dfg.value_type(val) != ir::types::F64 {
             b.ins().bitcast(ir::types::F64, MemFlagsData::new(), val)
         } else { val };
         b.def_var(self.var(name)?, val);
@@ -1032,7 +1033,9 @@ impl<M: Module> FuncLowering<'_, M> {
     fn stmt(&mut self, b: &mut FunctionBuilder, s: &Stmt) -> R<bool> {
         match s {
             Stmt::Set(v, e) => {
-                let val = self.expr(b, e)?;
+                let val = if self.var_kinds.get(v) == Some(&VarKind::F64) {
+                    self.float_expr(b, e)?
+                } else { self.expr(b, e)? };
                 self.def(b, v, val)?;
             }
             Stmt::Store(a, off, v) => {
@@ -1187,6 +1190,33 @@ impl<M: Module> FuncLowering<'_, M> {
             CmpOp::Ge => IntCC::SignedGreaterThanOrEqual,
         };
         Ok(b.ins().icmp(cc, x, y))
+    }
+
+    fn float_expr(&mut self, b: &mut FunctionBuilder, e: &Expr) -> R<Value> {
+        Ok(match e {
+            Expr::Var(name) if self.var_kinds.get(name) == Some(&VarKind::F64) => b.use_var(self.var(name)?),
+            Expr::Int(bits) => b.ins().f64const(ir::immediates::Ieee64::with_bits(*bits as u64)),
+            Expr::Load(address, offset) => {
+                let address = self.expr(b, address)?;
+                let flags = trusted(b);
+                b.ins().load(ir::types::F64, flags, address, *offset)
+            }
+            Expr::Bin(op @ (BinOp::F64Add | BinOp::F64Sub | BinOp::F64Mul | BinOp::F64Div), x, y) => {
+                let x = self.float_expr(b, x)?;
+                let y = self.float_expr(b, y)?;
+                match op {
+                    BinOp::F64Add => b.ins().fadd(x, y),
+                    BinOp::F64Sub => b.ins().fsub(x, y),
+                    BinOp::F64Mul => b.ins().fmul(x, y),
+                    BinOp::F64Div => b.ins().fdiv(x, y),
+                    _ => unreachable!(),
+                }
+            }
+            _ => {
+                let bits = self.expr(b, e)?;
+                b.ins().bitcast(ir::types::F64, MemFlagsData::new(), bits)
+            }
+        })
     }
 
     fn expr(&mut self, b: &mut FunctionBuilder, e: &Expr) -> R<Value> {
