@@ -581,6 +581,7 @@ predicate inside it is branched on, not made into T or NIL and compared."
               (ir-lower-double-bits (svref forms (1- (length forms))))))))
     (11 (ir-bind-let node)
         (return-from ir-lower-double-bits (ir-lower-double-bits (ir-node-c node))))
+    (20 (return-from ir-lower-double-bits (ir-lower-unwind-protect node t)))
     (22 (let ((result (ir-lower-double-bits (ir-node-a node))))
           (ir-lower-effect (ir-node-b node))
           (return-from ir-lower-double-bits result)))
@@ -902,20 +903,25 @@ unsupported call. Arguments retain their evaluation order and effects."
     (emit-error +err-no-catch-tag+ tv)
     (nil-value)))
 
-(defun ir-lower-unwind-protect (ast)
+(defun ir-lower-unwind-protect (ast &optional double-primary)
   (let* ((cleanup (list (ir-node-b ast)))
-         (r (new-var)) (n (new-var :raw)) (cont (new-block)) (land (new-block))
+         (r (new-var (if double-primary :f64 :obj)))
+         (n (and (not double-primary) (new-var :raw))) (cont (new-block)) (land (new-block))
          (region (establish-entry :unwind-protect)))
     (setf (region-cleanup region) cleanup)
     (multiple-value-bind (v nv)
         (let ((*regions* (cons region *regions*)))
-          (lower-mv (ir-node-a ast)))
+          (if double-primary (values (ir-lower-double-bits (ir-node-a ast)) 1)
+              (lower-mv (ir-node-a ast))))
       (pop-entry region)
-      (if cleanup
-          (let ((saved (emit-save-values v nv)))
-            (lower-progn cleanup)
-            (multiple-value-call #'set-mv r n (emit-restore-values saved nv)))
-          (set-mv r n v nv)))
+      (cond (double-primary
+             (emit `(:set ,r ,v))
+             (ir-lower-effect (ir-node-b ast)))
+            (cleanup
+             (let ((saved (emit-save-values v nv)))
+               (lower-progn cleanup)
+               (multiple-value-call #'set-mv r n (emit-restore-values saved nv))))
+            (t (set-mv r n v nv))))
     (jump cont)
     (start-dispatch region land)
     ;; Entered by an unwind passing through: the entry stays linked, marked
@@ -932,7 +938,7 @@ unsupported call. Arguments retain their evaluation order and effects."
     (emit `(:call-rt ,(rt-continue-unwind) () (:ctx (:slot ,(region-slot region))) ,(handler)))
     (emit '(:trap))
     (start-block cont)
-    (values r n)))
+    (values r (or n 1))))
 
 
 (defun ir-lower-progv (ast)
