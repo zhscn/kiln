@@ -614,7 +614,7 @@
                  ((block done (funcall (lambda () (block inner (return-from inner 1))))
                               (return-from done 2)) (integer 2 2))
                  ((block done (let ((escape (lambda () (return-from done "nonlocal")))) (opaque-call escape)) 2) t)
-                 ((block done (unwind-protect (return-from done 1) (return-from done "cleanup"))) t)))
+                 ((block done (unwind-protect (return-from done 1) (return-from done "cleanup"))) :native-string)))
   (assert (equal (second entry) (ir-node-type (ir-fun-body (ir-test-form (first entry)))))))
 (assert (eq t (ir-node-type (ir-fun-body (ir-test-form
                                          `(block done ,@(loop repeat 17000 collect nil) (return-from done 1)))))))
@@ -976,3 +976,49 @@
            (type (ir-node-type (ir-fun-body (ir-test-form form))))
            (actual (eval form)))
       (assert (or (eq type t) (ir-known-subtype-p (ir-constant-type actual) type))))))
+
+(dolist (entry '(((let ((value 0))
+                    (tagbody
+                       (unwind-protect (go wrong) (setq value 7) (go done))
+                     wrong (setq value "unreachable")
+                     done)
+                    value) (integer 7 7))
+                 ((block done
+                    (unwind-protect
+                         (unwind-protect (return-from done 1) (return-from done "inner"))
+                      (return-from done (cons 2 3)))) cons)
+                 ((block done
+                    (unwind-protect (return-from done (values 1 2))
+                      (return-from done (values)))) null)
+                 ((let ((value 0))
+                    (tagbody
+                       (unwind-protect (error "protected") (setq value "changed") (go done))
+                       (setq value 7)
+                     done)
+                    value) :native-string)
+                 ((block done
+                    (unwind-protect (return-from done 7)
+                      (block local (return-from local "ignored")))) (integer 7 7))))
+  (let ((root (ir-test-form (first entry))))
+    (assert (equal (second entry) (ir-node-type (ir-fun-body root))))))
+
+(let ((cleanup '(setq value "changed")))
+  (dotimes (i 16) (setf cleanup `(unwind-protect nil ,cleanup)))
+  (let ((root (ir-test-form `(let ((value 0))
+                             (block done (unwind-protect (return-from done value) ,cleanup))))))
+    (assert (eq t (ir-node-type (ir-fun-body root))))))
+
+(dolist (choose '(t nil))
+  (let* ((form `(let ((value 0) (counter 0))
+                  (tagbody again
+                     (unwind-protect
+                          (if (>= counter 3) (go done) (setq value (cons counter nil)))
+                       (incf counter)
+                       (when (< counter 2) (setq value "retry") (go again))
+                       (when ,choose (setq value 7)))
+                     (go again)
+                   done)
+                  value))
+         (type (ir-node-type (ir-fun-body (ir-test-form form))))
+         (actual (eval form)))
+    (assert (or (eq type t) (ir-known-subtype-p (ir-constant-type actual) type)))))
