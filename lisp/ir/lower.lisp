@@ -406,8 +406,36 @@ used nowhere else: test and rest."
                  (ir-ref-to-p (ir-node-a body) var) (ir-ref-to-p (ir-node-b body) var))
         (values (svref (ir-node-b node) 0) (ir-node-c body))))))
 
+(defun ir-bind-direct-values (vars init)
+  (unless (and (= (ir-node-kind init) 7) (eq (ir-node-a init) 'values)
+               (not (eq (ir-node-d init) :notinline)))
+    (return-from ir-bind-direct-values nil))
+  (let* ((args (ir-node-b init)) (count (length vars))
+         (raw (make-array count :initial-element nil)) (values (make-array count)))
+    (loop for var across vars for arg across args for i from 0
+          do (setf (svref raw i)
+                   (and (ir-double-local-p var) (eq (ir-node-type arg) 'double-float)
+                        (ir-declaration-proven-p (ir-node-type arg) (ir-var-type var)))))
+    (unless (some #'identity raw) (return-from ir-bind-direct-values nil))
+    ;; Evaluate and snapshot all arguments before introducing any bindings.
+    (loop for arg across args for i from 0
+          do (if (< i count)
+                 (setf (svref values i) (if (svref raw i) (ir-lower-double-bits arg)
+                                            (copy-to-var (ir-lower arg))))
+                 (ir-lower-effect arg)))
+    (loop for i from (length args) below count do (setf (svref values i) (nil-value)))
+    (loop for var across vars for value across values for bits across raw for i from 0
+          do (if bits (ir-bind-double-bits var value)
+                 (progn
+                   (ir-check-declaration value (ir-var-type var)
+                                         (if (< i (length args)) (ir-node-type (svref args i)) 'null))
+                   (ir-bind-variable var value t))))
+    t))
+
 (defun ir-bind-let (node)
   (let ((vars (ir-node-a node)) (inits (ir-node-b node)))
+    (when (and (ir-node-d node) (ir-bind-direct-values vars (svref inits 0)))
+      (return-from ir-bind-let nil))
     (if (ir-node-d node)
         (multiple-value-bind (v0 n) (ir-lower-mv (svref inits 0))
           ;; Read every value from ctx.values into an obj variable before
