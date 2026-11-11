@@ -11,7 +11,20 @@
     (emit `(:store ,object 8 ,bits))
     (copy-to-var `(:add ,object ,+tag-general+))))
 
+(defun ir-static-function-binding-p (var)
+  (let ((value (ir-var-lowering var)))
+    (and (consp value) (eq (car value) :static-function)
+         (eq (ir-fun-lowering-epoch (cadr value)) *ir-lowering-epoch*))))
+
+(defun ir-static-function-data (fun)
+  (let* ((label (ir-function-label fun)) (data (kiln.kir::kir-name label "_fobj")))
+    (module-data data `(:words ,+kind-function+ (:func ,label)))
+    data))
+
 (defun ir-variable-operand (var)
+  (when (ir-static-function-binding-p var)
+    (return-from ir-variable-operand
+      (copy-to-var `(:addr ,(cddr (ir-var-lowering var)) ,+tag-general+))))
   (if (eq (ir-var-owner var) *ir-lowering-function*)
       (let ((value (or (ir-var-lowering var) (fail "IR variable ~S is not bound" (ir-var-name var)))))
         (if (ir-raw-double-variable-p var) (cdr value) value))
@@ -143,7 +156,7 @@
     name))
 
 (defun ir-allocate-function (fun)
-  (let ((label (ir-compile-function fun)) (count (length (ir-fun-free fun))))
+  (let ((label (ir-compile-function fun)) (count (if (logtest 128 (ir-fun-flags fun)) 0 (length (ir-fun-free fun)))))
     (if (zerop count)
         (let ((data (kiln.kir::kir-name label "_fobj")))
           (module-data data `(:words ,+kind-function+ (:func ,label)))
@@ -153,6 +166,7 @@
           (copy-to-var `(:add ,p ,+tag-general+))))))
 
 (defun ir-fill-function (fun object)
+  (when (logtest 128 (ir-fun-flags fun)) (return-from ir-fill-function object))
   (loop for var across (ir-fun-free fun) for index from 0
         do (emit `(:store ,object ,(+ +fobj-env+ (* 8 index)) ,(ir-variable-operand var))))
   object)
@@ -164,12 +178,19 @@
 
 (defun ir-lower-local-functions (node)
   (let ((functions (ir-node-a node)))
-    (loop for fun across functions do (ir-function-label fun))
     (loop for fun across functions
+          do (ir-function-label fun)
+             (setf (ir-var-lowering (ir-fun-binding fun)) nil))
+    (loop for fun across functions when (logtest 128 (ir-fun-flags fun))
+          do (setf (ir-var-lowering (ir-fun-binding fun))
+                   (cons :static-function (cons fun (ir-static-function-data fun)))))
+    (loop for fun across functions when (logtest 128 (ir-fun-flags fun))
+          do (ir-compile-function fun))
+    (loop for fun across functions unless (logtest 128 (ir-fun-flags fun))
           do (ir-bind-variable (ir-fun-binding fun) (ir-allocate-function fun)))
     ;; Mutual recursion can capture any sibling's object, so fill only
     ;; after every object is allocated and rooted.
-    (loop for fun across functions
+    (loop for fun across functions unless (logtest 128 (ir-fun-flags fun))
           do (ir-fill-function fun (ir-variable-operand (ir-fun-binding fun))))
     (ir-lower-mv (ir-node-b node))))
 

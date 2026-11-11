@@ -66,7 +66,7 @@
 
 ### 函数和 funcallable instance
 
-- 函数对象 `[header(env 长度 << 8), 入口地址, env...]`。没有自由变量的函数用静态函数对象，闭包在堆上分配。GC 扫描 env，跳过入口地址。
+- 函数对象 `[header(env 长度 << 8), 入口地址, env...]`。无运行时环境的函数使用静态函数对象，包括只依赖静态函数绑定的递归组；捕获运行时数据的闭包在堆上分配。GC 扫描 env，跳过入口地址。
 - **funcallable instance 就是函数**：kind 10 和 kind 2 只差第 3 位，所有“是不是函数”的检查（调用点、`funcall`、`apply`、`functionp`）都用 `(kind & 0xF7) == 2`。它的入口是共享的跳板 `kiln_funcallable_trampoline`：从对象的第 3 个字取出安装的函数，用原来的 `nargs` 和寄存器参数尾调用它（不留自己的帧）。跳板里没有 safepoint，传递区里的参数原样传下去。新建的 funcallable instance 安装的是一个调用即报错的函数。
 
 ### 实例和 rack

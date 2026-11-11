@@ -33,7 +33,8 @@
   (name nil) (owner nil) (flags 0) (refs 0) (type t)
   (lowering nil) (constant nil) (constant-p nil))
 
-;;; Function flags: escapes, closure, single call, direct calls, inlined, analyzed, local definitions.
+;;; Function flags: escapes, closure, single call, direct calls, inlined, analyzed,
+;;; local definitions, static environment.
 (defstruct ir-fun
   (name nil) (parent nil) (lambda-list nil) (body nil) (parameter-specials nil)
   (free #()) (exits (make-ir-buffer)) (vars (make-ir-buffer))
