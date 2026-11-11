@@ -111,6 +111,8 @@ pub enum BinOp {
     F64Sub,
     F64Mul,
     F64Div,
+    /// Three-way comparison; unordered operands compare as equal.
+    F64Compare,
     /// Shifts by a count in a value, which must be in 0..64.
     Shlv,
     Sarv,
@@ -611,7 +613,7 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
     let (h, r) = head(list(s)?)?;
     let e = |i: usize| -> R<Box<Expr>> { Ok(Box::new(parse_expr(&r[i])?)) };
     Ok(match h {
-        "add" | "sub" | "mul" | "and" | "or" | "xor" | "sdiv" | "srem" | "shlv" | "sarv" | "f64-add" | "f64-sub" | "f64-mul" | "f64-div" => {
+        "add" | "sub" | "mul" | "and" | "or" | "xor" | "sdiv" | "srem" | "shlv" | "sarv" | "f64-add" | "f64-sub" | "f64-mul" | "f64-div" | "f64-compare" => {
             arity(h, r, 2)?;
             let op = match h {
                 "add" => BinOp::Add,
@@ -625,6 +627,7 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
                 "f64-sub" => BinOp::F64Sub,
                 "f64-mul" => BinOp::F64Mul,
                 "f64-div" => BinOp::F64Div,
+                "f64-compare" => BinOp::F64Compare,
                 "shlv" => BinOp::Shlv,
                 "sarv" => BinOp::Sarv,
                 _ => BinOp::Xor,

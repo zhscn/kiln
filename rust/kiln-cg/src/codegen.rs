@@ -4,7 +4,7 @@ use crate::kir::{self, BinOp, CmpOp, DataContents, DebugRef, Expr, Loc, OvfOp, S
 use cranelift_codegen::ir::{
     self, AbiParam, BlockArg, ExceptionTableData, ExceptionTableItem, InstBuilder,
     MemFlagsData,
-    Signature, StackSlotData, StackSlotKind, TrapCode, Value, condcodes::IntCC, types::I64,
+    Signature, StackSlotData, StackSlotKind, TrapCode, Value, condcodes::{FloatCC, IntCC}, types::I64,
 };
 use cranelift_codegen::isa::CallConv;
 use cranelift_codegen::{Context, ir::BlockCall};
@@ -1228,10 +1228,22 @@ impl<M: Module> FuncLowering<'_, M> {
                     b.ins().bitcast(I64, MemFlagsData::new(), value)
                 } else { value }
             },
+            Expr::Bin(BinOp::F64Compare, x, y) => {
+                let x = self.float_expr(b, x)?;
+                let y = self.float_expr(b, y)?;
+                let less = b.ins().fcmp(FloatCC::LessThan, x, y);
+                let greater = b.ins().fcmp(FloatCC::GreaterThan, x, y);
+                let negative = b.ins().iconst(I64, -1);
+                let zero = b.ins().iconst(I64, 0);
+                let positive = b.ins().iconst(I64, 1);
+                let nonnegative = b.ins().select(greater, positive, zero);
+                b.ins().select(less, negative, nonnegative)
+            }
             Expr::Bin(op, x, y) => {
                 let x = self.expr(b, x)?;
                 let y = self.expr(b, y)?;
                 match op {
+                    BinOp::F64Compare => unreachable!(),
                     BinOp::Add => b.ins().iadd(x, y),
                     BinOp::Sub => b.ins().isub(x, y),
                     BinOp::Mul => b.ins().imul(x, y),

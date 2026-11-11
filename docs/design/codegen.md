@@ -64,6 +64,7 @@ kiln-launcher               staticlib，提供 C main，链接 kiln-rt 和 kiln-
 | `(add A B)` `sub` `mul` `and` `or` `xor` | |
 | `(sdiv A B)` `srem` | 有符号除法和余数，向零截断；B 不能是 0，A 是 i64 最小值时 B 不能是 −1 |
 | `(f64-add A B)` `f64-sub` `f64-mul` `f64-div` | A、B 和结果是 IEEE binary64 的 64 位位模式；采用严格浮点运算，不进行装箱或 Lisp 条件检查。位模式须放在 `raw` 变量中，避免被 GC 当作对象引用 |
+| `(f64-compare A B)` | A、B 为 binary64 位模式，结果为有符号整数 −1、0、1；小于、相等、大于分别对应这三个值。正负零相等，不可排序的 NaN 比较返回 0，与运行期浮点比较一致 |
 | `(shl A n)` `sar` `shr` | 立即数移位 |
 | `(shlv A B)` `sarv` | 按 B 的值移位，B 必须在 0..64 之内 |
 | `(eq A B)` `ne` `lt` `le` `gt` `ge` | 有符号比较，结果 0/1 |

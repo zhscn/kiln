@@ -642,6 +642,15 @@ unsupported call. Arguments retain their evaluation order and effects."
           (values (ir-lower-fixnum-arithmetic
                    (if (eq name '1+) '+ '-) value (ash 1 +fixnum-shift+)
                    (ir-fixnum-type-p (ir-node-type node))) t))))
+    (when (and (= count 2) (not (eq (ir-node-d node) :notinline))
+               (member name '(< > <= >= = /=))
+               (every (lambda (arg) (eq (ir-node-type arg) 'double-float)) args))
+      (let* ((left (ir-lower-double-bits (svref args 0)))
+             (right (ir-lower-double-bits (svref args 1)))
+             (comparison (copy-to-var `(:f64-compare ,left ,right) :raw)))
+        (return-from ir-lower-typed-call
+          (values (boolean-value `(,(case name (< :lt) (> :gt) (<= :le) (>= :ge) (= :eq) (/= :ne))
+                                  ,comparison 0)) t))))
     (when (ir-double-arithmetic-p node)
       (let* ((bits (ir-lower-double-bits node))
              (object (emit-alloc 16 +kind-double+)))

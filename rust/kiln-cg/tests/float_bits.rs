@@ -13,7 +13,7 @@ fn binary64_bit_patterns_compile_with_verification() {
         .finish(settings::Flags::new(flags))
         .unwrap();
     let mut module = JITModule::new(JITBuilder::with_isa(isa, default_libcall_names()));
-    let functions = ["f64-add", "f64-sub", "f64-mul", "f64-div"]
+    let functions = ["f64-add", "f64-sub", "f64-mul", "f64-div", "f64-compare"]
         .iter()
         .enumerate()
         .map(|(i, op)| format!("(func \"f{i}\" (vars (bits raw)) (slots) (block entry (set bits ({op} a0 a1)) (return bits 1)))"))
