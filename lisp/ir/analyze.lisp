@@ -20,9 +20,12 @@
          (eq (ir-canonical-function (ir-fun-parent fun)) caller)
          (eq (ir-canonical-function (ir-fun-caller fun)) caller)
          call (not (eq (ir-node-d call) :notinline))
-         (= (length (ir-node-b call)) (length (ir-lambda-list-required ll)))
+         (if (ir-lambda-list-rest ll)
+             (<= (length (ir-lambda-list-required ll)) (length (ir-node-b call))
+                 (+ (length (ir-lambda-list-required ll)) 8))
+             (= (length (ir-node-b call)) (length (ir-lambda-list-required ll))))
          (zerop (length (ir-lambda-list-optional ll)))
-         (not (ir-lambda-list-rest ll)) (not (ir-lambda-list-key-p ll))
+         (not (ir-lambda-list-key-p ll))
          (null (ir-fun-parameter-specials fun)))))
 
 (defun ir-inline-call (node caller)
@@ -36,11 +39,18 @@
             do (setf (ir-var-owner var) caller
                      (ir-var-flags var) (logandc2 (ir-var-flags var) 6))
                (ir-push var (ir-fun-vars caller)))
-      (setf (ir-node-kind node) 11
-            (ir-node-a node) (ir-lambda-list-required (ir-fun-lambda-list fun))
-            (ir-node-c node) (ir-fun-body fun)
-            (ir-fun-body fun) nil
-            (ir-fun-flags fun) (logior 16 (ir-fun-flags fun))))))
+      (let* ((ll (ir-fun-lambda-list fun)) (required (ir-lambda-list-required ll))
+             (rest (ir-lambda-list-rest ll)) (args (ir-node-b node)))
+        (setf (ir-node-kind node) 11
+              (ir-node-a node) (if rest (concatenate 'simple-vector required (vector rest)) required)
+              (ir-node-b node) (if rest
+                                   (concatenate 'simple-vector (subseq args 0 (length required))
+                                                (vector (ir-node 7 (ir-node-source node) 'list
+                                                                 (subseq args (length required)))))
+                                   args)
+              (ir-node-c node) (ir-fun-body fun)
+              (ir-fun-body fun) nil
+              (ir-fun-flags fun) (logior 16 (ir-fun-flags fun)))))))
 
 (defun ir-specialization-cost (fun)
   (let ((ll (ir-fun-lambda-list fun)) (size 0))
@@ -997,7 +1007,6 @@ Moved bodies are analyzed again against their final lexical owners."
   (when (and (logtest 64 (ir-fun-flags root)) (not (logtest 32 (ir-fun-flags root))))
     (propagate-ir-function-identities root)
     (prune-ir-local-functions root))
-  (when specialize (expand-ir-list-bindings root))
   (setf (ir-fun-load-time-values root) (make-ir-buffer))
   (labels
       ((analyze (fun)
@@ -1043,7 +1052,10 @@ Moved bodies are analyzed again against their final lexical owners."
                         (setf (ir-node-a node)
                               (coerce (loop for nested across (ir-node-a node)
                                             unless (logtest 16 (ir-fun-flags nested)) collect nested)
-                                      'simple-vector)))
+                                      'simple-vector))
+                        (when (zerop (length (ir-node-a node)))
+                          (setf (ir-node-kind node) 10 (ir-node-a node) (vector (ir-node-b node))
+                                (ir-node-b node) nil)))
                     ((14 16)
                      (let ((exit (if (= (ir-node-kind node) 14) (ir-node-a node) (ir-node-b node))))
                        (setf (ir-exit-flags exit) 0 (ir-exit-owner exit) fun)
@@ -1071,6 +1083,7 @@ Moved bodies are analyzed again against their final lexical owners."
                  when (= (logand (ir-var-flags var) 3) 3)
                    do (setf (ir-var-flags var) (logior 4 (ir-var-flags var)))))))
     (analyze root))
+  (when specialize (expand-ir-list-bindings root))
   (when (logtest 64 (ir-fun-flags root)) (classify-ir-function-environments root))
   (multiple-value-bind (typed local-calls conses) (infer-ir-types root)
     (declare (ignore typed))
