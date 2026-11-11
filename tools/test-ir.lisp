@@ -2239,3 +2239,22 @@
     (assert (notany (lambda (node)
                       (and (= (ir-node-kind node) 7) (ir-node-p (ir-node-a node))
                            (= (ir-node-kind (ir-node-a node)) 1))) nodes))))
+
+(dolist (form
+         '((flet ((target (x) (+ x 7)) (other (x) (- x 7)))
+             (declare (notinline target other))
+             (let ((current #'target))
+               (multiple-value-bind (unused f)
+                   (unwind-protect (values nil current) (setq current #'other))
+                 (funcall f 3) (funcall current 4))))
+           (flet ((target (x) (+ x 7)))
+             (declare (notinline target))
+             (multiple-value-bind (unused f)
+                 (unwind-protect
+                      (unwind-protect (values nil #'target) (print 1))
+                   (print 2))
+               (funcall f 3)))))
+  (let ((nodes (ir-test-nodes (ir-test-form form))))
+    (assert (notany (lambda (node)
+                      (and (= (ir-node-kind node) 7) (ir-node-p (ir-node-a node))
+                           (= (ir-node-kind (ir-node-a node)) 1))) nodes))))
