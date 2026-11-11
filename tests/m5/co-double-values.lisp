@@ -1,0 +1,18 @@
+(defun double-values-primary (x y)
+  (declare (double-float x y))
+  (let ((log nil))
+    (print (+ (values (+ x y) (push :second log) (setq x 99d0) (push :third log))
+              (progn (push :right log) y)))
+    (print log)
+    (print x)))
+(double-values-primary 2d0 3d0)
+(print (block done
+         (+ (values (+ 2d0 3d0) (return-from done :secondary-exit)) 4d0)))
+(print (handler-case
+           (+ (values (+ 2d0 3d0) (error "secondary")) 4d0)
+         (error () :secondary-error)))
+(print (multiple-value-list (values (+ 2d0 3d0) :retained)))
+(let ((function (compile nil '(lambda (x y)
+                               (declare (double-float x y))
+                               (< (values (+ x y) (setq x 99d0)) y)))))
+  (print (funcall function -5d0 3d0)))

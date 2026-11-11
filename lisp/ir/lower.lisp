@@ -570,6 +570,11 @@ predicate inside it is branched on, not made into T or NIL and compared."
 
 (defun ir-lower-double-bits (node)
   (case (ir-node-kind node)
+    (7 (when (and (eq (ir-node-a node) 'values) (not (eq (ir-node-d node) :notinline))
+                  (plusp (length (ir-node-b node))))
+         (let* ((args (ir-node-b node)) (result (ir-lower-double-bits (svref args 0))))
+           (loop for i from 1 below (length args) do (ir-lower-effect (svref args i)))
+           (return-from ir-lower-double-bits result))))
     (9 (let ((result (new-var :f64)))
          (ir-lower-if node (lambda (branch)
                             (emit `(:set ,result ,(ir-lower-double-bits branch)))))
