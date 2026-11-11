@@ -8,6 +8,15 @@
     (13 (funcall function (ir-node-b node)))
     (otherwise (ir-map-children function node))))
 
+(defun ir-cons-borrow-call-p (fun summary count)
+  (and summary (>= count (length summary))
+       (or (= count (length summary)) (ir-lambda-list-rest (ir-fun-lambda-list fun)))))
+
+(defun ir-cons-borrow-variables (fun)
+  (let* ((ll (ir-fun-lambda-list fun)) (required (ir-lambda-list-required ll))
+         (rest (ir-lambda-list-rest ll)))
+    (if rest (concatenate 'simple-vector required (vector rest)) required)))
+
 (defun ir-cons-extent-proof (fun body variables var budget borrows &optional binding result-mode)
   "Return success and primary aliasing; RESULT-MODE :ONLY skips escape checks."
   (let ((eligible (make-hash-table :test #'eq)) (aliases (make-hash-table :test #'eq))
@@ -50,7 +59,7 @@
                                (and (plusp (length args)) (tainted (svref args 0))))
                               ;; Field projections rely on rejecting stores of this identity below.
                               ((member name '(car cdr first rest consp listp atom null not eq eql cons list vector)) nil)
-                              ((and local (= (length local) (length args)))
+                              ((ir-cons-borrow-call-p name local (length args))
                                (loop for arg across args for state across local
                                      thereis (and (not (eq state :borrow)) (tainted arg))))
                               (t (some #'tainted args)))))
@@ -101,7 +110,8 @@
                       (when (ir-node-p name) (check-use name :escape))
                       (loop for arg across args for i from 0
                             do (check-use arg (if (or borrow (and mutate (zerop i))
-                                                  (and local-borrows (= count (length local-borrows))
+                                                  (and (ir-cons-borrow-call-p name local-borrows count)
+                                                       (< i (length local-borrows))
                                                        (svref local-borrows i))) :borrow :escape)))))
                    (8 (when visible (fail)) (loop for arg across (ir-node-a node) do (check-use arg :escape)))
                    (9 (check-use (ir-node-a node) :borrow)
@@ -155,6 +165,8 @@
                                       (ir-declaration-proven-p 'cons (ir-var-type alias)))))
                      (fail))) aliases)
         (when (and (null binding) visible)
+          ;; Rest entries poll after parameters become visible.
+          (when (ir-lambda-list-rest (ir-fun-lambda-list fun)) (fail))
           (when (> (+ (length variables) (length (ir-lifted-environment fun))) +reg-args+) (fail))
           (loop for v across variables
                 when (or (logtest 4 (ir-var-flags v))
@@ -195,7 +207,7 @@
       (let ((ll (ir-fun-lambda-list fun)))
         (when (and ll (ir-fun-body fun) (null (ir-fun-parameter-specials fun))
                    (zerop (length (ir-lambda-list-optional ll)))
-                   (not (ir-lambda-list-rest ll)) (not (ir-lambda-list-key-p ll)))
+                   (not (ir-lambda-list-key-p ll)))
           (setf (gethash fun summaries)
                 (make-array (length (ir-lambda-list-required ll)) :initial-element :borrow)))))
     ;; Primary aliases grow from empty assumptions. Starting from "may return"
@@ -205,10 +217,11 @@
              (dolist (fun functions)
                (let ((summary (gethash fun summaries)))
                  (when summary
-                   (let ((parameters (ir-lambda-list-required (ir-fun-lambda-list fun))))
+                   (let ((parameters (ir-lambda-list-required (ir-fun-lambda-list fun)))
+                         (variables (ir-cons-borrow-variables fun)))
                      (loop for var across parameters for i from 0
                            unless (eq (svref summary i) :return)
-                             do (when (nth-value 1 (ir-cons-extent-proof fun (ir-fun-body fun) parameters
+                             do (when (nth-value 1 (ir-cons-extent-proof fun (ir-fun-body fun) variables
                                                                        var budget summaries nil :only))
                                   (setf (svref summary i) :return changed t))
                            do (when (minusp (car budget)) (return-from ir-cons-borrow-summaries nil))))))))
@@ -219,11 +232,12 @@
              (dolist (fun functions)
                (let ((summary (gethash fun summaries)))
                  (when summary
-                   (let ((parameters (ir-lambda-list-required (ir-fun-lambda-list fun))))
+                   (let ((parameters (ir-lambda-list-required (ir-fun-lambda-list fun)))
+                         (variables (ir-cons-borrow-variables fun)))
                      (loop for var across parameters for i from 0
                            when (svref summary i)
                              do (multiple-value-bind (safe returned)
-                                    (ir-cons-extent-proof fun (ir-fun-body fun) parameters
+                                    (ir-cons-extent-proof fun (ir-fun-body fun) variables
                                                           var budget summaries nil :allow)
                                   (unless (and safe (or (eq (svref summary i) :return) (not returned)))
                                     (setf (svref summary i) nil changed t)))
