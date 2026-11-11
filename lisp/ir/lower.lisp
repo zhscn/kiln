@@ -562,9 +562,9 @@ predicate inside it is branched on, not made into T or NIL and compared."
       (values result t))))
 
 (defun ir-double-arithmetic-p (node)
-  (and (= (ir-node-kind node) 7)
+  (and (= (ir-node-kind node) 7) (not (eq (ir-node-d node) :notinline))
        (let ((name (ir-node-a node)) (count (length (ir-node-b node))))
-         (or (and (= count 2) (member name '(+ - *)))
+         (or (and (= count 2) (member name '(+ - * /)))
              (and (= count 1) (member name '(- abs 1+ 1-)))))
        (every (lambda (arg) (eq (ir-node-type arg) 'double-float)) (ir-node-b node))))
 
@@ -596,7 +596,14 @@ predicate inside it is branched on, not made into T or NIL and compared."
              (left (ir-lower-double-bits (svref args 0))))
         (if (= (length args) 2)
             (let ((right (ir-lower-double-bits (svref args 1))))
-              (copy-to-var `(,(case name (+ :f64-add) (- :f64-sub) (* :f64-mul))
+              (when (eq name '/)
+                (let ((zero (new-block)) (divide (new-block)))
+                  (br `(:eq (:and ,right #x7fffffffffffffff) 0) zero divide)
+                  (start-block zero)
+                  (emit-error +err-division-by-zero+ (ir-box-double-bits left))
+                  (jump divide)
+                  (start-block divide)))
+              (copy-to-var `(,(case name (+ :f64-add) (- :f64-sub) (* :f64-mul) (/ :f64-div))
                             ,left ,right) :f64))
             (case name
               (- (copy-to-var `(:xor ,left ,(- #x8000000000000000)) :f64))
