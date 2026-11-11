@@ -18,7 +18,7 @@
          (eq (ir-fun-lowering-epoch (cadr value)) *ir-lowering-epoch*))))
 
 (defun ir-native-environment (fun)
-  (let ((free (ir-fun-free fun)))
+  (let ((free (ir-fun-free fun)) (binding (ir-fun-binding fun)))
     (if (or (logtest 128 (ir-fun-flags fun)) (zerop (length free)))
         #()
         (let ((cache (or *ir-native-environments*
@@ -26,8 +26,12 @@
           (multiple-value-bind (layout found) (gethash fun cache)
             (if found layout
                 (setf (gethash fun cache)
-                      (if (some #'ir-static-function-binding-p free)
-                          (remove-if #'ir-static-function-binding-p free) free))))))))
+                      (if (or (find binding free :test #'eq)
+                              (some #'ir-static-function-binding-p free))
+                          (remove-if (lambda (var)
+                                       (or (eq var binding) (ir-static-function-binding-p var)))
+                                     free)
+                          free))))))))
 
 (defun ir-static-function-data (fun)
   (let* ((label (ir-function-label fun)) (data (kiln.kir::kir-name label "_fobj")))
@@ -35,6 +39,8 @@
     data))
 
 (defun ir-variable-operand (var)
+  (when (eq var (ir-fun-binding *ir-lowering-function*))
+    (return-from ir-variable-operand *self*))
   (when (ir-static-function-binding-p var)
     (return-from ir-variable-operand
       (copy-to-var `(:addr ,(cddr (ir-var-lowering var)) ,+tag-general+))))
