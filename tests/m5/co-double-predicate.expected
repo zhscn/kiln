@@ -1,0 +1,7 @@
+(T NIL NIL)
+(T NIL NIL)
+(NIL T NIL)
+(NIL NIL T)
+T
+(T NIL T)
+:TYPE-ERROR

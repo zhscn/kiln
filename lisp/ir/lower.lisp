@@ -699,6 +699,16 @@ unsupported call. Arguments retain their evaluation order and effects."
       (let ((value (copy-to-var (ir-lower (svref args 0)))))
         (return-from ir-lower-typed-call
           (values (boolean-value `(,(case name (zerop :eq) (plusp :gt) (minusp :lt)) ,value 0)) t))))
+    (when (and (= count 1) (not (eq (ir-node-d node) :notinline))
+               (member name '(zerop plusp minusp))
+               (eq (ir-node-type (svref args 0)) 'double-float))
+      (let* ((bits (ir-lower-double-bits (svref args 0)))
+             ;; Mixed comparison with integer zero maps non-finite floats to zero.
+             (comparison (copy-to-var `(:select (:eq (:and ,bits #x7ff0000000000000) #x7ff0000000000000)
+                                               0 (:f64-compare ,bits 0)) :raw)))
+        (return-from ir-lower-typed-call
+          (values (boolean-value `(,(case name (zerop :eq) (plusp :gt) (minusp :lt))
+                                  ,comparison 0)) t))))
     (when (and (= count 1) (member name '(car cdr))
                (member (ir-node-type (svref args 0)) '(cons null)))
       (let ((value (copy-to-var (ir-lower (svref args 0)))))
