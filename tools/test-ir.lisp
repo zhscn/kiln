@@ -2432,3 +2432,17 @@
   (let* ((root (ir-test-form (first entry))) (plans (ir-prepare-stack-conses root)))
     (assert (= (second entry) (length (gethash root plans))) ()
             "Unexpected keyword cons borrow plan in ~S" (first entry))))
+
+(dolist (entry
+         '(((let ((x (list 1 2))) (rplaca (cdr x) 7) (eq x x)) 2)
+           ((let ((x (list 1 2))) (declare (dynamic-extent x)) (eq x x)) 2)
+           ((let ((x (list 1 2))) (declare (dynamic-extent x)) (unknown-save x)) 0)
+           ((let ((x (list* 1 2 'end))) (rplaca (cdr x) 7) (eq x x)) 2)
+           ((let ((x (list 1))) (eq x x)) 1)
+           ((let ((x (list 1 2))) (cdr x)) 1)
+           ((let ((x (list 1 2))) (unknown-save x)) 0)
+           ((locally (declare (notinline list)) (let ((x (list 1 2))) (eq x x))) 0)
+           ((let ((x (list 1 2 3 4 5 6 7 8 9))) (eq x x)) 0)))
+  (let* ((root (ir-test-form (first entry))) (plans (ir-prepare-stack-conses root)))
+    (assert (= (second entry) (length (gethash root plans))) ()
+            "Unexpected expanded list plan in ~S" (first entry))))
