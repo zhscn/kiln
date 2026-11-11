@@ -903,7 +903,7 @@ unsupported call. Arguments retain their evaluation order and effects."
                       (emit-apply (emit-function-designator function) (emit-nreverse acc))))))
           (22 (multiple-value-bind (v n) (ir-lower-mv (ir-node-a node))
                 (let ((saved (emit-save-values v n)))
-                  (ir-lower (ir-node-b node)) (emit-restore-values saved n))))
+                  (ir-lower-effect (ir-node-b node)) (emit-restore-values saved n))))
           (23 (ir-lower-mv (ir-node-b node)))
           (24 (copy-to-var `(:load (:addr ,(ir-node-c node)) 0)))
           (25 (ir-lower-progv node))

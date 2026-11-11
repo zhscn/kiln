@@ -2347,3 +2347,18 @@
   (let* ((root (ir-test-form (first entry))) (plans (ir-prepare-stack-conses root)))
     (assert (= (second entry) (length (gethash root plans))) ()
             "Unexpected discarded graph plan in ~S" (first entry))))
+
+(dolist (entry
+         '(((let ((x (cons 1 2))) (values x x) (car x)) 1)
+           ((let ((x (cons 1 2)))
+              (unwind-protect (values x x) (values x x)) (car x)) 1)
+           ((let ((x (cons 1 2)))
+              (multiple-value-prog1 (values x x) (unknown-save x)) (car x)) 0)
+           ((let ((x (cons 1 2)))
+              (block done
+                (unwind-protect (return-from done (values x x)) (print 7)))
+              (car x)) 0)
+           ((let ((x (cons 1 2))) (values x x)) 0)))
+  (let* ((root (ir-test-form (first entry))) (plans (ir-prepare-stack-conses root)))
+    (assert (= (second entry) (length (gethash root plans))) ()
+            "Unexpected discarded single-cons plan in ~S" (first entry))))
