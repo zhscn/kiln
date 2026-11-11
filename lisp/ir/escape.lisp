@@ -10,7 +10,8 @@
 
 (defun ir-cons-borrow-call-p (fun summary count)
   (and summary (>= count (length (ir-lambda-list-required (ir-fun-lambda-list fun))))
-       (or (<= count (length summary)) (ir-lambda-list-rest (ir-fun-lambda-list fun)))))
+       (or (<= count (length summary)) (ir-lambda-list-rest (ir-fun-lambda-list fun))
+           (ir-lambda-list-key-p (ir-fun-lambda-list fun)))))
 
 (defun ir-cons-borrow-parameters (fun)
   (let* ((ll (ir-fun-lambda-list fun)) (required (ir-lambda-list-required ll))
@@ -19,13 +20,21 @@
         (concatenate 'simple-vector required
                      (map 'simple-vector (lambda (parameter) (svref parameter 0)) optional)))))
 
+(defun ir-cons-borrow-defaults (fun)
+  (let* ((ll (ir-fun-lambda-list fun)) (optional (ir-lambda-list-optional ll))
+         (keys (ir-lambda-list-keys ll)))
+    (if (zerop (length keys)) optional (concatenate 'simple-vector optional keys))))
+
 (defun ir-cons-borrow-variables (fun)
   (let* ((ll (ir-fun-lambda-list fun)) (parameters (ir-cons-borrow-parameters fun))
-         (supplied (loop for parameter across (ir-lambda-list-optional ll)
+         (key-parameters (ir-lambda-list-keys ll))
+         (keys (if (zerop (length key-parameters)) #()
+                   (map 'simple-vector (lambda (parameter) (svref parameter 0)) key-parameters)))
+         (supplied (loop for parameter across (ir-cons-borrow-defaults fun)
                          when (svref parameter 2) collect (svref parameter 2)))
          (rest (ir-lambda-list-rest ll)))
-    (if (or supplied rest)
-        (concatenate 'simple-vector parameters supplied (when rest (list rest)))
+    (if (or (plusp (length keys)) supplied rest)
+        (concatenate 'simple-vector parameters keys supplied (when rest (list rest)))
         parameters)))
 
 (defun ir-cons-extent-proof (fun body variables var budget borrows &optional binding result-mode)
@@ -166,7 +175,7 @@
                    (otherwise (fail)))))
         (catalog body)
         (unless binding
-          (loop for parameter across (ir-lambda-list-optional (ir-fun-lambda-list fun))
+          (loop for parameter across (ir-cons-borrow-defaults fun)
                 do (catalog (svref parameter 1))
                    (push (cons (svref parameter 0) (svref parameter 1)) sources)))
         ;; May-alias propagation includes every lexical write. A value
@@ -187,8 +196,9 @@
                                       (ir-declaration-proven-p 'cons (ir-var-type alias)))))
                      (fail))) aliases)
         (when (and (null binding) visible)
-          ;; Rest entries poll after parameters become visible.
-          (when (ir-lambda-list-rest (ir-fun-lambda-list fun)) (fail))
+          ;; Rest and keyword entries build a heap list after positional bindings.
+          (when (or (ir-lambda-list-rest (ir-fun-lambda-list fun))
+                    (ir-lambda-list-key-p (ir-fun-lambda-list fun))) (fail))
           (when (> (+ (length (ir-cons-borrow-parameters fun)) (length (ir-lifted-environment fun))) +reg-args+) (fail))
           (loop for v across variables
                 when (or (logtest 4 (ir-var-flags v))
@@ -201,7 +211,7 @@
                               (not (ir-declaration-proven-p (ir-node-type init) (ir-var-type v)))))
                   do (fail)))
         (unless binding
-          (loop for parameter across (ir-lambda-list-optional (ir-fun-lambda-list fun))
+          (loop for parameter across (ir-cons-borrow-defaults fun)
                 do (check-use (svref parameter 1) :flow)))
         (check-use body (if result-mode :result :escape))
         (values t returned)))))
@@ -230,8 +240,7 @@
   (let ((summaries (make-hash-table :test #'eq)) (budget (list 65536)))
     (dolist (fun functions)
       (let ((ll (ir-fun-lambda-list fun)))
-        (when (and ll (ir-fun-body fun) (null (ir-fun-parameter-specials fun))
-                   (not (ir-lambda-list-key-p ll)))
+        (when (and ll (ir-fun-body fun) (null (ir-fun-parameter-specials fun)))
           (setf (gethash fun summaries)
                 (make-array (length (ir-cons-borrow-parameters fun)) :initial-element :borrow)))))
     ;; Primary aliases grow from empty assumptions. Starting from "may return"
