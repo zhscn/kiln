@@ -1,0 +1,13 @@
+(("optional" NIL ("optional" "optional") NIL 1) (7 T (7 "optional") NIL 1) (8 T 9 T 1))
+(("a" "b" "c" "d" 1 NIL) ("a" "b" "c" "d" 2 (3 4 5 6)))
+(("key" NIL ("key" "key") NIL) (7 T (7 "key") NIL) (9 T 8 T) (2 T (2 "key") NIL))
+((NIL "rest-key" NIL) ((:A 7 :EXTRA 8) 7 T))
+(((5 5) ((5 5) 5) 5) (8 7 9) 1)
+(("recursive" 1) ("recursive" 1))
+("escaped" 7)
+((1 1) (2 2) (3 3))
+:INVALID-KEYWORD
+:ODD-KEYWORD
+:TYPE-ERROR
+"allowed"
+("limit" 1024)
