@@ -520,17 +520,18 @@ through POLL-RETRY."
 region; code inside it runs with the region pushed on *REGIONS*."
   (let* ((slot (new-slot +dynentry-size+))
          (region (make-region :kind kind :slot slot
-                              :handler (if (member kind '(:bind :progv)) nil (new-block))
+                              :handler (if (member kind '(:bind :progv :stack-roots)) nil (new-block))
                               :outer *regions*)))
     (emit `(:store (:slot ,slot) ,+dyn-kind+ ,(ecase kind
                                                  (:catch +dyn-catch+)
                                                  (:unwind-protect +dyn-unwind-protect+)
                                                  (:exit-point +dyn-exit-point+)
                                                  (:bind +dyn-bind+)
-                                                 (:progv +dyn-progv+))))
+                                                 (:progv +dyn-progv+)
+                                                 (:stack-roots +dyn-stack-roots+))))
     (emit `(:store (:slot ,slot) ,+dyn-prev+ (:load :ctx ,+ctx-dynenv+)))
     (emit `(:store (:slot ,slot) ,+dyn-fp+ (:fp)))
-    ;; Tag and pending value are GC roots: always initialize them.
+    ;; Initialize object fields and range descriptors before linking the entry.
     (emit `(:store (:slot ,slot) ,+dyn-tag+ ,tag))
     (emit `(:store (:slot ,slot) ,+dyn-pend-target+ 0))
     (emit `(:store (:slot ,slot) ,+dyn-pend-value+ 0))

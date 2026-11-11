@@ -30,6 +30,7 @@
                (:file "ir/convert")
                (:file "ir/analyze")
                (:file "ir/types")
+               (:file "ir/escape")
                (:file "ir/eval")
                (:file "ir/lower")
                (:file "driver")))

@@ -12,7 +12,7 @@
            #:+length-shift+ #:+fobj-env+
            #:+cons-bytes+ #:+cons-car+ #:+cons-cdr+
            #:+ctx-poll-flag+ #:+ctx-dynenv+ #:+ctx-values+ #:+values-max+ #:+ctx-values-live+ #:+ctx-alloc-cursor+ #:+ctx-alloc-limit+ #:+ctx-stack-limit+ #:+ctx-tls+ #:+no-tls-value+
-           #:+dyn-catch+ #:+dyn-unwind-protect+ #:+dyn-exit-point+ #:+dyn-bind+ #:+dyn-progv+ #:+dynentry-size+
+           #:+dyn-catch+ #:+dyn-unwind-protect+ #:+dyn-exit-point+ #:+dyn-bind+ #:+dyn-progv+ #:+dyn-stack-roots+ #:+dynentry-size+
            #:+dyn-kind+ #:+dyn-prev+ #:+dyn-fp+ #:+dyn-tag+
            #:+dyn-pend-target+ #:+dyn-pend-value+
            #:+fobj-entry+

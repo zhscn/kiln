@@ -138,12 +138,16 @@ pub const DYN_BIND: u64 = 6;
 /// The bindings of a `progv`. `tag` is a list of (symbol . old TLS value)
 /// conses; leaving restores each.
 pub const DYN_PROGV: u64 = 7;
+/// A range of tagged reference fields in this frame. `pend_target` is the
+/// first field's address, `pend_value` is a raw word count, and `tag` is zero.
+/// These fields are roots even when their containing object lives on the stack.
+pub const DYN_STACK_ROOTS: u64 = 8;
 
 /// A dynamic-environment entry. Allocated in a stack slot of the frame that
 /// establishes it, and linked through `prev`. Layout is part of the ABI.
 #[repr(C)]
 pub struct DynEntry {
-    /// Offset 0: DYN_CATCH, DYN_UNWIND_PROTECT or DYN_CLEANUP_RUNNING.
+    /// Offset 0: dynamic-environment kind.
     pub kind: u64,
     /// Offset 8: enclosing entry.
     pub prev: *mut DynEntry,
@@ -152,8 +156,8 @@ pub struct DynEntry {
     /// Offset 24: catch tag (catch entries only). A Lisp object: the GC
     /// updates it (entries are roots, see gc.rs).
     pub tag: u64,
-    /// Offset 32: pending unwind target while a cleanup runs.
+    /// Offset 32: pending unwind target, or the raw base of a stack reference range.
     pub pend_target: *mut DynEntry,
-    /// Offset 40: pending unwind value while a cleanup runs. A Lisp object.
+    /// Offset 40: pending Lisp value, or a raw word count for DYN_STACK_ROOTS.
     pub pend_value: u64,
 }

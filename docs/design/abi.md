@@ -85,8 +85,12 @@ IR 前端转换 lambda list 之后（`lisp/ir/convert.lisp`），每个 `&option
 | 5 | 退出点 | 闭包非局部退出的目标 `block`/`tagbody`；tag 是令牌（[lowering.md](lowering.md)） |
 | 6 | 特殊变量绑定 | tag 是 symbol，`pend_target` 是 TLS 下标，`pend_value` 是旧的表项 |
 | 7 | progv | tag 是 `(symbol . 旧 TLS 值)` 的列表 |
+| 8 | 栈引用区 | `pend_target` 是连续 Lisp 引用字段的地址，`pend_value` 是字段个数（原始整数），tag 为 0 |
 
-动态环境条目的所有 Lisp 对象字段（`tag`、`pend_value`）都要初始化，因为 GC 把它们当作 root 扫描。
+动态环境条目的所有 Lisp 对象字段都要初始化。通常 GC 扫描 `tag` 和
+`pend_value`；kind 8 则仅扫描登记区间的引用字段，不把原始地址和计数当作 Lisp 值。
+栈引用区在函数建立后保持链接，正常返回前摘除；非局部展开直接跳过并摘除。
+登记字段在链接前清零，栈对象指针本身不交给 MMTk，字段中的堆引用仍会被移动和修正。
 
 ## 非局部退出（C3）
 
@@ -102,7 +106,7 @@ IR 前端转换 lambda list 之后（`lisp/ir/convert.lisp`），每个 `&option
 ### 展开算法（`rust/kiln-rt/src/unwind.rs`）
 
 1. 从 `ctx.dynenv` 栈顶开始逐个弹出条目，直到目标：
-   - 中间的 catch、退出点：跳过；
+   - 中间的 catch、退出点、栈引用区：跳过；
    - 中间的 unwind-protect：把展开目标和值保存在这个条目里，把它标记为 cleanup 运行中（条目留在链上），然后恢复进它所在的帧，执行 cleanup。cleanup 结束时调用 `kiln_rt_continue_unwind`，摘掉条目，继续展开；
    - 已标记为 cleanup 运行中的条目：直接摘掉（原来那次展开被放弃）；
    - 特殊变量绑定和 progv：恢复旧值；

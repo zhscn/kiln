@@ -10,7 +10,7 @@
 - **没有写屏障，所以分代 plan（GenCopy、GenImmix、StickyImmix 等）不能用。** 有写屏障之前只能用非分代 plan。写屏障的做法：生成的代码里每个往堆对象写指针的地方，以及 runtime 里修改堆对象的地方，都先检查源对象的 log bit（side metadata），没登记的就登记，即 MMTk 的 object barrier。
 - **对象引用就是 header 的地址。** forwarding pointer 写在 header 字里，forwarding bit 和 mark bit 放在 side metadata（header 的低字节是 kind，不能像 OpenJDK 那样把 forwarding bit 放进 header 的低位）。
 - **Slot 类型 `KilnSlot`**：槽里存的是带 tag 的值。
-  - load 时去掉 tag；fixnum、立即数和静态对象（地址不在 MMTk 的堆范围内）返回 `None`，GC 不处理。用地址范围判断，不用 `is_in_mmtk_spaces`（它要查 SFT 表，慢）。
+  - load 时去掉 tag；fixnum、立即数、静态对象及栈对象（地址不在 MMTk 的堆范围内）返回 `None`，GC 不处理。用地址范围判断，不用 `is_in_mmtk_spaces`（它要查 SFT 表，慢）。
   - store 时保留原来的 tag。
 - **mutator**：每个 context 绑定一个 MMTk mutator，tls 就是 context 的地址。
 - **分配不清零**：MMTk 交出的内存已经是零：kiln 用到的 plan 建空间时都传 `zeroed = true`，空间每次取得新页时清零（mutator 的 bump 块、大对象、GC 复制的目标块都是这样来的）；Immix 的分配器重用 recyclable line 时也清零，free-list 分配器清零每个 cell。所以 `kiln_rt_alloc` 只写 header（debug 构建检查首尾两个字是零）。编译出的代码的内联快路径（`emit-alloc`）仍然逐字写零，这些写也是多余的，可以去掉。反过来，MMTk 的清零才是大头（自举时约 2.5% 的 CPU，其中 GC 复制目标块的清零完全白做），但它在 MMTk 里写死，要改 MMTk。
@@ -31,7 +31,7 @@ MMTk 收到请求后立刻开始回收，而发起请求的 mutator 这时还在
    - 返回地址是 `[fp+8]`；
    - 调用方在这个调用点的 SP 是 `fp + 16`。这一点成立，是因为 Lisp 调用约定的所有参数都放在寄存器里（[abi.md](abi.md)）；
    - 用返回地址查栈图，得到存放 Lisp 对象的槽位（相对 SP 的偏移）。
-2. **动态环境链上每个条目的 `tag` 和 `pend_value` 字段。**
+2. **动态环境链上的对象引用。** 通常扫描条目的 `tag` 和 `pend_value`；栈引用区条目扫描其登记的连续引用字段，描述符中的地址与计数不作为 Lisp 值。
 3. **静态 root**：模块登记的静态字（symbol 的包、函数、值、TLS 下标、plist、setf 函数槽，`load-time-value` 的格子、`make-instance` 调用点缓存 cons 的 car，运行期编出的模块的字面量字，NIL 和 T 的几个字）。
 4. **每个 context 的 TLS 表**里已分配的项。
 5. **传递区的前 `ctx.values_live` 个字**。
@@ -42,6 +42,11 @@ MMTk 收到请求后立刻开始回收，而发起请求的 mutator 这时还在
 - kiln-cg 对 KIR 里所有 `obj` 类型的变量调用 `declare_var_needs_stack_map`。cranelift-frontend 会在每个调用点之前把活跃的引用溢出到栈槽，调用之后再重新加载，所以 **GC 移动对象后，代码看到的是新地址**。寄存器里不会有跨调用点存活的引用。
 - 每个函数编译完后，kiln-cg 读出 `user_stack_maps`，按调用点的返回地址偏移记录下来，并检查每个栈图确实位于某个调用点的返回地址上。JIT 直接用绝对地址注册，AOT 写进模块信息（[codegen.md](codegen.md)）。
 - 调试信息用同一组栈槽找变量（[debugging.md](debugging.md)）。栈图、调用点表、调试记录都按返回地址索引，以后可以合并成统一的调用点描述符。
+
+栈分配的 cons 保持普通对象布局；指针落在 MMTk 地址范围外，不向收集器报告为
+堆对象。编译器单独登记 car、cdr 所在的栈引用区，因而字段中的堆对象仍被扫描和
+移动修正。登记先于任何可能分配的用途，正常返回和栈展开后不得留下引用区条目。
+字段初始为零，未执行到的分配不会引入伪引用。逃逸证明禁止将栈指针写入堆对象。
 
 ## 编译器必须遵守的规则
 

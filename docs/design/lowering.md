@@ -80,10 +80,12 @@
 
 ## 分配
 
-小对象的分配就地生成 bump pointer 快路径（`emit-alloc`），见 [gc.md](gc.md) 的“内联分配”。
+小对象的堆分配就地生成 bump pointer 快路径（`emit-alloc`），见 [gc.md](gc.md) 的“内联分配”。
+词法 cons 在逃逸证明通过后也可使用固定栈槽，引用字段通过动态环境登记为精确根；
+布局选择、调试器限制和保守回退见 [ir.md](ir.md) 的“保留身份的 cons 栈存储”。
 
 ## 还没有的优化
 
-见 [roadmap.md](../roadmap.md) 的“性能”：编译器宏和更多调用点上的变换（`find`、`position` 等）、不逃逸局部函数的 lambda lifting、逃逸分析和拆箱、`dynamic-extent`。kiln 不做常量传播，`(funcall test ...)` 仍是间接调用。
+见 [roadmap.md](../roadmap.md) 的“性能”：更广的调用点变换、跨局部函数及对象包含关系的逃逸证明、rest 列表和闭包的栈存储，以及更多机器值表示。已证明身份的局部函数值使用直接入口，其他函数值仍采用间接调用。
 
 常量类名及 initarg 名的 `make-instance` 调用通过带静态 GC root 的调用点描述符选择构造器，再传递求值后的值；细节见 [specialization.md](specialization.md)。泛函调用仍是普通的函数格调用（调用点缓存试过，比判别函数慢）。

@@ -159,11 +159,21 @@ unsafe fn stack_slots(ctx: &Context, out: &mut Vec<KilnSlot>) {
     for i in 1..crate::special::tls_used() {
         out.push(KilnSlot(unsafe { Address::from_mut_ptr(ctx.tls.add(i)) }));
     }
-    let mut e = ctx.dynenv;
+    unsafe { dynamic_slots(ctx.dynenv, out) };
+}
+
+unsafe fn dynamic_slots(mut e: *mut crate::context::DynEntry, out: &mut Vec<KilnSlot>) {
     while !e.is_null() {
         unsafe {
-            out.push(KilnSlot(Address::from_mut_ptr(&mut (*e).tag)));
-            out.push(KilnSlot(Address::from_mut_ptr(&mut (*e).pend_value)));
+            if (*e).kind == crate::context::DYN_STACK_ROOTS {
+                let fields = (*e).pend_target.cast::<u64>();
+                for i in 0..(*e).pend_value as usize {
+                    out.push(KilnSlot(Address::from_mut_ptr(fields.add(i))));
+                }
+            } else {
+                out.push(KilnSlot(Address::from_mut_ptr(&mut (*e).tag)));
+                out.push(KilnSlot(Address::from_mut_ptr(&mut (*e).pend_value)));
+            }
             e = (*e).prev;
         }
     }
@@ -220,7 +230,7 @@ impl Slot for KilnSlot {
             return None;
         }
         let addr = object::untag(word);
-        // Static data (module data, symbols) is outside MMTk's address
+        // Static data and stack objects are outside MMTk's address
         // range; a range check is much cheaper than is_in_mmtk_spaces.
         if !in_heap_range(addr) {
             return None;
@@ -735,4 +745,40 @@ fn heap_range() -> (usize, usize) {
         let layout = mmtk::util::heap::vm_layout::vm_layout();
         (layout.heap_start.as_usize(), layout.heap_end.as_usize())
     })
+}
+
+#[cfg(test)]
+mod stack_root_tests {
+    use super::*;
+    use crate::context::{DYN_BIND, DYN_STACK_ROOTS, DynEntry};
+
+    #[test]
+    fn dynamic_ranges_scan_fields_instead_of_descriptor_words() {
+        let mut fields = [0_u64; 2];
+        let mut binding = DynEntry {
+            kind: DYN_BIND,
+            prev: core::ptr::null_mut(),
+            fp: 0,
+            tag: 0,
+            pend_target: core::ptr::null_mut(),
+            pend_value: 0,
+        };
+        let mut range = DynEntry {
+            kind: DYN_STACK_ROOTS,
+            prev: &raw mut binding,
+            fp: 0,
+            tag: 0,
+            pend_target: fields.as_mut_ptr().cast(),
+            pend_value: fields.len() as u64,
+        };
+        let mut roots = Vec::new();
+        unsafe { dynamic_slots(&raw mut range, &mut roots) };
+        let expected = [
+            Address::from_mut_ptr(&raw mut fields[0]),
+            Address::from_mut_ptr(&raw mut fields[1]),
+            Address::from_mut_ptr(&raw mut binding.tag),
+            Address::from_mut_ptr(&raw mut binding.pend_value),
+        ];
+        assert_eq!(roots.iter().map(|slot| slot.0).collect::<Vec<_>>(), expected);
+    }
 }
