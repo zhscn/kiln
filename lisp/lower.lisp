@@ -730,9 +730,9 @@ known to hold one), and true; else NIL and NIL."
        (otherwise (values nil nil))))
     (t (values nil nil))))
 
-(defun lower-switch-mv (reference arms default)
+(defun lower-switch-mv (reference arms default &optional effect)
   (let ((value (lower reference))
-        (r (new-var)) (n (new-var :raw))
+        (r (and (not effect) (new-var))) (n (and (not effect) (new-var :raw)))
         (fallback (new-block)) (dispatch (new-block)) (join (new-block))
         (blocks '()))
     (dolist (arm arms)
@@ -747,13 +747,15 @@ known to hold one), and true; else NIL and NIL."
                                               (cdr (assoc body blocks :test #'eq)))))))
     (loop for (body . block) in blocks
           do (start-block block)
-             (multiple-value-call #'set-mv r n (lower-mv body))
+             (if effect (funcall effect body)
+                 (multiple-value-call #'set-mv r n (lower-mv body)))
              (jump join))
     (start-block fallback)
-    (multiple-value-call #'set-mv r n (lower-or-nil-mv default))
+    (if effect (when default (funcall effect default))
+        (multiple-value-call #'set-mv r n (lower-or-nil-mv default)))
     (jump join)
     (start-block join)
-    (values r n)))
+    (if effect (values (nil-value) 1) (values r n))))
 
 
 ;;; Tests (the test of an IF, IR-LOWER-BRANCH): a predicate's (:SELECT
