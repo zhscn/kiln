@@ -1176,3 +1176,60 @@
           (second (with-output-to-string (stream)
                     (kiln.kir:print-module (compile-module forms "cons-return-layout" :session session) stream))))
       (assert (equal first second)))))
+
+;; Catch continuations are conservative, but local exits retain their own facts.
+(dolist (entry
+         '(((let ((value 0))
+              (block done
+                (tagbody
+                   (catch 'tag (setq value 3) (go use))
+                   (return-from done nil)
+                 use (record-catch-type value) (return-from done nil)))) (integer 3 3))
+           ((let ((value 0))
+              (block done
+                (tagbody
+                   (catch 'tag
+                     (unwind-protect (go use) (setq value "cleanup")))
+                   (return-from done nil)
+                 use (record-catch-type value) (return-from done nil)))) :native-string)
+           ((let ((value 0))
+              (block done
+                (tagbody
+                   (catch (progn (setq value 4) (go use) 'tag)
+                     (setq value "unreachable"))
+                   (return-from done nil)
+                 use (record-catch-type value) (return-from done nil)))) (integer 4 4))
+           ((let ((value 0))
+              (block done
+                (catch 'tag (setq value "changed") (throw 'tag nil))
+                (record-catch-type value))) t)
+           ((let ((value 0))
+              (block done
+                (catch 'tag (setq value "changed") (unknown-thrower))
+                (record-catch-type value))) t)))
+  (let* ((root (ir-test-form (first entry)))
+         (calls (remove-if-not (lambda (node)
+                                 (and (= (ir-node-kind node) 7)
+                                      (eq (ir-node-a node) 'record-catch-type)))
+                               (ir-test-nodes root))))
+    (assert calls)
+    (dolist (call calls)
+      (assert (equal (second entry) (ir-node-type (svref (ir-node-b call) 0)))))))
+
+(let* ((root (ir-test-form
+              '(let ((value 0))
+                 (block done
+                   (tagbody again
+                      (record-catch-type value)
+                      (catch 'tag
+                        (if (unknown-input) (return-from done nil))
+                        (setq value 3)
+                        (go again))
+                      (return-from done nil))))))
+       (call (find-if (lambda (node)
+                        (and (= (ir-node-kind node) 7)
+                             (eq (ir-node-a node) 'record-catch-type)))
+                      (ir-test-nodes root)))
+       (type (ir-node-type (svref (ir-node-b call) 0))))
+  (assert (ir-known-subtype-p type 'fixnum))
+  (assert (ir-known-subtype-p '(integer 0 3) type)))

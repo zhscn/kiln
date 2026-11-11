@@ -404,7 +404,6 @@
                              (ir-node-a form))))
              (20 (and (supported (ir-node-a form) gos exits)
                       (supported (ir-node-b form) gos exits)))
-             (18 nil)
              (otherwise
               (let ((ok t))
                 (children (lambda (child) (unless (supported child gos exits) (setf ok nil))) form)
@@ -548,6 +547,13 @@
                         ((ir-own-function form) (funcall function-types (ir-node-a form) state))))
                 (multiple-value-setq (type state) (many (if (= (ir-node-kind form) 8) (ir-node-a form) (ir-node-b form)) state))
                 (unless (eq state :unreachable) (multiple-value-setq (type state) (leaf form state t))))
+               (18 (multiple-value-setq (type state) (walk (ir-node-a form) state))
+                   (unless (eq state :unreachable)
+                     (let ((base (ir-immutable-types state)))
+                       (walk (ir-node-b form) state)
+                       ;; A callee may throw from any point in the body. Local
+                       ;; GO and RETURN edges keep their states independently.
+                       (setf type t state base written t))))
                (19 (multiple-value-setq (type state) (walk (ir-node-a form) state))
                    (multiple-value-setq (type state) (walk (ir-node-b form) state))
                    (setf state :unreachable))

@@ -1,0 +1,5 @@
+(0 0)
+(5 5)
+(3 "cleanup")
+(:CAUGHT "changed" 7)
+42
