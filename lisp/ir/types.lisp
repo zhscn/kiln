@@ -293,6 +293,37 @@
       environment
       (acons var type environment)))
 
+(defun ir-direct-values-leaves (init)
+  "Return argument vectors and whether every result path is a direct VALUES."
+  (let ((leaves nil) (budget 256))
+    (labels ((collect (node)
+               (when (minusp (decf budget)) (return-from collect nil))
+               (case (ir-node-kind node)
+                 (7 (when (and (eq (ir-node-a node) 'values) (not (eq (ir-node-d node) :notinline)))
+                      (push (ir-node-b node) leaves) t))
+                 (9 (and (collect (ir-node-b node)) (collect (ir-node-c node))))
+                 (11 (collect (ir-node-c node)))
+                 ((20 22) (collect (ir-node-a node)))
+                 (10 (let ((forms (ir-node-a node)))
+                       (and (plusp (length forms)) (collect (svref forms (1- (length forms))))))))))
+      (unless (collect init) (return-from ir-direct-values-leaves (values nil nil))))
+    (values leaves t)))
+
+(defun ir-bind-let-types (node environment)
+  (let ((vars (ir-node-a node)) (inits (ir-node-b node)))
+    (if (ir-node-d node)
+        (multiple-value-bind (leaves complete) (ir-direct-values-leaves (svref inits 0))
+          (when complete
+            (loop for var across vars for i from 0
+                  for type = nil
+                  do (dolist (args leaves)
+                       (let ((next (if (< i (length args)) (ir-node-type (svref args i)) 'null)))
+                         (setf type (if type (ir-type-join type next) next))))
+                     (setf environment (ir-bind-type var type environment)))))
+        (loop for var across vars for init across inits
+              do (setf environment (ir-bind-type var (ir-node-type init) environment))))
+    environment))
+
 (defun ir-immutable-types (environment)
   (remove-if (lambda (entry) (logtest 1 (ir-var-flags (car entry)))) environment))
 
@@ -518,9 +549,7 @@
                (11 (multiple-value-setq (type state) (many (ir-node-b form) state))
                    (unless (eq state :unreachable)
                      (let ((saved locals) (vars (ir-node-a form)))
-                       (unless (ir-node-d form)
-                         (loop for var across vars for init across (ir-node-b form)
-                               do (setf state (ir-bind-type var (ir-node-type init) state))))
+                       (setf state (ir-bind-let-types form state))
                        (loop for var across vars do (push var locals))
                        (multiple-value-setq (type state) (walk (ir-node-c form) state))
                        (setf state (drop-locals state saved) locals saved))))
@@ -910,10 +939,8 @@
              (10 (multiple-value-setq (type environment written) (many (ir-node-a node) environment)))
              (11
               (multiple-value-setq (type environment written) (many (ir-node-b node) environment))
-              (let ((base environment) (vars (ir-node-a node)) (inits (ir-node-b node)))
-                (unless (ir-node-d node)
-                  (loop for var across vars for init across inits
-                        do (setf environment (ir-bind-type var (ir-node-type init) environment))))
+              (let ((base environment) (vars (ir-node-a node)))
+                (setf environment (ir-bind-let-types node environment))
                 (multiple-value-bind (body-type body-env body-write) (visit (ir-node-c node) environment)
                   (setf type body-type written (or written body-write)
                         environment (if body-write
