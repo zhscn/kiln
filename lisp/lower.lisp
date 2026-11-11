@@ -1733,6 +1733,7 @@ Returns the module and the vector of its literals."
   (let ((*module* (make-kmodule module-name))
         (*ir-lowering-epoch* (list nil))
         (*ir-native-environments* nil)
+        (*ir-lifted-environments* nil)
         (*image-literals* (and image (make-hash-table :test 'eq)))
         (*image-literal-objects* '())
         (*module-label* (mangle module-name))

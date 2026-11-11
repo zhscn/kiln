@@ -1,0 +1,15 @@
+(11 12)
+(5 "mutual")
+("first" "second")
+("shared" "shared" "shared" 3)
+("nested" "capture")
+("a" "x" "b" "y" "c" "z" "d" "e")
+(("special" 8) 1)
+(2 3)
+("default" 7)
+(17 1)
+:WRONG-ARITY
+:TYPE-ERROR
+10
+("rooted" "initial")
+("rooted" "changed")
