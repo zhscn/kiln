@@ -1,6 +1,7 @@
 (in-package #:kiln.compiler)
 
 (defvar *ir-lowering-function*)
+(defvar *ir-closure-layout*)
 
 (defun ir-raw-double-variable-p (var)
   (let ((value (ir-var-lowering var)))
@@ -16,6 +17,18 @@
     (and (consp value) (eq (car value) :static-function)
          (eq (ir-fun-lowering-epoch (cadr value)) *ir-lowering-epoch*))))
 
+(defun ir-native-environment (fun)
+  (let ((free (ir-fun-free fun)))
+    (if (or (logtest 128 (ir-fun-flags fun)) (zerop (length free)))
+        #()
+        (let ((cache (or *ir-native-environments*
+                         (setf *ir-native-environments* (make-hash-table :test #'eq)))))
+          (multiple-value-bind (layout found) (gethash fun cache)
+            (if found layout
+                (setf (gethash fun cache)
+                      (if (some #'ir-static-function-binding-p free)
+                          (remove-if #'ir-static-function-binding-p free) free))))))))
+
 (defun ir-static-function-data (fun)
   (let* ((label (ir-function-label fun)) (data (kiln.kir::kir-name label "_fobj")))
     (module-data data `(:words ,+kind-function+ (:func ,label)))
@@ -28,7 +41,7 @@
   (if (eq (ir-var-owner var) *ir-lowering-function*)
       (let ((value (or (ir-var-lowering var) (fail "IR variable ~S is not bound" (ir-var-name var)))))
         (if (ir-raw-double-variable-p var) (cdr value) value))
-      (let ((index (position var (ir-fun-free *ir-lowering-function*) :test #'eq)))
+      (let ((index (position var *ir-closure-layout* :test #'eq)))
         (unless index (fail "IR variable ~S is missing from closure layout" (ir-var-name var)))
         (copy-to-var `(:load ,*self* ,(+ +fobj-env+ (* 8 index)))))))
 
@@ -131,7 +144,8 @@
   (let ((name (ir-function-label fun)))
     (unless (gethash name (kiln.kir::kmodule-defined *module*))
       (setf (gethash name (kiln.kir::kmodule-defined *module*)) t)
-      (let ((*ir-lowering-function* fun) (*regions* '())
+      (let ((*ir-lowering-function* fun) (*ir-closure-layout* (ir-native-environment fun))
+            (*regions* '())
             (*debug-vars* '()) (*debug-var-count* 0)
             (*function-name* (local-function-debug-name (or (ir-fun-name fun) (gensym "LAMBDA")))))
         (with-function (name)
@@ -156,7 +170,7 @@
     name))
 
 (defun ir-allocate-function (fun)
-  (let ((label (ir-compile-function fun)) (count (if (logtest 128 (ir-fun-flags fun)) 0 (length (ir-fun-free fun)))))
+  (let ((label (ir-compile-function fun)) (count (length (ir-native-environment fun))))
     (if (zerop count)
         (let ((data (kiln.kir::kir-name label "_fobj")))
           (module-data data `(:words ,+kind-function+ (:func ,label)))
@@ -167,7 +181,7 @@
 
 (defun ir-fill-function (fun object)
   (when (logtest 128 (ir-fun-flags fun)) (return-from ir-fill-function object))
-  (loop for var across (ir-fun-free fun) for index from 0
+  (loop for var across (ir-native-environment fun) for index from 0
         do (emit `(:store ,object ,(+ +fobj-env+ (* 8 index)) ,(ir-variable-operand var))))
   object)
 
@@ -819,7 +833,7 @@ unsupported call. Arguments retain their evaluation order and effects."
     (nil-value)))
 
 (defun ir-lower-toplevel (fun)
-  (let ((*ir-lowering-function* fun))
+  (let ((*ir-lowering-function* fun) (*ir-closure-layout* (ir-native-environment fun)))
     (loop for ltv across (ir-vector (ir-fun-load-time-values fun))
           for cell = (fresh-label "kiln_ir_ltv_")
           do (setf (kiln.kir::kmodule-replayable-p *module*) nil)

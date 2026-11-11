@@ -60,6 +60,7 @@
                :vars vars :funcs funcs :blocks blocks :tags tags :declarations declarations))
 
 (defvar *ir-lowering-epoch*)
+(defvar *ir-native-environments* nil)
 (defvar *ir-function*)
 (defvar *ir-source* nil)
 (defvar *ir-file-id* 0)
