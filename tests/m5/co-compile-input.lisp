@@ -86,7 +86,24 @@
   (define-getter second-of 1)
   (define-getter third-of 2))
 
+(declaim (inline alias-map-keys))
+(defun alias-map-keys (function table)
+  (maphash (lambda (key value) (declare (ignore value)) (funcall function key)) table))
+
+(defun alias-hash-keys (table)
+  (let ((keys nil))
+    (alias-map-keys (lambda (key) (push key keys)) table)
+    keys))
+
+(defun alias-calls (value)
+  (let* ((function (lambda (n) (+ value n))) (other function))
+    (list (funcall function 1) (funcall other 2))))
+
 (defun run ()
+  (let ((table (make-hash-table)))
+    (setf (gethash 3 table) :three (gethash 1 table) :one)
+    (assert (equal '(1 3) (sort (alias-hash-keys table) #'<))))
+  (assert (equal '(8 9) (alias-calls 7)))
   (twice (incf *count*))
   (format t "~S ~S ~S~%" (sum-squares '(1 2 3)) (funcall (counter)) (mapcar #'classify *names*))
   (format t "~S ~S ~S~%" (multiple-value-list (divide 17 5)) (find-first #'stringp *names*)

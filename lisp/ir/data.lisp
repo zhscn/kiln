@@ -43,6 +43,10 @@
   (input-types nil) (result-type t)
   (load-time-values (make-ir-buffer)))
 
+(defstruct (ir-function-alias (:constructor make-ir-function-alias (node owner variable initializer index)))
+  (node nil) (owner nil) (variable nil) (initializer nil) (index 0)
+  (target nil) (source nil) (users nil) (escaped nil) (used nil))
+
 (defstruct ir-lambda-list
   (required #()) (optional #()) (rest nil) (keys #()) (key-p nil) (allow-other-keys nil))
 
