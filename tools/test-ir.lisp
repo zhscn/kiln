@@ -598,4 +598,38 @@
 (assert (eq t (ir-node-type (ir-fun-body (ir-test-form
                                          `(block done ,@(loop repeat 300 collect nil) (return-from done 1)))))))
 
+(dolist (entry '(((let ((value 0))
+                    (block done (if (unknown-input) (progn (setq value 2) (return-from done)))
+                                (setq value 3)) value) (integer 2 3))
+                 ((let ((value 0))
+                    (block done (if (unknown-input) (return-from done)) (setq value 3)) value) (integer 0 3))
+                 ((let ((value 0))
+                    (block done (let ((temporary 1)) (setq value temporary) (return-from done))
+                                (setq value "unreachable")) value) (integer 1 1))
+                 ((let ((value 0))
+                    (block done (return-from done (progn (setq value 2) 0))) value) (integer 2 2))
+                 ((let ((value 0))
+                    (block done (if (unknown-input) (progn (setq value "changed") (return-from done)))
+                                (setq value 3)) value) t)))
+  (assert (equal (second entry) (ir-node-type (ir-fun-body (ir-test-form (first entry)))))))
+
+(dolist (early '(0 1 7 "early"))
+  (dolist (normal '(0 3 9 "normal"))
+    (let* ((form `(lambda (flag)
+                   (let ((value -1))
+                     (block done
+                       (block inner
+                         (if flag
+                             (progn (setq value ,early) (return-from done))
+                             (progn (setq value "intermediate") (return-from inner))))
+                       (setq value ,normal))
+                     value)))
+           (root (ir-test-form form))
+           (fun (ir-node-a (ir-fun-body root)))
+           (type (ir-node-type (ir-fun-body fun)))
+           (reference (compile nil form)))
+      (dolist (flag '(nil t))
+        (let ((actual (funcall reference flag)))
+          (assert (or (eq type t) (ir-known-subtype-p (ir-constant-type actual) type))))))))
+
 (format t "IR model and diagnostics passed.~%")
