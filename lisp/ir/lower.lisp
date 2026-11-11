@@ -415,7 +415,7 @@ used nowhere else: test and rest."
                       (push (ir-node-b node) leaves) t))
                  (9 (and (collect (ir-node-b node)) (collect (ir-node-c node))))
                  (11 (collect (ir-node-c node)))
-                 (22 (collect (ir-node-a node)))
+                 ((20 22) (collect (ir-node-a node)))
                  (10 (let ((forms (ir-node-a node)))
                        (and (plusp (length forms)) (collect (svref forms (1- (length forms))))))))))
       (unless (collect init) (return-from ir-bind-direct-values nil)))
@@ -437,6 +437,7 @@ used nowhere else: test and rest."
                    (case (ir-node-kind node)
                      (9 (ir-lower-if node #'produce))
                      (11 (ir-bind-let node) (produce (ir-node-c node)))
+                     (20 (ir-lower-unwind-protect node nil #'produce))
                      (22 (produce (ir-node-a node)) (ir-lower-effect (ir-node-b node)))
                      (10 (let ((forms (ir-node-a node)))
                            (loop for i below (1- (length forms)) do (ir-lower-effect (svref forms i)))
@@ -999,18 +1000,20 @@ unsupported call. Arguments retain their evaluation order and effects."
     (emit-error +err-no-catch-tag+ tv)
     (nil-value)))
 
-(defun ir-lower-unwind-protect (ast &optional double-primary)
+(defun ir-lower-unwind-protect (ast &optional double-primary producer)
   (let* ((cleanup (list (ir-node-b ast)))
-         (r (new-var (if double-primary :f64 :obj)))
-         (n (and (not double-primary) (new-var :raw))) (cont (new-block)) (land (new-block))
+         (r (and (not producer) (new-var (if double-primary :f64 :obj))))
+         (n (and (not producer) (not double-primary) (new-var :raw))) (cont (new-block)) (land (new-block))
          (region (establish-entry :unwind-protect)))
     (setf (region-cleanup region) cleanup)
     (multiple-value-bind (v nv)
         (let ((*regions* (cons region *regions*)))
-          (if double-primary (values (ir-lower-double-bits (ir-node-a ast)) 1)
-              (lower-mv (ir-node-a ast))))
+          (cond (producer (funcall producer (ir-node-a ast)) (values (nil-value) 1))
+                (double-primary (values (ir-lower-double-bits (ir-node-a ast)) 1))
+                (t (lower-mv (ir-node-a ast)))))
       (pop-entry region)
-      (cond (double-primary
+      (cond (producer (ir-lower-effect (ir-node-b ast)))
+            (double-primary
              (emit `(:set ,r ,v))
              (ir-lower-effect (ir-node-b ast)))
             (cleanup
@@ -1034,7 +1037,7 @@ unsupported call. Arguments retain their evaluation order and effects."
     (emit `(:call-rt ,(rt-continue-unwind) () (:ctx (:slot ,(region-slot region))) ,(handler)))
     (emit '(:trap))
     (start-block cont)
-    (values r (or n 1))))
+    (values (or r (nil-value)) (or n 1))))
 
 
 (defun ir-lower-progv (ast)

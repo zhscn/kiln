@@ -2084,3 +2084,23 @@
                              (eql (fourth form) +kind-double+)) 1 0)
                     (reduce #'+ form :key #'boxes :initial-value 0)) 0)))
     (assert (zerop (boxes (kiln.kir::kmodule-funcs module))))))
+
+(let* ((*source-file* "double-multiple-cleanup-layout") (*toplevel-source* nil)
+       (session (make-session))
+       (forms (front-end-forms
+               '((lambda (a b)
+                   (declare (double-float a b))
+                   (multiple-value-bind (x y marker)
+                       (unwind-protect
+                            (unwind-protect (values (+ a b) (* a b) :ok)
+                              (print 7))
+                         (setq a 99d0))
+                     (declare (double-float x y))
+                     (print marker) (< x y)))) session))
+       (module (compile-module forms "double-multiple-cleanup-layout" :session session)))
+  (labels ((boxes (form)
+             (if (consp form)
+                 (+ (if (and (eq (first form) :store) (eql (third form) 0)
+                             (eql (fourth form) +kind-double+)) 1 0)
+                    (reduce #'+ form :key #'boxes :initial-value 0)) 0)))
+    (assert (zerop (boxes (kiln.kir::kmodule-funcs module))))))
