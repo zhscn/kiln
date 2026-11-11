@@ -300,7 +300,9 @@
   object)
 
 (defun ir-lower-function (fun)
-  (when (ir-lifted-environment fun) (return-from ir-lower-function (nil-value)))
+  (when (ir-lifted-environment fun)
+    (return-from ir-lower-function
+      (copy-to-var `(:addr ,(ir-static-function-data fun) ,+tag-general+))))
   (if (ir-fun-binding fun)
       (ir-variable-value (ir-fun-binding fun))
       (let ((object (ir-allocate-function fun))) (ir-fill-function fun object))))
