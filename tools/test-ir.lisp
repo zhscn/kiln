@@ -617,7 +617,7 @@
                  ((block done (unwind-protect (return-from done 1) (return-from done "cleanup"))) t)))
   (assert (equal (second entry) (ir-node-type (ir-fun-body (ir-test-form (first entry)))))))
 (assert (eq t (ir-node-type (ir-fun-body (ir-test-form
-                                         `(block done ,@(loop repeat 300 collect nil) (return-from done 1)))))))
+                                         `(block done ,@(loop repeat 17000 collect nil) (return-from done 1)))))))
 
 (dolist (entry '(((let ((value 0))
                     (block done (if (unknown-input) (progn (setq value 2) (return-from done)))
@@ -904,3 +904,75 @@
     (assert calls)
     (assert (equal expected (ir-fun-result-type (ir-node-a (first calls)))))
     (dolist (call calls) (assert (equal expected (ir-node-type call))))))
+
+(dolist (entry '(((let ((value 0))
+                    (tagbody (tagbody (setq value 3) (go done))
+                             (setq value "unreachable") done)
+                    value) (integer 3 3))
+                 ((let ((value 0))
+                    (block done
+                      (tagbody top
+                         (setq value 3)
+                         (return-from done value)
+                         (go top)))) (integer 3 3))
+                 ((let ((value 0))
+                    (tagbody
+                       (unwind-protect (go done) (setq value "changed"))
+                       (setq value 9)
+                     done)
+                    value) :native-string)
+                 ((let ((value 0))
+                    (tagbody
+                       (unwind-protect
+                            (unwind-protect (go done) (setq value "inner"))
+                         (setq value 7))
+                     done)
+                    value) (integer 7 7))
+                 ((let ((value 0))
+                    (block done
+                      (unwind-protect
+                           (tagbody (go use) (setq value "unreachable")
+                            use (return-from done value))
+                        (setq value "cleanup")))) (integer 0 0))
+                 ((let ((value 0))
+                    (tagbody
+                       (setq value (progn (go done) "unreachable"))
+                     done)
+                    value) (integer 0 0))
+                 ((let ((value 0))
+                    (tagbody
+                       (list (progn (setq value 4) (go done)) (setq value "unreachable"))
+                     done)
+                    value) (integer 4 4))))
+  (let ((root (ir-test-form (first entry))))
+    (assert (equal (second entry) (ir-node-type (ir-fun-body root))))))
+
+(let* ((root (ir-test-form
+              '(let ((value 0))
+                 (block done
+                   (unwind-protect
+                        (if (unknown-input)
+                            (progn (setq value 1) (return-from done 1))
+                            (progn (setq value "changed") (return-from done 2)))
+                     (integerp value))))))
+       (check (find-if (lambda (node) (and (= (ir-node-kind node) 7) (eq (ir-node-a node) 'integerp)))
+                       (ir-test-nodes root))))
+  (assert (equal '(integer 1 2) (ir-node-type (ir-fun-body root))))
+  (assert (eq t (ir-node-type (svref (ir-node-b check) 0)))))
+
+;; Compare inferred exits with execution across nested backedges and cleanup paths.
+(dolist (limit '(0 1 2 7))
+  (dolist (initial '(0 "initial" (1 . 2)))
+    (let* ((form `(let ((value ',initial) (counter 0))
+                    (block finish
+                      (tagbody again
+                         (when (>= counter ,limit) (return-from finish value))
+                         (unwind-protect
+                              (tagbody
+                                 (if (oddp counter) (setq value "odd") (setq value (cons counter nil)))
+                                 (incf counter)
+                                 (go again))
+                           (when (= counter 2) (setq value 99)))))))
+           (type (ir-node-type (ir-fun-body (ir-test-form form))))
+           (actual (eval form)))
+      (assert (or (eq type t) (ir-known-subtype-p (ir-constant-type actual) type))))))
