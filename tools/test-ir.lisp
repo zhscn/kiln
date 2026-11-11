@@ -1836,3 +1836,38 @@
        (session (make-session)) (forms (front-end-forms (list form) session))
        (*toplevel* (first forms)) (root (toplevel-form-ast *toplevel*)))
   (assert (null (gethash root (ir-prepare-stack-conses root)))))
+
+(dolist (entry
+         '(((let ((inner (cons 1 nil)))
+              (let ((outer (cons inner nil)) (count 0))
+                (tagbody again
+                   (rplacd inner outer)
+                   (eq (cdr (car outer)) outer)
+                   (incf count) (if (< count 3) (go again)))
+                (eq (car outer) inner))) 2)
+           ((let ((saved nil) (count 0))
+              (tagbody again
+                 (let ((inner (cons count nil)))
+                   (let ((outer (cons inner nil))) (setq saved outer)))
+                 (incf count) (if (< count 3) (go again)))
+              saved) 0)
+           ((let ((inner (cons 1 2)))
+              (let ((outer (cons inner nil)) (count 0))
+                (tagbody again
+                   (let ((wrapper (cons inner nil))) (unknown-save wrapper))
+                   (incf count) (if (< count 3) (go again)))
+                (eq outer outer))) 1)))
+  (let* ((root (ir-test-form (first entry))) (plans (ir-prepare-stack-conses root)))
+    (assert (= (second entry) (length (gethash root plans))) ()
+            "Unexpected owner loop graph in ~S" (first entry))))
+
+(let* ((form '(let ((inner (cons 1 nil)))
+                (let ((outer (cons inner nil)) (count 0))
+                  (tagbody again
+                     (rplacd inner outer)
+                     (incf count) (if (< count 3) (go again)))
+                  (eq (car outer) inner))))
+       (*source-file* "owner-loop-observation") (*toplevel-source* nil)
+       (session (make-session)) (forms (front-end-forms (list form) session))
+       (*toplevel* (first forms)) (root (toplevel-form-ast *toplevel*)))
+  (assert (null (gethash root (ir-prepare-stack-conses root)))))
