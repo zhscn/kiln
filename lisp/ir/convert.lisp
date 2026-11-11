@@ -398,6 +398,7 @@
           (push (cons name fun) entries)
           (push (cons fun (rest def)) definitions)
           (ir-push fun functions))))
+    (when (plusp (ir-buffer-count functions)) (ir-note-local-functions *ir-function*))
     (let ((env (ir-env environment :funcs entries)))
       (dolist (definition (nreverse definitions))
         (ir-convert-lambda (cdr definition) (if recursive env environment)
@@ -541,7 +542,8 @@ as MULTIPLE-VALUE-BIND expands into: the variable inputs, FORM, and BODY."
         (ir-node 0 *ir-source* nil))))
 (define-ir-converter load-time-value (parts environment)
   (ir-arity 'load-time-value parts 1 2)
-  (let* ((fun (make-ir-fun :name '(load-time-value) :source *ir-source*
+  (let* ((outer *ir-function*)
+         (fun (make-ir-fun :name '(load-time-value) :source *ir-source*
                           :lambda-list (make-ir-lambda-list)))
          (*ir-function* fun))
     (unless (member (ir-raw (second parts)) '(nil t)) (ir-error "Invalid LOAD-TIME-VALUE read-only flag"))
@@ -549,6 +551,7 @@ as MULTIPLE-VALUE-BIND expands into: the variable inputs, FORM, and BODY."
           (ir-convert (first parts)
                       (ir-env (make-instance 'trucler-reference:environment
                                 :global-environment (trucler:global-environment *client* environment)))))
+    (when (logtest 64 (ir-fun-flags fun)) (ir-note-local-functions outer))
     (ir-node 24 *ir-source* fun (ir-raw (second parts)))))
 
 (define-ir-converter symbol-macrolet (parts environment)

@@ -33,7 +33,7 @@
   (name nil) (owner nil) (flags 0) (refs 0) (type t)
   (lowering nil) (constant nil) (constant-p nil))
 
-;;; Function flags: escapes, closure, single call, direct calls, inlined, analyzed.
+;;; Function flags: escapes, closure, single call, direct calls, inlined, analyzed, local definitions.
 (defstruct ir-fun
   (name nil) (parent nil) (lambda-list nil) (body nil) (parameter-specials nil)
   (free #()) (exits (make-ir-buffer)) (vars (make-ir-buffer))
@@ -147,6 +147,11 @@ found here.")
   (unless (eq (ir-var-owner var) *ir-function*)
     (setf (ir-var-flags var) (logior 2 (ir-var-flags var))))
   var)
+
+(defun ir-note-local-functions (fun)
+  (loop for owner = fun then (ir-fun-parent owner)
+        while (and owner (not (logtest 64 (ir-fun-flags owner))))
+        do (setf (ir-fun-flags owner) (logior 64 (ir-fun-flags owner)))))
 
 (defun ir-note-call (fun)
   (incf (ir-fun-calls fun))
