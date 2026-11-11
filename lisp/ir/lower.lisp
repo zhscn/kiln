@@ -369,6 +369,8 @@
     (10 (loop for form across (ir-node-a node) do (ir-lower-effect form)))
     (11 (let ((*call-source* (or (ir-node-source node) *call-source*)))
           (ir-bind-let node) (ir-lower-effect (ir-node-c node))))
+    (20 (ir-lower-unwind-protect node nil #'ir-lower-effect))
+    (22 (ir-lower-effect (ir-node-a node)) (ir-lower-effect (ir-node-b node)))
     (otherwise (ir-lower node))))
 
 (defun ir-lower-sequence (nodes)
@@ -1023,7 +1025,7 @@ unsupported call. Arguments retain their evaluation order and effects."
              (ir-lower-effect (ir-node-b ast)))
             (cleanup
              (let ((saved (emit-save-values v nv)))
-               (lower-progn cleanup)
+               (ir-lower-effect (ir-node-b ast))
                (multiple-value-call #'set-mv r n (emit-restore-values saved nv))))
             (t (set-mv r n v nv))))
     (jump cont)
@@ -1038,7 +1040,7 @@ unsupported call. Arguments retain their evaluation order and effects."
                                                    (and outer (region-handler outer)))
                                         :outer *regions*)
                            *regions*)))
-      (lower-progn cleanup))
+      (ir-lower-effect (ir-node-b ast)))
     (emit `(:call-rt ,(rt-continue-unwind) () (:ctx (:slot ,(region-slot region))) ,(handler)))
     (emit '(:trap))
     (start-block cont)

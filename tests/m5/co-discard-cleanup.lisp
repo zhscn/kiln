@@ -1,0 +1,27 @@
+(defun discard-cleanup-values (a b)
+  (declare (double-float a b))
+  (multiple-value-prog1 (values (progn (print :body) (+ a b)) (* a b))
+    (print :after))
+  (unwind-protect (values (+ a b) (* a b))
+    (+ a b) (print :cleanup))
+  :done)
+(print (discard-cleanup-values 2d0 3d0))
+(print (handler-case
+           (progn
+             (unwind-protect (values (+ 2d0 3d0) (/ 2d0 0d0))
+               (+ 2d0 3d0) (print :error-cleanup))
+             :too-late)
+         (division-by-zero () :division-error)))
+(print (catch 'done
+         (unwind-protect (values (+ 2d0 3d0) (* 2d0 3d0))
+           (throw 'done :cleanup-exit))
+         :too-late))
+(print (multiple-value-list
+        (unwind-protect (values (+ 2d0 3d0) (* 2d0 3d0))
+          (+ 2d0 3d0) (print :retained-cleanup))))
+(let ((function (compile nil '(lambda (a b)
+                               (declare (double-float a b))
+                               (multiple-value-prog1 (values (+ a b) (* a b)) (+ a b))
+                               (unwind-protect (values (+ a b) (* a b)) (+ a b))
+                               :done))))
+  (print (funcall function 2d0 3d0)))
