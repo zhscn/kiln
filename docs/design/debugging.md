@@ -193,6 +193,7 @@ key 和 value 的 cons。未绑定槽和无法读取的 NIL 元素类型数组�
 `rust/kiln-rt/src/profile.rs`、`lisp/target/clos/profile.lisp`。用的是已有的两样零件：poll 点和函数的调试信息，不需要在信号处理里走栈。
 
 - **CPU 模式**：一个定时器线程按间隔（默认 1 ms，实际时间）累加 tick，并对被分析的 context 请求 poll（设置 `poll_flag`，抬高 `stack_limit`）。下一个 poll 点（函数入口、循环头）进入 `kiln_rt_poll`，沿帧指针链记下栈上各帧所在的函数（最多 256 帧，跨过栈段），权重是上次采样以来的 tick 数。所以一次很长的 runtime 调用（bignum 运算等）按它的时长计在调用它的 Lisp 帧上，不会因为中间没有 poll 点而少算。偏差是 safepoint 偏差：样本落在 poll 点，而不是精确的指令上。
+- **定时线程的生命周期**：停止或切换采样模式会唤醒并等待旧定时线程退出，之后它不再写入被采样的 context。程序退出时也会停止通过 Lisp 接口启动的采样；长采样间隔不延迟停止操作。
 - **分配模式**：分配的慢路径（bump 分配器的缓冲用完，或者大对象）记录栈，权重是上次采样以来分配的字节数。编译出的代码内联分配，只在缓冲用完时进入 runtime，所以这是按缓冲大小（几十 KB）的采样。
 - 样本按栈聚合，记的是各帧函数的起始地址；Lisp 经 `kiln_rt_frame` 的 PROFILE 操作读出，按调试信息对象取名字，不分配。
 - **Lisp 接口**（`kiln.sys`）：`start-profiler`（`:mode :cpu`/`:alloc`，`:interval` 微秒）、`stop-profiler`、`profile-samples`（`(权重 . 函数名列表)`，最内层在前）、`profile-report`（按自身权重和按在栈上的总权重各列一张表）、`write-folded-stacks`（火焰图工具的 folded 格式）、`with-profiling`。

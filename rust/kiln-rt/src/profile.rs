@@ -43,6 +43,7 @@ struct State {
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
+static TIMER: Mutex<Option<std::thread::JoinHandle<()>>> = Mutex::new(None);
 
 /// Starts profiling `ctx`, forgetting earlier samples.
 pub fn start(ctx: *mut Context, mode: u64, interval_us: u64) {
@@ -58,11 +59,14 @@ pub fn start(ctx: *mut Context, mode: u64, interval_us: u64) {
     CPU_ACTIVE.store(true, Ordering::Release);
     let generation = GENERATION.load(Ordering::Relaxed);
     let interval = std::time::Duration::from_micros(interval_us.max(50));
-    std::thread::Builder::new()
+    let timer = std::thread::Builder::new()
         .name("kiln-profiler".into())
         .spawn(move || {
             while GENERATION.load(Ordering::Relaxed) == generation {
-                std::thread::sleep(interval);
+                std::thread::park_timeout(interval);
+                if GENERATION.load(Ordering::Acquire) != generation {
+                    break;
+                }
                 TICKS.fetch_add(1, Ordering::Relaxed);
                 let ctx = CONTEXT.load(Ordering::Relaxed) as *mut Context;
                 // Plain stores, as the poll points read them; a lost
@@ -71,13 +75,18 @@ pub fn start(ctx: *mut Context, mode: u64, interval_us: u64) {
             }
         })
         .expect("cannot start the profiler thread");
+    *TIMER.lock().unwrap() = Some(timer);
 }
 
 /// Stops profiling; the samples stay readable until the next start.
 pub fn stop() {
     CPU_ACTIVE.store(false, Ordering::Release);
     ALLOC_ACTIVE.store(false, Ordering::Release);
-    GENERATION.fetch_add(1, Ordering::Relaxed);
+    GENERATION.fetch_add(1, Ordering::AcqRel);
+    if let Some(timer) = TIMER.lock().unwrap().take() {
+        timer.thread().unpark();
+        timer.join().expect("profiler timer thread panicked");
+    }
     if let Some(s) = STATE.lock().unwrap().as_mut() {
         let mut list: Vec<_> = s.samples.drain().collect();
         list.sort_by(|a, b| b.1.cmp(&a.1));
@@ -233,6 +242,7 @@ fn function_name(start: usize) -> String {
 
 pub fn finish_from_env() {
     if !FROM_ENV.swap(false, Ordering::Relaxed) {
+        stop();
         return;
     }
     let alloc = ALLOC_ACTIVE.load(Ordering::Relaxed);
@@ -276,4 +286,30 @@ pub fn finish_from_env() {
         }
     }
     eprint!("{out}");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn stop_quiesces_timer_and_interrupts_long_wait() {
+        // The timer only accesses poll_flag and stack_limit; no Lisp or GC runs.
+        let mut ctx: Context = unsafe { std::mem::zeroed() };
+        for _ in 0..8 {
+            start(&mut ctx, MODE_CPU, 50);
+            std::thread::sleep(Duration::from_millis(1));
+            stop();
+            ctx.poll_flag = 0;
+            ctx.stack_limit = 0;
+            std::thread::sleep(Duration::from_millis(1));
+            assert_eq!(ctx.poll_flag, 0);
+            assert_eq!(ctx.stack_limit, 0);
+        }
+        start(&mut ctx, MODE_CPU, 10_000_000);
+        let began = Instant::now();
+        stop();
+        assert!(began.elapsed() < Duration::from_secs(1));
+    }
 }
