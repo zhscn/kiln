@@ -1,6 +1,6 @@
 # Benchmarks
 
-- `compare.lisp`, `micro*.lisp`, `gf*.lisp`, `fe-read.lisp`, `local-calls.lisp`, `captured-calls.lisp`, `double-tree.lisp`: kiln's own.
+- `compare.lisp`, `micro*.lisp`, `gf*.lisp`, `fe-read.lisp`, `local-calls.lisp`, `captured-calls.lisp`, `double-tree.lisp`, `double-branches.lisp`: kiln's own.
 - `cl-bench/`: cl-bench (Eric Marsden, maintained by Daniel Kochmański; public domain per its `cl-bench.asd`; `files/deflate.lisp` is copyright Gilbert Baumann), from https://gitlab.common-lisp.net/ansi-test/cl-bench at commit a054e5f (2026-10-29): the benchmark sources, `misc/gabriel.lisp` and `misc/message.gz`; not the report generator.
 - `benchmarksgame/`: the SBCL programs of the Computer Language Benchmarks Game (revised BSD license, `benchmarksgame/LICENSE`), from its source archive (https://benchmarksgame-team.pages.debian.net/benchmarksgame/download/benchmarksgame-sourcecode.zip, downloaded 2026-11-07).
 
@@ -26,6 +26,10 @@ of `benchmark-captured-calls`. Its fixed workload prints `2097150`.
 and a sum. `benchmark-double-tree` stays callable for isolated counters.
 The fixed workload checks its result and prints `T`; it measures arithmetic
 calls and intermediate boxing rather than general floating-point workloads.
+
+`double-branches.lisp` applies the stable double-float recurrence through a
+four-arm `case`. It checks the final value and isolates discarded branch
+results, switch lowering, and boxing at assignment boundaries.
 
 ## Changes
 
