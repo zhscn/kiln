@@ -150,6 +150,21 @@ pub fn symbol_root_index(field: u32) -> Result<u32, String> {
     Ok((offset / size_of::<u64>()) as u32)
 }
 
+pub fn fixnum_arithmetic(op: crate::kir::OvfOp, a: Expr, b: Expr) -> Expr {
+    use crate::kir::{BinOp, OvfOp};
+    let (op, a) = match op {
+        OvfOp::Add => (BinOp::Add, a),
+        OvfOp::Sub => (BinOp::Sub, a),
+        OvfOp::Mul => (BinOp::Mul, fixnum_untag(a)),
+    };
+    Expr::Bin(op, Box::new(a), Box::new(b))
+}
+
+pub fn fixnum_arithmetic_ovf(op: crate::kir::OvfOp, result: String, overflow: String, a: Expr, b: Expr) -> Stmt {
+    let a = if matches!(op, crate::kir::OvfOp::Mul) { fixnum_untag(a) } else { a };
+    Stmt::Ovf { op, result, overflow, a, b }
+}
+
 pub fn fixnum_untag(value: Expr) -> Expr {
     Expr::Shift(crate::kir::ShiftOp::Sar, Box::new(value), 1)
 }

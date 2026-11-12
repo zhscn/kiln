@@ -1167,6 +1167,16 @@ fn parse_stmt(s: &Sexp) -> R<Stmt> {
                 loc,
             }
         }
+        "fixnum-add-ovf" | "fixnum-sub-ovf" | "fixnum-mul-ovf" => {
+            arity(h, r, 4)?;
+            let op = match h {
+                "fixnum-add-ovf" => OvfOp::Add,
+                "fixnum-sub-ovf" => OvfOp::Sub,
+                _ => OvfOp::Mul,
+            };
+            crate::lir::fixnum_arithmetic_ovf(op, sym(&r[0])?.to_string(),
+                sym(&r[1])?.to_string(), parse_expr(&r[2])?, parse_expr(&r[3])?)
+        }
         "add-ovf" | "sub-ovf" | "mul-ovf" => {
             arity(h, r, 4)?;
             Stmt::Ovf {
@@ -1244,6 +1254,15 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
         "field-load" => {
             arity(h, r, 2)?;
             return crate::lir::field_load(u32::try_from(int(&r[0])?).map_err(|_| "invalid field ID")?, parse_expr(&r[1])?);
+        }
+        "fixnum-add" | "fixnum-sub" | "fixnum-mul" => {
+            arity(h, r, 2)?;
+            let op = match h {
+                "fixnum-add" => OvfOp::Add,
+                "fixnum-sub" => OvfOp::Sub,
+                _ => OvfOp::Mul,
+            };
+            crate::lir::fixnum_arithmetic(op, parse_expr(&r[0])?, parse_expr(&r[1])?)
         }
         "fixnum-untag" => {
             arity(h, r, 1)?;

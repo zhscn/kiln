@@ -598,15 +598,15 @@ predicate inside it is branched on, not made into T or NIL and compared."
 (defun hir-lower-fixnum-arithmetic (name a b bounded &optional error-on-overflow)
   (if bounded
       (copy-to-var (case name
-                     (+ `(:add ,a ,b)) (- `(:sub ,a ,b))
-                     (* `(:mul (:fixnum-untag ,a) ,b))))
+                     (+ `(:fixnum-add ,a ,b)) (- `(:fixnum-sub ,a ,b))
+                     (* `(:fixnum-mul ,a ,b))))
       ;; Input types do not prove that the result fits. Keep the overflow
       ;; edge and its arbitrary-precision result.
       (let ((r (new-var)) (ovf (new-var :raw)) (slow (new-block)) (done (new-block)))
         (emit (case name
-                (+ `(:add-ovf ,r ,ovf ,a ,b))
-                (- `(:sub-ovf ,r ,ovf ,a ,b))
-                (* `(:mul-ovf ,r ,ovf (:fixnum-untag ,a) ,b))))
+                (+ `(:fixnum-add-ovf ,r ,ovf ,a ,b))
+                (- `(:fixnum-sub-ovf ,r ,ovf ,a ,b))
+                (* `(:fixnum-mul-ovf ,r ,ovf ,a ,b))))
         (br ovf slow done)
         (start-block slow)
         (emit `(:set ,r ,(emit-slow-call

@@ -545,6 +545,24 @@ fn vector_element_access_uses_word_indices() {
 }
 
 #[test]
+fn fixnum_arithmetic_preserves_overflow_and_fast_paths() {
+    let module = |body| format!("(module \"arith\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj) (o raw)) (slots) (block b {body} (return v 1))))");
+    for (old, new) in [
+        ("(set v (add a0 a1))", "(set v (fixnum-add a0 a1))"),
+        ("(set v (sub a0 a1))", "(set v (fixnum-sub a0 a1))"),
+        ("(set v (mul (sar a0 1) a1))", "(set v (fixnum-mul a0 a1))"),
+        ("(add-ovf v o a0 a1)", "(fixnum-add-ovf v o a0 a1)"),
+        ("(sub-ovf v o a0 a1)", "(fixnum-sub-ovf v o a0 a1)"),
+        ("(mul-ovf v o (sar a0 1) a1)", "(fixnum-mul-ovf v o a0 a1)"),
+    ] {
+        let old = kiln_cg::kir::parse_module(&sexp::parse_one(&module(old)).unwrap()).unwrap();
+        let new = sexp::parse_one(&module(new)).unwrap();
+        let new = packet::load(&packet::encode(&new, packet::schema::KIR_PAYLOAD).unwrap()).unwrap();
+        assert_eq!(format!("{old:?}"), format!("{new:?}"));
+    }
+}
+
+#[test]
 fn fixnum_unsigned_bits_preserves_logical_shift() {
     let module = |body| format!("(module \"bits\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v raw)) (slots) (block b {body} (return v 1))))");
     let old = module("(set v (shr a0 1))");

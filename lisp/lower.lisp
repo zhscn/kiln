@@ -708,7 +708,7 @@ known to hold one), and true; else NIL and NIL."
       (unless (assoc (cdr arm) blocks :test #'eq)
         (push (cons (cdr arm) (new-block)) blocks)))
     (setf blocks (nreverse blocks))
-    (br `(:eq (:and ,value 1) 0) dispatch fallback)
+    (br `(:test-class ,kiln.kir::+packet-class-fixnum+ ,value) dispatch fallback)
     (start-block dispatch)
     (emit `(:switch (:fixnum-untag ,value) ,(kiln.kir::kblock-name fallback)
                     ,(loop for (key . body) in arms
@@ -1096,7 +1096,7 @@ returns LOW, HIGH and T; else NIL, NIL and NIL."
 
 (defun emit-fixnum-range-test (val low high)
   "Raw 0/1 operand: is VAL a fixnum in LOW..HIGH?"
-  (let ((cond `(:eq (:and ,val 1) 0)))
+  (let ((cond `(:test-class ,kiln.kir::+packet-class-fixnum+ ,val)))
     (when (> low +most-negative-fixnum+)
       (setf cond `(:and ,cond (:ge ,val ,(ash low +fixnum-shift+)))))
     (when (< high +most-positive-fixnum+)
