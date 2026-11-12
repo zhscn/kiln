@@ -59,7 +59,6 @@
 (defconstant +ctx-dynenv+ 8)
 ;;; Transfer area: arguments beyond the register arguments, and (later)
 ;;; values beyond the first. VALUES_MAX words, at the end of the context.
-(defconstant +ctx-values+ 88)
 ;;; Function entries call the poll slow path when their frame pointer is
 ;;; below this (stack exhaustion, rust/kiln-rt/src/stack.rs).
 (defconstant +ctx-stack-limit+ 80)

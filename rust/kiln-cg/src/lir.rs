@@ -69,6 +69,22 @@ pub fn transfer_set(index: i64, value: Expr) -> Result<Stmt, String> {
     Ok(Stmt::Store(Expr::Var("ctx".into()), transfer_offset(index)?, value))
 }
 
+fn transfer_address(index: Expr) -> Expr {
+    Expr::Bin(
+        crate::kir::BinOp::Add,
+        Box::new(Expr::Var("ctx".into())),
+        Box::new(Expr::Shift(crate::kir::ShiftOp::Shl, Box::new(index), 3)),
+    )
+}
+
+pub fn transfer_ref_dynamic(index: Expr) -> Expr {
+    Expr::Load(Box::new(transfer_address(index)), core::mem::offset_of!(kiln_rt::context::Context, values) as i32)
+}
+
+pub fn transfer_set_dynamic(index: Expr, value: Expr) -> Stmt {
+    Stmt::Store(transfer_address(index), core::mem::offset_of!(kiln_rt::context::Context, values) as i32, value)
+}
+
 /// Materialize the target calling convention after the front end has
 /// evaluated the callee and every argument into stable operands.
 pub fn invoke(

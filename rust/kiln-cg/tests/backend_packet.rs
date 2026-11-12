@@ -99,6 +99,17 @@ fn named_fields_preserve_the_legacy_kir_program() {
 }
 
 #[test]
+fn dynamic_transfer_slots_expand_to_context_accesses() {
+    let module = |body| format!("(module \"transfer\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj) (i raw)) (slots) (block b {body} (return v 1))))");
+    let old = module("(set v (load (add ctx (shl i 3)) 88)) (store (add ctx (shl i 3)) 88 a0)".to_string());
+    let new = module("(set v (transfer-ref-dynamic i)) (transfer-set-dynamic i a0)".to_string());
+    let old = kiln_cg::kir::parse_module(&sexp::parse_one(&old).unwrap()).unwrap();
+    let new = sexp::parse_one(&new).unwrap();
+    let new = packet::load(&packet::encode(&new, packet::schema::KIR_PAYLOAD).unwrap()).unwrap();
+    assert_eq!(format!("{old:?}"), format!("{new:?}"));
+}
+
+#[test]
 fn fixed_transfer_slots_preserve_kir_and_check_bounds() {
     let module = |body| format!("(module \"transfer\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj)) (slots) (block b {body} (return v 1))))");
     for index in [0, 1, 1020] {

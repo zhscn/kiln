@@ -10,9 +10,8 @@
 ;;;; makes the transfer area a GC root.
 
 (defun values-word (i)
-  "KIR operand for the address-relative load of value I (I >= 1, raw
-variable or integer) in ctx.values."
-  `(:load (:add :ctx (:shl ,i 3)) ,(- +ctx-values+ 8)))
+  "Operand for value I (I >= 1, raw variable or integer) in the transfer area."
+  `(:transfer-ref-dynamic (:sub ,i 1)))
 
 (defun emit-push-values (v0 n acc)
   "Conses the values (V0, N) onto the list operand ACC, first value
@@ -81,7 +80,7 @@ Returns the primary value and the count. No allocation."
       (start-block bad)
       (emit-error +err-wrong-nargs+ `(:shl ,n ,+fixnum-shift+))
       (start-block ok))
-    (emit `(:store (:add :ctx (:shl ,n 3)) ,(- +ctx-values+ 8) (:field-load ,kiln.kir::+packet-field-cons-car+ ,cur)))
+    (emit `(:transfer-set-dynamic (:sub ,n 1) (:field-load ,kiln.kir::+packet-field-cons-car+ ,cur)))
     (emit `(:set ,cur (:field-load ,kiln.kir::+packet-field-cons-cdr+ ,cur)))
     (emit `(:set ,n (:add ,n 1)))
     (jump head)
@@ -146,7 +145,7 @@ proper list LIST as arguments. Returns the primary value and the count."
                  (emit `(:set ,a ,x))
                  (jump next)
                  (start-block other)))
-      (emit `(:store (:add :ctx (:shl ,i 3)) ,(- +ctx-values+ (* 8 +reg-args+)) ,x))
+      (emit `(:transfer-set-dynamic (:sub ,i ,+reg-args+) ,x))
       (jump next)
       (start-block next))
     (emit `(:set ,cur (:field-load ,kiln.kir::+packet-field-cons-cdr+ ,cur)))
@@ -187,7 +186,7 @@ use them only when the entire list fits, otherwise allocate on the heap."
                  (emit `(:set ,x ,a))
                  (jump join)
                  (start-block other)))
-      (emit `(:set ,x (:load (:add :ctx (:shl ,i 3)) ,(- +ctx-values+ (* 8 +reg-args+)))))
+      (emit `(:set ,x (:transfer-ref-dynamic (:sub ,i ,+reg-args+))))
       (jump join)
       (start-block join)
       (if stack-slots
