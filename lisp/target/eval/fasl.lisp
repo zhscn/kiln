@@ -194,7 +194,7 @@
     (t (error "Invalid FASL record encoding."))))
 
 (defun write-native-fasl (unit stream)
-  (dolist (byte '(75 70 65 83 1)) (write-byte byte stream))
+  (dolist (byte '(137 75 70 65 83 1)) (write-byte byte stream))
   (fasl-write-uint (first unit) stream)
   (fasl-write-uint (length (second unit)) stream)
   (dolist (record (second unit)) (fasl-write-data record stream)))
@@ -237,7 +237,7 @@
 
 (defun load-native-fasl (stream &key verbose)
   (declare (ignore verbose))
-  (dolist (byte '(75 70 65 83 1))
+  (dolist (byte '(137 75 70 65 83 1))
     (unless (= (read-byte stream) byte) (error "Unsupported native FASL header or version.")))
   (let ((*fasl-load-objects* (make-array (fasl-read-uint stream))))
     (dotimes (i (fasl-read-uint stream))

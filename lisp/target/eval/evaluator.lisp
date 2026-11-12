@@ -88,7 +88,7 @@
                  (let ((byte (read-byte stream nil nil)))
                    (unless byte (return-from fasl-stream-p nil))
                    (setf magic (logior (ash magic 8) byte))))
-               (= magic #x4b464153))))
+               (= magic #x894b4641))))
     (if (streamp filespec)
         (load-stream filespec nil nil
                      (subtypep (stream-element-type filespec) '(unsigned-byte 8)))
