@@ -11,6 +11,18 @@
 
 (defclass image-client (client) ())
 
+(setf kiln.kernel::*compiler-macro-query-hook*
+      (lambda (name) (note-dependency :compiler-macro name)))
+
+(defmethod client-compiler-macro ((client image-client) environment name)
+  (declare (ignore environment))
+  (unless (eq (kiln.kernel::function-inline-declaration name) 'notinline)
+    (compiler-macro-function name)))
+
+(defmethod client-type-expander ((client image-client) environment name)
+  (declare (ignore environment))
+  (get name 'kiln.kernel::type-expander))
+
 (defmethod run-time-packages-p ((client image-client))
   t)
 
@@ -72,11 +84,12 @@
   (declare (ignore client))
   (make-instance 'trucler:declarations-description :declarations kiln.kernel::*declaration-names*))
 
-;;; As Clostrum's environments with no OPTIMIZE proclamation (the host's).
 (defmethod trucler:describe-optimize (client (environment run-time-environment))
   (declare (ignore client))
-  (make-instance 'trucler:optimize-description
-    :speed 3 :debug 3 :space 3 :safety 3 :compilation-speed 3))
+  (let ((qualities kiln.kernel::*optimization-qualities*))
+    (make-instance 'trucler:optimize-description
+      :speed (svref qualities 0) :safety (svref qualities 1) :debug (svref qualities 2)
+      :space (svref qualities 3) :compilation-speed (svref qualities 4))))
 
 (defmethod make-compile-environment ((client image-client))
   (make-instance 'trucler-reference:environment
@@ -111,13 +124,16 @@
     (maclina.compile:eval (ecclesia:parse-macro name lambda-list body)
                           (maclina-environment (ir-evaluation-environment environment)))))
 
-;;; Inline proclamations at compile time (DECLAIM) reach the front end
-;;; through the kernel's PROCLAIM.
+;;; Runtime proclamations also update the table shared by image sessions.
+;;; During module initialization the host table is not installed yet.
 (setf kiln.kernel::*proclaim-hook*
       (lambda (declaration)
-        (when (and (boundp '*client*) (typep *client* 'image-client)
+        (when (and (boundp '*host-inline-functions*)
                    (consp declaration) (member (first declaration) '(inline notinline)))
-          (note-inline-proclamation (first declaration) (rest declaration)))))
+          (let ((*client* (if (and (boundp '*client*) (typep *client* 'image-client))
+                             *client* (make-instance 'image-client)))
+                (*inline-functions* (image-inline-functions)))
+            (note-inline-proclamation (first declaration) (rest declaration))))))
 
 (defvar *host-inline-functions*)        ; session.lisp
 

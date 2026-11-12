@@ -1,6 +1,6 @@
 # 依赖追踪
 
-在 image 里求值的定义会记下编译期用到的定义（宏、内联函数、`setf` 展开器、常量）；其中之一被重新定义时，依赖它的定义自动重新求值，或者报告为过时。没有它的话，在活 image 里重定义宏之后，已经编好的使用者仍按旧的展开运行（SBCL 就是这样，用户常常因此踩坑）。这也是“重定义任何东西都立即对所有调用者生效”在优化之后仍然成立的前提（[editor.md](editor.md) 的“重定义始终立即生效”）。
+在 image 里求值的定义会记下编译期用到的定义（宏、编译器宏、类型展开、内联函数、`setf` 展开器、常量）；其中之一被重新定义时，依赖它的定义自动重新求值，或者报告为过时。没有它的话，在活 image 里重定义宏之后，已经编好的使用者仍按旧的展开运行（SBCL 就是这样，用户常常因此踩坑）。这也是“重定义任何东西都立即对所有调用者生效”在优化之后仍然成立的前提（[editor.md](editor.md) 的“重定义始终立即生效”）。
 
 实现在 `lisp/target/compiler/dependencies.lisp`，记录点在前端。AOT 编出的模块还没有依赖记录（见“不追踪的”）。增量编译的做法取自 Zig，对照见 [zig-incremental.md](../research/zig-incremental.md)。
 
@@ -19,6 +19,7 @@
 | 键 | 记录的时机 | 失效的时机 |
 |---|---|---|
 | `(:macro m)` | 展开了全局宏 `m`；或者编译时 `m` 还没有定义（以后的 `defmacro` 会改变这个形式的含义） | `(setf macro-function)`，即每次 `defmacro` |
+| `(:compiler-macro f)` | 查询了可用于调用点的编译器宏，包括缺失及拒绝展开的定义 | `(setf compiler-macro-function)`，包括删除 |
 | `(:inline f)` | 内联展开了 `f` | `f` 有了新的内联展开，或者被声明为 `notinline` |
 | `(:setf f)` | 编译了位置 `(f ...)` 的 `setf` | `defsetf`、`define-setf-expander` |
 | `(:constant c)` | 引用了常量 `c`（值折叠进了代码） | `defconstant` 改变了它的值（不 `eql`） |
@@ -28,7 +29,7 @@
 | `(:initialization c)` | 代码用到了类初始化协议对 `c` 的适用方法 | 往 `allocate-instance`、`initialize-instance`、`shared-initialize` 增删方法 |
 | `(:function f)` | 代码依赖 `f` 的定义 | `f` 重定义 |
 
-后五行（`(:class c)` 等）是 [specialization.md](specialization.md) 的假设：每次 `change-assumption` 都把键交给同一个重定义钩子，所以它们和宏、内联函数一样能成为在 image 里编译的定义的依赖。现在编译器还没有记录这些键（调用点特化、生成的判别函数才会记），但报告和 `kiln.sys:dependents` 已经认识它们。
+后五行（`(:class c)` 等）是 [specialization.md](specialization.md) 的假设：每次 `change-assumption` 都把键交给同一个重定义钩子，所以它们和宏、内联函数一样能成为在 image 里编译的定义的依赖。类型展开已经记录 `(:type name)`；其他键由相应的调用点特化、生成的判别函数等记录，但报告和 `kiln.sys:dependents` 已经认识它们。
 
 在哪里记录：
 - 前端查询全局环境时（`lisp/target/compiler/client.lisp` 的 `run-time-environment`）：IR 转换展开宏、宏用 `&environment` 调用 `macro-function`，都会经过这里。查到宏、查不到定义、查到常量时记下依赖。
@@ -84,7 +85,7 @@ image 里所有的编译会话共用一张内联函数表（`*image-inline-funct
 - **AOT 编出的模块**：kiln 自己的五个模块和测试程序由交叉编译器编译，没有记录。在 image 里重定义 kernel 的宏，kernel 里已经编好的代码不会更新。要支持它，得在 KIR 里记下每个函数的依赖，模块初始化时装进同一张表（定义表也要这样做，[debugging.md](debugging.md) 的定义记录）。
 - **宏展开函数在展开时调用的函数**：展开函数调用的辅助函数被重新定义后，不会自动更新。重新求值那个宏就会传播（见“决定”）。
 - **`compile` 编出的函数**：没有可以重新求值的定义形式。
-- **类型**：`typep` 对非标准的类型在运行期按类型缓存（`%typep-cached`），不在编译期展开 `deftype`，不需要追踪；调用点的 `typep` 缓存自己检查类型假设的版本。`defstruct` 在运行期还没有实现。CLOS 分派和调用点特化还没有把假设记成依赖，以后加上时用同一套键。
+- **动态类型参数**：不能在编译期确定的类型参数继续走运行期 `typep`；调用点的类型缓存检查类型假设的版本。常量类型与声明的别名展开则记录编译期依赖。CLOS 分派和调用点特化需要按其使用的事实继续扩展依赖记录。
 - **宏改成函数**：`defun` 不清除名字上的宏函数（原来就是这样），这种重定义目前不起作用。
 
 ## 接口

@@ -212,6 +212,7 @@
 
 (defun ir-declaration-type (specifier)
   "Project supported declarations into the value domain; T is unsupported."
+  (setf specifier (ir-declaration-expanded specifier))
   (cond ((member specifier '(fixnum integer rational real number float single-float double-float
                             cons symbol character simple-vector simple-string string vector array
                             function null list)) specifier)
@@ -272,6 +273,7 @@
                   (and truth known)))))))
 
 (defun ir-declaration-proven-p (actual specifier)
+  (setf specifier (ir-declaration-expanded specifier))
   (cond ((and (consp specifier) (member (car specifier) '(array simple-array)))
          ;; A projected class does not prove element or extent constraints.
          (and (equal specifier '(simple-array t (*)))

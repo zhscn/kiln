@@ -24,7 +24,7 @@
 | 流 | Cyclosis（vendor） | 补了 fd 系统调用和缓冲 |
 | 包 | Parcl（vendor） | intrinsic 方式加载 |
 | LOOP | Khazern（vendor） | 宿主展开交叉编译的 LOOP；目标端编进 CLOS 模块 |
-| FORMAT | Invistra（vendor） | |
+| FORMAT | Invistra（vendor） | 指令编译器也在宿主上用于交叉展开 |
 | 打印器、pretty printer | Incless、Inravina（vendor） | |
 | 浮点打印 | Quaviver | 现在用 kiln 自己的替身（[io.md](io.md)） |
 | Condition 系统 | Predicament（vendor） | kiln 自己写 `condition` 类和 `define-condition` |

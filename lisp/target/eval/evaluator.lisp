@@ -38,9 +38,12 @@
          (make-instance 'trucler:special-operator-description :name name))
         ((and (symbolp name) (macro-function name))
          (make-instance 'trucler:global-macro-description
-           :name name :expander (macro-function name)))
+           :name name :expander (macro-function name) :compiler-macro (compiler-macro-function name)
+           :inline (kiln.kernel::function-inline-declaration name)))
         ((fboundp name)
-         (make-instance 'trucler:global-function-description :name name))
+         (make-instance 'trucler:global-function-description :name name
+                        :compiler-macro (compiler-macro-function name)
+                        :inline (kiln.kernel::function-inline-declaration name)))
         (t nil)))
 
 (defmethod trucler:describe-block ((client client) (env null) name)
@@ -78,6 +81,14 @@
           (if (typep description 'trucler:symbol-macro-description)
               (values (trucler:expansion description) t)
               (values nil nil)))))
+
+(setf kiln.kernel::*environment-compiler-macro-function*
+      (lambda (name environment)
+        (let ((description (trucler:describe-function
+                            (environment-client environment) environment name)))
+          (when (or (null description)
+                    (typep description '(or trucler:global-function-description trucler:global-macro-description)))
+            (compiler-macro-function name)))))
 
 (setf m:*client* (make-instance 'client))
 (maclina.vm-native:initialize-vm 100000)

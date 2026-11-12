@@ -11,6 +11,7 @@
                "clostrum-trucler"
                "trucler-reference"
                "ecclesia"
+               "invistra"
                "anatomicl")
   :pathname "lisp/"
   :serial t

@@ -300,6 +300,7 @@ local symbol-macro binding in ENVIRONMENT."
 (defun inline-call-p (client environment form)
   (multiple-value-bind (name arguments) (inline-call form)
    (and *inline-enabled*
+       (ir-policy-optimize-p *ir-policy*)
        name
        (let ((entry (and (boundp '*inline-functions*)
                          (gethash name *inline-functions*))))
@@ -373,25 +374,60 @@ true; else NIL and NIL."
             (values nil nil)))
       (values nil nil)))
 
-;;; Compiler macros: kiln has none of its own yet, but the host's of the
-;;; libraries whose macros are the host's (USE-HOST-MACROS, cross.lisp)
-;;; apply to the code compiled for the target.
-(defgeneric client-compiler-macro (client name)
-  (:method (client name)
-    (declare (ignore client name))
+;;; Compiler macros are owned by the compilation environment, including
+;;; the wrapped host-library expanders used by cross compilation.
+(defgeneric client-compiler-macro (client environment name)
+  (:method (client environment name)
+    (declare (ignore client environment name))
     nil))
+
+(defgeneric client-type-expander (client environment name)
+  (:method (client environment name)
+    (declare (ignore client environment name))
+    nil))
+
+(defvar *compiler-macro-depth* 0)
+
+(define-condition compiler-macro-expansion-warning (style-warning)
+  ((form :initarg :form :reader compiler-macro-warning-form)
+   (cause :initarg :cause :reader compiler-macro-warning-cause))
+  (:report (lambda (condition stream)
+             (format stream "Compiler macro expansion of ~S failed: ~A"
+                     (compiler-macro-warning-form condition) (compiler-macro-warning-cause condition)))))
+
+(defun compiler-macro-call-name (form)
+  (when (consp form)
+    (if (and (eq (first form) 'funcall) (consp (rest form))
+             (consp (second form)) (eq (first (second form)) 'function)
+             (consp (rest (second form))) (null (cddr (second form)))
+             (or (symbolp (second (second form)))
+                 (setf-function-name-p (second (second form)))))
+        (second (second form))
+        (and (symbolp (first form)) (first form)))))
+
+(defun compiler-macro-expander (client environment name)
+  (unless (or (member name *local-notinline* :test #'equal)
+              (and (boundp '*inline-functions*) (eq (gethash name *inline-functions*) :notinline)))
+    (let ((description (trucler:describe-function client environment name)))
+      (when (or (null description)
+                (and (typep description '(or trucler:global-function-description trucler:global-macro-description))
+                     (not (eq (ignore-errors (trucler:inline description)) 'notinline))))
+        (note-dependency :compiler-macro name)
+        (client-compiler-macro client environment name)))))
 
 (defun compiler-macro-expansion (client environment form)
   "The expansion of FORM, a call of a global function, by its compiler
-macro, or NIL (none, or the compiler macro declines)."
-  (and *inline-enabled*
-       (consp form) (symbolp (first form))
-       (let ((expander (client-compiler-macro client (first form))))
-         (and expander
-              (typep (trucler:describe-function client environment (first form))
-                     '(or null trucler:global-function-description))
-              (let ((expansion (funcall expander form environment)))
-                (and (not (eq expansion form)) expansion))))))
+macro. The second value distinguishes a NIL expansion from declining."
+  (when (and *inline-enabled* (ir-policy-optimize-p *ir-policy*) (< *compiler-macro-depth* 64))
+    (let* ((name (compiler-macro-call-name form))
+           (expander (and name (compiler-macro-expander client environment name))))
+      (when expander
+        (handler-case
+            (let ((expansion (funcall expander form environment)))
+              (unless (eq expansion form) (values expansion t)))
+          (error (condition)
+            (warn 'compiler-macro-expansion-warning :form form :cause condition)
+            (values nil nil)))))))
 
 ;;; Reading
 

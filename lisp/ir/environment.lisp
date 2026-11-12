@@ -37,6 +37,62 @@
 (defun ir-base-environment (environment)
   (if (ir-env-p environment) (ir-env-base environment) environment))
 
+(defun ir-declaration-original (type)
+  (cond ((ir-type-declaration-p type) (ir-type-declaration-original type))
+        ((and (consp type) (member (car type) '(and or not)))
+         (cons (car type) (mapcar #'ir-declaration-original (cdr type))))
+        (t type)))
+
+(defun ir-declaration-expanded (type)
+  (cond ((ir-type-declaration-p type) (ir-type-declaration-expanded type))
+        ((and (consp type) (member (car type) '(and or not)))
+         (cons (car type) (mapcar #'ir-declaration-expanded (cdr type))))
+        (t type)))
+
+(defun ir-expand-type (type environment)
+  "Expand type aliases in this lexical environment, retaining bounded work.
+Each named alias queried is a dependency, including currently undefined names."
+  (unless (and (boundp '*client*) *client* (ir-base-environment environment))
+    (return-from ir-expand-type type))
+  (let ((budget 128))
+    (block expansion
+      (labels ((walk (specifier path)
+                 (when (or (minusp (decf budget)) (member specifier path :test #'equal))
+                   (return-from expansion type))
+                 (let* ((name (if (consp specifier) (car specifier) specifier))
+                        (named (and (symbolp name) (not (keywordp name))
+                                    (not (eq (symbol-package name) (find-package '#:common-lisp)))))
+                        (expander (and named
+                                       (client-type-expander *client* environment name))))
+                   (when named (note-dependency :type name))
+                   (cond (expander
+                          (walk (funcall expander specifier environment) (cons specifier path)))
+                         ((and (consp specifier) (member name '(and or not cons))
+                               (ir-proper-list-p specifier))
+                          (cons name (mapcar (lambda (part) (walk part (cons specifier path)))
+                                             (cdr specifier))))
+                         ((and (consp specifier) (member name '(array simple-array vector))
+                               (consp (cdr specifier)) (ir-proper-list-p specifier))
+                          (list* name (walk (second specifier) (cons specifier path))
+                                 (mapcar (lambda (part)
+                                           (if (and (consp part) (ir-proper-list-p part)) (copy-list part) part))
+                                         (cddr specifier))))
+                         ((and (consp specifier) (ir-proper-list-p specifier))
+                          ;; Bounds and dimensions belong to the proof snapshot;
+                          ;; EQL and MEMBER payloads retain their object identities.
+                          (if (member name '(integer rational real float single-float double-float short-float long-float))
+                              (cons name (mapcar (lambda (bound)
+                                                   (if (and (consp bound) (ir-proper-list-p bound))
+                                                       (copy-list bound) bound)) (cdr specifier)))
+                              (copy-list specifier)))
+                         (t specifier)))))
+        (walk type nil)))))
+
+(defun ir-expand-declaration (type environment)
+  (if (ir-type-declaration-p type) type
+      (let ((expanded (ir-expand-type type environment)))
+        (if (equal type expanded) type (make-ir-type-declaration type expanded)))))
+
 (defun ir-declared-variable-type (environment variable)
   "Intersect declarations on this binding identity in the current scope."
   (let ((types nil))
@@ -53,7 +109,7 @@
     (if found
         (cond ((ir-var-p binding)
                (make-instance 'trucler:lexical-variable-description
-                              :name name :identity binding :type (ir-declared-variable-type environment binding)
+                              :name name :identity binding :type (ir-declaration-original (ir-declared-variable-type environment binding))
                               :ignore (and (logtest 8 (ir-var-flags binding)) 'ignorable)
                               :dynamic-extent (logtest 16 (ir-var-flags binding))))
               ((eq (car binding) :special)
@@ -113,6 +169,21 @@
             :debug (quality 'debug (trucler:debug base))
             :compilation-speed (quality 'compilation-speed (trucler:compilation-speed base)))))))
 
+(defun ir-policy-from-environment (environment)
+  (let ((policy (trucler:describe-optimize *client* environment)))
+    (flet ((quality (value shift)
+             (unless (and (integerp value) (<= 0 value 3))
+               (ir-error "Invalid optimization quality ~S" value))
+             (ash value shift)))
+      (logior (quality (trucler:speed policy) 0) (quality (trucler:safety policy) 2)
+              (quality (trucler:debug policy) 4) (quality (trucler:space policy) 6)
+              (quality (trucler:compilation-speed policy) 8)))))
+
+(defun ir-body-policy (environment declarations)
+  (if (assoc 'optimize declarations)
+      (ir-policy-from-environment (ir-env environment :declarations declarations))
+      *ir-policy*))
+
 (defmethod trucler:macro-function (name (environment ir-env))
   (let ((description (trucler:describe-function *client* environment name)))
     (and (typep description 'trucler:macro-description) (trucler:expander description))))
@@ -164,7 +235,8 @@
         (type
          (dolist (name (cddr spec))
            (let ((var (ir-lookup env name :var)))
-             (when (ir-var-p var) (push (cons var (second spec)) (ir-env-types env))))))
+             (when (ir-var-p var)
+               (push (cons var (ir-expand-declaration (second spec) env)) (ir-env-types env))))))
         (otherwise
          ;; A type name in declaration position is shorthand for TYPE.
          (unless (or (member (car spec) '(special optimize inline notinline ftype declaration))
@@ -172,12 +244,15 @@
                              (trucler:declarations (trucler:describe-declarations *client* env))))
            (cond
              #+kiln
-             ((not (kiln.kernel::type-specifier-p (car spec)))
+             ((not (or (and (symbolp (car spec)) (boundp '*client*) *client* (ir-base-environment env)
+                            (client-type-expander *client* env (car spec)))
+                       (kiln.kernel::type-specifier-p (car spec))))
               (warn 'unknown-declaration-warning :specifier spec))
              (t
               (dolist (name (cdr spec))
                 (let ((var (ir-lookup env name :var)))
-                  (when (ir-var-p var) (push (cons var (car spec)) (ir-env-types env)))))))))))
+                  (when (ir-var-p var)
+                    (push (cons var (ir-expand-declaration (car spec) env)) (ir-env-types env)))))))))))
     env))
 
 (defun ir-declare-binding (environment name declarations)

@@ -79,6 +79,7 @@ object itself."
   (destructuring-bind (kind name) key
     (case kind
       (:macro (format nil "the macro ~S" name))
+      (:compiler-macro (format nil "the compiler macro ~S" name))
       (:inline (format nil "the inline function ~S" name))
       (:setf (format nil "the SETF expander of ~S" name))
       (:constant (format nil "the constant ~S" name))

@@ -49,7 +49,7 @@
 
 - fixnum、字符、single-float、NIL、T 是立即数或静态对象。
 - symbol 是静态 symbol（或运行期 image 里的符号，见 [eval-compile.md](eval-compile.md)）。
-- cons 树、字符串、向量、bignum、ratio、double-float 作为静态数据输出，GC 不移动也不扫描。cons 常量按 car 和 cdr 合并。
+- cons 树、字符串、向量、bignum、ratio、double-float 作为静态数据输出，GC 不移动也不扫描。静态字符串常量按内容合并，cons 常量按 car 和 cdr 合并。编译进活 image 时，literal 表保留原对象身份。
 - 降级时记录“绑定到常量且从不赋值”的临时变量，这样 `defun` 展开出的 `(funcall #'(setf fdefinition) f name)` 在函数名是编译期常量时直接写进对应的 cell。
 - `defconstant` 的常量在编译期登记进编译期环境，引用处直接编译成值。
 

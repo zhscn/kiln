@@ -205,7 +205,7 @@ invoked, and lists retain their identity through tail projections."
                                       (ir-declaration-proven-p object-type (ir-var-type alias)))))
                      (fail))) aliases)
         (when (and (null binding) visible)
-          ;; Rest and keyword entries build a heap list after positional bindings.
+          ;; Rest and keyword entries can allocate and poll after positional bindings.
           (when (or (ir-lambda-list-rest (ir-fun-lambda-list fun))
                     (ir-lambda-list-key-p (ir-fun-lambda-list fun))) (fail))
           (when (> (+ (length (ir-cons-borrow-parameters fun)) (length (ir-lifted-environment fun))) +reg-args+) (fail))
@@ -235,6 +235,8 @@ invoked, and lists retain their identity through tail projections."
                (when (and (= (ir-node-kind node) 11) (not (ir-node-d node)))
                  (loop for var across (ir-node-a node) for init across (ir-node-b node)
                        when (and (plusp (car budget)) (< (length candidates) 16)
+                                 (ir-policy-optimize-p (ir-node-policy init))
+                                 (ir-policy-optimize-p (ir-var-policy var))
                                  (= (ir-node-kind init) 7) (eq (ir-node-a init) 'cons)
                                  (= (length (ir-node-b init)) 2)
                                  (not (eq (ir-node-d init) :notinline))
@@ -322,9 +324,11 @@ invoked, and lists retain their identity through tail projections."
     (setf functions (nreverse functions))
     (let ((borrows (and local-calls (ir-cons-borrow-summaries functions))))
       (dolist (fun functions)
-        (when (gethash fun cons-owners)
+        (when (and (gethash fun cons-owners) (ir-policy-optimize-p (ir-fun-policy fun)))
           (let ((graph (and (gethash fun graph-owners) (ir-stack-cons-graph fun)))
                 (single (ir-stack-cons-candidates fun borrows)))
+            (unless (every (lambda (node) (ir-policy-optimize-p (ir-node-policy node))) graph)
+              (setf graph nil))
             (setf (gethash fun plans)
                   (append graph (remove-if (lambda (node) (member node graph :test #'eq)) single)))))))
     plans))
@@ -641,6 +645,7 @@ invoked, and lists retain their identity through tail projections."
 
 (defun ir-stack-closure-candidates (fun)
   "Select lexical closure allocations whose identities stay in their binding."
+  (unless (ir-policy-optimize-p (ir-fun-policy fun)) (return-from ir-stack-closure-candidates nil))
   (let ((candidates nil) (budget (list 8192)) (tail-call nil))
     (labels ((walk (node)
                (when (and (= (ir-node-kind node) 8)
@@ -650,6 +655,8 @@ invoked, and lists retain their identity through tail projections."
                  (loop for var across (ir-node-a node) for init across (ir-node-b node)
                        for closure = (ir-lexical-closure-initializer init)
                        when (and (plusp (car budget)) (< (length candidates) 16)
+                                 (ir-policy-optimize-p (ir-node-policy init))
+                                 (ir-policy-optimize-p (ir-var-policy var))
                                  closure
                                  (or (null (ir-fun-binding closure))
                                      (not (logtest 2 (ir-var-flags (ir-fun-binding closure)))))
@@ -685,7 +692,7 @@ invoked, and lists retain their identity through tail projections."
   "Prove that every cons of the entry rest list stays in this invocation."
   (let* ((ll (ir-fun-lambda-list fun)) (rest (and ll (ir-lambda-list-rest ll)))
          (tail-call nil))
-    (when (and rest (not (ir-lambda-list-key-p ll))
+    (when (and rest (ir-policy-optimize-p (ir-fun-policy fun)) (not (ir-lambda-list-key-p ll))
                (null (ir-fun-parameter-specials fun)))
       (labels ((walk (node)
                  (when (and (= (ir-node-kind node) 8)

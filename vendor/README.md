@@ -1,7 +1,8 @@
 # Vendored modules
 
 Copies of SICL-ecosystem modules that kiln patches. Most are target code,
-compiled into kiln's modules; Common-macros is a host library (kiln's
+compiled into kiln's modules; Invistra and its printer dependencies also provide
+the host-side FORMAT directive compiler. Common-macros is a host library (kiln's
 front end, in the host and in the compiler module) and Khazern and
 Eclector are both (the host's LOOP and reader, and the image's). Host
 libraries are found by ASDF before `deps/` (`tools/env.lisp`). Each is imported
@@ -373,14 +374,17 @@ Under `#+kiln`:
   components. Constructor syntax quotes the directory list when a
   namestring cannot represent those components.
 
-- `define-interface` defines `kiln.kernel::%print-unreadable-object` under
-  `#+kiln` so `cl:print-unreadable-object` can be defined early in
-  `lisp/target/early.lisp` before `printer.lisp` is compiled. kiln's client
-  (`lisp/target/clos/printer.lisp`) supplies the implementation-specific
-  parts, and `lisp/target/clos/quaviver.lisp` the part of Quaviver that
-  Incless uses.
+- Under `#+kiln`, the `print-unreadable-object` interface macro expands to
+  `kiln.kernel::%print-unreadable-object`, allowing the CL macro to be defined
+  before the printer implementation is compiled. Host expansion uses the
+  portable unreadable-object protocol. kiln's printer client supplies the
+  implementation-specific operations and the Quaviver integration.
 
 ## Invistra patches
+
+The FORMAT compiler macro can use the directive compiler in both the cross
+compiler and the image. The host-side client emits references to the target
+printer client, so no host client object enters generated code.
 
 Known upstream bug, not patched: `~F` rounds `(format nil "~,1f" 0.05f0)`
 (and `0.05d0`) to `"0.0"`; it should be `"0.1"`, since both are slightly
@@ -389,16 +393,14 @@ greater than 0.05. Invistra with Quaviver does the same in SBCL.
 Under `#+kiln`:
 
 - `formatter` expands into a function that interprets the control string
-  (the format compiler is target code, not available when macros are
-  expanded). It parses the control string when creating the function and
+  and parses the control string when creating the function. It
   returns the unused arguments, including after an escape directive.
 - `unique-name` is defined at compile time too (macro expanders call it).
 - Infinities and NaNs are recognized through `quaviver:float-triple`.
 - Output to a string with a fill pointer goes through a string output
   stream on it (upstream uses the string as the stream).
 - `parse-control-string` caches the directives of each control string
-  (by its contents); `format` interprets control strings at run time, and
-  parsing was most of its cost.
+  (by its contents); calls without a compiled formatter reuse this cache.
 
 ## Khazern patches
 

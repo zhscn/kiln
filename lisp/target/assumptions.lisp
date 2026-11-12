@@ -101,10 +101,14 @@
          (setq slow (cdr slow) fast (cddr fast))
          (when (eq slow fast) (return nil)))))
 
-;;; Runtime proclamations record special bindings and custom declaration
-;;; names. The compiler hook processes compilation-specific information.
+(defun function-inline-declaration (name)
+  (if (consp name) (%get (cadr name) '%setf-inline-declaration)
+      (%get name '%inline-declaration)))
+
+;;; Runtime proclamations retain binding, declaration and optimization facts.
+;;; The compiler hook maintains compilation-specific state.
 (defun proclaim (declaration)
-  (declare (special *proclaim-hook* *declaration-names*))
+  (declare (special *proclaim-hook* *declaration-names* *optimization-qualities*))
   (unless (proper-declaration-p declaration)
     (error 'program-error))
   (when (and (consp declaration) (eq (car declaration) 'special))
@@ -121,6 +125,22 @@
       (%put name '%declaration t)
       (unless (member name *declaration-names*)
         (push name *declaration-names*))))
+  (when (eq (car declaration) 'optimize)
+    (dolist (entry (cdr declaration))
+      (let* ((name (if (consp entry) (car entry) entry))
+             (level (if (consp entry)
+                        (if (and (consp (cdr entry)) (null (cddr entry))) (cadr entry)
+                            (error 'program-error))
+                        3))
+             (index (case name (speed 0) (safety 1) (debug 2) (space 3) (compilation-speed 4)
+                           (otherwise (error 'program-error)))))
+        (unless (and (integerp level) (<= 0 level 3)) (error 'program-error))
+        (setf (svref *optimization-qualities* index) level))))
+  (when (or (eq (car declaration) 'inline) (eq (car declaration) 'notinline))
+    (dolist (name (cdr declaration))
+      (if (consp name)
+          (%put (cadr name) '%setf-inline-declaration (car declaration))
+          (%put name '%inline-declaration (car declaration)))))
   (when (and (boundp '*proclaim-hook*) *proclaim-hook*)
     (funcall *proclaim-hook* declaration))
   nil)
@@ -128,6 +148,7 @@
 ;;; (The first DEFVAR: its DECLAIM calls PROCLAIM, which is defined above.)
 (defvar *proclaim-hook* nil)
 (defvar *declaration-names* nil)
+(defvar *optimization-qualities* (vector 3 3 3 3 3))
 
 ;;; The redefinition hook: the compiler module's dependency tracking
 ;;; (lisp/target/compiler/dependencies.lisp), NIL before it is loaded.
@@ -214,7 +235,7 @@
 
 (defun assumption-name (kind name)
   "Canonicalizes SETF function names so independently made lists share a cell."
-  (if (and (or (eq kind :function) (eq kind :inline))
+  (if (and (or (eq kind :function) (eq kind :inline) (eq kind :compiler-macro))
            (consp name) (eq (car name) 'setf)
            (consp (cdr name)) (symbolp (cadr name)) (null (cddr name)))
       (or (%get (cadr name) '%setf-assumption-name)

@@ -218,6 +218,11 @@
 
     (defmacro ,print-unreadable-object-sym
         ((object stream &key type identity) &body body)
+      #-kiln
+      (list 'write-unreadable-object
+            ',client-form object stream type identity
+            (list* 'lambda '() body))
+      #+kiln
       (list 'kiln.kernel::%print-unreadable-object
             object stream type identity
             (list* 'lambda '() body)))

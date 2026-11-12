@@ -24,8 +24,8 @@
     (define-compiler-macro ,format-sym (&whole form destination control-string &rest args)
       (expand-format ,client-form form destination control-string args))
 
-    ;; kiln: the format compiler is target code, not available when
-    ;; macros are expanded; the function interprets the control string.
+    ;; Reusable FORMATTER functions parse and interpret their control strings.
+    ;; FORMAT call sites can use the directive compiler independently.
     (defmacro ,formatter-sym (control-string)
       #-kiln (expand-formatter ,client-form control-string)
       #+kiln `(make-interpreted-formatter ,',client-form ,control-string))

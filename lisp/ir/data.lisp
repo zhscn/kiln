@@ -10,8 +10,18 @@
 ;;;; 16 tagbody, 17 go, 18 catch, 19 throw, 20 unwind-protect,
 ;;;; 21 multiple-value-call, 22 multiple-value-prog1, 23 the,
 ;;;; 24 load-time-value, 25 progv.
+(defvar *ir-policy* 1023)
+
+(defun ir-policy-quality (policy quality)
+  (logand 3 (ash (or policy 1023)
+                (- (ecase quality (:speed 0) (:safety 2) (:debug 4) (:space 6) (:compilation-speed 8))))))
+
+(defun ir-policy-optimize-p (policy)
+  (let ((speed (ir-policy-quality policy :speed)))
+    (and (plusp speed) (>= speed (ir-policy-quality policy :compilation-speed)))))
+
 (defstruct (ir-node (:constructor ir-node (kind source &optional a b c d)))
-  (kind 0) (source nil) (a nil) (b nil) (c nil) (d nil) (type t) (mark 0))
+  (kind 0) (source nil) (a nil) (b nil) (c nil) (d nil) (type t) (mark 0) (policy *ir-policy*))
 
 (defstruct (ir-buffer (:constructor make-ir-buffer (&optional (data (make-array 8)))))
   (data nil) (count 0))
@@ -31,14 +41,17 @@
 ;;; Variable flags: assigned, captured, cell, ignorable, dynamic-extent.
 (defstruct ir-var
   (name nil) (owner nil) (flags 0) (refs 0) (type t)
-  (lowering nil) (constant nil) (constant-p nil))
+  (lowering nil) (constant nil) (constant-p nil) (policy *ir-policy*))
+
+(defstruct (ir-type-declaration (:constructor make-ir-type-declaration (original expanded)))
+  original expanded)
 
 ;;; Function flags: escapes, closure, single call, direct calls, inlined, analyzed,
 ;;; local definitions, static environment, function aliases.
 (defstruct ir-fun
   (name nil) (parent nil) (lambda-list nil) (body nil) (parameter-specials nil)
   (free #()) (exits (make-ir-buffer)) (vars (make-ir-buffer))
-  (flags 8) (calls 0) (value-refs 0) (caller nil) (call-site nil) (policy nil)
+  (flags 8) (calls 0) (value-refs 0) (caller nil) (call-site nil) (policy *ir-policy*)
   (source nil) (binding nil) (label nil) (lowering-epoch nil)
   (input-types nil) (result-type t)
   (load-time-values (make-ir-buffer)))

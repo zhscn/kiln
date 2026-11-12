@@ -297,6 +297,7 @@ name of its package as a string."
   #+kiln (kiln.sys:%primop :double-float-low-bits x))
 
 (defvar *constants*)                    ; host object -> data word
+(defvar *string-constants*)             ; static string contents -> data word
 (defvar *cons-words*)                   ; (car word, cdr word) -> data word of a cons
 (defvar *pending-conses*)               ; conses being emitted -> their word if a cycle needs it
 
@@ -347,7 +348,9 @@ name of its package as a string."
     (string
      (or (gethash x *constants*)
          (setf (gethash x *constants*)
-               `(:data ,(string-data (fresh-label "kiln_string_") x) ,+tag-general+))))
+               (or (gethash x *string-constants*)
+                   (setf (gethash x *string-constants*)
+                         `(:data ,(string-data (fresh-label "kiln_string_") x) ,+tag-general+))))))
     (simple-vector
      (or (gethash x *constants*)
          (let ((label (fresh-label "kiln_vector_")))
@@ -664,7 +667,8 @@ in the source: it occurs in the top-level form. Variables that macros
 introduce do not; their names are of no use, and differ between the host
 and kiln, where some macro packages have other names."
   (let ((name (and definition (ir-var-name definition))))
-    (and name (symbolp name) (symbol-package name) *toplevel*
+    (and name (>= (ir-policy-quality (ir-var-policy definition) :debug) 2)
+         (symbolp name) (symbol-package name) *toplevel*
          (gethash name (toplevel-symbols *toplevel*))
          name)))
 
@@ -1741,6 +1745,7 @@ Returns the module and the vector of its literals."
         (*module-label* (mangle module-name))
         (*counter* 0)
         (*constants* (make-hash-table :test 'eql))
+        (*string-constants* (make-hash-table :test 'equal))
         (*cons-words* (make-hash-table :test 'equal))
         (*pending-conses* (make-hash-table :test 'eq))
         (*module-symbols* '())

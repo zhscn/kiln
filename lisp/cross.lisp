@@ -9,8 +9,27 @@
 
 (in-package #:kiln.compiler)
 
+#-kiln
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  ;; Host printer classes retain their native Gray symbols. Target
+  ;; source must read NGRAY names from the Cyclosis interface instead.
+  (unless (find-package "KILN.HOST.GRAY-STREAMS")
+    (rename-package (find-package "NONTRIVIAL-GRAY-STREAMS") "KILN.HOST.GRAY-STREAMS" nil)))
+
 (defclass cross-client (client)
-  ())
+  ((compiler-macros :initform (make-hash-table :test #'equal) :reader cross-compiler-macros)))
+
+#-kiln
+(defclass cross-format-client (invistra:client incless:client inravina:client) ())
+
+#-kiln
+(defmethod trinsic:client-form ((client cross-format-client))
+  'incless::*client*)
+
+#-kiln
+(defmethod incless:whitespace-char-p ((client cross-format-client) character)
+  (declare (ignore client))
+  (not (null (member character '(#\Tab #\Newline #\Page #\Return #\Space)))))
 
 (defun common-macro-p (name)
   "True if Common-macros defines the standard macro NAME."
@@ -116,17 +135,17 @@ at compile time (USE-HOST-MACROS).")
                                   (common-macro-p name)))))
           (setf (clo:macro-function client genv name) function))
         function))
-    ;; DEFINE-COMPILER-MACRO at compile time: ignored (the host's would
-    ;; change the host's functions). The compiler uses only the host's
-    ;; compiler macros of host libraries (USE-HOST-MACROS).
     (def 'compiler-macro-function
       (lambda (name &optional env)
-        (declare (ignore name env))
-        nil))
+        (let ((description (and env (trucler:describe-function client env name))))
+          (when (or (null description)
+                    (typep description '(or trucler:global-function-description trucler:global-macro-description)))
+            (client-compiler-macro client (or env *environment*) name)))))
     (def '(setf compiler-macro-function)
       (lambda (function name &optional env)
-        (declare (ignore name env))
-        function))
+        (when env (error "Cannot set a compiler macro in a lexical environment"))
+        (setf (gethash name (cross-compiler-macros client)) function
+              (clo:compiler-macro-function client genv name) function)))
     (def 'fdefinition (lambda (name) (clo:fdefinition client genv name)))
     (def 'symbol-function (lambda (name) (clo:fdefinition client genv name)))
     (def '(setf fdefinition)
@@ -276,6 +295,13 @@ at compile time (USE-HOST-MACROS).")
                (setf (clo:macro-function client genv (host-cmd-symbol s))
                      (cross-common-macro (macro-function s)))))
     (import-host-functions client genv)
+    ;; FORMAT expanders produce target forms; only their parser and
+    ;; directive compiler execute in the host.
+    (setf (clo:symbol-value client genv 'incless::*client*)
+          #-kiln (make-instance 'cross-format-client) #+kiln incless::*client*
+          (clo:fdefinition client genv 'invistra:expand-format) #'invistra:expand-format
+          (clo:fdefinition client genv 'invistra:expand-function) #'invistra:expand-function
+          (clo:fdefinition client genv 'khazern::constant-form-p) #'khazern::constant-form-p)
     ;; Eclector reads `X as (ECLECTOR.READER:QUASIQUOTE X); its expansion
     ;; uses only APPEND, LIST and QUOTE. SICL does the same
     ;; (New-boot/Shared/define-backquote-macros.lisp).
@@ -387,8 +413,13 @@ at compile time (USE-HOST-MACROS).")
 (defvar *host-compiler-macros* (make-hash-table :test 'eq)
   "Function names -> the host's compiler macros, wrapped (USE-HOST-MACROS).")
 
-(defmethod client-compiler-macro ((client cross-client) name)
-  (gethash name *host-compiler-macros*))
+(defmethod client-compiler-macro ((client cross-client) environment name)
+  (declare (ignore environment))
+  (multiple-value-bind (expander found) (gethash name (cross-compiler-macros client))
+    (if found expander (gethash name *host-compiler-macros*))))
+
+(defmethod client-type-expander ((client cross-client) environment name)
+  (clo:type-expander client (trucler:global-environment client environment) name))
 
 (defun use-host-macros (session package-names)
   "The macros whose home is one of the packages PACKAGE-NAMES are expanded
