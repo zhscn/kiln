@@ -1113,3 +1113,17 @@ fn dynamic_argument_routes_have_distinct_blocks_and_common_exit() {
         vec!["same".into(); crate::kir::REG_ARGS]).is_err());
     assert!(argument_write("route", "entry".into(), Vec::new(), "saved0".into(), Expr::Int(0), registers()).is_err());
 }
+
+/// Test a header class only on the general-object branch.
+pub fn guarded_class_test(prefix: &str, start: String, mut before: Vec<Stmt>, result: String,
+                          class: u32, object: Expr) -> Result<(Vec<crate::kir::Block>, String), String> {
+    use crate::kir::Block;
+    let yes = format!("{prefix}_general");
+    let no = format!("{prefix}_immediate");
+    let done = format!("{prefix}_done");
+    let header = test_header_class(class, object.clone())?;
+    before.push(Stmt::Br(test_class(CLASS_GENERAL, object)?, yes.clone(), no.clone()));
+    Ok((vec![Block { name: start, stmts: before },
+        Block { name: yes, stmts: vec![Stmt::Set(result.clone(), header), Stmt::Jump(done.clone())] },
+        Block { name: no, stmts: vec![Stmt::Set(result, Expr::Int(0)), Stmt::Jump(done.clone())] }], done))
+}

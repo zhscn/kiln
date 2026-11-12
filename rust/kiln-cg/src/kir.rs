@@ -655,6 +655,18 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                 for stmt in stmts {
                     validate_stack_references(stmt, &stack_objects)?;
                     let (head_name, operands) = head(list(stmt)?)?;
+                    if head_name == "guarded-class-test" {
+                        arity(head_name, operands, 3)?;
+                        let name = format!("{prefix}{alloc_number}_class");
+                        alloc_number += 1;
+                        let class = u32::try_from(int(&operands[1])?).map_err(|_| "invalid class ID")?;
+                        let (blocks, next) = crate::lir::guarded_class_test(&name, block_name, lowered,
+                            sym(&operands[0])?.to_string(), class, parse_expr(&operands[2])?)?;
+                        f.blocks.extend(blocks);
+                        block_name = next;
+                        lowered = Vec::new();
+                        continue;
+                    }
                     if head_name == "arg-write" {
                         arity(head_name, operands, 3)?;
                         let name = format!("{prefix}{alloc_number}_argwrite");

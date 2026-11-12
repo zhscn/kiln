@@ -454,30 +454,14 @@ are compared (no short circuit), which also checks every argument."
 ;;; index check their index.
 
 (defun emit-kind-test (x class)
-  "Raw 0/1: is X a general object of KIND? Safe for any value."
-  (let ((r (new-var :raw)) (general (new-block)) (no (new-block)) (join (new-block)))
-    (br `(:test-class ,kiln.kir::+packet-class-general+ ,x) general no)
-    (start-block general)
-    (emit `(:set ,r (:test-header-class ,class ,x)))
-    (jump join)
-    (start-block no)
-    (emit `(:set ,r 0))
-    (jump join)
-    (start-block join)
+  "Raw 0/1: safely tests the object's representation class."
+  (let ((r (new-var :raw)))
+    (emit `(:guarded-class-test ,r ,class ,x))
     r))
 
 (defun emit-function-test (x)
-  "Raw 0/1: is X a function (a function object or funcallable instance)?"
-  (let ((r (new-var :raw)) (general (new-block)) (no (new-block)) (join (new-block)))
-    (br `(:test-class ,kiln.kir::+packet-class-general+ ,x) general no)
-    (start-block general)
-    (emit `(:set ,r (:test-header-class ,kiln.kir::+packet-class-function+ ,x)))
-    (jump join)
-    (start-block no)
-    (emit `(:set ,r 0))
-    (jump join)
-    (start-block join)
-    r))
+  "Raw 0/1: is X a function or funcallable instance?"
+  (emit-kind-test x kiln.kir::+packet-class-function+))
 
 (defun vector-length (v)
   "Fixnum length of the vector or string V."
