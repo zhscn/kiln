@@ -452,11 +452,30 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
             _ => false,
         }
     }
+    fn validate_stack_references(value: &Sexp, objects: &std::collections::HashMap<String, (u32, i64)>) -> R<()> {
+        if let Sexp::List(items) = value {
+            if let Some(Sexp::Sym(name)) = items.first() {
+                if name == "stack-reference-base" {
+                    let args = &items[1..];
+                    arity(name, args, 3)?;
+                    let slot = sym(&args[0])?;
+                    let class = u32::try_from(int(&args[1])?).map_err(|_| "invalid stack object class")?;
+                    let count = int(&args[2])?;
+                    if objects.get(slot) != Some(&(class, count)) {
+                        return Err("stack reference base does not match slot".into());
+                    }
+                }
+            }
+            for item in items { validate_stack_references(item, objects)?; }
+        }
+        Ok(())
+    }
     let mut prefix = "__kiln_lir_".to_string();
     while body.iter().any(|part| uses_prefix(part, &prefix)) {
         prefix.push('_');
     }
     let mut alloc_number = 0usize;
+    let mut stack_objects = std::collections::HashMap::new();
     for part in body {
         let (h, items) = head(list(part)?)?;
         match h {
@@ -485,8 +504,21 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                     if pair.len() != 2 {
                         return Err(format!("slots: malformed entry {v}"));
                     }
-                    f.slots
-                        .push((sym(&pair[0])?.to_string(), int(&pair[1])? as u32));
+                    let name = sym(&pair[0])?.to_string();
+                    let size = match &pair[1] {
+                        Sexp::Int(n) => u32::try_from(*n).map_err(|_| "invalid slot size")?,
+                        descriptor => {
+                            let (kind, args) = head(list(descriptor)?)?;
+                            if kind != "stack-object" { return Err("unknown slot descriptor".into()); }
+                            arity(kind, args, 2)?;
+                            let class = u32::try_from(int(&args[0])?).map_err(|_| "invalid stack object class")?;
+                            let count = int(&args[1])?;
+                            let (size, _, _) = crate::lir::stack_object_layout(class, count)?;
+                            if stack_objects.insert(name.clone(), (class, count)).is_some() { return Err("duplicate stack object slot".into()); }
+                            size
+                        }
+                    };
+                    f.slots.push((name, size));
                 }
             }
             "debug" => {
@@ -502,7 +534,17 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                 let mut block_name = sym(bname)?.to_string();
                 let mut lowered = Vec::new();
                 for stmt in stmts {
+                    validate_stack_references(stmt, &stack_objects)?;
                     let (head_name, operands) = head(list(stmt)?)?;
+                    if head_name == "stack-object-init" {
+                        arity(head_name, operands, 3)?;
+                        let slot = sym(&operands[0])?;
+                        let class = u32::try_from(int(&operands[1])?).map_err(|_| "invalid stack object class")?;
+                        let count = int(&operands[2])?;
+                        if stack_objects.get(slot) != Some(&(class, count)) { return Err("stack object initialization does not match slot".into()); }
+                        lowered.extend(crate::lir::initialize_stack_object(slot.to_string(), class, count)?);
+                        continue;
+                    }
                     if head_name == "alloc-closure" {
                         arity(head_name, operands, 5)?;
                         let result = sym(&operands[0])?.to_string();
@@ -878,6 +920,10 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
         "vector-ref" => {
             arity(h, r, 2)?;
             crate::lir::vector_ref(parse_expr(&r[0])?, parse_expr(&r[1])?)
+        }
+        "stack-reference-base" => {
+            arity(h, r, 3)?;
+            return crate::lir::stack_reference_base(sym(&r[0])?.to_string(), u32::try_from(int(&r[1])?).map_err(|_| "invalid stack object class")?, int(&r[2])?);
         }
         "test-class" => {
             arity(h, r, 2)?;

@@ -117,6 +117,30 @@ fn immediate_class_tests_preserve_kir_and_reject_unknown_classes() {
 }
 
 #[test]
+fn stack_objects_lower_slot_layout_and_validate_initialization() {
+    use packet::schema::*;
+    let module = |slots, body| format!("(module \"stack\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v raw)) (slots {slots}) (block b {body} (return a0 1))))");
+    for (class, count, size, header, root) in [(CLASS_CONS, 2, 24, 3, 8), (CLASS_FUNCTION, 2, 32, 514, 16)] {
+        let stores = (8..size).step_by(8).map(|offset| format!("(store (slot s) {offset} 0)")).collect::<Vec<_>>().join(" ");
+        let old = module(format!("(s {size})"), format!("(store (slot s) 0 {header}) {stores} (set v (add (slot s) {root}))"));
+        let new = module(format!("(s (stack-object {class} {count}))"), format!("(stack-object-init s {class} {count}) (set v (stack-reference-base s {class} {count}))"));
+        let old = kiln_cg::kir::parse_module(&sexp::parse_one(&old).unwrap()).unwrap();
+        let new = sexp::parse_one(&new).unwrap();
+        let new = packet::load(&packet::encode(&new, KIR_PAYLOAD).unwrap()).unwrap();
+        assert_eq!(format!("{old:?}"), format!("{new:?}"));
+    }
+    for (slot, init) in [
+        (format!("(s (stack-object {CLASS_CONS} 2))"), format!("(stack-object-init s {CLASS_FUNCTION} 2)")),
+        (format!("(s (stack-object {CLASS_CONS} 2))"), format!("(set v (stack-reference-base s {CLASS_FUNCTION} 2))")),
+        (format!("(s (stack-object {CLASS_CONS} 1))"), String::new()),
+        (format!("(s (stack-object {CLASS_FUNCTION} 999999999))"), String::new()),
+    ] {
+        let program = module(slot, init);
+        assert!(kiln_cg::kir::parse_module(&sexp::parse_one(&program).unwrap()).is_err());
+    }
+}
+
+#[test]
 fn closure_allocation_initializes_entry_and_zeroes_environment() {
     let module = |body: &str| format!("(module \"closure\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj)) (slots) (block b {body} (return v 1)) (block caught (return exn1 1))))");
     let program = module("(alloc-closure v \"entry\" 2 \"kiln_rt_alloc\" caught)");

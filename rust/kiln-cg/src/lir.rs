@@ -171,6 +171,36 @@ pub fn initialize_closure(result: String, address: String, entry: String) -> Vec
     ]
 }
 
+pub fn stack_object_layout(class: u32, count: i64) -> Result<(u32, i64, i32), String> {
+    match class {
+        CLASS_CONS if count == 2 => Ok((kiln_rt::object::CONS_BYTES as u32, kiln_rt::object::KIND_CONS as i64, size_of::<u64>() as i32)),
+        CLASS_FUNCTION => {
+            if count > (MAX_EXPANDED_BYTES / EXPANSION_RECORD_BYTES) as i64 {
+                return Err("stack closure initialization exceeds expansion budget".into());
+            }
+            let (size, header) = closure_layout(count)?;
+            if size > i32::MAX as i64 { return Err("stack closure too large".into()); }
+            Ok((size as u32, header, size_of::<FunctionObj>() as i32))
+        }
+        _ => Err("invalid stack object class or reference count".into()),
+    }
+}
+
+pub fn initialize_stack_object(slot: String, class: u32, count: i64) -> Result<Vec<Stmt>, String> {
+    let (size, header, _) = stack_object_layout(class, count)?;
+    let mut statements = Vec::with_capacity((size / 8) as usize);
+    statements.push(Stmt::Store(Expr::Slot(slot.clone()), 0, Expr::Int(header)));
+    for offset in (8..size).step_by(8) {
+        statements.push(Stmt::Store(Expr::Slot(slot.clone()), offset as i32, Expr::Int(0)));
+    }
+    Ok(statements)
+}
+
+pub fn stack_reference_base(slot: String, class: u32, count: i64) -> Result<Expr, String> {
+    let (_, _, offset) = stack_object_layout(class, count)?;
+    Ok(Expr::Bin(crate::kir::BinOp::Add, Box::new(Expr::Slot(slot)), Box::new(Expr::Int(offset as i64))))
+}
+
 pub fn closure_ref(object: Expr, index: i64) -> Result<Expr, String> {
     Ok(Expr::Load(Box::new(object), closure_offset(index)?))
 }

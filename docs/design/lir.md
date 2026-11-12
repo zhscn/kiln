@@ -8,6 +8,8 @@
 
 `alloc-closure` 按入口和捕获项数量分配堆函数对象，初始化入口并把捕获项清零；生成方随后以 `closure-set` 填充捕获项。这允许递归组先建立所有函数对象，再互相引用，即使填充之前发生 GC 也可安全扫描。
 
+栈上的 cons 和闭包以对象种类及引用项数量声明栈槽，由 Rust 决定大小、header、清零和引用字段起点。当前动态根区域仍由生成方建立并撤销；填充闭包入口和 cons 字段的迁移仍在进行。
+
 `alloc-vector` 接收 simple-vector 或字符串的种类、未装箱长度和初值，Rust 负责尺寸、header、对齐及填充。字符串初值为字符码点，simple-vector 初值为对象；动态长度须由生成方检查范围。`alloc-vector-elements` 接收已求值的多个对象，按顺序初始化 simple-vector。填充过程没有 safepoint。
 
 `vector-ref` 和 `vector-set` 访问 simple-vector 的对象元素，`string-ref` 和 `string-set` 访问字符串的字符；这些操作接收未装箱下标，对象类型与下标范围由生成方检查。`vector-length` 读取未装箱长度，并屏蔽 header 中的身份哈希。fixnum 和字符的装箱、拆箱操作负责立即数与机器字之间的转换。

@@ -263,19 +263,17 @@
 (defvar *hir-rest-slots* nil)
 (defvar *hir-stack-slots* nil)
 
-(defun hir-establish-stack-object (size header reference-start reference-count)
+(defun hir-establish-stack-object (class reference-count)
   "Allocate fixed storage and register only its contiguous Lisp reference fields.
 All words are initialized before the object can be observed at a safepoint.
 Return the storage slot and its root region, if any."
-  (let ((slot (new-slot size)))
-    (emit `(:store (:slot ,slot) 0 ,header))
-    (loop for offset from 8 below size by 8
-          do (emit `(:store (:slot ,slot) ,offset 0)))
+  (let ((slot (new-slot `(:stack-object ,class ,reference-count))))
+    (emit `(:stack-object-init ,slot ,class ,reference-count))
     (values slot
             (when (plusp reference-count)
               (let ((region (establish-entry :stack-roots)))
                 (emit `(:store (:slot ,(region-slot region)) ,+dyn-pend-target+
-                               (:add (:slot ,slot) ,reference-start)))
+                               (:stack-reference-base ,slot ,class ,reference-count)))
                 (emit `(:store (:slot ,(region-slot region)) ,+dyn-pend-value+ ,reference-count))
                 region)))))
 
@@ -283,19 +281,18 @@ Return the storage slot and its root region, if any."
   (let ((*hir-stack-slots* nil) (*hir-rest-slots* nil) (*regions* *regions*) (roots nil))
     (when (and *hir-stack-rests* (gethash fun *hir-stack-rests*))
       (dotimes (i 8)
-        (multiple-value-bind (slot region) (hir-establish-stack-object 24 +kind-cons+ 8 2)
+        (multiple-value-bind (slot region) (hir-establish-stack-object kiln.kir::+packet-class-cons+ 2)
           (push slot *hir-rest-slots*)
           (push region roots)
           (push region *regions*))))
     (dolist (closure (and *hir-stack-closures* (gethash fun *hir-stack-closures*)))
       (let ((count (length (hir-native-environment closure))))
         (multiple-value-bind (slot region)
-            (hir-establish-stack-object (+ 16 (* 8 count))
-                                       (logior +kind-function+ (ash count +length-shift+)) 16 count)
+            (hir-establish-stack-object kiln.kir::+packet-class-function+ count)
           (push (cons closure slot) *hir-stack-slots*)
           (when region (push region roots) (push region *regions*)))))
     (dolist (node (and *hir-stack-conses* (gethash fun *hir-stack-conses*)))
-      (multiple-value-bind (slot region) (hir-establish-stack-object 24 +kind-cons+ 8 2)
+      (multiple-value-bind (slot region) (hir-establish-stack-object kiln.kir::+packet-class-cons+ 2)
         (push (cons node slot) *hir-stack-slots*)
         (when region
           (push region roots)
