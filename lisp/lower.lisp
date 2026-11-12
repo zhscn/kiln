@@ -845,14 +845,6 @@ if needed (not a safepoint)."
 
 ;;; Allocation
 
-(defun emit-alloc (bytes header &optional (zero-p t))
-  "Allocates an object; returns a raw variable holding its untagged
-address. The payload is zeroed when ZERO-P is true. No safepoint may occur
-before the address is tagged and stored in an obj variable."
-  (let ((p (new-var :raw)))
-    (emit `(:alloc-raw ,p ,bytes ,header ,(if zero-p 1 0) ,(rt-alloc) ,(handler)))
-    p))
-
 (defun emit-fixed-object (class fields)
   "Allocate an object with already evaluated, stable field operands."
   (let ((result (new-var)))

@@ -346,6 +346,21 @@ pub fn initialize_closure(result: String, address: String, entry: String) -> Vec
     ]
 }
 
+pub fn initialize_symbol(result: String, address: String, name: Expr, nil: Expr) -> Vec<Stmt> {
+    use crate::kir::BinOp;
+    use kiln_rt::object::{SymbolObj, UNBOUND};
+    let store = |offset: usize, value| Stmt::Store(Expr::Var(address.clone()), offset as i32, value);
+    vec![
+        store(core::mem::offset_of!(SymbolObj, name), name),
+        store(core::mem::offset_of!(SymbolObj, package), nil.clone()),
+        store(core::mem::offset_of!(SymbolObj, function), nil.clone()),
+        store(core::mem::offset_of!(SymbolObj, value), Expr::Int(UNBOUND as i64)),
+        store(core::mem::offset_of!(SymbolObj, plist), nil.clone()),
+        store(core::mem::offset_of!(SymbolObj, setf_function), nil),
+        Stmt::Set(result, Expr::Bin(BinOp::Add, Box::new(Expr::Var(address)), Box::new(Expr::Int(TAG_GENERAL as i64)))),
+    ]
+}
+
 pub fn initialize_stack_closure(result: String, slot: String, entry: String) -> Vec<Stmt> {
     use crate::kir::BinOp;
     vec![

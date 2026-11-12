@@ -762,14 +762,9 @@ of it, SLOW-FN otherwise; both return an operand. Returns the result."
   ;; An uninterned symbol; both function cells hold an undefined-function
   ;; object for it.
   (let* ((name (copy-to-var name))
-         (p (emit-alloc 64 +kind-symbol+))
-         (s (copy-to-var `(:add ,p ,+tag-general+))))
-    (emit `(:store ,p 8 ,name))
-    (emit `(:store ,p 16 ,(nil-value)))
-    (emit `(:store ,p 24 ,(nil-value)))
-    (emit `(:store ,p 32 ,+unbound+))
-    (emit `(:store ,p 48 ,(nil-value)))
-    (emit `(:store ,p 56 ,(nil-value)))
+         (nil-object (copy-to-var (nil-value)))
+         (s (new-var)))
+    (emit `(:alloc-symbol ,s ,name ,nil-object ,(rt-alloc) ,(handler)))
     (emit-undefined-function-cells s)
     s))
 (defun emit-undefined-function-cells (s &key (function t) (setf-function t))
@@ -779,10 +774,10 @@ cells (both by default)."
                              (list (cons kiln.kir::+packet-field-symbol-function+ (undefined-function-entry))))
                         (and setf-function
                              (list (cons kiln.kir::+packet-field-symbol-setf-function+ (undefined-setf-function-entry))))))
-    (let ((f (emit-alloc 24 (logior +kind-function+ (ash 1 +length-shift+)))))
-      (emit `(:store ,f 8 (:addr ,(cdr cell))))
-      (emit `(:store ,f 16 ,s))
-      (emit `(:field-store ,(car cell) ,s (:add ,f ,+tag-general+))))))
+    (let ((f (new-var)))
+      (emit `(:alloc-closure ,f ,(cdr cell) 1 ,(rt-alloc) ,(handler)))
+      (emit `(:closure-set ,f 0 ,s))
+      (emit `(:field-store ,(car cell) ,s ,f)))))
 ;; NIL and T are defined by the runtime with empty function cells; the
 ;; kernel fills them in first thing.
 (define-primop :init-function-cells (s)

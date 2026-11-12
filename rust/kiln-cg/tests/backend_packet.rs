@@ -120,6 +120,25 @@ fn immediate_class_tests_preserve_kir_and_reject_unknown_classes() {
 }
 
 #[test]
+fn symbol_allocation_initializes_fields_before_it_can_escape() {
+    let module = |body| format!("(module \"symbol\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj) (name obj) (nilobj obj)) (slots) (block b {body} (return v 1)) (block caught (return exn1 1))))");
+    let program = module("(alloc-symbol v name nilobj \"kiln_rt_alloc\" caught)");
+    let program = sexp::parse_one(&program).unwrap();
+    let result = packet::load(&packet::encode(&program, packet::schema::KIR_PAYLOAD).unwrap()).unwrap();
+    let blocks = &result.funcs[0].blocks;
+    assert!(format!("{:?}", blocks[1]).contains("Int(1)"));
+    assert!(format!("{:?}", blocks[2]).contains("handler: Some(\"caught\")"));
+    let done = format!("{:?}", blocks[3]);
+    for field in ["8, Var(\"name\")", "16, Var(\"nilobj\")", "24, Var(\"nilobj\")", "32, Int(19)", "48, Var(\"nilobj\")", "56, Var(\"nilobj\")"] {
+        assert!(done.contains(field), "missing {field}: {done}");
+    }
+    assert!(done.contains("Int(5)"));
+    for body in ["(alloc-symbol v v nilobj \"kiln_rt_alloc\" nil)", "(alloc-symbol v (load name 0) nilobj \"kiln_rt_alloc\" nil)"] {
+        assert!(kiln_cg::kir::parse_module(&sexp::parse_one(&module(body)).unwrap()).is_err());
+    }
+}
+
+#[test]
 fn rack_allocation_accounts_for_class_and_zeroed_slots() {
     let module = |body| format!("(module \"rack\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj) (n raw) (class obj)) (slots) (block b {body} (return v 1)) (block caught (return exn1 1))))");
     let program = module("(alloc-rack v class 2 \"kiln_rt_alloc\" caught)");
