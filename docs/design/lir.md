@@ -30,6 +30,8 @@ double-float 的未装箱位模式和 complex 的实部、虚部通过字段操�
 
 `alloc-symbol` 初始化 symbol 的名称、包、值和函数格，再由生成方建立未定义函数对象并写入函数格；这些分配期间 symbol 保持为精确根。动态分配路径不再由 Lisp 发射原始大小和 header，兼容载荷仍保留 `alloc-raw` 供旧输入使用。
 
+静态函数、字符串、cons、simple-vector、bignum、ratio、complex 和 double-float 使用对象种类及内容描述，由 Rust 构造 header 与对象字。引用和重定位保留原有的数据标签，字符串传递字符码点，Rust 负责 UTF-32 打包。静态 symbol 的布局仍在迁移。
+
 `invalid-vector-length` 检查带 tag 的候选长度是否为非负 fixnum 且不超过运行时 header 可表示的最大长度；生成方负责错误路径。常量长度在后端展开时也检查同一上限。
 
 LIR（low-level IR）是表示选择后的后端输入语言，也是编译协议的程序载荷。它不设独立的优化管线。初期由 HIR 降级产生，后续由 MIR 产生；两者使用同一 schema。它已经确定了“做什么”：每个值的表示、每个对象的存储、闭包的内容、控制流和动态范围；还没有确定“怎么做”：tag、对象和 context 的偏移、调用序列、展开 payload 的编码、栈图。后者由 kiln-cg 降级成 KIR 时按 kiln-rt 的布局决定。

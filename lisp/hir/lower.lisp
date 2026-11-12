@@ -134,7 +134,7 @@
 
 (defun hir-static-function-data (fun)
   (let* ((label (hir-function-label fun)) (data (kiln.kir::kir-name label "_fobj")))
-    (module-data data `(:words ,+kind-function+ (:func ,label)))
+    (module-data data `(:static-function ,label))
     data))
 
 (defun hir-variable-operand (var)
@@ -342,7 +342,7 @@ Return the storage slot and its root region, if any."
   (let ((label (hir-compile-function fun)) (count (length (hir-native-environment fun))))
     (if (zerop count)
         (let ((data (kiln.kir::kir-name label "_fobj")))
-          (module-data data `(:words ,+kind-function+ (:func ,label)))
+          (module-data data `(:static-function ,label))
           (copy-to-var `(:addr ,data ,+tag-general+)))
         (let ((slot (cdr (assoc fun *hir-stack-slots* :test #'eq))))
           (if slot

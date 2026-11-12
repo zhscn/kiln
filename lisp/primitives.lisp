@@ -998,7 +998,7 @@ error when called."
         (with-function (name)
           (emit-error +err-not-function+ :self)))
       (module-shared (module-data "kiln_funcallable_unset_fobj"
-                                  `(:words ,+kind-function+ (:func ,name)))))
+                                  `(:static-function ,name))))
     `(:addr "kiln_funcallable_unset_fobj" ,+tag-general+)))
 
 (defun emit-allocate-rack (class size)

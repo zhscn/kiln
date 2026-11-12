@@ -203,17 +203,9 @@ its first env word. Every function cell starts out holding one."
         (values (constant-object symbol) (- (* 8 index) +tag-general+))
         (values `(:addr ,(symbol-data symbol)) (* 8 index)))))
 
-(defun string-words (string)
-  "Data words of a string object: header, then UTF-32 code points packed
-two per word (little-endian), padded."
-  (let ((codes (map 'list #'char-code string)))
-    (cons (logior +kind-string+ (ash (length codes) +length-shift+))
-          (loop for (a b) on codes by #'cddr
-                collect (logior a (ash (or b 0) 32))))))
-
 (defun string-data (label string)
   "Defines LABEL as a static string object holding STRING (once)."
-  (module-data label `(:words ,@(string-words string)))
+  (module-data label `(:static-string ,@(map 'list #'char-code string)))
   label)
 
 (defun package-name-word (package)
@@ -241,12 +233,8 @@ name of its package as a string."
       (let ((name (string-data (kiln.kir::kir-name "kiln_name_" label) (module-symbol-name sym)))
             (undef (kiln.kir::kir-name "kiln_undef_" label))
             (undef-setf (kiln.kir::kir-name "kiln_undef_setf_" label)))
-        (module-data undef `(:words ,(logior +kind-function+ (ash 1 +length-shift+))
-                                    (:func ,(undefined-function-entry))
-                                    (:data ,obj ,+tag-general+)))
-        (module-data undef-setf `(:words ,(logior +kind-function+ (ash 1 +length-shift+))
-                                         (:func ,(undefined-setf-function-entry))
-                                         (:data ,obj ,+tag-general+)))
+        (module-data undef `(:static-function ,(undefined-function-entry) (:data ,obj ,+tag-general+)))
+        (module-data undef-setf `(:static-function ,(undefined-setf-function-entry) (:data ,obj ,+tag-general+)))
         ;; [header, name, package, function, value, TLS index, plist,
         ;; setf function]
         (module-data obj `(:words ,+kind-symbol+
@@ -314,8 +302,7 @@ name of its package as a string."
              (let ((label (fresh-label "kiln_bignum_"))
                    (n (ceiling (1+ (integer-length x)) 64)))
                ;; Two's complement digits, minimal length.
-               (module-data label `(:words ,(logior +kind-bignum+ (ash n +length-shift+))
-                                           ,@(loop for i below n
+               (module-data label `(:static-bignum ,@(loop for i below n
                                                    collect (let ((d (ldb (byte 64 (* 64 i)) x)))
                                                              (if (logbitp 63 d) (- d (ash 1 64)) d)))))
                (setf (gethash x *constants*) `(:data ,label ,+tag-general+))))))
@@ -326,21 +313,20 @@ name of its package as a string."
     (double-float
      (or (gethash x *constants*)
          (let ((label (fresh-label "kiln_double_")))
-           (module-data label `(:words ,+kind-double+
-                                       ,(signed-word
+           (module-data label `(:static-double ,(signed-word
                                          (logior (ash (double-float-high-bits x) 32)
                                                  (double-float-low-bits x)))))
            (setf (gethash x *constants*) `(:data ,label ,+tag-general+)))))
     (ratio
      (or (gethash x *constants*)
          (let ((label (fresh-label "kiln_ratio_")))
-           (module-data label `(:words ,+kind-ratio+ ,(constant-word (numerator x))
+           (module-data label `(:static-ratio ,(constant-word (numerator x))
                                        ,(constant-word (denominator x))))
            (setf (gethash x *constants*) `(:data ,label ,+tag-general+)))))
     (complex
      (or (gethash x *constants*)
          (let ((label (fresh-label "kiln_complex_")))
-           (module-data label `(:words ,+kind-complex+ ,(constant-word (realpart x))
+           (module-data label `(:static-complex ,(constant-word (realpart x))
                                        ,(constant-word (imagpart x))))
            (setf (gethash x *constants*) `(:data ,label ,+tag-general+)))))
     (character
@@ -355,9 +341,7 @@ name of its package as a string."
      (or (gethash x *constants*)
          (let ((label (fresh-label "kiln_vector_")))
            (setf (gethash x *constants*) `(:data ,label ,+tag-general+))
-           (module-data label `(:words ,(logior +kind-simple-vector+
-                                                (ash (length x) +length-shift+))
-                                       ,@(map 'list #'constant-word x)))
+           (module-data label `(:static-vector ,@(map 'list #'constant-word x)))
            `(:data ,label ,+tag-general+))))
     (cons
      ;; Static conses: the GC neither moves nor scans them, and they only
@@ -382,7 +366,7 @@ name of its package as a string."
              (setf (gethash x *constants*)
                    (or (and (not cyclic) (gethash key *cons-words*))
                        (let ((word (or cyclic `(:data ,(fresh-label "kiln_const_") ,+tag-cons+))))
-                         (module-data (second word) `(:words ,+kind-cons+ ,car-word ,cdr-word))
+                         (module-data (second word) `(:static-cons ,car-word ,cdr-word))
                          (unless cyclic
                            (setf (gethash key *cons-words*) word))
                          word)))))))
@@ -1276,7 +1260,7 @@ stamp of the last object's class and the result. Holding
 no pointer, the cons need not be scanned by the GC."
   (let ((object (copy-to-var (lower object-ast)))
         (label (fresh-label "kiln_typep_cache_")))
-    (module-data label `(:words ,+kind-cons+ ,(nil-word) ,(nil-word)))
+    (module-data label `(:static-cons ,(nil-word) ,(nil-word)))
     (emit-lisp-call (function-cell-value 'kiln.kernel::%typep-cached)
                     (list object (constant-object type) `(:addr ,label ,+tag-cons+)))))
 
@@ -1289,7 +1273,7 @@ a class, so it is the guard of the location (see lisp/target/clos/
 support.lisp)."
   (let ((object (copy-to-var (lower object-ast)))
         (label (fresh-label "kiln_slot_value_cache_")))
-    (module-data label `(:words ,+kind-cons+ ,(nil-word) ,(nil-word)))
+    (module-data label `(:static-cons ,(nil-word) ,(nil-word)))
     (emit-lisp-call (function-cell-value 'kiln.kernel::%slot-value-cached)
                     (list object (constant-object slot-name)
                           `(:addr ,label ,+tag-cons+)))))
@@ -1300,7 +1284,7 @@ LOWER-CACHED-SLOT-VALUE."
   (let ((value (copy-to-var (lower value-ast)))
         (object (copy-to-var (lower object-ast)))
         (label (fresh-label "kiln_set_slot_value_cache_")))
-    (module-data label `(:words ,+kind-cons+ ,(nil-word) ,(nil-word)))
+    (module-data label `(:static-cons ,(nil-word) ,(nil-word)))
     (emit-lisp-call (function-cell-value 'kiln.kernel::%set-slot-value-cached)
                     (list value object (constant-object slot-name)
                           `(:addr ,label ,+tag-cons+)))))
@@ -1308,7 +1292,7 @@ LOWER-CACHED-SLOT-VALUE."
 (defun call-site-root ()
   "A mutable cache cons whose object-valued car is a static GC root."
   (let ((label (fresh-label "kiln_call_site_")))
-    (module-data label `(:words ,+kind-cons+ ,(nil-word) ,(nil-word)))
+    (module-data label `(:static-cons ,(nil-word) ,(nil-word)))
     (module-root label 1)
     `(:addr ,label ,+tag-cons+)))
 
@@ -1576,7 +1560,7 @@ returns the operand of its (static) function object."
                              (make-toplevel-form nil (first files) nil nil nil))))
         (set-function-debug '(:top-level-form) nil))))
   (let ((fobj (kiln.kir::kir-name name "_fobj")))
-    (module-data fobj `(:words ,+kind-function+ (:func ,name)))
+    (module-data fobj `(:static-function ,name))
     `(:data ,fobj ,+tag-general+)))
 
 (defun compile-toplevel-function (asts)
@@ -1693,7 +1677,7 @@ Returns the module and the vector of its literals."
     (when image
       (let ((literals (emit-literal-words))
             (init (kiln.kir::kir-name "kiln_toplevel_" *module-label*)))
-        (module-data (kiln.kir::kir-name init "_fobj") `(:words ,+kind-function+ (:func ,init)))
+        (module-data (kiln.kir::kir-name init "_fobj") `(:static-function ,init))
         (module-init (kiln.kir::kir-name init "_fobj"))
         (return-from compile-module (values *module* literals))))
     ;; Sorted by name: the order of a package's symbols differs between
@@ -1723,6 +1707,6 @@ Returns the module and the vector of its literals."
                  `(:words ,(constant-word (symbol-table-literal
                                            *module-symbols* session defined-packages))))
     (let ((init (format nil "kiln_toplevel_~A" *module-label*)))
-      (module-data (format nil "~A_fobj" init) `(:words ,+kind-function+ (:func ,init)))
+      (module-data (format nil "~A_fobj" init) `(:static-function ,init))
       (module-init (format nil "~A_fobj" init)))
     *module*))

@@ -343,7 +343,7 @@ pub fn parse_module(s: &Sexp) -> R<Module> {
                         arity(kind, items, 1)?;
                         DataContents::Bytes(string(&items[0])?.as_bytes().to_vec())
                     }
-                    _ => return Err(format!("data: unknown contents {kind}")),
+                    _ => DataContents::Words(parse_static_object(kind, items)?),
                 };
                 m.data.push(Data { name, contents });
             }
@@ -432,6 +432,53 @@ fn parse_word(s: &Sexp) -> R<Word> {
                 _ => Err(format!("unknown data word {h}")),
             }
         }
+    }
+}
+
+fn parse_static_object(kind: &str, items: &[Sexp]) -> R<Vec<Word>> {
+    use kiln_rt::object::*;
+    let header = |kind: u64, length: usize| -> R<Word> {
+        let length = u64::try_from(length).map_err(|_| "static object length out of range")?;
+        if length > LENGTH_MASK { return Err("static object length out of range".into()); }
+        Ok(Word::Int((kind | (length << LENGTH_SHIFT)) as i64))
+    };
+    match kind {
+        "static-function" => {
+            let (entry, captures) = items.split_first().ok_or("static-function: missing entry")?;
+            let mut words = vec![header(KIND_FUNCTION, captures.len())?, Word::FuncAddr(string(entry)?.to_string())];
+            words.extend(captures.iter().map(parse_word).collect::<R<Vec<_>>>()?);
+            Ok(words)
+        }
+        "static-string" => {
+            let mut words = vec![header(KIND_STRING, items.len())?];
+            for pair in items.chunks(2) {
+                let lo = u32::try_from(int(&pair[0])?).map_err(|_| "invalid string code point")?;
+                let hi = if pair.len() == 2 { u32::try_from(int(&pair[1])?).map_err(|_| "invalid string code point")? } else { 0 };
+                if lo >= 0x110000 || hi >= 0x110000 { return Err("invalid string code point".into()); }
+                words.push(Word::Int((u64::from(lo) | (u64::from(hi) << 32)) as i64));
+            }
+            Ok(words)
+        }
+        "static-vector" | "static-bignum" => {
+            let object_kind = if kind == "static-vector" { KIND_SIMPLE_VECTOR } else { KIND_BIGNUM };
+            let mut words = vec![header(object_kind, items.len())?];
+            if kind == "static-bignum" {
+                words.extend(items.iter().map(|word| int(word).map(Word::Int)).collect::<R<Vec<_>>>()?);
+            } else {
+                words.extend(items.iter().map(parse_word).collect::<R<Vec<_>>>()?);
+            }
+            Ok(words)
+        }
+        "static-cons" | "static-ratio" | "static-complex" => {
+            arity(kind, items, 2)?;
+            let object_kind = match kind { "static-cons" => KIND_CONS, "static-ratio" => KIND_RATIO, _ => KIND_COMPLEX };
+            Ok(vec![Word::Int(object_kind as i64), parse_word(&items[0])?, parse_word(&items[1])?])
+        }
+        "static-double" => {
+            arity(kind, items, 1)?;
+            Ok(vec![Word::Int(KIND_DOUBLE as i64), Word::Int(int(&items[0])?)])
+        }
+        _ => Err(format!("data: unknown contents {kind}")),
     }
 }
 

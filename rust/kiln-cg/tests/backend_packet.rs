@@ -120,6 +120,21 @@ fn immediate_class_tests_preserve_kir_and_reject_unknown_classes() {
 }
 
 #[test]
+fn static_objects_preserve_words_relocations_and_packing() {
+    let module = |data| format!("(module \"static\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) {data} (func \"body\" (vars) (slots) (block b (return a0 1))))");
+    let old = module("(data \"string\" (words 773 4127463571553 122)) (data \"cons\" (words 3 (data \"vector\" 5) 0)) (data \"vector\" (words 516 (data \"cons\" 1) 4)) (data \"fn\" (words 258 (func \"body\") (data \"cons\" 1))) (data \"big\" (words 518 -1 2)) (data \"ratio\" (words 7 2 4)) (data \"complex\" (words 12 2 4)) (data \"double\" (words 8 -9223372036854775808))".to_string());
+    let new = module("(data \"string\" (static-string 97 961 122)) (data \"cons\" (static-cons (data \"vector\" 5) 0)) (data \"vector\" (static-vector (data \"cons\" 1) 4)) (data \"fn\" (static-function \"body\" (data \"cons\" 1))) (data \"big\" (static-bignum -1 2)) (data \"ratio\" (static-ratio 2 4)) (data \"complex\" (static-complex 2 4)) (data \"double\" (static-double -9223372036854775808))".to_string());
+    let old = kiln_cg::kir::parse_module(&sexp::parse_one(&old).unwrap()).unwrap();
+    let new = sexp::parse_one(&new).unwrap();
+    let new = packet::load(&packet::encode(&new, packet::schema::KIR_PAYLOAD).unwrap()).unwrap();
+    assert_eq!(format!("{old:?}"), format!("{new:?}"));
+    for contents in ["(static-cons 1)", "(static-string -1)", "(static-string 1114112)", "(static-function)", "(static-bignum (data \"x\" 1))"] {
+        let invalid = module(format!("(data \"bad\" {contents})"));
+        assert!(kiln_cg::kir::parse_module(&sexp::parse_one(&invalid).unwrap()).is_err());
+    }
+}
+
+#[test]
 fn symbol_allocation_initializes_fields_before_it_can_escape() {
     let module = |body| format!("(module \"symbol\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj) (name obj) (nilobj obj)) (slots) (block b {body} (return v 1)) (block caught (return exn1 1))))");
     let program = module("(alloc-symbol v name nilobj \"kiln_rt_alloc\" caught)");
