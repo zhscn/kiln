@@ -1249,6 +1249,10 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
             arity(h, r, 1)?;
             crate::lir::fixnum_untag(parse_expr(&r[0])?)
         }
+        "fixnum-unsigned-bits" => {
+            arity(h, r, 1)?;
+            crate::lir::fixnum_unsigned_bits(parse_expr(&r[0])?)
+        }
         "unbound-value" => {
             arity(h, r, 0)?;
             Expr::Int(kiln_rt::object::UNBOUND as i64)

@@ -55,7 +55,7 @@
     (ecase op
       (+ (emit `(:add-ovf ,r ,ovf ,a ,b)))
       (- (emit `(:sub-ovf ,r ,ovf ,a ,b)))
-      (* (emit `(:mul-ovf ,r ,ovf (:sar ,a ,+fixnum-shift+) ,b))))
+      (* (emit `(:mul-ovf ,r ,ovf (:fixnum-untag ,a) ,b))))
     (br ovf slow done)
     (start-block slow)
     (emit `(:set ,r ,(emit-slow-call (ecase op
@@ -594,7 +594,7 @@ are compared (no short circuit), which also checks every argument."
 
 (define-primop :make-string (n c)
   (emit-check-length n)
-  (let* ((len (copy-to-var `(:sar ,n ,+fixnum-shift+) :raw))
+  (let* ((len (copy-to-var `(:fixnum-untag ,n) :raw))
          (code (copy-to-var `(:character-untag ,c) :raw)))
     (emit-vector-object kiln.kir::+packet-class-string+ len code)))
 
@@ -736,7 +736,7 @@ of it, SLOW-FN otherwise; both return an operand. Returns the result."
 
 (define-primop :make-simple-vector (n x)
   (emit-check-length n)
-  (let* ((len (copy-to-var `(:sar ,n ,+fixnum-shift+) :raw))
+  (let* ((len (copy-to-var `(:fixnum-untag ,n) :raw))
          (zero (eql x 0))
          (x (if zero 0 (copy-to-var x))))
     (emit-vector-object kiln.kir::+packet-class-simple-vector+ len x)))
@@ -883,8 +883,8 @@ cells (both by default)."
 ;;; constants with them when it runs on kiln).
 (define-primop :single-float-bits (x) (copy-to-var `(:fixnum-tag (:single-float-bits ,x))))
 (define-primop :make-double-float-bits (high low)
-  (let* ((bits (copy-to-var `(:or (:shl (:shr ,high ,+fixnum-shift+) 32)
-                                (:shr ,low ,+fixnum-shift+)) :raw)))
+  (let* ((bits (copy-to-var `(:or (:shl (:fixnum-unsigned-bits ,high) 32)
+                                (:fixnum-unsigned-bits ,low)) :raw)))
     (emit-fixed-object kiln.kir::+packet-class-double+ (list bits))))
 (define-primop :double-float-high-bits (x)
   (copy-to-var `(:fixnum-tag (:shr (:field-load ,kiln.kir::+packet-field-double-bits+ ,x) 32))))
@@ -927,7 +927,7 @@ cells (both by default)."
 (define-primop :lisp-error (x) (emit-fatal-error +err-lisp-error+ x) (nil-value))
 (define-primop :fatal-error (code x)
   ;; CODE is a fixnum.
-  (emit-fatal-error `(:sar ,code ,+fixnum-shift+) x)
+  (emit-fatal-error `(:fixnum-untag ,code) x)
   (nil-value))
 
 ;;; CLOS objects. A rack is [header, class, stamp, slot list,

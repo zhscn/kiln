@@ -78,7 +78,7 @@ Returns the primary value and the count. No allocation."
     (let ((bad (new-block)) (ok (new-block)))
       (br `(:gt ,n ,+values-max+) bad ok)
       (start-block bad)
-      (emit-error +err-wrong-nargs+ `(:shl ,n ,+fixnum-shift+))
+      (emit-error +err-wrong-nargs+ `(:fixnum-tag ,n))
       (start-block ok))
     (emit `(:transfer-set-dynamic (:sub ,n 1) (:field-load ,kiln.kir::+packet-field-cons-car+ ,cur)))
     (emit `(:set ,cur (:field-load ,kiln.kir::+packet-field-cons-cdr+ ,cur)))
@@ -134,7 +134,7 @@ proper list LIST as arguments. Returns the primary value and the count."
           (bad (new-block)) (stack (new-block)) (next (new-block)))
       (br `(:ge ,i ,(+ +reg-args+ +values-max+)) bad stack)
       (start-block bad)
-      (emit-error +err-wrong-nargs+ `(:shl ,i ,+fixnum-shift+))
+      (emit-error +err-wrong-nargs+ `(:fixnum-tag ,i))
       (start-block stack)
       ;; Registers for the first arguments, the transfer area for the rest.
       (loop for a in args

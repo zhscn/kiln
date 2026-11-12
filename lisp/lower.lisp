@@ -710,7 +710,7 @@ known to hold one), and true; else NIL and NIL."
     (setf blocks (nreverse blocks))
     (br `(:eq (:and ,value 1) 0) dispatch fallback)
     (start-block dispatch)
-    (emit `(:switch (:sar ,value ,+fixnum-shift+) ,(kiln.kir::kblock-name fallback)
+    (emit `(:switch (:fixnum-untag ,value) ,(kiln.kir::kblock-name fallback)
                     ,(loop for (key . body) in arms
                            collect (list key (kiln.kir::kblock-name
                                               (cdr (assoc body blocks :test #'eq)))))))
@@ -869,7 +869,7 @@ arguments; later ones are in the transfer area."
               (t `(:lt :nargs ,min)))
         bad ok)
     (start-block bad)
-    (emit-error +err-wrong-nargs+ `(:shl :nargs ,+fixnum-shift+))
+    (emit-error +err-wrong-nargs+ `(:fixnum-tag :nargs))
     (start-block ok)))
 
 (defun emit-find-key (plist keyword value supplied)

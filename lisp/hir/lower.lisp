@@ -599,14 +599,14 @@ predicate inside it is branched on, not made into T or NIL and compared."
   (if bounded
       (copy-to-var (case name
                      (+ `(:add ,a ,b)) (- `(:sub ,a ,b))
-                     (* `(:mul (:sar ,a ,+fixnum-shift+) ,b))))
+                     (* `(:mul (:fixnum-untag ,a) ,b))))
       ;; Input types do not prove that the result fits. Keep the overflow
       ;; edge and its arbitrary-precision result.
       (let ((r (new-var)) (ovf (new-var :raw)) (slow (new-block)) (done (new-block)))
         (emit (case name
                 (+ `(:add-ovf ,r ,ovf ,a ,b))
                 (- `(:sub-ovf ,r ,ovf ,a ,b))
-                (* `(:mul-ovf ,r ,ovf (:sar ,a ,+fixnum-shift+) ,b))))
+                (* `(:mul-ovf ,r ,ovf (:fixnum-untag ,a) ,b))))
         (br ovf slow done)
         (start-block slow)
         (emit `(:set ,r ,(emit-slow-call
@@ -1223,7 +1223,7 @@ unsupported call. Arguments retain their evaluation order and effects."
         (start-dispatch region land)
         (start-block land)
         (emit `(:dynamic-relink ,(region-slot region)))
-        (emit `(:switch (:sar :exn1 ,+fixnum-shift+) ,(kiln.kir::kblock-name bad)
+        (emit `(:switch (:fixnum-untag :exn1) ,(kiln.kir::kblock-name bad)
                         ,(loop for block across blocks for i from 0
                                collect (list i (kiln.kir::kblock-name block)))))
         (start-block bad)

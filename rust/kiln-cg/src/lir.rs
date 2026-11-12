@@ -154,6 +154,10 @@ pub fn fixnum_untag(value: Expr) -> Expr {
     Expr::Shift(crate::kir::ShiftOp::Sar, Box::new(value), 1)
 }
 
+pub fn fixnum_unsigned_bits(value: Expr) -> Expr {
+    Expr::Shift(crate::kir::ShiftOp::Shr, Box::new(value), 1)
+}
+
 pub fn tls_address(index: Expr) -> Expr {
     use crate::kir::{BinOp, ShiftOp};
     let table = Expr::Load(Box::new(Expr::Var("ctx".into())), core::mem::offset_of!(kiln_rt::context::Context, tls) as i32);
