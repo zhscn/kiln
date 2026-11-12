@@ -797,35 +797,15 @@ known to hold one), and true; else NIL and NIL."
 (defun rt-save-image () (module-import-func "kiln_rt_save_image" 4 1))
 (defun rt-frame () (module-import-func "kiln_rt_frame" 4 1))
 
-(defun emit-tls-slot (sym)
-  "Raw address of the TLS slot of the symbol operand SYM (index 0 if it
-has never been bound). The table does not move."
-  (copy-to-var `(:tls-address (:field-load ,kiln.kir::+packet-field-symbol-tls-index+ ,sym)) :raw))
-
 (defun emit-symbol-value (sym)
   "Current value of the symbol operand SYM, possibly UNBOUND."
-  (let ((addr (emit-tls-slot sym))
-        (v (new-var))
-        (global (new-block)) (join (new-block)))
-    (emit `(:set ,v (:load ,addr 0)))
-    (br `(:no-tls-p ,v) global join)
-    (start-block global)
-    (emit `(:set ,v (:field-load ,kiln.kir::+packet-field-symbol-value+ ,sym)))
-    (jump join)
-    (start-block join)
+  (let ((sym (copy-to-var sym)) (v (new-var)))
+    (emit `(:special-ref ,v ,sym))
     v))
 
 (defun emit-set-symbol-value (sym value)
-  (let ((addr (emit-tls-slot sym))
-        (global (new-block)) (local (new-block)) (join (new-block)))
-    (br `(:no-tls-p (:load ,addr 0)) global local)
-    (start-block global)
-    (emit `(:field-store ,kiln.kir::+packet-field-symbol-value+ ,sym ,value))
-    (jump join)
-    (start-block local)
-    (emit `(:store ,addr 0 ,value))
-    (jump join)
-    (start-block join)))
+  (let ((sym (copy-to-var sym)) (value (copy-to-var value)))
+    (emit `(:special-set ,sym ,value))))
 
 (defun emit-check-bound (v sym)
   (let ((bad (new-block)) (ok (new-block)))

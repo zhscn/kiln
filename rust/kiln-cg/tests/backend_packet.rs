@@ -117,6 +117,22 @@ fn immediate_class_tests_preserve_kir_and_reject_unknown_classes() {
 }
 
 #[test]
+fn special_access_expands_global_and_dynamic_paths() {
+    let module = |body| format!("(module \"special\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj)) (slots) (block b {body} (return v 1))))");
+    let program = sexp::parse_one(&module("(special-ref v a0) (special-set a0 a1)")).unwrap();
+    let result = packet::load(&packet::encode(&program, packet::schema::KIR_PAYLOAD).unwrap()).unwrap();
+    let blocks = &result.funcs[0].blocks;
+    assert_eq!(blocks.len(), 6);
+    assert!(format!("{:?}", blocks[0]).contains("Int(35)"));
+    assert!(format!("{:?}", blocks[1]).contains("Load(Var(\"a0\"), 27)"));
+    assert!(format!("{:?}", blocks[3]).contains("Store(Var(\"a0\"), 27, Var(\"a1\"))"));
+    assert!(format!("{:?}", blocks[4]).contains("Store(Var(\"__kiln_lir_1_tls\"), 0, Var(\"a1\"))"));
+    for body in ["(special-ref v v)", "(special-ref v (load a0 0))", "(special-set a0 (load a1 0))"] {
+        assert!(kiln_cg::kir::parse_module(&sexp::parse_one(&module(body)).unwrap()).is_err());
+    }
+}
+
+#[test]
 fn tls_address_and_empty_slot_test_preserve_existing_kir() {
     let module = |body| format!("(module \"tls\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (p raw) (v raw)) (slots) (block b {body} (return a0 1))))");
     let old = module("(set p (add (load ctx 48) (shl a0 2))) (set v (eq (load p 0) 35))");

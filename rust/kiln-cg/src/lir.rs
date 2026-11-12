@@ -90,6 +90,36 @@ pub fn no_tls_value(value: Expr) -> Expr {
     Expr::Cmp(crate::kir::CmpOp::Eq, Box::new(value), Box::new(Expr::Int(kiln_rt::special::NO_TLS_VALUE as i64)))
 }
 
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+pub fn special_access(name: &str, block: String, mut preceding: Vec<Stmt>, symbol: String,
+                      result: Option<String>, value: Option<Expr>)
+    -> Result<(Vec<(String, crate::kir::VarKind)>, Vec<crate::kir::Block>, String), String> {
+    use crate::kir::{Block, VarKind};
+    let addr = format!("{name}_tls");
+    let global = format!("{name}_global");
+    let done = format!("{name}_done");
+    let var = |name: &str| Expr::Var(name.to_string());
+    preceding.push(Stmt::Set(addr.clone(), tls_address(field_load(FIELD_SYMBOL_TLS_INDEX, var(&symbol))?)));
+    let mut blocks = Vec::new();
+    if let Some(result) = result {
+        preceding.push(Stmt::Set(result.clone(), Expr::Load(Box::new(var(&addr)), 0)));
+        preceding.push(Stmt::Br(no_tls_value(var(&result)), global.clone(), done.clone()));
+        blocks.push(Block { name: block, stmts: preceding });
+        blocks.push(Block { name: global, stmts: vec![
+            Stmt::Set(result, field_load(FIELD_SYMBOL_VALUE, var(&symbol))?), Stmt::Jump(done.clone()),
+        ] });
+    } else if let Some(value) = value {
+        let local = format!("{name}_local");
+        preceding.push(Stmt::Br(no_tls_value(Expr::Load(Box::new(var(&addr)), 0)), global.clone(), local.clone()));
+        blocks.push(Block { name: block, stmts: preceding });
+        blocks.push(Block { name: global, stmts: vec![field_store(FIELD_SYMBOL_VALUE, var(&symbol), value.clone())?, Stmt::Jump(done.clone())] });
+        blocks.push(Block { name: local, stmts: vec![Stmt::Store(var(&addr), 0, value), Stmt::Jump(done.clone())] });
+    } else {
+        return Err("special access requires a result or value".into());
+    }
+    Ok((vec![(addr, VarKind::Raw)], blocks, done))
+}
+
 pub fn fixnum_tag(value: Expr) -> Expr {
     Expr::Shift(crate::kir::ShiftOp::Shl, Box::new(value), 1)
 }

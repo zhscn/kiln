@@ -552,6 +552,28 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                 for stmt in stmts {
                     validate_stack_references(stmt, &stack_objects)?;
                     let (head_name, operands) = head(list(stmt)?)?;
+                    if head_name == "special-ref" || head_name == "special-set" {
+                        arity(head_name, operands, 2)?;
+                        let (result, symbol, value) = if head_name == "special-ref" {
+                            let result = sym(&operands[0])?.to_string();
+                            let symbol = sym(&operands[1])?.to_string();
+                            if result == symbol { return Err("special-ref result must differ from symbol".into()); }
+                            (Some(result), symbol, None)
+                        } else {
+                            let symbol = sym(&operands[0])?.to_string();
+                            let value = parse_expr(&operands[1])?;
+                            if !matches!(value, Expr::Var(_) | Expr::Int(_)) { return Err("special-set requires a stable value".into()); }
+                            (None, symbol, Some(value))
+                        };
+                        let name = format!("{prefix}{alloc_number}");
+                        alloc_number += 1;
+                        let (vars, blocks, next_name) = crate::lir::special_access(&name, block_name, lowered, symbol, result, value)?;
+                        f.vars.extend(vars);
+                        f.blocks.extend(blocks);
+                        block_name = next_name;
+                        lowered = Vec::new();
+                        continue;
+                    }
                     if head_name == "special-bind" || head_name == "special-unbind" {
                         arity(head_name, operands, if head_name == "special-bind" { 4 } else { 1 })?;
                         let entry = sym(&operands[0])?;

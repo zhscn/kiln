@@ -12,7 +12,7 @@
 
 catch、unwind-protect、跨函数退出点、special 绑定和 progv 的动态条目也由 Rust 按语义种类建立和撤销。special 绑定的保存与恢复、progv 已保存绑定的读取和退出点重新链接使用对应的后端操作；Lisp 仍编排控制流及绑定、cleanup 的求值，展开 payload 仍使用兼容载荷。
 
-迁移中的 special 访问使用 `tls-address` 和 `no-tls-p`，由 Rust 决定 context 字段、TLS 下标缩放和空槽标记。调用方仍负责分支、全局值回退和绑定顺序。
+`special-ref` 和 `special-set` 由 Rust 安排动态值与全局值的选择，调用方负责检查未绑定值。绑定和 progv 的兼容路径使用 `tls-address`，由 Rust 决定 context 字段和 TLS 下标缩放；绑定顺序仍由调用方编排。
 
 `alloc-vector` 接收 simple-vector 或字符串的种类、未装箱长度和初值，Rust 负责尺寸、header、对齐及填充。字符串初值为字符码点，simple-vector 初值为对象；动态长度须由生成方检查范围。`alloc-vector-elements` 接收已求值的多个对象，按顺序初始化 simple-vector。填充过程没有 safepoint。
 
