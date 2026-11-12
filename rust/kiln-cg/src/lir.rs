@@ -344,6 +344,12 @@ pub fn bind_special(entry: String, index: Expr, address: Expr, value: Expr) -> V
     ]
 }
 
+pub fn bind_special_index(entry: String, temporary: String, index: Expr, value: Expr) -> Vec<Stmt> {
+    let mut statements = vec![Stmt::Set(temporary.clone(), tls_address(index.clone()))];
+    statements.extend(bind_special(entry, index, Expr::Var(temporary), value));
+    statements
+}
+
 pub fn unbind_special(entry: String) -> Stmt {
     use kiln_rt::context::DynEntry;
     let field = |offset: usize| Expr::Load(Box::new(Expr::Slot(entry.clone())), offset as i32);

@@ -12,7 +12,7 @@
 
 catch、unwind-protect、跨函数退出点、special 绑定和 progv 的动态条目也由 Rust 按语义种类建立和撤销。special 绑定的保存与恢复、progv 已保存绑定的读取和退出点重新链接使用对应的后端操作；Lisp 仍编排控制流及绑定、cleanup 的求值，展开 payload 仍使用兼容载荷。
 
-`special-ref` 和 `special-set` 由 Rust 安排动态值与全局值的选择，调用方负责检查未绑定值。绑定和 progv 使用后端操作取得或分配 TLS 下标及读写动态槽；绑定顺序仍由调用方编排。下标分配的 runtime 调用不是 safepoint。
+`special-ref` 和 `special-set` 由 Rust 安排动态值与全局值的选择，调用方负责检查未绑定值。绑定和 progv 使用后端操作取得或分配 TLS 下标及读写动态槽；special 绑定按已分配的下标由后端保存旧值并设置新值，绑定顺序仍由调用方编排。下标分配的 runtime 调用不是 safepoint。
 
 `alloc-vector` 接收 simple-vector 或字符串的种类、未装箱长度和初值，Rust 负责尺寸、header、对齐及填充。字符串初值为字符码点，simple-vector 初值为对象；动态长度须由生成方检查范围。`alloc-vector-elements` 接收已求值的多个对象，按顺序初始化 simple-vector。填充过程没有 safepoint。
 

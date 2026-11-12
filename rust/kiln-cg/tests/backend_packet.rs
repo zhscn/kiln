@@ -117,6 +117,25 @@ fn immediate_class_tests_preserve_kir_and_reject_unknown_classes() {
 }
 
 #[test]
+fn special_binding_by_index_builds_tls_address_and_saves_old_value() {
+    let module = |slots, body| format!("(module \"binding\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (i raw) (v obj)) (slots {slots}) (block b {body} (return v 1))))");
+    let program = module("(b (dynamic-entry bind))", "(special-bind-index b i v)");
+    let program = sexp::parse_one(&program).unwrap();
+    let result = packet::load(&packet::encode(&program, packet::schema::KIR_PAYLOAD).unwrap()).unwrap();
+    let dump = format!("{:?}", result.funcs[0]);
+    assert!(dump.contains("Load(Var(\"ctx\"), 48)"));
+    assert!(dump.contains("Store(Slot(\"b\"), 32, Var(\"i\"))"));
+    assert!(dump.contains("Store(Slot(\"b\"), 40, Load(Var(\"__kiln_lir_0_tls\"), 0))"));
+    assert!(dump.contains("Store(Var(\"__kiln_lir_0_tls\"), 0, Var(\"v\"))"));
+    for (slots, body) in [
+        ("(b (dynamic-entry catch))", "(special-bind-index b i v)"),
+        ("(b (dynamic-entry bind))", "(special-bind-index b (load i 0) v)"),
+    ] {
+        assert!(kiln_cg::kir::parse_module(&sexp::parse_one(&module(slots, body)).unwrap()).is_err());
+    }
+}
+
+#[test]
 fn tls_index_and_slot_operations_preserve_binding_layout() {
     let module = |body| format!("(module \"tls\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj) (i raw)) (slots) (block b {body} (return v 1))))");
     let old = module("(set v (load (add (load ctx 48) (shl (load a0 35) 2)) 0)) (store (add (load ctx 48) (shl (load a0 35) 2)) 0 a1)");

@@ -211,10 +211,9 @@
 
 (defun hir-with-binding (name value body)
   (let* ((sym (constant-object name)) (index (emit-tls-index sym))
-         (addr (copy-to-var `(:tls-address ,index) :raw))
          (region (establish-entry :bind sym))
          (r (new-var)) (n (new-var :raw)))
-    (emit `(:special-bind ,(region-slot region) ,index ,addr ,value))
+    (emit `(:special-bind-index ,(region-slot region) ,index ,value))
     (let ((*regions* (cons region *regions*)))
       (multiple-value-call #'set-mv r n (funcall body)))
     (emit-unbind region)

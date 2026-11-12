@@ -587,8 +587,8 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                         lowered = Vec::new();
                         continue;
                     }
-                    if head_name == "special-bind" || head_name == "special-unbind" {
-                        arity(head_name, operands, if head_name == "special-bind" { 4 } else { 1 })?;
+                    if head_name == "special-bind" || head_name == "special-bind-index" || head_name == "special-unbind" {
+                        arity(head_name, operands, match head_name { "special-bind" => 4, "special-bind-index" => 3, _ => 1 })?;
                         let entry = sym(&operands[0])?;
                         if dynamic_entries.get(entry).map(String::as_str) != Some("bind") { return Err("special binding operation requires a bind entry".into()); }
                         if head_name == "special-bind" {
@@ -599,6 +599,16 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                                 return Err("special-bind requires stable operands".into());
                             }
                             lowered.extend(crate::lir::bind_special(entry.to_string(), index, address, value));
+                        } else if head_name == "special-bind-index" {
+                            let index = parse_expr(&operands[1])?;
+                            let value = parse_expr(&operands[2])?;
+                            if [&index, &value].iter().any(|operand| !matches!(operand, Expr::Var(_) | Expr::Int(_))) {
+                                return Err("special-bind-index requires stable operands".into());
+                            }
+                            let temporary = format!("{prefix}{alloc_number}_tls");
+                            alloc_number += 1;
+                            f.vars.push((temporary.clone(), VarKind::Raw));
+                            lowered.extend(crate::lir::bind_special_index(entry.to_string(), temporary, index, value));
                         } else {
                             lowered.push(crate::lir::unbind_special(entry.to_string()));
                         }
