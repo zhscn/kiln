@@ -1,5 +1,12 @@
 (in-package #:kiln.kir)
 
+(defun module-symbol-roots (data)
+  "Declare the mutable fields of a static symbol for GC and images."
+  (push `(:symbol-roots ,data ,+packet-field-symbol-package+ ,+packet-field-symbol-function+
+                        ,+packet-field-symbol-value+ ,+packet-field-symbol-tls-index+
+                        ,+packet-field-symbol-plist+ ,+packet-field-symbol-setf-function+)
+        (kmodule-roots *module*)))
+
 ;;;; Indexed backend records. Program data is encoded without invoking
 ;;;; the Lisp printer or reader; IDs are local to this request.
 

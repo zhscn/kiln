@@ -351,6 +351,14 @@ pub fn parse_module(s: &Sexp) -> R<Module> {
                 arity(h, rest, 2)?;
                 m.roots.push((string(&rest[0])?.to_string(), int(&rest[1])? as u32));
             }
+            "symbol-roots" => {
+                let (name, fields) = rest.split_first().ok_or("symbol-roots: missing name")?;
+                let name = string(name)?.to_string();
+                for field in fields {
+                    let field = u32::try_from(int(field)?).map_err(|_| "invalid symbol root field")?;
+                    m.roots.push((name.clone(), crate::lir::symbol_root_index(field)?));
+                }
+            }
             "func" => m.funcs.push(parse_func(rest)?),
             _ => return Err(format!("unknown module declaration {h}")),
         }
@@ -429,6 +437,10 @@ fn parse_word(s: &Sexp) -> R<Word> {
                     arity(h, rest, 1)?;
                     Ok(Word::FuncAddr(string(&rest[0])?.to_string()))
                 }
+                "unbound" => {
+                    arity(h, rest, 0)?;
+                    Ok(Word::Int(kiln_rt::object::UNBOUND as i64))
+                }
                 _ => Err(format!("unknown data word {h}")),
             }
         }
@@ -443,6 +455,22 @@ fn parse_static_object(kind: &str, items: &[Sexp]) -> R<Vec<Word>> {
         Ok(Word::Int((kind | (length << LENGTH_SHIFT)) as i64))
     };
     match kind {
+        "static-symbol" => {
+            arity(kind, items, 6)?;
+            let mut words = vec![Word::Int(0); size_of::<SymbolObj>() / size_of::<u64>()];
+            words[core::mem::offset_of!(SymbolObj, header) / size_of::<u64>()] = Word::Int(KIND_SYMBOL as i64);
+            for (offset, value) in [
+                (core::mem::offset_of!(SymbolObj, name), &items[0]),
+                (core::mem::offset_of!(SymbolObj, package), &items[1]),
+                (core::mem::offset_of!(SymbolObj, function), &items[2]),
+                (core::mem::offset_of!(SymbolObj, value), &items[3]),
+                (core::mem::offset_of!(SymbolObj, plist), &items[4]),
+                (core::mem::offset_of!(SymbolObj, setf_function), &items[5]),
+            ] {
+                words[offset / size_of::<u64>()] = parse_word(value)?;
+            }
+            Ok(words)
+        }
         "static-function" => {
             let (entry, captures) = items.split_first().ok_or("static-function: missing entry")?;
             let mut words = vec![header(KIND_FUNCTION, captures.len())?, Word::FuncAddr(string(entry)?.to_string())];

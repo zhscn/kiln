@@ -120,6 +120,21 @@ fn immediate_class_tests_preserve_kir_and_reject_unknown_classes() {
 }
 
 #[test]
+fn static_symbol_layout_and_roots_preserve_relocations() {
+    use packet::schema::*;
+    let module = |declarations| format!("(module \"symbol\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) {declarations} (func \"body\" (vars) (slots) (block b (return a0 1))))");
+    let old = module("(data \"s\" (words 1 (data \"name\" 5) (data \"package\" 5) (data \"f\" 5) 19 0 (data \"nil\" 5) (data \"sf\" 5))) (root \"s\" 2) (root \"s\" 3) (root \"s\" 4) (root \"s\" 5) (root \"s\" 6) (root \"s\" 7)".to_string());
+    let new = module(format!("(data \"s\" (static-symbol (data \"name\" 5) (data \"package\" 5) (data \"f\" 5) (unbound) (data \"nil\" 5) (data \"sf\" 5))) (symbol-roots \"s\" {FIELD_SYMBOL_PACKAGE} {FIELD_SYMBOL_FUNCTION} {FIELD_SYMBOL_VALUE} {FIELD_SYMBOL_TLS_INDEX} {FIELD_SYMBOL_PLIST} {FIELD_SYMBOL_SETF_FUNCTION})"));
+    let old = kiln_cg::kir::parse_module(&sexp::parse_one(&old).unwrap()).unwrap();
+    let new = sexp::parse_one(&new).unwrap();
+    let new = packet::load(&packet::encode(&new, KIR_PAYLOAD).unwrap()).unwrap();
+    assert_eq!(format!("{old:?}"), format!("{new:?}"));
+    for declaration in ["(data \"s\" (static-symbol 0))".to_string(), format!("(symbol-roots \"s\" {FIELD_SYMBOL_NAME})"), "(data \"s\" (static-symbol 0 0 0 (unbound 1) 0 0))".to_string()] {
+        assert!(kiln_cg::kir::parse_module(&sexp::parse_one(&module(declaration)).unwrap()).is_err());
+    }
+}
+
+#[test]
 fn static_objects_preserve_words_relocations_and_packing() {
     let module = |data| format!("(module \"static\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) {data} (func \"body\" (vars) (slots) (block b (return a0 1))))");
     let old = module("(data \"string\" (words 773 4127463571553 122)) (data \"cons\" (words 3 (data \"vector\" 5) 0)) (data \"vector\" (words 516 (data \"cons\" 1) 4)) (data \"fn\" (words 258 (func \"body\") (data \"cons\" 1))) (data \"big\" (words 518 -1 2)) (data \"ratio\" (words 7 2 4)) (data \"complex\" (words 12 2 4)) (data \"double\" (words 8 -9223372036854775808))".to_string());

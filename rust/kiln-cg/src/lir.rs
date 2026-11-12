@@ -78,6 +78,19 @@ pub fn field_store(field: u32, object: Expr, value: Expr) -> Result<Stmt, String
     Ok(Stmt::Store(object, field_offset(field)?, value))
 }
 
+pub fn symbol_root_index(field: u32) -> Result<u32, String> {
+    let offset = match field {
+        FIELD_SYMBOL_PACKAGE => core::mem::offset_of!(SymbolObj, package),
+        FIELD_SYMBOL_FUNCTION => core::mem::offset_of!(SymbolObj, function),
+        FIELD_SYMBOL_VALUE => core::mem::offset_of!(SymbolObj, value),
+        FIELD_SYMBOL_TLS_INDEX => core::mem::offset_of!(SymbolObj, tls_index),
+        FIELD_SYMBOL_PLIST => core::mem::offset_of!(SymbolObj, plist),
+        FIELD_SYMBOL_SETF_FUNCTION => core::mem::offset_of!(SymbolObj, setf_function),
+        _ => return Err(format!("invalid static symbol root field {field}")),
+    };
+    Ok((offset / size_of::<u64>()) as u32)
+}
+
 pub fn fixnum_untag(value: Expr) -> Expr {
     Expr::Shift(crate::kir::ShiftOp::Sar, Box::new(value), 1)
 }

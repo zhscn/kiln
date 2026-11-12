@@ -235,16 +235,12 @@ name of its package as a string."
             (undef-setf (kiln.kir::kir-name "kiln_undef_setf_" label)))
         (module-data undef `(:static-function ,(undefined-function-entry) (:data ,obj ,+tag-general+)))
         (module-data undef-setf `(:static-function ,(undefined-setf-function-entry) (:data ,obj ,+tag-general+)))
-        ;; [header, name, package, function, value, TLS index, plist,
-        ;; setf function]
-        (module-data obj `(:words ,+kind-symbol+
-                                  (:data ,name ,+tag-general+)
-                                  ,(package-name-word (symbol-package sym))
-                                  (:data ,undef ,+tag-general+)
-                                  ,(if (keywordp sym) `(:data ,obj ,+tag-general+) +unbound+)
-                                  0
-                                  ,(nil-word)
-                                  (:data ,undef-setf ,+tag-general+)))
+        (module-data obj `(:static-symbol (:data ,name ,+tag-general+)
+                                         ,(package-name-word (symbol-package sym))
+                                         (:data ,undef ,+tag-general+)
+                                         ,(if (keywordp sym) `(:data ,obj ,+tag-general+) '(:unbound))
+                                         ,(nil-word)
+                                         (:data ,undef-setf ,+tag-general+)))
         (module-shared name)
         (module-shared undef)
         (module-shared undef-setf)
@@ -253,12 +249,7 @@ name of its package as a string."
         ;; The package slot holds the package object once packages exist.
         ;; The TLS index (a fixnum) is not a GC root, but it changes as
         ;; the other words do: a heap image saves the static roots.
-        (module-root obj 2)
-        (module-root obj 3)
-        (module-root obj 4)
-        (module-root obj 5)
-        (module-root obj 6)
-        (module-root obj 7)))
+        (kiln.kir::module-symbol-roots obj)))
     obj))
 
 (defun symbol-word (sym)
