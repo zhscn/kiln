@@ -11,7 +11,7 @@
 
 (defun values-word (i)
   "Operand for value I (I >= 1, raw variable or integer) in the transfer area."
-  `(:transfer-ref-dynamic (:sub ,i 1)))
+  `(:secondary-value-ref ,i))
 
 (defun emit-push-values (v0 n acc)
   "Conses the values (V0, N) onto the list operand ACC, first value
@@ -80,7 +80,7 @@ Returns the primary value and the count. No allocation."
       (start-block bad)
       (emit-error +err-wrong-nargs+ `(:fixnum-tag ,n))
       (start-block ok))
-    (emit `(:transfer-set-dynamic (:sub ,n 1) (:field-load ,kiln.kir::+packet-field-cons-car+ ,cur)))
+    (emit `(:secondary-value-set ,n (:field-load ,kiln.kir::+packet-field-cons-car+ ,cur)))
     (emit `(:set ,cur (:field-load ,kiln.kir::+packet-field-cons-cdr+ ,cur)))
     (emit `(:set ,n (:add ,n 1)))
     (jump head)

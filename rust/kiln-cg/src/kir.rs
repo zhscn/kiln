@@ -1082,6 +1082,10 @@ fn parse_stmt(s: &Sexp) -> R<Stmt> {
             arity(h, r, 2)?;
             Stmt::Set(sym(&r[0])?.to_string(), parse_expr(&r[1])?)
         }
+        "secondary-value-set" => {
+            arity(h, r, 2)?;
+            return crate::lir::secondary_value_set(parse_expr(&r[0])?, parse_expr(&r[1])?);
+        }
         "field-store" => {
             arity(h, r, 3)?;
             return crate::lir::field_store(u32::try_from(int(&r[0])?).map_err(|_| "invalid field ID")?,
@@ -1435,6 +1439,10 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
             arity(h, r, 2)?;
             return crate::lir::argument_ref(int(&r[0])?,
                 list(&r[1])?.iter().map(parse_expr).collect::<R<Vec<_>>>()?);
+        }
+        "secondary-value-ref" => {
+            arity(h, r, 1)?;
+            return crate::lir::secondary_value_ref(parse_expr(&r[0])?);
         }
         "transfer-ref" => {
             arity(h, r, 1)?;

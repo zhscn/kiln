@@ -508,11 +508,11 @@ used nowhere else: test and rest."
                            (copy-to-var
                             (cond ((integerp n)
                                    (if (> n i)
-                                       `(:transfer-ref ,(1- i))
+                                       `(:secondary-value-ref ,i)
                                        (nil-value)))
                                   ((> i kiln.kir::+backend-values-max+) (nil-value))
                                   (t `(:select (:gt ,n ,i)
-                                               (:transfer-ref ,(1- i))
+                                               (:secondary-value-ref ,i)
                                                ,(nil-value)))))))
             (loop for var across vars for value across values
                   do (hir-check-declaration value (hir-var-type var))

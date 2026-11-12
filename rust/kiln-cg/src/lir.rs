@@ -987,3 +987,42 @@ fn prepared_call_validates_counts_and_preserves_unwind_metadata() {
     assert!(call(Expr::Var("count".into()), saved()).is_ok());
     assert!(call(Expr::Load(Box::new(Expr::Int(0)), 0), saved()).is_err());
 }
+
+fn secondary_value_index(index: Expr) -> Result<Expr, String> {
+    if let Expr::Int(i) = index {
+        if i < 1 || i > kiln_rt::context::VALUES_MAX as i64 {
+            return Err("secondary value index out of range".into());
+        }
+        Ok(Expr::Int(i - 1))
+    } else {
+        Ok(Expr::Bin(crate::kir::BinOp::Sub, Box::new(index), Box::new(Expr::Int(1))))
+    }
+}
+
+pub fn secondary_value_ref(index: Expr) -> Result<Expr, String> {
+    match secondary_value_index(index)? {
+        Expr::Int(i) => transfer_ref(i),
+        index => Ok(transfer_ref_dynamic(index)),
+    }
+}
+
+pub fn secondary_value_set(index: Expr, value: Expr) -> Result<Stmt, String> {
+    match secondary_value_index(index)? {
+        Expr::Int(i) => transfer_set(i, value),
+        index => Ok(transfer_set_dynamic(index, value)),
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn secondary_values_check_primary_and_capacity_boundaries() {
+    for i in [1, kiln_rt::context::VALUES_MAX as i64] {
+        assert_eq!(format!("{:?}", secondary_value_ref(Expr::Int(i)).unwrap()),
+                   format!("{:?}", transfer_ref(i - 1).unwrap()));
+        assert!(secondary_value_set(Expr::Int(i), Expr::Int(0)).is_ok());
+    }
+    for i in [-1, 0, kiln_rt::context::VALUES_MAX as i64 + 1] {
+        assert!(secondary_value_ref(Expr::Int(i)).is_err());
+        assert!(secondary_value_set(Expr::Int(i), Expr::Int(0)).is_err());
+    }
+}
