@@ -117,6 +117,26 @@ fn immediate_class_tests_preserve_kir_and_reject_unknown_classes() {
 }
 
 #[test]
+fn vector_elements_initialize_in_order_after_allocation() {
+    let module = |body| format!("(module \"vector\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj) (x obj)) (slots) (block b {body} (return v 1))))");
+    for (fields, count) in [("", 0), ("x 4 a0", 3)] {
+        let program = module(format!("(alloc-vector-elements v ({fields}) \"kiln_rt_alloc\" nil)"));
+        let result = kiln_cg::kir::parse_module(&sexp::parse_one(&program).unwrap()).unwrap();
+        let done = format!("{:?}", result.funcs[0].blocks[3]);
+        assert_eq!(done.matches("Store(Var(\"v\")").count(), count);
+        if count == 3 {
+            assert!(done.contains("Store(Var(\"v\"), 3, Var(\"x\"))"));
+            assert!(done.contains("Store(Var(\"v\"), 11, Int(4))"));
+            assert!(done.contains("Store(Var(\"v\"), 19, Var(\"a0\"))"));
+        }
+    }
+    for fields in ["v", "(load x 0)"] {
+        let program = module(format!("(alloc-vector-elements v ({fields}) \"kiln_rt_alloc\" nil)"));
+        assert!(kiln_cg::kir::parse_module(&sexp::parse_one(&program).unwrap()).is_err());
+    }
+}
+
+#[test]
 fn vector_allocation_checks_lengths_and_builds_fill_paths() {
     use packet::schema::*;
     let module = |body| format!("(module \"vector\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj) (n raw) (x obj)) (slots) (block b {body} (return v 1))))");

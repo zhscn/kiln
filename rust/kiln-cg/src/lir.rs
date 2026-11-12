@@ -178,6 +178,17 @@ pub fn vector_layout(class: u32, length: &Expr) -> Result<(Expr, Expr, u32), Str
         Expr::Bin(BinOp::Or, Box::new(Expr::Shift(ShiftOp::Shl, Box::new(length.clone()), LENGTH_SHIFT as i64)), Box::new(Expr::Int(kind as i64))), shift))
 }
 
+pub fn initialize_vector_elements(result: String, address: String, values: Vec<Expr>) -> Vec<Stmt> {
+    use crate::kir::BinOp;
+    let mut stmts = Vec::with_capacity(values.len() + 1);
+    stmts.push(Stmt::Set(result.clone(), Expr::Bin(BinOp::Add, Box::new(Expr::Var(address)), Box::new(Expr::Int(TAG_GENERAL as i64)))));
+    for (index, value) in values.into_iter().enumerate() {
+        let offset = ((index + 1) * size_of::<u64>()) as i32 - TAG_GENERAL as i32;
+        stmts.push(Stmt::Store(Expr::Var(result.clone()), offset, value));
+    }
+    stmts
+}
+
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn initialize_vector(name: &str, block: String, mut preceding: Vec<Stmt>, result: String,
                          address: String, length: Expr, value: Expr, shift: u32)

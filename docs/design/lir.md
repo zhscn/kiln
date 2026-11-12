@@ -6,7 +6,7 @@
 
 兼容载荷的 `alloc-fixed` 接收对象种类和已求值的字段，Rust 据此分配和初始化堆 cons、double-float 和 complex；对象字段变量跨分配慢路径保持 GC root。尚未迁移的分配使用 `alloc-raw`，由生成方提供大小和 header；Rust 展开定长小对象的 bump 分配、清零与慢路径，其他大小调用 runtime 分配器。`alloc-raw` 的结果是未加 tag 的地址，生成方须在下一个 safepoint 前完成初始化并转换为对象引用。完整 LIR 的分配操作将改用对象种类、存储方式和字段。
 
-`alloc-vector` 接收 simple-vector 或字符串的种类、未装箱长度和初值，Rust 负责尺寸、header、对齐及填充。字符串初值为字符码点，simple-vector 初值为对象；动态长度须由生成方检查范围。填充过程没有 safepoint。
+`alloc-vector` 接收 simple-vector 或字符串的种类、未装箱长度和初值，Rust 负责尺寸、header、对齐及填充。字符串初值为字符码点，simple-vector 初值为对象；动态长度须由生成方检查范围。`alloc-vector-elements` 接收已求值的多个对象，按顺序初始化 simple-vector。填充过程没有 safepoint。
 
 LIR（low-level IR）是表示选择后的后端输入语言，也是编译协议的程序载荷。它不设独立的优化管线。初期由 HIR 降级产生，后续由 MIR 产生；两者使用同一 schema。它已经确定了“做什么”：每个值的表示、每个对象的存储、闭包的内容、控制流和动态范围；还没有确定“怎么做”：tag、对象和 context 的偏移、调用序列、展开 payload 的编码、栈图。后者由 kiln-cg 降级成 KIR 时按 kiln-rt 的布局决定。
 

@@ -503,6 +503,34 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                 let mut lowered = Vec::new();
                 for stmt in stmts {
                     let (head_name, operands) = head(list(stmt)?)?;
+                    if head_name == "alloc-vector-elements" {
+                        arity(head_name, operands, 4)?;
+                        let result = sym(&operands[0])?.to_string();
+                        let values = list(&operands[1])?.iter().map(parse_expr).collect::<R<Vec<_>>>()?;
+                        for value in &values {
+                            match value {
+                                Expr::Int(_) => (),
+                                Expr::Var(name) if name != &result => (),
+                                _ => return Err("alloc-vector-elements: elements must be stable operands distinct from the result".into()),
+                            }
+                        }
+                        let length = i64::try_from(values.len()).map_err(|_| "vector length out of range")?;
+                        let (bytes, header, _) = crate::lir::vector_layout(crate::packet::schema::CLASS_SIMPLE_VECTOR, &Expr::Int(length))?;
+                        let name = format!("{prefix}{alloc_number}");
+                        alloc_number += 1;
+                        let raw = format!("{name}_object");
+                        f.vars.push((raw.clone(), VarKind::Raw));
+                        let (vars, blocks, next_name, mut next_stmts) = crate::lir::allocate_raw(
+                            &name, block_name, lowered, raw.clone(), bytes, header, false,
+                            string(&operands[2])?.to_string(), handler(&operands[3])?,
+                        )?;
+                        f.vars.extend(vars);
+                        f.blocks.extend(blocks);
+                        next_stmts.extend(crate::lir::initialize_vector_elements(result, raw, values));
+                        block_name = next_name;
+                        lowered = next_stmts;
+                        continue;
+                    }
                     if head_name == "alloc-vector" {
                         arity(head_name, operands, 6)?;
                         let result = sym(&operands[0])?.to_string();

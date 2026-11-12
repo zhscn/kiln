@@ -16,3 +16,8 @@
 (print (list (length (kiln.kernel::make-simple-vector 0 0))
              (svref (kiln.kernel::make-simple-vector 3 0) 2)
              (svref (kiln.kernel::make-simple-vector 3 42) 2)))
+(let* ((x (cons 5 6))
+       (v (vector x 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 x)))
+  (%gc)
+  (print (list (length (vector)) (length v) (eq x (svref v 0))
+               (eq x (svref v 16)) (cdr (svref v 16)))))

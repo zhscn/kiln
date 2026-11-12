@@ -343,14 +343,9 @@ are compared (no short circuit), which also checks every argument."
   (when (null vals) (hir-error "LIST* needs at least one argument"))
   (emit-list (butlast vals) (car (last vals))))
 (define-nary-primitive vector (vals)
-  (let* ((n (length vals))
-         (p (emit-alloc (+ 8 (* 8 n))
-                        (logior (ash n +length-shift+) +kind-simple-vector+)
-                        nil)))
-    (loop for v in vals
-          for offset from 8 by 8
-          do (emit `(:store ,p ,offset ,v)))
-    (copy-to-var `(:add ,p ,+tag-general+))))
+  (let ((result (new-var)))
+    (emit `(:alloc-vector-elements ,result ,vals ,(rt-alloc) ,(handler)))
+    result))
 
 ;;; Primitives may return a second value, the number of values;
 ;;; those that return one value omit it.
