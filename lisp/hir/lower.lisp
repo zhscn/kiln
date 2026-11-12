@@ -175,7 +175,7 @@
 (defun hir-bind-variable (var value &optional raw-local)
   (when (and raw-local (hir-double-local-p var))
     (return-from hir-bind-variable
-      (hir-bind-double-bits var `(:load ,value ,(- 8 +tag-general+)))))
+      (hir-bind-double-bits var `(:field-load ,kiln.kir::+packet-field-double-bits+ ,value))))
   (let* ((cell (logtest 4 (hir-var-flags var)))
          (operand (copy-to-var (if cell (emit-cons value (nil-value)) value))))
     (setf (hir-var-lowering var) operand)
@@ -185,7 +185,7 @@
 (defun hir-set-variable (var value &optional (actual t) (check t))
   (when check (hir-check-declaration value (hir-var-type var) actual))
   (cond ((hir-raw-double-variable-p var)
-         (emit `(:set ,(hir-variable-operand var) (:load ,value ,(- 8 +tag-general+)))))
+         (emit `(:set ,(hir-variable-operand var) (:field-load ,kiln.kir::+packet-field-double-bits+ ,value))))
         ((logtest 4 (hir-var-flags var))
          (emit `(:field-store ,kiln.kir::+packet-field-cons-car+ ,(hir-variable-operand var) ,value)))
         (t (emit `(:set ,(hir-variable-operand var) ,value))))
@@ -949,7 +949,7 @@ unsupported call. Arguments retain their evaluation order and effects."
                       (hir-lower-double-bits init)
                       (let ((value (hir-lower init)))
                         (hir-check-declaration value (hir-var-type var) (hir-node-type init))
-                        (copy-to-var `(:load ,value ,(- 8 +tag-general+)) :raw)))))
+                        (copy-to-var `(:field-load ,kiln.kir::+packet-field-double-bits+ ,value) :raw)))))
         (emit `(:set ,(hir-variable-operand var) ,bits))
         (return-from hir-lower-assignment
           (cond (double-primary bits) (value-needed (hir-box-double-bits bits)) (t (nil-value))))))

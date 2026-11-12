@@ -1,6 +1,6 @@
 # 编译器架构
 
-状态：**分层目标正在接入**。结构化封套、文件与内存入口已实现，当前载荷仍是 KIR，固定对象字段、闭包环境读写和普通函数对象调用的 ABI 展开已迁往 Rust，其余 LIR 操作和 Lisp MIR 待实现。现在的编译器是 Lisp 一路生成 KIR（`CST → HIR → KIR`，见 [hir.md](hir.md)、[lowering.md](lowering.md)），kiln-cg 把 KIR 交给 Cranelift。本文规定迁移后的分层；迁移期间现有路径是行为参照。
+状态：**分层目标正在接入**。结构化封套、文件与内存入口已实现，当前载荷仍是 KIR 与迁移中的语义操作。动态分配、静态对象布局、部分字段和调用、多值传递区及动态条目已由 Rust 展开；完整 LIR、其余 ABI 操作和 Lisp MIR 待实现。现在的编译器主要由 Lisp 从 HIR 生成兼容载荷（见 [hir.md](hir.md)、[lowering.md](lowering.md)），kiln-cg 把展开后的 KIR 交给 Cranelift。本文规定迁移后的分层；迁移期间现有路径是行为参照。
 
 ## 分层
 

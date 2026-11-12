@@ -1,14 +1,8 @@
 (defpackage #:kiln.abi
   (:use #:cl)
   (:documentation "Constants shared with the runtime.")
-  (:export #:+fixnum-shift+ #:+tag-mask+ #:+tag-cons+ #:+tag-general+
-           #:+kind-mask+ #:+kind-symbol+ #:+kind-function+ #:+kind-cons+
-           #:+kind-simple-vector+ #:+kind-string+ #:+kind-bignum+
-           #:+kind-ratio+ #:+kind-double+ #:+kind-complex+ #:+single-float-tag+
-           #:+kind-structure-instance+ #:+kind-instance+ #:+kind-funcallable-instance+ #:+kind-rack+
+  (:export #:+fixnum-shift+ #:+single-float-tag+
            #:+immediate-mask+ #:+character-tag+ #:+character-shift+ #:+char-code-limit+
-           #:+length-shift+
-           #:+cons-bytes+
            #:+values-max+
            #:+err-not-fixnum+ #:+err-overflow+ #:+err-wrong-nargs+
            #:+err-not-list+ #:+err-not-function+

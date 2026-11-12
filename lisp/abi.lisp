@@ -2,31 +2,8 @@
 
 ;;;; Must match rust/kiln-rt.
 
-;;; Values: fixnum when the low bit is 0 (value = word >> 1); cons pointer
-;;; when the low 3 bits are #b001; other object pointer when #b101.
+;;; Fixnum encoding.
 (defconstant +fixnum-shift+ 1)
-(defconstant +tag-mask+ 7)
-(defconstant +tag-cons+ 1)
-(defconstant +tag-general+ 5)
-
-;;; Every object starts with a header word: kind in bits 0-7, payload length
-;;; in words above that for variable-length kinds.
-(defconstant +kind-mask+ #xff)
-(defconstant +kind-symbol+ 1)
-(defconstant +kind-function+ 2)
-(defconstant +kind-cons+ 3)
-(defconstant +kind-simple-vector+ 4)
-(defconstant +kind-string+ 5)          ; UTF-32, padded to 8 bytes
-(defconstant +kind-bignum+ 6)          ; two's complement 64-bit digits
-(defconstant +kind-ratio+ 7)           ; [header, numerator, denominator]
-(defconstant +kind-double+ 8)          ; [header, IEEE bits]
-;;; CLOS.
-(defconstant +kind-instance+ 9)        ; [header, rack]
-(defconstant +kind-funcallable-instance+ 10) ; [header, entry, rack, function]
-(defconstant +kind-rack+ 11)           ; [header, class, stamp, slot list, slots...]
-(defconstant +kind-complex+ 12)        ; [header, real part, imaginary part]
-(defconstant +kind-structure-instance+ 13) ; [header (slot count), layout, slots...]
-;;; Function objects and funcallable instances differ only in bit 3: a
 
 ;;; Immediates: low 3 bits #b011, bits 3-7 the immediate kind, payload from
 ;;; bit 8.
@@ -37,21 +14,9 @@
 (defconstant +single-float-tag+ #x1b)
 (defconstant +char-code-limit+ #x110000)
 
-;;; Symbol layout: [header, name, package, function, value, TLS index,
-;;; plist, setf function]. Offsets from a tagged pointer. The TLS index is a fixnum.
-
-;;; Function object layout: [header (env length << 8), entry, env...].
-(defconstant +length-shift+ 8)
-
-;;; Cons layout: [header, car, cdr].
-(defconstant +cons-bytes+ 24)
-
 ;;; Transfer area: arguments beyond the register arguments, and (later)
 ;;; values beyond the first. VALUES_MAX words, at the end of the context.
 (defconstant +values-max+ 1021)
-
-;;; Dynamic-environment entries (stack-allocated in the establishing frame).
-
 
 ;;; Error codes for kiln_rt_error.
 (defconstant +err-not-fixnum+ 1)

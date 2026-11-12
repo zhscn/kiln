@@ -1,6 +1,6 @@
 # 值和对象的表示
 
-两侧的定义在 `rust/kiln-rt/src/object.rs` 和 `lisp/abi.lisp`，修改时必须同步（[abi-policy.md](abi-policy.md)）。迁移中的 cons、symbol、函数入口、double-float 位模式和 complex 分量以字段 ID 交给 Rust，具体偏移由 `rust/kiln-cg/src/lir.rs` 展开；其他布局常量仍在 Lisp 中（[codegen.md](codegen.md)）。
+对象布局由 `rust/kiln-rt/src/object.rs` 定义，迁移中的字段、分配和静态对象由 `rust/kiln-cg/src/lir.rs` 与 KIR 构造器展开。Lisp 仍有部分立即数与调用约定常量，修改这些表示时必须同步（[abi-policy.md](abi-policy.md)）。
 
 ## 值
 

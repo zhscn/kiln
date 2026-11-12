@@ -945,7 +945,7 @@ intact."
       (module-shared name)
       (let ((*regions* '()))
         (with-function (name)
-          (let ((f (copy-to-var `(:load :self ,(- 24 +tag-general+)))))
+          (let ((f (copy-to-var `(:funcallable-function :self))))
             (emit `(:tail-call-lisp (:field-load ,kiln.kir::+packet-field-function-entry+ ,f) (:ctx ,f :nargs :a0 :a1 :a2)))))))
     name))
 
