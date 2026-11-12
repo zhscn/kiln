@@ -262,8 +262,8 @@ name of its package as a string."
         (*image-literals* (literal-word sym))
         (t `(:object-data ,(symbol-data sym) :general))))
 
-(defconstant +most-positive-fixnum+ (1- (ash 1 62)))
-(defconstant +most-negative-fixnum+ (- (ash 1 62)))
+(defconstant +most-positive-fixnum+ kiln.kir::+backend-fixnum-max+)
+(defconstant +most-negative-fixnum+ kiln.kir::+backend-fixnum-min+)
 
 ;;; The bits of floats, unsigned: in the host (SBCL) and on kiln (the
 ;;; compiler module).

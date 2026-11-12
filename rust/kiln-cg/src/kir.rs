@@ -445,7 +445,7 @@ fn parse_word(s: &Sexp) -> R<Word> {
                 "fixnum" => {
                     arity(h, rest, 1)?;
                     let value = int(&rest[0])?;
-                    if !(-(1_i64 << 62)..(1_i64 << 62)).contains(&value) {
+                    if !(kiln_rt::object::FIXNUM_MIN..=kiln_rt::object::FIXNUM_MAX).contains(&value) {
                         return Err("fixnum out of range".into());
                     }
                     Ok(Word::Int(value << 1))

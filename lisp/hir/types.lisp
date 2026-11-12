@@ -3,8 +3,8 @@
 ;;; The domain is deliberately bounded: canonical value classes and finite
 ;;; machine-word integer intervals. T means unknown, not an assertion. Host FIXNUM
 ;;; bounds need not match the target's and must not determine inferred types.
-(defconstant +hir-fixnum-min+ (- (ash 1 62)))
-(defconstant +hir-fixnum-max+ (1- (ash 1 62)))
+(defconstant +hir-fixnum-min+ kiln.kir::+backend-fixnum-min+)
+(defconstant +hir-fixnum-max+ kiln.kir::+backend-fixnum-max+)
 (defconstant +hir-bound-min+ (- (ash 1 63)))
 (defconstant +hir-bound-max+ (1- (ash 1 63)))
 

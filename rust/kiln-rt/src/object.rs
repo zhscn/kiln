@@ -12,6 +12,8 @@
 //! function objects) are static data outside them.
 
 pub const FIXNUM_MASK: u64 = 1;
+pub const FIXNUM_MIN: i64 = -(1_i64 << 62);
+pub const FIXNUM_MAX: i64 = (1_i64 << 62) - 1;
 pub const TAG_MASK: u64 = 7;
 pub const TAG_CONS: u64 = 1;
 pub const TAG_GENERAL: u64 = 5;
