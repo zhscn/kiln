@@ -1053,6 +1053,10 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
             arity(h, r, 1)?;
             crate::lir::fixnum_untag(parse_expr(&r[0])?)
         }
+        "poll-test" => {
+            arity(h, r, 1)?;
+            return crate::lir::poll_test(sym(&r[0])?);
+        }
         "tls-address" => {
             arity(h, r, 1)?;
             crate::lir::tls_address(parse_expr(&r[0])?)

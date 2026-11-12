@@ -90,6 +90,17 @@ pub fn no_tls_value(value: Expr) -> Expr {
     Expr::Cmp(crate::kir::CmpOp::Eq, Box::new(value), Box::new(Expr::Int(kiln_rt::special::NO_TLS_VALUE as i64)))
 }
 
+pub fn poll_test(kind: &str) -> Result<Expr, String> {
+    use kiln_rt::context::Context;
+    let context = || Expr::Var("ctx".into());
+    match kind {
+        "entry" => Ok(Expr::Cmp(crate::kir::CmpOp::Lt, Box::new(Expr::Fp),
+            Box::new(Expr::Load(Box::new(context()), core::mem::offset_of!(Context, stack_limit) as i32)))),
+        "loop" => Ok(Expr::Load(Box::new(context()), core::mem::offset_of!(Context, poll_flag) as i32)),
+        _ => Err(format!("unknown poll test {kind}")),
+    }
+}
+
 pub fn tls_read(symbol: Expr) -> Result<Expr, String> {
     Ok(Expr::Load(Box::new(tls_address(field_load(FIELD_SYMBOL_TLS_INDEX, symbol)?)), 0))
 }

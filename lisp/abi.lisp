@@ -52,13 +52,8 @@
 ;;; Cons layout: [header, car, cdr].
 (defconstant +cons-bytes+ 24)
 
-;;; Context field offsets.
-(defconstant +ctx-poll-flag+ 0)
 ;;; Transfer area: arguments beyond the register arguments, and (later)
 ;;; values beyond the first. VALUES_MAX words, at the end of the context.
-;;; Function entries call the poll slow path when their frame pointer is
-;;; below this (stack exhaustion, rust/kiln-rt/src/stack.rs).
-(defconstant +ctx-stack-limit+ 80)
 (defconstant +values-max+ 1021)
 
 ;;; Dynamic-environment entries (stack-allocated in the establishing frame).

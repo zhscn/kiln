@@ -117,6 +117,19 @@ fn immediate_class_tests_preserve_kir_and_reject_unknown_classes() {
 }
 
 #[test]
+fn poll_tests_preserve_entry_and_loop_checks() {
+    let module = |body| format!("(module \"poll\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (p raw) (q raw)) (slots) (block b {body} (return a0 1))))");
+    let old = module("(set p (lt (fp) (load ctx 80))) (set q (load ctx 0))");
+    let new = module("(set p (poll-test entry)) (set q (poll-test loop))");
+    let old = kiln_cg::kir::parse_module(&sexp::parse_one(&old).unwrap()).unwrap();
+    let new = sexp::parse_one(&new).unwrap();
+    let new = packet::load(&packet::encode(&new, packet::schema::KIR_PAYLOAD).unwrap()).unwrap();
+    assert_eq!(format!("{old:?}"), format!("{new:?}"));
+    let invalid = module("(set p (poll-test missing))");
+    assert!(kiln_cg::kir::parse_module(&sexp::parse_one(&invalid).unwrap()).is_err());
+}
+
+#[test]
 fn special_binding_by_index_builds_tls_address_and_saves_old_value() {
     let module = |slots, body| format!("(module \"binding\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (i raw) (v obj)) (slots {slots}) (block b {body} (return v 1))))");
     let program = module("(b (dynamic-entry bind))", "(special-bind-index b i v)");

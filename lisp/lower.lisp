@@ -450,9 +450,7 @@ comparison covers both. The slow path returns true when the stack is
 exhausted, and KILN.KERNEL::%STACK-EXHAUSTED signals the STORAGE-CONDITION."
   (let ((slow (new-block)) (overflow (new-block)) (cont (new-block))
         (exhausted (new-var :raw)))
-    (br (if stack
-            `(:lt (:fp) (:load :ctx ,+ctx-stack-limit+))
-            `(:load :ctx ,+ctx-poll-flag+))
+    (br (if stack '(:poll-test :entry) '(:poll-test :loop))
         slow cont)
     (start-block slow)
     (emit `(:call-rt ,(rt-poll) (,exhausted) (:ctx 0) ,(handler)))
@@ -497,7 +495,7 @@ them."
 registers, before it reads them: the slow path re-enters the function
 through POLL-RETRY."
   (let ((slow (new-block)) (cont (new-block)))
-    (br `(:lt (:fp) (:load :ctx ,+ctx-stack-limit+)) slow cont)
+    (br '(:poll-test :entry) slow cont)
     (start-block slow)
     (emit `(:tail-call-lisp (:addr ,(poll-retry)) (:ctx :self :nargs :a0 :a1 :a2)))
     (start-block cont)))
