@@ -10,7 +10,7 @@
 
 栈上的 cons 和闭包以对象种类及引用项数量声明栈槽，由 Rust 决定大小、header、清零、引用字段起点和对象初始化。生成方标注栈根区域的进入与退出，Rust 初始化并链接动态根条目；rest 列表按生成方选择的栈槽地址初始化 cons。
 
-catch、unwind-protect、跨函数退出点、special 绑定和 progv 的动态条目也由 Rust 按语义种类建立和撤销。special 绑定的保存与恢复、progv 已保存绑定的读取和退出点重新链接使用对应的后端操作；Lisp 仍编排控制流及绑定、cleanup 的求值，展开 payload 仍使用兼容载荷。
+catch、unwind-protect、跨函数退出点、special 绑定和 progv 的动态条目也由 Rust 按语义种类建立和撤销。special 绑定的保存与恢复、progv 已保存绑定的读取和退出点重新链接使用对应的后端操作；Lisp 仍编排控制流及绑定、cleanup 的求值，退出目标及多值打包标志由后端从展开 payload 中解码。
 
 `special-ref` 和 `special-set` 由 Rust 安排动态值与全局值的选择，调用方负责检查未绑定值。绑定和 progv 使用后端操作取得或分配 TLS 下标及读写动态槽；special 绑定按已分配的下标由后端保存旧值并设置新值，绑定顺序仍由调用方编排。下标分配的 runtime 调用不是 safepoint。
 

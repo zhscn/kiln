@@ -17,6 +17,9 @@ use crate::context::{
 };
 use std::sync::RwLock;
 
+/// Flag stored in the low bit of an unwind target address.
+pub const PACKED_VALUES_FLAG: u64 = 1;
+
 /// One call site with an exception handler, in absolute addresses.
 #[derive(Clone, Copy, Debug)]
 pub struct CallSite {
@@ -234,6 +237,6 @@ pub unsafe extern "C" fn kiln_rt_continue_unwind(
         }
         (*ctx).dynenv = (*entry).prev;
         let target = (*entry).pend_target as u64;
-        unwind_to(ctx, (target & !1) as *mut DynEntry, (*entry).pend_value, target & 1, fp)
+        unwind_to(ctx, (target & !PACKED_VALUES_FLAG) as *mut DynEntry, (*entry).pend_value, target & PACKED_VALUES_FLAG, fp)
     }
 }

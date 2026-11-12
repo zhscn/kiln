@@ -4,7 +4,7 @@
 
 ## 已实现的封套
 
-`protocol/lir-schema.def` 定义记录种类和版本，`tools/gen-lir-schema.py` 生成 Lisp 与 Rust 常量，`--check` 检查副本。`kiln-cg target-description` 生成 `lisp/backend-target.lisp`；目标描述提供参数寄存器数与多值传递区容量。目标指纹涵盖 runtime 对象、数值与 context 定义、参数寄存器数、共享 schema 以及目标架构、系统，采用严格的构建匹配，不承诺布局相同时跨构建兼容。修改这些定义后重新生成目标描述。
+`protocol/lir-schema.def` 定义记录种类和版本，`tools/gen-lir-schema.py` 生成 Lisp 与 Rust 常量，`--check` 检查副本。`kiln-cg target-description` 生成 `lisp/backend-target.lisp`；目标描述提供参数寄存器数与多值传递区容量。目标指纹涵盖 runtime 对象、数值、动态退出与 context 定义、参数寄存器数、共享 schema 以及目标架构、系统，采用严格的构建匹配，不承诺布局相同时跨构建兼容。修改这些定义后重新生成目标描述。
 
 头部为 64 字节，整数按小端编码：
 

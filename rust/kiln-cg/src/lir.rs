@@ -4,6 +4,18 @@ use crate::kir::{Expr, Stmt};
 use crate::packet::schema::*;
 use kiln_rt::object::{FunctionObj, SymbolObj, TAG_CONS, TAG_GENERAL};
 
+pub fn unwind_target() -> Expr {
+    use crate::kir::BinOp;
+    Expr::Bin(BinOp::And, Box::new(Expr::Var("exn0".into())),
+        Box::new(Expr::Int(!(kiln_rt::unwind::PACKED_VALUES_FLAG as i64))))
+}
+
+pub fn unwind_packed() -> Expr {
+    use crate::kir::BinOp;
+    Expr::Bin(BinOp::And, Box::new(Expr::Var("exn0".into())),
+        Box::new(Expr::Int(kiln_rt::unwind::PACKED_VALUES_FLAG as i64)))
+}
+
 pub fn static_object_tag(kind: &str) -> Result<i64, String> {
     match kind {
         "cons" => Ok(TAG_CONS as i64),

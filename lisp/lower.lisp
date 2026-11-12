@@ -511,8 +511,7 @@ region; code inside it runs with the region pushed on *REGIONS*."
 Unwinds to other entries of this frame are dispatched outward."
   (start-block (region-handler region))
   (let ((outer (new-block)))
-    ;; Bit 0 of exn0 flags packed multiple values (see EMIT-UNWIND-VALUES).
-    (br `(:eq (:and :exn0 -2) (:slot ,(region-slot region))) land outer)
+    (br `(:eq (:unwind-target) (:slot ,(region-slot region))) land outer)
     (start-block outer)
     (let ((h (let ((*regions* (region-outer region))) (handler))))
       (if (eq h :nil)
@@ -531,7 +530,7 @@ word is a list of them and the flag is 1."
   "In a landing block: the values passed by the unwind (exn0, exn1)."
   (let ((v (new-var)) (n (new-var :raw))
         (packed (new-block)) (single (new-block)) (join (new-block)))
-    (br `(:and :exn0 1) packed single)
+    (br `(:unwind-packed) packed single)
     (start-block single)
     (set-mv v n :exn1 1)
     (jump join)
