@@ -1,4 +1,4 @@
-(dolist (evaluator (list #'eval #+kiln #'kiln.kernel::maclina-eval #-kiln #'eval))
+(dolist (evaluator (list #'eval #+kiln #'kiln.kernel::interpreted-eval #-kiln #'eval))
   (let ((warnings 0) (name (gensym "DECL")))
     (handler-bind ((warning (lambda (condition)
                              (incf warnings)

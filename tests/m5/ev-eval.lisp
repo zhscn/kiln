@@ -1,8 +1,8 @@
 ;;; EVAL, COMPILE and LOAD at run time (the eval module):
-;;; Maclina's bytecode, called from and calling compiled code.
+;;; HIR closures, called from and calling compiled code.
 (eval '(defun fact (n) (if (< n 2) 1 (* n (fact (- n 1))))))
 (print (fact 10))
-;; special variables, dynamic binding across compiled and bytecode code
+;; special variables, dynamic binding across compiled and HIR code
 (defvar *depth* 0)
 (defun native-depth () *depth*)
 (print (eval '(let ((*depth* 5)) (list *depth* (native-depth)))))
@@ -14,14 +14,14 @@
 ;; tagbody/go, labels, flet, &optional/&key/&rest
 (print (eval '(labels ((ev (n) (if (= n 0) t (od (1- n)))) (od (n) (if (= n 0) nil (ev (1- n))))) (list (ev 10) (od 7)))))
 (print (eval '((lambda (a &optional (b 2) &rest r &key k) (list a b r k)) 1 3 :k 4)))
-;; handler-case through bytecode, conditions from native code
+;; handler-case through HIR, conditions from native code
 (print (eval '(handler-case (car 5) (type-error (e) (list :type-error (type-error-datum e))))))
 ;; CLOS through eval
 (eval '(defclass point () ((x :initarg :x :accessor px) (y :initarg :y :accessor py))))
 (eval '(defgeneric norm1 (p)))
 (eval '(defmethod norm1 ((p point)) (+ (abs (px p)) (abs (py p)))))
 (print (eval '(norm1 (make-instance 'point :x 3 :y -4))))
-;; a bytecode function as a value in native code, and setf of places
+;; a HIR function as a value in native code, and setf of places
 (let ((f (eval '(lambda (x) (* x x)))))
   (print (mapcar f '(1 2 3))))
 (print (eval '(let ((l (list 1 2 3))) (setf (second l) 20) (push 0 l) (incf (car l) 5) l)))

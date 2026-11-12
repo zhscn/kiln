@@ -37,7 +37,7 @@
             nil)))
     (show (= (slot-value (funcall (kiln.kernel::%constructor-target
                                   cache 'promotion-old '())) 'value) 2))))
-;;; Bytecode-only compilation contexts defer promotion without poisoning a site.
+;;; HIR evaluation contexts defer promotion without poisoning a site.
 (defclass delayed-promotion () ((value :initform 1)))
 (let ((cache (cons nil nil)) (clostrophilia::*specialization-threshold* 1))
   (let ((kiln.kernel::*compile-function* nil))

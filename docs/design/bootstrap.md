@@ -34,9 +34,9 @@ kiln0 ──运行构建程序──▶ stage1 ──kiln-cg──▶ kiln1 ─�
 
 ## 构建程序和清单
 
-构建程序 `lisp/target/build.lisp` 是一个普通的程序模块（名字是 `build`），在 compiler 模块之后，由 SBCL 在 stage0 里用同一个会话编译，所以 kiln1 完全由 kiln 编出。它在 kiln 上做的事和 SBCL 一样：一个 `cross-client` 会话，kernel 带上 CL 的全部外部符号，编 compiler 模块之前调用 `prepare-compiler-session`（宿主宏、`defrule` 和 `define-syntax` 只在加载时定义、`host-inline-functions`，`lisp/cross.lisp`），按 `muffle-warning` 处理警告。它不依赖 SBCL 才有的东西：
+构建程序 `lisp/target/build.lisp` 是一个普通的程序模块（名字是 `build`），在 compiler 模块之后，由 SBCL 在 stage0 里用同一个会话编译，所以 kiln1 完全由 kiln 编出。它在 kiln 上做的事和 SBCL 一样：一个 `cross-client` 会话，kernel 带上 CL 的全部外部符号，编 eval 和 compiler 模块之前调用 `prepare-compiler-session`（宿主宏、`defrule` 和 `define-syntax` 只在加载时定义、`host-inline-functions`，`lisp/cross.lisp`），按 `muffle-warning` 处理警告。它不依赖 SBCL 才有的东西：
 
-- **文件列表**放在清单 `modules.lisp-expr` 里，由 stage0 写出：每个模块的名字和源文件，格式就是 `front-end` 接受的格式（路径是 namestring，`:renames`、`:compile-time-too` 原样保留），作用类似 SBCL 的 `build-order.lisp-expr`。SBCL 会话里的 `kiln.compiler::module-files` 是展开时用 ASDF 的宿主宏；构建程序在编 compiler 模块之前也注册同名的宿主宏，展开成清单里的文件列表。
+- **文件列表**放在清单 `modules.lisp-expr` 里，由 stage0 写出：每个模块的名字和源文件，格式就是 `front-end` 接受的格式（路径是 namestring，`:renames`、`:compile-time-too` 原样保留），作用类似 SBCL 的 `build-order.lisp-expr`。SBCL 会话里的 `kiln.compiler::module-files` 是展开时用 ASDF 的宿主宏；构建程序在编 eval 和 compiler 模块之前也注册同名的宿主宏，展开成清单里的文件列表。
 - **输出**写到当前目录的 `NAME.kir`。
 - 设了 `KILN_SERVE` 时，构建程序不做构建，改为在标准输入输出上运行后端协议（[backend-protocol.md](backend-protocol.md)）。
 - 设了 `KILN_SAVE_IMAGE` 时，编完五个模块就保存堆快照，然后照常编后面的程序。快照的 toplevel 重新读入清单，只编五个模块之后的条目。

@@ -29,7 +29,7 @@
       (do-external-symbols (s '#:common-lisp) (push s extra-symbols)))
     (when (string= name "clos")
       (push 'closer-mop:ensure-class extra-symbols))
-    (when (string= name "compiler")
+    (when (member name '("eval" "compiler") :test #'string=)
       (kiln.compiler::prepare-compiler-session session)
       ;; As kiln:compile-compiler: (KILN.COMPILER::MODULE-FILES NAME),
       ;; for programs that compile modules (tests/m5/co-clos.lisp), is

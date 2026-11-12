@@ -1,39 +1,35 @@
 # 运行期求值、编译和文件加载
 
-运行期求值有两层：eval 模块的 Maclina 字节码，和 compiler 模块载入后的原生编译。两者产出的函数都是真正的函数，可以和 AOT 代码互相调用。
+运行期与编译期共用 HIR 前端。eval 模块提供词法环境、宏展开、HIR 分析与求值，
+compiler 模块安装 HIR → KIR → Cranelift 的原生入口。两种执行方式构造的函数
+都可与 AOT 函数互相调用；全局函数、特殊变量及宏定义属于同一个运行中 image。
 
-## 为什么先有 Maclina
+## 模块与自举边界
 
-原生编译器是最后载入的模块，而在它之前，REPL、`load` 和载入期间的 `eval`、`compile` 就要能用；编译期形式使用 HIR 求值器，共用原生前端并直接构造可执行闭包。所以 `eval` 和 `compile` 不能等编译器。
+编译器的前端与 HIR 求值器随 eval 模块载入，因此原生编译入口安装前已经能够
+运行宏、`eval` 和 `compile`。求值器把分析后的 HIR 节点构造成原生闭包，不需要
+调用正在初始化的原生编译器。编译期和解释执行共用相同的词法绑定、声明、捕获、
+多值与退出分析。cross-client 的全局定义保存在 Clostrum 环境中，image-client
+直接访问运行中 image；后者的动态绑定使用运行时 `progv`。
 
-**决定：eval 模块用 Maclina。** Maclina 是用可移植 CL 写的字节码编译器、VM 和 FASL 加载器。字节码函数是 funcallable instance，能和原生函数互相调用。它依赖少（closer-mop、alexandria、Trucler、Ecclesia），不依赖编译器，所以没有循环依赖。它同时提供：
+模块按依赖顺序加载：
 
-- 一个能用的 REPL 和 `eval`；
-- compiler 模块载入之前的 `compile`；
-- 原生编译器就绪前的运行期求值；
-- 交付期可选的轻量求值器（不带 Cranelift 的发行版里执行扩展，[editor.md](editor.md)）。
+1. frontend 提供 Eclector CST reader。
+2. eval 提供 Ecclesia、运行期 Common-macros、Trucler 查询协议和 image 全局环境。
+3. eval 中的共享前端包含 Trucler reference 环境、Clostrum、Anatomicl、HIR、
+   KIR 降级及 image-client。求值路径不调用降级和机器码生成。
+4. eval 提供 HIR 执行入口、编译单元、FASL 对象图、文件和模块加载、REPL 及后端协议。
+5. compiler 提供内联元数据、依赖追踪、顶层原生缓存、原生 `compile` / `eval` 和
+   `compile-file`。安装入口后，完整开发 image 默认生成原生代码。
 
-## eval 模块
+运行期 Common-macros 使用 `kiln.cmd` 包；kernel 和 CLOS 自带宏保持优先。
+标准宏、setf 展开器、类型展开器和自定义声明使用同一套 image 元数据。环境查询
+通过产生环境的 client 处理，局部宏和 symbol macro 直接保留 HIR/Trucler 环境，
+不转换为另一种求值器环境。
 
-`kiln:compile-eval`，在 CLOS 和 frontend 之后载入。内容按顺序：
-
-1. Ecclesia。
-2. **运行期的标准宏：Common-macros。**
-   - 宿主编译器用的是它的 extrinsic 版本（包 `COMMON-MACRO-DEFINITIONS` 遮蔽宏的名字），这些源码不能原样编进目标端，上游的 intrinsic 包也不能用（遮蔽得太少）。kiln 自己定义包 `kiln.cmd`：使用 CL，只遮蔽 `get-setf-expansion`、`ensure-generic-function`、`proclaim` 这三个带 client 参数的函数；读 Common-macros 的源码时用 `:renames` 把包名换成 `KILN.CMD`。
-   - kernel 和 CLOS 自己定义的宏（`loop`、`define-condition`、`do-symbols` 等）在载入 Common-macros 之前保存起来，之后恢复，所以仍然优先。Common-macros 的定义另存在 `kiln.kernel::*common-macros*`，kiln 上的交叉编译要用（[front-end.md](front-end.md)）。
-   - 嵌套 `values` 位置为每个子位置的次要存储变量预先绑定 NIL；只向子位置的主存储变量分配输入值，零存储变量的子位置不消耗输入值。
-   - 广义位置支持 `(apply #'symbol ...)`，读取和写入共用已求值的参数。长格式 `defsetf` 为参数和存储变量生成独立临时变量，展开函数保留定义时的词法环境及具名 block。`define-modify-macro` 传递调用点的词法环境，先求值附加参数，再读取位置。
-   - `define-compiler-macro` 登记展开函数后，返回定义的函数名作为唯一值，包括 `(setf name)`；编译器是否使用展开函数遵循其编译策略。
-   - `define-setf-expander` 和 `defsetf` 在载入时生效，展开函数记在符号的 plist 上。运行期的 `get-setf-expansion` 依次查展开函数、宏，最后用 setf 函数。
-3. Trucler（base，以及 trucler-native 的 client 类）。
-4. Maclina：base、compile、vm-shared 和 vm-native。文件读取沿用 kiln 的 CST reader；原生 FASL 的对象图编码和加载由 kiln 自己实现。
-5. `lisp/target/eval/evaluator.lisp`：
-   - kiln 的 Trucler client 继承 `trucler-native:client`（Maclina 的 native VM 就是为这类 client 写的）。它描述的全局环境是运行中的 image：special 变量来自运行期的 `proclaim`（`defvar` 的展开在载入时调用它，把变量记在 plist 上），常量来自 `defconstant`，函数和宏查符号本身。
-   - `macro-function` 和 `macroexpand` 收到 Maclina 的词法环境时，经 Trucler 查局部宏。
-   - 字节码存成 simple vector（kiln 的 Maclina client 定义 `m:make-module`）：`(unsigned-byte 8)` 数组是 Regalia 的实例，`aref` 要经过几层泛函。
-   - 对未知函数的调用只在形式执行完后仍未定义时才警告，所以递归的 `defun` 不会报警告。
-6. `repl.lisp`：`kiln.sys:repl`，维护 `*`、`+`、`/` 等变量；形式没有处理的错误打印出来，经 `abort` 回到提示符。`tools/repl.sh` 构建 kernel、CLOS、eval 三个模块并启动它（`--jit` 改用 JIT）。
-7. `server.lisp`：后端协议（[backend-protocol.md](backend-protocol.md)）。
+`tools/repl.sh` 构建 kernel、CLOS、frontend 和 eval，使用 HIR 求值。
+只需要解释执行的发行版可裁剪未调用的降级与原生编译入口；具体体积取决于裁剪结果。
+完整开发 image 载入 compiler 后使用原生入口。
 
 ## `provide` 和 `require`
 
@@ -43,7 +39,7 @@
 
 ## 编译单元
 
-`with-compilation-unit` 将动态范围内原生编译器和 Maclina 的未知函数引用延迟到单元结束，再根据最终函数定义决定是否报告。Maclina 的未知变量警告延迟到结束；后来初始化变量不撤销先前缺失声明的警告。未知类型按最终类型定义复查。其他警告即时报告。普通嵌套单元共用外层队列，`:override` 为真时建立独立队列；重复函数引用合并，已经补齐的定义不再警告。
+`with-compilation-unit` 将原生编译和 HIR 求值中的未知函数引用延迟到单元结束，再根据最终函数定义决定是否报告。未知变量警告同样延迟；后来初始化变量不撤销先前缺失声明的警告。其他警告即时报告。普通嵌套单元共用外层队列，`:override` 为真时建立独立队列；重复函数引用合并，已经补齐的定义不再警告。
 
 单元返回主体的全部值。正常返回、错误或非局部退出都会结束当前单元并恢复外层状态；独立内层单元的结束警告直接报告，不重新加入外层队列。
 
@@ -58,7 +54,7 @@
 
 ## 原生 `compile`
 
-compiler 模块的最后一个文件 `lisp/target/compiler/native.lisp` 把 `kiln.kernel::*compile-function*` 设成 `native-compile`，此后的 `compile` 都编成机器码。这个变量为 NIL 时用 Maclina。compiler 模块自己载入时调用的 `compile` 仍是字节码。
+compiler 模块的 `lisp/target/compiler/native.lisp` 把 `kiln.kernel::*compile-function*` 设成 `native-compile`，此后的 `compile` 都编成机器码。这个变量为 NIL 时构造 HIR 求值闭包。compiler 模块初始化期间的 `compile` 使用已经就绪的 HIR 求值器。
 
 1. `native-compile` 新建一个 session（`image-client`），然后：
    - 用 `front-end-forms` 处理 `(setq *compiled-function* (function LAMBDA))`（和 `front-end` 一样，只是直接处理形式，不读文件）；
@@ -81,14 +77,14 @@ compiler 模块的最后一个文件 `lisp/target/compiler/native.lisp` 把 `kil
 
 ## 原生 `eval` 和 `load`
 
-compiler 模块载入后，`eval` 也走原生编译（`native-eval`，挂在 `kiln.kernel::*eval-function*` 上；绑成 NIL 则用 Maclina）。`load` 和 REPL 都经过 `eval`，所以载入的源文件和 REPL 里定义的函数都是机器码。做法和 SBCL 的 `eval` 一样：
+compiler 模块载入后，`eval` 也走原生编译（`native-eval`，挂在 `kiln.kernel::*eval-function*` 上；绑成 NIL 则用 HIR 求值）。`load` 和 REPL 都经过 `eval`，所以载入的源文件和 REPL 里定义的函数都是机器码。做法和 SBCL 的 `eval` 一样：
 
-- 不需要代码的形式直接求值：符号（经 Maclina，以便处理符号宏）、自求值对象、`quote`、`(function 符号)`。
+- 不需要代码的形式直接求值：符号（先处理 symbol macro）、自求值对象、`quote`、`(function 符号)`。
 - `progn` 和 `eval-when`（含 `:execute` 时）逐个求值子形式，所以 `defmacro` 在下一个子形式编译之前就已生效。
 - 宏形式先展开一层再判断。展开定义宏之前记下定义的名字（`definition-name`），交给前端（`*eval-definition*`），调试信息和依赖追踪按它命名（[debugging.md](debugging.md)、[dependencies.md](dependencies.md)）。
 - 其他形式作为顶层形式编译，然后调用。
 
-每个形式至少多花几毫秒的编译时间，交互时察觉不到。对只为展开宏或只运行几次的代码，编译时间占主导：这样的 `compile` 要把 `*compile-function*` 绑成 NIL，改用 Maclina。交叉编译的编译期求值用 HIR 求值器（构造宿主闭包），不经过 `compile`。
+每个形式至少多花几毫秒的编译时间，交互时察觉不到。对只为展开宏或只运行几次的代码，编译时间占主导：这样的 `compile` 要把 `*compile-function*` 绑成 NIL，构造 HIR 求值闭包。交叉编译的编译期求值用 HIR 求值器（构造宿主闭包），不经过 `compile`。
 
 `symbol-macrolet` 在字节码和原生前端都拒绝常量、全局特殊变量，以及对自身绑定的 `special` 声明；内层自由声明和新变量绑定仍可遮蔽外层 symbol macro。HIR 语法错误属于 `program-error`，同时保留编译器的错误信息和源码位置。
 
@@ -136,4 +132,12 @@ FASL 加载需要 compiler 模块及 Cranelift；保存的是 KIR，机器码在
 - 代码回收：函数对象不再被引用后，代码和它的表也不会释放。
 - `compile` 的前端开销：每次都新建 session。
 - `compile` 编出的函数名是 `(lambda)`；`load` 逐个读取形式再求值，没有文件和位置。
-- 运行期的 `defstruct`（[stdlib.md](stdlib.md)）。
+- typed-vector `defstruct` 的位置构造器布局展开（[stdlib.md](stdlib.md)）。
+
+## 语义验证
+
+`tools/ansi-test.sh` 默认使用完整 image 的原生 `eval` 和 `compile`。设置
+`ANSI_EVAL=hir` 可独立验证 HIR 求值；两种模式都使用同一前端。原生文件编译
+仍需结合 FASL 加载验证，交叉 AOT 需要端到端测试覆盖静态字面量和模块初始化。
+解释执行、image 编译和交叉 AOT 的通过情况不能互相替代。任一测试组失败或
+进程异常时，ANSI 驱动完成其他组后返回非零状态。

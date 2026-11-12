@@ -21,7 +21,7 @@ kernel 先给出简单的版本，后面的模块替换或扩充。钩子是 `ki
 | `%cached-typep` | 不缓存的 `typep` | CLOS：按 stamp 缓存只取决于类的结果（[clos.md](clos.md)） |
 | `*complex-array-kind*`、`*complex-array-op*` | 无 | Regalia 数组层（[stdlib.md](stdlib.md)） |
 | `*instance-type-of*`、`*instance-equal*`、`*instance-equalp*` | 无 | CLOS：实例的 `type-of`，pathname 的 `equal`、哈希表的 `equalp` |
-| `*environment-macro-function*` | 无 | eval 模块：Maclina 词法环境里的局部宏 |
+| `*environment-macro-function*` | 无 | eval 模块：HIR / Trucler 词法环境里的局部宏 |
 | `*compile-function*`、`*eval-function*` | 无 | eval 模块和 compiler 模块（[eval-compile.md](eval-compile.md)） |
 | `*proclaim-hook*` | 无 | image-client：inline 声明 |
 | `*redefinition-hook*` | 无 | compiler 模块：依赖追踪（[dependencies.md](dependencies.md)） |
@@ -60,7 +60,7 @@ kernel 先给出简单的版本，后面的模块替换或扩充。钩子是 `ki
 - 编译期把常量原子类型的 `typep` 换成谓词调用，把类名的 `typep` 换成 `%typep-cached`（[lowering.md](lowering.md)）。
 - `equal` 按活动长度比较位向量，支持填充指针和位移。`equalp` 按元素递归比较数组，向量按活动长度、其他数组按维度匹配，忽略存储元素类型；哈希表按测试函数、条目数、对应键的值递归比较。
 - `coerce` 保留已符合目标类型的对象，接受类对象及 `deftype` 别名作为目标，复数转换遵循有理数的规范表示；浮点转换后检查目标范围，字符转换使用 `character` 的设计符规则。`typep` 的类对象参数直接按该类判断，允许无名类。
-- `type-of` 对 0 和 1 返回 `bit`，对其他非负整数返回保留下界的区间类型；字符区分 standard、base 和 extended。数组结果保留存储元素类型、完整维度和简单性，向量的维度不受 fill pointer 影响。具名标准实例保留类名协议。`compiled-function-p` 接受原生函数和 Maclina 字节码函数、闭包；泛型函数及其他 funcallable instance 只满足 `functionp`。`coerce`、`equalp` 覆盖已有的类型。`typep` 也认识 `complex`、`(complex 类型)` 和 `simple-bit-vector`。`deftype` 和 `subtypep` 由 ctype 提供（[stdlib.md](stdlib.md)）。
+- `type-of` 对 0 和 1 返回 `bit`，对其他非负整数返回保留下界的区间类型；字符区分 standard、base 和 extended。数组结果保留存储元素类型、完整维度和简单性，向量的维度不受 fill pointer 影响。具名标准实例保留类名协议。`compiled-function-p` 接受原生函数，包括 HIR 求值闭包；泛型函数及其他 funcallable instance 只满足 `functionp`。`coerce`、`equalp` 覆盖已有的类型。`typep` 也认识 `complex`、`(complex 类型)` 和 `simple-bit-vector`。`deftype` 和 `subtypep` 由 ctype 提供（[stdlib.md](stdlib.md)）。
 
 ## 序列和列表
 
@@ -77,7 +77,7 @@ kernel 先给出简单的版本，后面的模块替换或扩充。钩子是 `ki
 
 ## 运行期的宏环境
 
-- `(setf macro-function)` 把展开函数记在符号 plist 的 `macro-function` 下；`macro-function`、`macroexpand-1`、`macroexpand`、`*macroexpand-hook*`、`constantp` 都在 kernel 里。带 Maclina 或编译器前端的 Trucler 环境时，由造出这个环境的 client 查询局部宏（`kiln.eval:environment-client`）。
+- `(setf macro-function)` 把展开函数记在符号 plist 的 `macro-function` 下；`macro-function`、`macroexpand-1`、`macroexpand`、`*macroexpand-hook*`、`constantp` 都在 kernel 里。带前端的 HIR 或 Trucler 环境时，由造出这个环境的 client 查询局部宏（`kiln.eval:environment-client`）。
 - `proclaim` 先检查声明是非空、以符号为标识的有限 proper list；带点尾或循环声明在登记及编译器钩子之前报告 `program-error`。随后保存自定义 declaration 名，字节码和原生编译环境通过 Trucler 查询同一份登记。declaration 名与类型、类和结构名互斥，类型定义和类名绑定都会检查冲突；未知 declaration 标识符产生 style warning。
 - `defconstant` 在加载期给符号做常量标记，并将文档字符串存为该符号的 `variable` 文档；`define-setf-expander` 和 `defsetf` 的展开函数也记在 plist 上（eval 模块之后）。
 - 编译期仍然用前端自己的环境（[front-end.md](front-end.md)），两者互不影响。

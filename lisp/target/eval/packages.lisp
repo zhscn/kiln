@@ -1,5 +1,5 @@
 ;;;; The eval module: the standard macros at run time,
-;;;; then Maclina's evaluator.
+;;;; then the shared HIR evaluator.
 ;;;;
 ;;;; Common-macros is compiled for the target with its package renamed to
 ;;;; KILN.CMD (the host's COMMON-MACRO-DEFINITIONS is the extrinsic one the

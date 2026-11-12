@@ -2,7 +2,6 @@
 ;;; compiles lambda expressions into the running image (kiln_rt_jit).
 
 (defun native-p (f)
-  ;; Maclina's bytecode functions are funcallable instances.
   (not (typep f 'standard-object)))
 
 (let ((f (compile nil '(lambda (x) (* x x)))))

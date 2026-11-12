@@ -3,7 +3,7 @@
 ;;;; whose literals are the image's objects, which kiln-cg, linked into the
 ;;;; runtime, compiles into memory (kiln_rt_jit). The compiler module's
 ;;;; native entry points: from here on the kernel's COMPILE and EVAL (so LOAD) use
-;;;; it, not Maclina.
+;;;; the native execution path.
 
 (in-package #:kiln.compiler)
 
@@ -55,7 +55,7 @@ running image, in the null lexical environment."
            (multiple-value-bind (expansion macrop) (macroexpand-1 form)
              (if macrop
                  (setf form expansion)
-                 (return (kiln.kernel::maclina-eval form)))))
+                 (return (symbol-value form)))))
           ((atom form)
            (return form))
           ((eq (first form) 'quote)

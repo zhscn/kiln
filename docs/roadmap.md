@@ -75,7 +75,7 @@
 4. **库的快速路径**：打印 fixnum 和字符串、`format` 的常见指令（编译期编译控制串，`formatter` 也随之正确）、字符串流的批量写入，绕开逐字符的泛函调用；`intern` 绕开 Parcl 的协议层；Salmagundi 剩下的协议开销。
 5. **数值**：扩展类型推导和浮点拆箱：已知 double 的算术链、局部存储及部分多值控制流已使用机器值，继续扩展参数和调用边界、其他浮点格式及运算；bignum 的乘除法算法和实现要整个重看（慢到两三千倍）；多维数组绕开 Regalia 的通用路径。
 6. **`dynamic-extent` 和逃逸分析**：`&rest` 列表、handler（现在在堆上分配）、闭包在栈上分配，同时减轻 GC。
-7. **局部函数**：对不逃逸的局部函数做 lambda lifting，或者内联小的局部函数，免去闭包对象被 spill 后在循环里的搬移（Maclina 的主循环就是这样）。
+7. **局部函数**：对不逃逸的局部函数做 lambda lifting，或者内联小的局部函数，免去闭包对象被 spill 后在循环里的搬移。
 8. **分代 GC**：这一轮优化之后，自编译的分配量从约 250 GB 降到 2.58 GB（8 GiB 自举堆下 0 次 GC），对编译器自身的收益已不再是瓶颈，价值主要在降低峰值内存（GenImmix 不需要半个堆的复制预留）和分配密集的用户程序。下面是优化之前量的：已量过（[performance.md](research/performance.md) 的“GC”）：自举时 GC 停顿约占墙钟的 9%、worker 占 CPU 的 22%，复制的字节 93% 是反复复制的老对象，新对象只有约 1.1% 活过下一次回收（nursery 从 4 GiB 缩到 256 MiB 也不变）。估计分代后 GC 停顿从 31–39 秒降到 6–9 秒，扣掉写屏障净省墙钟的 4–6%。设计和实施步骤见 [gc.md](design/gc.md) 的“Generational GC plan”：先 GenCopy 验证屏障，再换 GenImmix；快照区同时改成 card table。另外两项不依赖分代、要改 MMTk 的：MMTk 写死的清零（约 2.5% 的 CPU），GC 并行度低（8 个线程平均只有约 3 个在干活，线程数不影响停顿）。
 10. **无 header 的 cons**：cons 现在 24 字节，SBCL 是 16 字节。做法：所有 header 的低 3 位用保留的 tag `111`，任何 Lisp 值都不会长成 header，于是对象的第一个字不是 header 就是 cons（SBCL 遍历堆也是这样区分的）；forwarding bits 已在 side metadata，forwarding 指针写在偏移 0 覆盖 car 也没问题。难点是身份哈希：cons 没有 header 就没有地方存，改为按地址哈希，GC 确实移动了某张表的键时才标记这张表需要重新哈希（SBCL 的做法）。SemiSpace 下每次 GC 都移动全部对象，所以排在分代 GC 之后。先量 cons 在分配量里的占比（按 kind 统计分配字节数）。NIL 同时带 list tag 的技巧收益很小，不做。
 11. **CLOS 调用点的内联缓存**，以及 `&rest` 泛函、方法组合不再分配参数列表。统一的假设登记和失效框架（[specialization.md](design/specialization.md)）已经就位：现有的缓存（分派、`make-instance`、`typep` 表）都经过它，调用点 `typep` 缓存的过时问题已修掉，常量槽名的 `slot-value` 已经按对象 stamp 在调用点缓存槽位置（24.7 → 9.9 ns，和访问器方法相当）。常量类名 `make-instance` 的构造器对象和热点构造器的生成代码也已接入（未晋升的闭包路径 437 → 359 ns）。接下来按 PCL 的路线优化判别函数本身：按状态（单类、双类、caching）生成专门的判别函数，失效时整个换掉（`install-discriminating-function`），命中路径不检查任何版本。泛函调用点缓存试过一版：要先调选择器、再调有效方法，还要检查方法版本、判别函数身份和类变化版本，`bench/compare.lisp` 上单态 13.7 → 28.6 ns、多态 18.9 → 25.7 ns，已去掉。
@@ -221,7 +221,7 @@
 | 1 | 最小的 TUI 编辑器：buffer 和文本属性、命令循环、按键表、输入框、文件；显示管线的四段，装饰提供者先同步运行 | fiber 之前可以先用同一个栈上嵌套的命令循环 |
 | 2 | kiln 的 IDE：REPL、可塑的 inspector、debugger、跳转到定义、调用者查询、image 和源码的同步，都走后端协议；用它开发 kiln 自己 | debugger、依赖追踪、定义表 |
 | 3 | 异步任务（提供者超时转异步、语言服务器、子进程）、渲染分离；GUI 前端（Rust 的平台层、文字服务和渲染器，声明式动画） | fiber、内存模型、Rust 宿主模块 |
-| 4 | 发行版：部分 seal、扩展点声明、Maclina 执行扩展、体积优化 | seal、tree shaking |
+| 4 | 发行版：部分 seal、扩展点声明、HIR 求值执行扩展、体积优化 | seal、tree shaking |
 
 Rust 宿主模块不依赖通用的 C FFI，也不依赖 fiber，可以先做；通用的 C FFI 排在后面，建在它上面。
 

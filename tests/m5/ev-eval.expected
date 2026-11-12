@@ -17,7 +17,7 @@
 (TWICE NIL NIL)
 49
 ;; Warning:
-Unknown operator NO-SUCH-FUNCTION-ANYWHERE: treating as global function
+undefined function: NO-SUCH-FUNCTION-ANYWHERE
 T
 ((40 . 4) (10 . 1) "COMMON-LISP-USER")
 :HELLO

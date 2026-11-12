@@ -344,10 +344,14 @@ simple-vector ARGUMENTS, the arity dispatched on when the closure is made."
              (hir-eval-reader (hir-fun-binding fun))
              (hir-eval-closure fun))))
     (7 (hir-eval-call node))
-    (8 (let ((name (hir-node-b node)))
+    (8 (let ((name (hir-node-b node))
+              (arguments (hir-eval-subs (hir-node-a node)))
+              (imagep (compiles-into-image-p *hir-eval-client*)))
          (lambda (frame)
-           (declare (ignore frame))
-           (error "The primitive operation ~S cannot be evaluated at compile time." name))))
+           (if imagep
+               (apply #'kiln.sys:%primop name
+                      (loop for argument across arguments collect (funcall argument frame)))
+               (error "The primitive operation ~S cannot be evaluated in a cross environment." name)))))
     (9 (hir-eval-if node))
     (10 (hir-eval-progn (hir-node-a node)))
     (11 (hir-eval-let node))

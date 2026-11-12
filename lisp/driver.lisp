@@ -400,13 +400,8 @@ kernel."
 SESSION must have compiled the kernel and CLOS."
   (write-module (compile-files *frontend-files* session "frontend") output))
 
-(defun maclina-directory ()
-  ;; Maclina is not loaded in the host (its system would be found among the
-  ;; pinned dependencies).
-  (asdf:system-source-directory (asdf:find-system "maclina")))
-
-(defparameter *eval-files*
-  ;; The eval module.
+(defun eval-support-files ()
+  ;; Runtime macros and global environment protocols.
   (let ((cmd-renames '(("COMMON-MACRO-DEFINITIONS" . "KILN.CMD")))
         (cmd-dir "vendor/Common-macros/Common-macro-definitions/"))
     (flet ((ecclesia (name)
@@ -445,9 +440,7 @@ SESSION must have compiled the kernel and CLOS."
                    (asdf:system-relative-pathname "kiln" "lisp/macro-client.lisp"))
              (eval-file "macros")
              (asdf:system-relative-pathname "kiln" "lisp/step-forms.lisp"))
-       ;; Trucler (trucler-base.asd, and the client class of
-       ;; trucler-native.asd), then Maclina (maclina.asd: base, compile,
-       ;; vm-shared, vm-native).
+       ;; Trucler query and environment protocols.
        (mapcar (lambda (name)
                  (asdf:system-relative-pathname "trucler-base" (format nil "~A.lisp" name)))
                '("packages" "query-functions" "query-class-accessors" "cloning-information"
@@ -455,34 +448,12 @@ SESSION must have compiled the kernel and CLOS."
                  "merge-functions" "merge-methods" "low-level-augmentation-functions"
                  "augmentation-functions" "environment-builder" "macro-functions"
                  "conditions" "condition-reporters-english"))
-       (mapcar (lambda (name)
-                 (asdf:system-relative-pathname "trucler-native" (format nil "~A.lisp" name)))
-               '("packages" "client" "methods"))
-       ;; parse-macro.lisp's functions are called by the expander of
-       ;; DESTRUCTURE-SYNTAX (compile.lisp).
-       (mapcar (lambda (name)
-                 (let ((path (merge-pathnames (format nil "~A.lisp" name) (maclina-directory))))
-                   (if (string= name "compile/parse-macro")
-                       (list :compile-time-too path)
-                       path)))
-               '("packages" "machine" "arg-conditions" "structures" "map-info" "link"
-                 "access" "introspect"
-                 "compile/package" "compile/conditions" "compile/misc-program-conditions"
-                 "compile/parse-macro" "compile/unknown-reference-conditions"
-                 "compile/compilation-unit" "compile/environment" "compile/compile"
-                 "vm-shared" "vm-native"))
-       (list (eval-file "fasl"))
-       (list (eval-file "evaluator")
-             (eval-file "disassemble")
-             (eval-file "files")
-             (eval-file "modules")
-             (eval-file "compilation-unit")
-             (eval-file "repl")
-             (eval-file "server"))))))
+       (list (eval-file "environment"))))))
 
 (defun compile-eval (output &key (session (kiln.compiler:make-session)))
-  "Compiles the eval module to OUTPUT, loaded after the CLOS module.
-SESSION must have compiled the kernel and CLOS."
+  "Compiles shared HIR evaluation support to OUTPUT.
+SESSION must have compiled the kernel, CLOS and frontend."
+  (kiln.compiler::prepare-compiler-session session)
   (write-module (compile-files *eval-files* session "eval") output))
 
 (defun system-files (name &key exclude)
@@ -497,10 +468,9 @@ those whose names are in EXCLUDE."
                                :test #'string=)))
           collect (asdf:component-pathname c)))
 
-(defparameter *compiler-files*
-  ;; The compiler module: the front end's remaining dependencies
-  ;; (Trucler's reference environments, Clostrum,
-  ;; Anatomicl), then kiln's compiler (M5.3).
+(defparameter *compiler-core-files*
+  ;; Shared semantic front end and HIR execution support, loaded before
+  ;; the native compiler installs its execution entry points.
   (append
      (system-files "trucler-reference")
      (list (asdf:system-relative-pathname "kiln" "lisp/target/compiler/environment.lisp"))
@@ -514,9 +484,18 @@ those whose names are in EXCLUDE."
      (mapcar (lambda (name) (asdf:system-relative-pathname "kiln" (format nil "lisp/~A.lisp" name)))
              '("abi" "kir" "hir/data" "lower" "values" "primitives" "structures" "front" "cross"
                "hir/environment" "hir/convert" "hir/analyze" "hir/types" "hir/escape" "hir/eval" "hir/lower"
-               "target/compiler/client" "target/compiler/session"
-               "target/compiler/dependencies" "target/compiler/cache" "target/compiler/native"
-               "target/compiler/files"))))
+               "target/compiler/client" "target/eval/interpreter"))))
+
+(defparameter *eval-files*
+  (append (eval-support-files) *compiler-core-files*
+          (mapcar (lambda (name)
+                    (asdf:system-relative-pathname "kiln" (format nil "lisp/target/eval/~A.lisp" name)))
+                  '("compilation-unit" "evaluator" "fasl" "disassemble" "files" "modules" "repl" "server"))))
+
+(defparameter *compiler-files*
+  (mapcar (lambda (name)
+            (asdf:system-relative-pathname "kiln" (format nil "lisp/target/compiler/~A.lisp" name)))
+          '("session" "dependencies" "cache" "native" "files")))
 
 (defun compile-compiler (output &key (session (kiln.compiler:make-session)))
   "Compiles the compiler module to OUTPUT, loaded after the front-end and

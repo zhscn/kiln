@@ -26,7 +26,7 @@ kiln 是一个现代 Common Lisp 实现：开发时是完整的活 image，交�
 | [clos.md](design/clos.md) | CLOS：vendor Clostrophilia、目标端引导、分派和缓存、类的重定义、实例初始化和 `make-instance` 的快路径、类名 `typep` |
 | [stdlib.md](design/stdlib.md) | condition、哈希表、包、ctype、数组、结构、LOOP |
 | [io.md](design/io.md) | 系统接口、流、pathname 和文件、reader、打印器、FORMAT、美化打印 |
-| [eval-compile.md](design/eval-compile.md) | eval 模块（Maclina）、原生 `compile`/`eval`/`load`、image 模式的 KIR |
+| [eval-compile.md](design/eval-compile.md) | 共用 HIR 的 eval 模块、原生 `compile`/`eval`/`load`、image 模式的 KIR |
 | [bootstrap.md](design/bootstrap.md) | 自举（stage0 → kiln0 → kiln1）、构建程序和清单、测试方式、仓库结构 |
 | [heap-image.md](design/heap-image.md) | 堆快照：固定地址、静态根、运行期代码区、GC 扫描快照区 |
 | [debugging.md](design/debugging.md) | 函数和调用点的调试信息、变量的栈槽、走栈接口、采样和分配分析器、单步执行、对象检查、编辑器接口和定义记录规划 |

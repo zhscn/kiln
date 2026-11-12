@@ -13,7 +13,7 @@
 ;;;; runs through the HIR evaluator (lisp/hir/eval.lisp), in a Clostrum
 ;;;; environment that holds the compile-time definitions; compiling into
 ;;;; the image on kiln, the compile-time environment is the run-time one,
-;;;; and Maclina evaluates.
+;;;; and the HIR evaluator executes.
 
 (defclass client (#-kiln kiln.macros:macro-client
                   #+kiln kiln.macros-target:macro-client
@@ -68,6 +68,13 @@ time only.")
              (format s "undefined function~P: ~{~S~^, ~}"
                      (length (undefined-function-names c))
                      (undefined-function-names c)))))
+(define-condition undefined-variable-warning (warning)
+  ((name :initarg :name :reader undefined-variable-name))
+  (:report (lambda (condition stream)
+             (format stream "Undefined variable: ~S" (undefined-variable-name condition)))))
+
+(defvar *referenced-variables* nil)
+
 (define-condition unknown-declaration-warning (style-warning)
   ((specifier :initarg :specifier :reader unknown-declaration-specifier))
   (:report (lambda (condition stream)
@@ -835,6 +842,7 @@ order, and the host packages that DEFPACKAGE forms created."
          (*toplevel-asts* '())
          (*defined-functions* (session-defined-functions session))
          (*referenced-functions* (make-hash-table :test 'equal))
+         (*referenced-variables* (make-hash-table :test 'eq))
          (*defined-packages* '())
          (*structures* (session-structures session))
          (*inline-functions* (session-inline-functions session))

@@ -27,7 +27,6 @@ shows exactly what kiln changed. Changes are not sent upstream for now.
 | Ecclesia | https://github.com/s-expressionists/Ecclesia | 74027d0cedba9b98dce9611bf3ae2793e8819449 | BSD (`Ecclesia/LICENSE.md`) |
 | Common-macros | https://github.com/robert-strandh/Common-macros | 4596ddf32357fa793ece25cecb6e8661259b51ac (2026-02-10) | no license file |
 | Inravina | https://github.com/s-expressionists/Inravina | e28b107b025b2efdd4f16ed71fbdc0e1af62e478 (2026-07-11) | MIT (`Inravina/LICENSE.md`) |
-| Maclina | https://github.com/s-expressionists/Maclina | a46ba99620ceb51f05f14e31d34fe77e1cfa96c1 (2026-09-15) | BSD (`Maclina/LICENSE`) |
 
 ## Clostrophilia patches
 
@@ -537,66 +536,6 @@ Under `#+kiln`:
 - Eclector's backquote symbols (`eclector.reader:quasiquote`, `unquote`,
   `unquote-splicing`) are the quasiquote and unquote forms (`#+kiln`), in
   the types and in the standard dispatch table.
-
-## Maclina patches
-
-- The target VM declares bytecode as a simple vector, matching kiln’s bytecode
-  storage. The host VM retains its specialized octet-array declaration.
-
-- STEP scopes instrument calls after callee and argument evaluation, using
-  the shared source wrapper also used by the native compiler. Private
-  compilation markers preserve lexical context and suppress instrumentation
-  of the stepper and compile-time local macro expanders.
-
-- MAKE-LOAD-FORM initializers that reference an active creation are deferred
-  until its creator exists. Speculative initializer records use child
-  coalescence tables and commit only on success, so retries cannot retain
-  partially constructed constants. Genuine creation cycles signal
-  PROGRAM-ERROR.
-
-- The object writer canonicalizes an absent pathname host to NIL rather
-  than an empty host name. The loader fills bytecode before asking the
-  client to construct a module, allowing the client to convert or copy it.
-  Container termination checks read binary EOF directly.
-
-- CATCH transfers a thrown value to the value stack when its caller
-  receives one value, while normal completion keeps its existing stack
-  result. MULTIPLE-VALUE-CALL always pushes its function designator,
-  including when the call's results are discarded.
-
-- SYMBOL-MACROLET rejects constant and globally special names, and SPECIAL
-  declarations for its own bindings. Inner free SPECIAL declarations and
-  new variable bindings retain their lexical shadowing behavior.
-
-- Both VMs implement long-operand stack-pointer save and restore, so local
-  blocks work when their saved stack location exceeds 255.
-
-- Unrecognized declaration identifiers signal style warnings. Global
-  `declaration` proclamations are available through Trucler, so custom
-  declarations are recognized without becoming type declarations.
-
-- The native VM captures the values of a native `throw` caught by a
-  bytecode `catch`, including when cleanup code calls back into the VM.
-
-- The native VM advances past the operands of `encell` and the long
-  closure creation and initialization instructions. Both VMs support long
-  `encell` operands for captured mutable parameters beyond local slot 255.
-
-- The VM's `throw` throws the values in its register (`vm-native.lisp`), not
-  no values: a `catch` in native code (not the VM's) received `nil`
-  (a macro function compiled by Maclina that throws to a `catch` in native
-  code).
-- `bytecode-call` tears down its frame in an `unwind-protect`: a non-local
-  exit from the VM to native code (a `throw` or `return-from`) left the
-  VM's stack, frame pointer and pc in the callee's frame, and later calls
-  read garbage.
-  For that, an exit to a block or tag of the VM (`exit-8`...) passes its
-  target to the entry's function, which sets the pc (and the stack and
-  frame pointers) once the `go` has unwound, after those cleanups.
-- `called-fdefinition` on the target client calls
-  `kiln.kernel::%called-fdefinition` so `fdefinition` itself can signal
-  `undefined-function` when called directly while the VM still evaluates call
-  arguments before signaling `undefined-function`.
 
 ## Ecclesia patches
 

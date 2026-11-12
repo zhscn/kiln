@@ -1,6 +1,6 @@
 ;;;; DOCUMENTATION and (SETF DOCUMENTATION) become generic functions
 ;;;; (CLHS: standard generic functions), so that libraries can add methods
-;;;; (Maclina does, for its bytecode functions). The kernel's functions,
+;;;; (the HIR evaluator uses ordinary native closures). The kernel's functions,
 ;;;; which keep documentation strings on the plist of the name, are the
 ;;;; default methods.
 

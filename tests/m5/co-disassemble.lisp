@@ -14,7 +14,7 @@
        (function (compile nil '(lambda (x) (cons x x))))
        (text (with-output-to-string (*standard-output*) (disassemble function))))
   (print (plusp (length text)))
-  #+kiln (print (not (null (search "Bytecode" text))))
+  #+kiln (print (not (null (search "Machine code" text))))
   #-kiln (print t)
   (print (funcall function 7)))
 (dolist (object '(17 1.5 #\a "bad" #(a b) (setf) (setf a b)))

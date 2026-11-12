@@ -2,7 +2,7 @@
 # Builds the kernel, CLOS and eval modules (SBCL, into build/repl) and an
 # executable linked from them (kiln-cg obj) if a source changed, then
 # starts kiln's read-eval-print loop. Forms are evaluated by
-# Maclina's bytecode VM. With --jit, runs the modules with the JIT instead
+# the HIR evaluator. With --jit, runs the modules with the JIT instead
 # (slower to start: it compiles them all).
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -21,11 +21,12 @@ if [ ! -e "$stamp" ] || [ -n "$(find lisp vendor kiln.asd -newer "$stamp" -name 
     --eval "(defvar *session* (kiln.compiler:make-session))" \
     --eval "(kiln:compile-kernel \"$build/kernel.kir\" :session *session*)" \
     --eval "(kiln:compile-clos \"$build/clos.kir\" :session *session*)" \
+    --eval "(kiln:compile-frontend \"$build/frontend.kir\" :session *session*)" \
     --eval "(kiln:compile-eval \"$build/eval.kir\" :session *session*)" \
     --eval "(kiln:compile-file-to-kir \"$main\" \"$build/main.kir\" :session *session*)" \
     >"$build/compile.log" 2>&1 || { tail -40 "$build/compile.log"; exit 1; }
 fi
-modules=("$build/kernel.kir" "$build/clos.kir" "$build/eval.kir" "$build/main.kir")
+modules=("$build/kernel.kir" "$build/clos.kir" "$build/frontend.kir" "$build/eval.kir" "$build/main.kir")
 if [ "${1:-}" = --jit ]; then
   exec "$root/target/debug/kiln-cg" jit "${modules[@]}"
 fi

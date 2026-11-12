@@ -53,7 +53,7 @@ HIR 的词法绑定、自由变量、赋值、退出点和闭包布局直接记�
 
 运行期 `compile`、`eval`、`load` 用它（[eval-compile.md](eval-compile.md)）。编译期环境就是运行期的环境，和一般的实现一样：
 
-- Trucler 的全局环境是一个 `run-time-environment` 对象，对它的查询转给 eval 模块的 Maclina client：宏、特殊变量、常量、已定义的函数都来自运行中的 image。依赖追踪在这里记录查询（[dependencies.md](dependencies.md)）。
+- Trucler 的全局环境是一个 `run-time-environment` 对象，对它的查询转给 eval 模块的 image 全局环境 client：宏、特殊变量、常量、已定义的函数都来自运行中的 image。依赖追踪在这里记录查询（[dependencies.md](dependencies.md)）。
 - 编译期求值使用 HIR 求值器，直接保留前端的局部宏和 symbol macro 环境。`macrolet` 的展开函数由同一转换器和求值器构造；其环境保留外层的局部宏、symbol macro 和 special 声明，屏蔽词法值及局部函数。
 - 编译期的效果直接落在 image 里：`defmacro` 定义宏，`defvar` 宣告特殊变量，`deftype` 和 `define-setf-expander` 记在 plist 上。`declaim inline` 经 kernel `proclaim` 的 `*proclaim-hook*` 通知前端。
 - image 里所有的编译会话共用一张内联函数表（`*image-inline-functions*`），初始内容是宿主编完 compiler 模块那一刻的 inline 表（`host-inline-functions`）。

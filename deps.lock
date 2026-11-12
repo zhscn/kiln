@@ -13,7 +13,6 @@ Constrictor https://github.com/s-expressionists/Constrictor master 1a8a90ec114f7
 documentation-utils https://github.com/Shinmera/documentation-utils master fcbd927dee7f311915a27ee557e3db1d4510403c
 fast-generic-functions https://github.com/marcoheisig/fast-generic-functions master 6e9d690ec08dacf9ab4e14aa39a084ef7c7edabb
 Hirundine https://github.com/robert-strandh/Hirundine main 8bf9a60532e456174374ea1a0cd22289c133c1f4
-Maclina https://github.com/s-expressionists/Maclina main a46ba99620ceb51f05f14e31d34fe77e1cfa96c1
 nontrivial-gray-streams https://github.com/yitzchak/nontrivial-gray-streams main 1413a06dcff7d47bb1cb65decde95ac063c27bd4
 Quaviver https://github.com/s-expressionists/Quaviver main d11d95e5f42873c89ee4d3fde4333d256f9bf571
 Trinsic https://github.com/s-expressionists/Trinsic main 3a370f91982fba03987ae71d5b75e8527508b3c4

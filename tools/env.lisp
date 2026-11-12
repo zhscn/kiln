@@ -22,7 +22,6 @@
      (:tree ,(merge-pathnames "vendor/Eclector/" (truename root)))
      (:tree ,(merge-pathnames "vendor/Ecclesia/" (truename root)))
      (:tree ,(merge-pathnames "vendor/Anatomicl/" (truename root)))
-     (:tree ,(merge-pathnames "vendor/Maclina/" (truename root)))
      (:tree ,(merge-pathnames "vendor/Incless/" (truename root)))
      (:tree ,(merge-pathnames "vendor/Inravina/" (truename root)))
      (:tree ,(merge-pathnames "vendor/Invistra/" (truename root)))

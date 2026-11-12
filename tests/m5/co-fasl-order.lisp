@@ -40,3 +40,25 @@
                         (eq (second (fasl-node-payload *fasl-b*)) *fasl-a*)))))
     (when (probe-file source) (delete-file source))
     (when (probe-file output) (delete-file output))))
+
+(let* ((source "build/test/co-fasl-order-three.lisp")
+       (output (compile-file-pathname source)))
+  (unwind-protect
+       (progn
+         (with-open-file (stream source :direction :output :if-exists :supersede)
+           (write-string "(in-package :cl-user)
+(eval-when (:compile-toplevel)
+  (setf *fasl-a* (make-instance 'fasl-node :name :a)
+        *fasl-b* (make-instance 'fasl-node :name :b :dependency *fasl-a*))
+  (let ((c (make-instance 'fasl-node :name :c :dependency *fasl-b*)))
+    (setf (fasl-node-payload *fasl-a*) c
+          (fasl-node-payload *fasl-b*) c
+          *fasl-b* c)))
+(defparameter *fasl-b* #.*fasl-b*)
+" stream))
+         (compile-file source :verbose nil :print nil)
+         (let ((*fasl-order* nil))
+           (load output :verbose nil :print nil)
+           (print (reverse *fasl-order*))))
+    (when (probe-file source) (delete-file source))
+    (when (probe-file output) (delete-file output))))

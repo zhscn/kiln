@@ -82,7 +82,7 @@
 (defun structure-access-error (object name)
   (error 'type-error :datum object :expected-type name))
 
-;;; When Maclina's bytecode evaluator runs DEFSTRUCT expansions directly,
+;;; When the HIR evaluator runs DEFSTRUCT expansions directly,
 ;;; %PRIMOP is called as an ordinary function.
 (defun kiln.sys:%primop (op &optional a b c)
   (ecase op

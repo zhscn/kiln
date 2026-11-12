@@ -41,8 +41,7 @@
                (note-dependency :setf (first place)))
              (call-next-method client place environment))))))
 
-;;; The global environment, for Trucler: described as Maclina's client
-;;; describes it (lisp/target/eval/evaluator.lisp), whatever the client.
+;;; Global queries share the image environment's description protocol.
 ;;; MACRO-FUNCTION with the front end's environment queries it with a
 ;;; reference client (environment.lisp).
 
@@ -59,14 +58,14 @@
 ;;; DEFMACRO may define.
 (defmethod trucler:describe-variable (client (environment run-time-environment) name)
   (declare (ignore client))
-  (let ((description (trucler:describe-variable maclina.machine:*client* nil name)))
+  (let ((description (trucler:describe-variable kiln.eval::*global-client* nil name)))
     (when (typep description 'trucler:constant-variable-description)
       (note-dependency :constant name))
     description))
 
 (defmethod trucler:describe-function (client (environment run-time-environment) name)
   (declare (ignore client))
-  (let ((description (trucler:describe-function maclina.machine:*client* nil name)))
+  (let ((description (trucler:describe-function kiln.eval::*global-client* nil name)))
     (when (or (null description) (typep description 'trucler:global-macro-description))
       (note-dependency :macro name))
     description))
@@ -115,7 +114,7 @@
                 (*inline-functions* (image-inline-functions)))
             (note-inline-proclamation (first declaration) (rest declaration))))))
 
-(defvar *host-inline-functions*)        ; session.lisp
+(defvar *host-inline-functions* nil)        ; session.lisp
 
 (defvar *image-inline-functions* nil
   "The inline proclamations and expansions of the image: those the host

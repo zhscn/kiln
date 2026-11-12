@@ -29,7 +29,7 @@
 | 浮点打印 | Quaviver | 现在用 kiln 自己的替身（[io.md](io.md)） |
 | Condition 系统 | Predicament（vendor） | kiln 自己写 `condition` 类和 `define-condition` |
 | CLOS / MOP | Clostrophilia（vendor） | 在目标端用 early 函数 bootstrap（[clos.md](clos.md)） |
-| 字节码求值器 | Maclina（vendor） | eval 模块：运行期的编译期求值、交付期可选的轻量 `eval` |
+| 求值器与 FASL | 自研 HIR 求值器、对象图编码器 | 编译期与运行期共用前端，原生入口安装前即可执行 |
 | 序列、cons 字典 | Consecution、Constrictor | 还没有接入，现在是 kernel 的简单实现 |
 | 数值塔 | 自研 | Rust runtime 原语，Lisp 包一层（SICL 也没有 bignum） |
 | 符号、字符、字符串、pathname、文件、时间 | 自研 | 没有现成的模块 |
@@ -46,8 +46,8 @@ kiln 的 Lisp 代码编成五个模块，按顺序载入，每个模块只编译
 | kernel | `lisp/target/*.lisp`（[kernel.md](kernel.md)） | 所有测试 |
 | clos | Clostrophilia 和 CLOS 引导，Predicament、Salmagundi、Parcl、ctype、Regalia、Anatomicl 的目标端部分、Trinsic、Cyclosis、文件和 pathname、Acclimation、Incless、Inravina、Invistra、Khazern、alexandria、Eclector 的 reader，以及调试接口 | `clos-` |
 | frontend | Concrete-Syntax-Tree、Eclector 的 parse-result 和 CST 读取器 | `fe-` |
-| eval | Ecclesia、Common-macros（运行期标准宏）、Trucler、Maclina、`lisp/target/eval/`（evaluator、REPL、后端协议） | `ev-` |
-| compiler | Trucler reference、Clostrum、Anatomicl，以及 kiln 自己的 `lisp/*.lisp`、`lisp/hir/` 和 `lisp/target/compiler/` | `co-` |
+| eval | Ecclesia、Common-macros、Trucler、Clostrum、Anatomicl、HIR 前端与求值器、`lisp/target/eval/`（evaluator、REPL、后端协议） | `ev-` |
+| compiler | 原生编译入口、文件编译、依赖追踪与顶层缓存 | `co-` |
 
 frontend 不进 CLOS 模块，以免拖慢所有 CLOS 测试的启动。
 
@@ -62,7 +62,7 @@ kernel 原语和 primop（cons/symbol/vector/funcall/闭包/数/字符串/typep/
  → Salmagundi → Parcl（包）→ ctype → Regalia → 结构、change-class
  → Trinsic + Cyclosis → Incless、Inravina → Acclimation、Invistra
  → pathname、文件、时间、快照、调试接口 → Khazern → alexandria、Eclector
- → frontend → eval（Ecclesia、Common-macros、Trucler、Maclina）→ compiler
+ → frontend → eval（环境、宏、共享 HIR 前端与求值）→ compiler
 ```
 
 精确的顺序以 `lisp/driver.lisp` 为准。几乎所有模块都依赖 CLOS，所以 CLOS 之前只能放 kernel 原语和手写的引导代码。ctype 在载入时就创建实例，要放在 CLOS 之后；Regalia 选数组类要用 `subtypep`，所以在 ctype 之后。
@@ -83,7 +83,7 @@ SICL 的库有 intrinsic（库就是实现自己的版本，直接定义 `CL` �
 
 **加载时**：模块的 init 函数第一件事是把这张表推到 `kiln.kernel::*module-symbol-tables*`，`%register-module-symbols` 已经定义时就调用它。CLOS 模块加载完 Parcl 和 client 后自己调用一次，把 kernel 和 CLOS 模块的表登记成包对象：新建 Parcl 的包对象，填好符号表、use 列表和包局部昵称（宿主已经检查过冲突，直接写入），把每个 symbol 的 `package` 槽从包名字符串换成 home 包对象。之后加载的模块在 init 开头就完成登记。运行期编进 image 的代码没有符号表，符号都已经在 image 里（[eval-compile.md](eval-compile.md)）。
 
-**closer-mop**：用 closer-mop 的库在宿主里读入，读到的是宿主 CLOSER-MOP 包的符号。宏 `kiln.sys::closer-mop-aliases` 展开成一次 `kiln.sys::%alias-names` 调用：对 CLOSER-MOP 的每个外部符号，取 Clostrophilia 里可访问的同名符号，运行期在后者有定义时，把函数、setf 函数和类给前者（`closer-mop.lisp`）。kiln 的 image 里因此也有 CLOSER-MOP 包，Maclina 等直接使用。
+**closer-mop**：用 closer-mop 的库在宿主里读入，读到的是宿主 CLOSER-MOP 包的符号。宏 `kiln.sys::closer-mop-aliases` 展开成一次 `kiln.sys::%alias-names` 调用：对 CLOSER-MOP 的每个外部符号，取 Clostrophilia 里可访问的同名符号，运行期在后者有定义时，把函数、setf 函数和类给前者（`closer-mop.lisp`）。kiln 的 image 里因此也有 CLOSER-MOP 包，需要 MOP 协议的库直接使用。
 
 ## Lisp 依赖
 

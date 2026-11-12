@@ -1,4 +1,4 @@
-;;;; Deferred compiler references shared by native and bytecode compilation.
+;;;; Deferred compiler references shared by native and HIR compilation.
 
 (in-package #:kiln.kernel)
 
@@ -18,15 +18,13 @@
 
 (defun defer-compilation-reference (condition)
   (when (and *compilation-unit* (not *flushing-compilation-unit*))
-    (if (typep condition 'maclina.compile:unknown-function)
-        (note-compilation-unit-functions (list (maclina.compile:name condition)))
+    (if (typep condition 'kiln.compiler::undefined-function-warning)
+        (note-compilation-unit-functions (kiln.compiler::undefined-function-names condition))
         (pushnew condition (svref *compilation-unit* 1)
                  :test (lambda (a b)
-                         (and (eq (class-of a) (class-of b))
-                              (equal (maclina.compile:name a) (maclina.compile:name b))))))
-    (let ((restart (or (find-restart 'continue condition)
-                       (find-restart 'muffle-warning condition))))
-      (when restart (invoke-restart restart)))))
+                         (eq (kiln.compiler::undefined-variable-name a)
+                             (kiln.compiler::undefined-variable-name b)))))
+    (muffle-warning condition)))
 
 (defun finish-compilation-unit (unit)
   (let ((*flushing-compilation-unit* t))
@@ -34,18 +32,16 @@
       (unless (fboundp name)
         (warn 'deferred-function-warning :name name)))
     (dolist (condition (reverse (svref unit 1)))
-      (unless (and (typep condition 'maclina.compile:unknown-type)
-                   (type-specifier-p (maclina.compile:name condition)))
-        (warn condition)))))
+      (warn condition))))
 
 
 (defun call-with-compilation-unit (thunk &key override)
   (if (and *compilation-unit* (not override))
       (funcall thunk)
-      (let ((*compilation-unit* (vector nil nil))
-            (maclina.compile::*in-compilation-unit* t))
+      (let ((*compilation-unit* (vector nil nil)))
         (unwind-protect
-             (handler-bind ((maclina.compile:unknown-reference #'defer-compilation-reference))
+             (handler-bind (((or kiln.compiler::undefined-function-warning kiln.compiler::undefined-variable-warning)
+                              #'defer-compilation-reference))
                (funcall thunk))
           (finish-compilation-unit *compilation-unit*)))))
 

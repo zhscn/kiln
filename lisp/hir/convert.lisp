@@ -53,6 +53,10 @@
           ((and found (eq (car binding) :special)) (hir-node 3 *hir-source* name))
           (t
            (let ((description (trucler:describe-variable *client* environment name)))
+             (when (and (null description) (compiles-into-image-p *client*)
+                        *referenced-variables* (not (gethash name *referenced-variables*)))
+               (setf (gethash name *referenced-variables*) t)
+               (warn 'undefined-variable-warning :name name))
              (cond ((typep description 'trucler:constant-variable-description)
                     (note-dependency :constant name)
                     (hir-node 0 *hir-source* (trucler:value description)))
@@ -594,7 +598,7 @@ as MULTIPLE-VALUE-BIND expands into: the variable inputs, FORM, and BODY."
 (defgeneric hir-local-macro-expander (client name lambda-list body environment)
   (:documentation "The expander of the local macro NAME defined by MACROLET
 in the HIR environment ENVIRONMENT. The cross client evaluates it with the
-HIR evaluator (eval.lisp), the image client with Maclina; either sees only
+HIR evaluator (eval.lisp); both clients see only
 the local macros and symbol macros of ENVIRONMENT."))
 
 (define-hir-converter macrolet (parts environment)

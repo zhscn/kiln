@@ -190,7 +190,7 @@ at compile time (USE-HOST-MACROS).")
                    (if macrop
                        (setf form expansion expanded t)
                        (return (values form expanded)))))))
-    ;; EVAL in a macro expander (Maclina's DEFOPS) sees the compile-time
+    ;; EVAL in a macro expander sees the compile-time
     ;; definitions.
     (def 'eval
       (lambda (form)
@@ -470,9 +470,8 @@ evaluate some at compile time)."
     "CLOSTRUM-BASIC" "CLOSTRUM-TRUCLER"))
 
 (defun prepare-compiler-session (session)
-  "Makes SESSION, which has compiled the kernel, CLOS, the front end and
-eval, ready to compile the compiler module: the host libraries' macros and
-the compile-time definitions that the module needs."
+  "Installs host macro protocols needed by the shared compiler sources
+and native entry points into SESSION."
   (use-host-macros session *compiler-host-macro-packages*)
   (let* ((client (session-client session))
          (genv (trucler:global-environment client (session-environment session))))

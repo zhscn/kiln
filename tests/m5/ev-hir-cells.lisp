@@ -1,4 +1,4 @@
-;; Captured mutable required arguments must not execute the ENCELL operand.
+;; Returned closures share captured mutable required arguments.
 (let ((f (eval '(lambda (x) (lambda () (incf x))))))
   (let ((counter (funcall f 10)))
     (print (funcall counter))
@@ -7,7 +7,7 @@
            (funcall (eval '(lambda (x) (ccase x (a 2)))) 1)
          (type-error (c) (type-error-datum c))))
 
-;; Large frames and literal tables exercise long cell and closure operands.
+;; Large frames preserve cells for parameters and local bindings beyond slot 255.
 (let* ((vars (loop for i below 260 collect (gensym "ARG")))
        (last (car (last vars)))
        (f (eval `(lambda ,vars

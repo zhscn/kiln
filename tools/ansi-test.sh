@@ -7,11 +7,16 @@
 # Environment:
 #   KILN_COMPILER   kiln executable (default: build/boot/kiln1, or build/stage0/kiln0)
 #   ANSI_TEST_DIR   path to ansi-test checkout (default: ~/package/ansi-test)
-#   ANSI_EVAL       "hybrid" (default: Maclina + native DEFSTRUCT) or "native"
+#   ANSI_EVAL       "native" (default) or "hir" (shared HIR evaluator)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+
+case "${ANSI_EVAL:-native}" in
+  native|hir) ;;
+  *) echo "ANSI_EVAL must be native or hir" >&2; exit 1 ;;
+esac
 
 ANSI_TEST_DIR="${ANSI_TEST_DIR:-$HOME/package/ansi-test}"
 if [[ ! -d "$ANSI_TEST_DIR" ]]; then
@@ -80,18 +85,6 @@ if [[ ! -f "$IMAGE" || "$KILN_COMPILER" -nt "$IMAGE" || "$0" -nt "$IMAGE" ]]; th
 
 (in-package :cl-user)
 
-(defun tree-has-defstruct-p (form)
-  (and (consp form)
-       (or (eq (car form) 'defstruct)
-           (and (consp (cdr form))
-                (or (tree-has-defstruct-p (car form))
-                    (tree-has-defstruct-p (cdr form)))))))
-
-(defun hybrid-eval (form)
-  (if (tree-has-defstruct-p form)
-      (kiln.compiler::native-eval form)
-      (kiln.kernel::maclina-eval form)))
-
 (defun run-ansi-group ()
   (let ((group (ansi-getenv "ANSI_GROUP"))
         (eval-mode (ansi-getenv "ANSI_EVAL"))
@@ -102,8 +95,9 @@ if [[ ! -f "$IMAGE" || "$KILN_COMPILER" -nt "$IMAGE" || "$0" -nt "$IMAGE" ]]; th
         (dolist (host '("CLTEST" "CLTESTROOT"))
           (setf (logical-pathname-translations host)
                 (list (list "**;*.*.*" target))))))
-    (unless (and eval-mode (string= eval-mode "native"))
-      (setf kiln.kernel::*eval-function* #'hybrid-eval))
+    (when (and eval-mode (string= eval-mode "hir"))
+      (setf kiln.kernel::*eval-function* nil
+            kiln.kernel::*compile-function* nil))
     (if group
         (let ((*default-pathname-defaults* *ansi-test-dir*)
               (*package* (find-package :cl-test)))
@@ -176,6 +170,7 @@ sum_failed=0
 sum_skipped=0
 sum_total=0
 sum_time=0
+ansi_status=0
 
 for g in "${TEST_GROUPS[@]}"; do
   rm -rf "$SANDBOX_DIR"
@@ -193,9 +188,11 @@ for g in "${TEST_GROUPS[@]}"; do
   sum_time=$(awk "BEGIN {printf \"%.2f\", $sum_time + ($t1 - $t0)}")
   result=$(grep -a "^ANSI-RESULT " "$OUT_DIR/${g}.log" | tail -n 1 || true)
   if [[ -z "$result" || "$rc" -ne 0 ]]; then
+    ansi_status=1
     printf "%-24s %7s %7s %7s %7s %7s %7ss (rc=%d)\n" "$g" "-" "-" "-" "-" "CRASH" "$dt" "$rc"
   else
     read -r _ passed failed skipped <<< "$result"
+    if [[ "$failed" -ne 0 ]]; then ansi_status=1; fi
     total=$((passed + failed + skipped))
     rate=$(awk "BEGIN {if ($passed + $failed) printf \"%.1f%%\", ($passed * 100.0) / ($passed + $failed); else print \"-\"}")
     printf "%-24s %7d %7d %7d %7d %7s %7ss\n" "$g" "$passed" "$failed" "$skipped" "$total" "$rate" "$dt"
@@ -211,3 +208,5 @@ if [[ ${#TEST_GROUPS[@]} -gt 1 && $sum_total -gt 0 ]]; then
   tot_rate=$(awk "BEGIN {printf \"%.1f%%\", ($sum_passed * 100.0) / ($sum_passed + $sum_failed)}")
   printf "%-24s %7d %7d %7d %7d %7s %7ss\n" "Total" "$sum_passed" "$sum_failed" "$sum_skipped" "$sum_total" "$tot_rate" "$sum_time"
 fi
+
+exit "$ansi_status"
