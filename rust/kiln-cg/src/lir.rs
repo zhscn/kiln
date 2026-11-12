@@ -642,6 +642,18 @@ fn transfer_offset(index: i64) -> Result<i32, String> {
     Ok((core::mem::offset_of!(Context, values) + index * size_of::<u64>()) as i32)
 }
 
+pub fn argument_ref(index: i64, registers: Vec<Expr>) -> Result<Expr, String> {
+    if registers.len() != crate::kir::REG_ARGS {
+        return Err("arg-ref requires all saved register arguments".into());
+    }
+    let index = usize::try_from(index).map_err(|_| "invalid argument index")?;
+    if index < registers.len() {
+        Ok(registers[index].clone())
+    } else {
+        transfer_ref((index - registers.len()) as i64)
+    }
+}
+
 pub fn transfer_ref(index: i64) -> Result<Expr, String> {
     Ok(Expr::Load(Box::new(Expr::Var("ctx".into())), transfer_offset(index)?))
 }
@@ -871,4 +883,16 @@ mod tests {
         assert!(field_store(FIELD_FUNCTION_ENTRY, Expr::Int(0), Expr::Int(0)).is_err());
         assert!(field_store(FIELD_DOUBLE_BITS, Expr::Int(0), Expr::Int(0)).is_err());
     }
+}
+
+#[cfg(test)]
+#[test]
+fn argument_reference_checks_capacity_and_register_boundary() {
+    let registers = || (0..crate::kir::REG_ARGS).map(|i| Expr::Var(format!("saved{i}"))).collect();
+    assert!(matches!(argument_ref(2, registers()).unwrap(), Expr::Var(v) if v == "saved2"));
+    assert_eq!(format!("{:?}", argument_ref(3, registers()).unwrap()),
+               format!("{:?}", transfer_ref(0).unwrap()));
+    assert!(argument_ref(-1, registers()).is_err());
+    assert!(argument_ref(1024, registers()).is_err());
+    assert!(argument_ref(0, Vec::new()).is_err());
 }

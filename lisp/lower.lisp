@@ -855,11 +855,8 @@ if needed (not a safepoint)."
   (allow-other-keys nil))
 
 (defun arg-operand (args i)
-  "Argument I (an integer) on function entry: ARGS hold the register
-arguments; later ones are in the transfer area."
-  (if (< i kiln.kir::+backend-reg-args+)
-      (nth i args)
-      `(:transfer-ref ,(- i kiln.kir::+backend-reg-args+))))
+  "Argument I on function entry, using the saved register operands ARGS."
+  `(:arg-ref ,i ,args))
 
 (defun emit-nargs-check (min max)
   "MAX is NIL for no upper limit."

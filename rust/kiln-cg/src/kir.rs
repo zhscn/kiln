@@ -1401,6 +1401,11 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
             arity(h, r, 2)?;
             return crate::lir::closure_ref(parse_expr(&r[0])?, int(&r[1])?);
         }
+        "arg-ref" => {
+            arity(h, r, 2)?;
+            return crate::lir::argument_ref(int(&r[0])?,
+                list(&r[1])?.iter().map(parse_expr).collect::<R<Vec<_>>>()?);
+        }
         "transfer-ref" => {
             arity(h, r, 1)?;
             return crate::lir::transfer_ref(int(&r[0])?);
