@@ -619,7 +619,7 @@ whole instead (the declarations would otherwise be lost)."
                          ;; far, which holds the enclosing local macros.
                          (let ((expander (evaluate-at-compile-time
                                           *client*
-                                          `(function ,(ecclesia:parse-macro name lambda-list body))
+                                          `(function ,(ecclesia:parse-macro-using-canonicalization name lambda-list body))
                                           env)))
                            (setf env (trucler:add-local-macro *client* env name expander)))))))
                   (symbol-macrolet

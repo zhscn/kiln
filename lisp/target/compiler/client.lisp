@@ -100,7 +100,7 @@
     (hir-eval input environment)))
 
 (defmethod hir-local-macro-expander ((client image-client) name lambda-list body environment)
-  (hir-eval `(function ,(ecclesia:parse-macro name lambda-list body))
+  (hir-eval `(function ,(ecclesia:parse-macro-using-canonicalization name lambda-list body))
             (hir-macrolet-environment environment)))
 
 ;;; Runtime proclamations also update the table shared by image sessions.
