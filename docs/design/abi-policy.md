@@ -1,5 +1,7 @@
 # ABI 的稳定性和演进
 
+Lisp/Rust 编译边界另有[编译 schema](compiler-protocol.md) 版本；runtime 的 [interop 服务表](rust-interop.md) 使用版本、表大小与能力位协商。请求及产物携带目标 ABI 指纹，不匹配时在安装前拒绝。编译 schema、服务接口和生成代码 ABI 分别校验，不能用其中一个版本替代其余检查。
+
 ABI 本身见 [abi.md](abi.md)、[objects.md](objects.md)、[codegen.md](codegen.md)；本文说明 kiln 对 ABI 做什么承诺、不做什么承诺。和 Swift ABI 稳定化的对照见 [swift-abi.md](../research/swift-abi.md)。
 
 ## ABI 的使用者

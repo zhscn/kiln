@@ -1,5 +1,7 @@
 # 前端：读入、顶层形式和编译期环境
 
+目标分工见 [compiler.md](compiler.md)：Lisp 前端止于语义 HIR 与[编译请求](compiler-protocol.md)，Rust 构造 MIR 并接手优化和降级。下面的源码路径与直接 HIR → KIR 管线描述当前实现；其优化职责按目标边界迁移。
+
 前端把源码变成 HIR（[hir.md](hir.md)），降级见 [lowering.md](lowering.md)。同一份前端既在 SBCL 上运行（交叉编译出 stage0），也在 kiln 上运行（自举、运行期 `compile`/`eval`）。
 
 ## 流水线
@@ -35,7 +37,7 @@ HIR 的词法绑定、自由变量、赋值、退出点和闭包布局直接记�
 编译 kiln 自己的模块用它，在 SBCL 上和在 kiln 上都一样（kiln 编译自己时不能改掉正在运行编译器的 image，而且两边必须从同一个空的编译期环境开始）。
 
 - **编译期环境是一个 Clostrum 环境**，和运行编译器的 image 隔离。目标里重定义 `car`、`defclass` 都不会碰到宿主。
-- **编译期求值用 HIR 求值器**（`lisp/hir/eval.lisp`，[hir.md](hir.md) 的“编译期求值”）：形式用 HIR 前端的转换器转成 HIR，再编成宿主闭包执行，全局函数和特殊变量都经过 Clostrum 环境的 cell，动态绑定是浅绑定。宏函数会调用目标环境里定义的辅助函数，所以不能直接交给宿主的 `compile`。
+- **编译期求值用 HIR 求值器**（`lisp/hir/eval.lisp`，[hir.md](hir.md) 的“求值器”）：形式用 HIR 前端的转换器转成 HIR，再编成宿主闭包执行，全局函数和特殊变量都经过 Clostrum 环境的 cell，动态绑定是浅绑定。宏函数会调用目标环境里定义的辅助函数，所以不能直接交给宿主的 `compile`。
 - 宿主 CL 包里所有的函数导入编译期环境，宏展开函数可以直接调用它们。和全局环境打交道的函数换成访问 Clostrum 环境的版本：`macro-function`、`(setf macro-function)`、`fdefinition`、`(setf fdefinition)`、`fboundp`、`symbol-value`、`(setf symbol-value)`、`boundp`、`proclaim`、`macroexpand`、`macroexpand-1`，以及接受符号作为函数标识的 `funcall`、`apply`。
 - **编译期的 CLOS**：被交叉编译的库在编译期需要 `defclass`、`defgeneric`、`define-condition` 的副作用，这部分用宿主 CLOS（通过 closer-mop），并且和目标 image 里的 metaobject 严格分开（SICL 的 E1 也是这样）。
 - 在 kiln 上，“宿主”就是 kiln 自己：编译期环境同样是 Clostrum 环境，HIR 求值器构造的闭包是 kiln 的闭包，导入的函数和宿主宏是 image 里的。
@@ -90,11 +92,13 @@ raw cons 到 CST 的只读映射，再分别为 car、cdr 筛选引用、登记�
 ## 转换时的处理
 
 - **对 symbol macro 做 `setq`**：CLHS 3.1.2.1.1 要求按对展开式的 `setf` 处理，转换时改写成 `(setf 展开式 值)`。`with-slots`、`with-accessors` 依赖这一点。
-- **词法类型声明**按绑定身份和作用域保留，供 Trucler 查询。可投影到证明域的声明在绑定、赋值或局部读取处检查后用于特化；用户类型别名在当前编译期环境中展开，保留原始声明供环境查询与诊断；尚未支持的复合类型不建立证明事实，见 [HIR 类型传播](hir.md#类型传播与降级特化)。
+- **词法类型声明**按绑定身份和作用域保留，供 Trucler 查询。可投影到证明域的声明在绑定、赋值或局部读取处检查后用于特化；用户类型别名在当前编译期环境中展开，保留原始声明供环境查询与诊断；尚未支持的复合类型不建立证明事实，见 [MIR 类型分析](mir.md#效果与分析)。
 - **`(setf (the 类型 place) 值)`**（CLHS 5.1.2.6）：交叉编译和运行期都按 `(setf place (the 类型 值))` 处理。
 - **Trucler 的缓存**：reference 环境会把查到的全局描述缓存在环境对象里，而会话的环境在多个文件之间是同一个，后来重新定义的宏会被缓存挡住，所以每个顶层形式之前都清空缓存。
 
 ## inline 声明
+
+目标架构中，Lisp 在定义环境准备绑定后的候选 HIR 和依赖，Rust MIR 按调用点、策略与增长预算决定内联；`notinline` 随请求传递。下面的转换期展开描述现有实现，随 MIR 内联接入而移除。
 
 实现在 `lisp/front.lisp`。
 
@@ -106,7 +110,7 @@ raw cons 到 CST 的只读映射，再分别为 car、cdr 筛选引用、登记�
   - 有覆盖这个调用的 `notinline` 声明；
   - 调用处的局部函数、局部宏或局部 symbol macro 遮蔽了函数体里出现的某个名字；
   - 实参个数不对，这时照常调用，由运行期报错。
-- **局部 `notinline`**：转换主体（`lambda`、`let`、`locally` 等）时，收集其开头的 `notinline` 声明，在转换主体期间生效（`*local-notinline*`）。局部函数调用也记录该限制，供后续 HIR 内联和调用点特化使用。
+- **局部 `notinline`**：转换主体（`lambda`、`let`、`locally` 等）时，收集其开头的 `notinline` 声明，在转换主体期间生效（`*local-notinline*`）。局部函数调用也记录该限制，供后续内联和调用点特化使用。
 - **编译期求值不做全局 CST 展开**：展开式里可能用到 kernel 的内部函数和 `%primop`，它们在编译期并不存在。只有把形式转成目标端 HIR 时才打开展开（`*inline-enabled*`）。
 - kernel 和 CLOS 里声明为 inline 的：一行的类型谓词、`char-code`、`acons`、`identity`、cXXr，`standard-instance-access`、`instancep`、`class-of+1`、`stamp+1`，结构的访问器等。
 

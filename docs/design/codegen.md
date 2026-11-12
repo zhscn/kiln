@@ -3,7 +3,8 @@
 ## 组成
 
 ```
-Lisp 编译器（lisp/*.lisp，SBCL 上或 kiln 上）   源码 → KIR（s-expression 文本）
+目标：Lisp 语义前端 → HIR 请求 → Rust MIR → KIR
+当前：Lisp 编译器（SBCL 上或 kiln 上）   源码 → KIR（s-expression 文本）
         ↓ .kir（或运行期的字符串）
 kiln-cg（rust/kiln-cg）      KIR → Cranelift
         ├─ jit：cranelift-jit，在进程内运行（链接 kiln-rt）
@@ -20,10 +21,10 @@ kiln-launcher               staticlib，提供 C main，链接 kiln-rt 和 kiln-
 
 ## 决定：交换格式用 KIR，不用 CLIF 文本
 
-最初计划用 CLIF 文本做 Lisp 编译器和代码生成之间的交换格式，后来改成了 KIR：
+KIR 是布局和 ABI 已确定的低级表示。目标架构中由 Rust MIR 降级产生，当前由 Lisp 直接产生；职责见 [compiler.md](compiler.md)。保留 KIR 的原因：
 
 - **cranelift-frontend 只能通过 API 使用。** 它负责从可变变量构建 SSA（`Variable`、`def_var`/`use_var`），以及在 safepoint 处为 GC 引用插入溢出和重载（user stack maps，C5）。直接写 CLIF 文本就绕过了它，Lisp 侧得自己构建 SSA、自己做溢出。
-- **对象布局的知识留在 Lisp 侧。** KIR 是接近 Cranelift 的低级 IR：tag、偏移、kind 编号都由 Lisp 编译器决定。kiln-cg 只负责调用约定、`try_call` 和异常表、栈图、trampoline、调试信息的表。编译器自举进 kiln 之后，kiln-cg 作为 runtime 里的代码生成库继续使用，不用改。
+- **布局与机器后端分层。** KIR 固化 tag、偏移和 kind。目标架构由 Rust MIR 的表示降级根据 runtime 目标描述生成这些信息；当前仍由 Lisp 降级决定。kiln-cg 负责调用约定、`try_call` 和异常表、栈图、trampoline 与调试表，不处理宏或词法环境。
 
 ## KIR 语法
 

@@ -1,5 +1,7 @@
 # 底层约束
 
+目标 Rust 编译边界见 [rust-interop.md](rust-interop.md)。外部 Rust 帧用显式 handles 持有对象；Lisp 回调先捕获非局部退出并返回 token，Rust 完成清理后再由 Lisp 恢复退出。纯 MIR 工作只消费自含数据，进入 GC 安全 native 状态前必须发布 roots 并结束对象借用。这些是新增边界的实现要求，现有 JIT 入口尚不提供完整的回调协议。
+
 这些约束从第一行代码起就必须遵守。它们大多数在早期没有直接用处，但一旦写死，以后加 GC 精确扫描、异步、抢占或重定义时，就要改动整个 runtime 和编译器。
 
 每条约束都写了理由，以及以后哪些功能依赖它。写 runtime 或编译器代码时对照文末的检查清单。
@@ -79,7 +81,7 @@ handler 和 restart 是 Predicament 的 special 变量，所以也自然挂在 c
 **约束**
 
 - 所有调用点和 poll 点都生成 stack map（使用 Cranelift 的 user stack maps），GC 精确扫描 Lisp 帧。
-- 堆对象不能持有指向栈帧内部的指针。闭包的非局部退出因此用堆上的令牌，而不是条目的栈地址（[lowering.md](lowering.md) 的 `block` 和 `tagbody`）。
+- 堆对象不能持有指向栈帧内部的指针。闭包的非局部退出因此用堆上的令牌，而不是条目的栈地址（[lowering.md](lowering.md)）。
 - `dynamic-extent` 分配的对象不能逃逸到堆里，编译器负责检查。证明不了不逃逸时，退回堆分配。
 - 不对 Lisp 帧做保守扫描。
 
@@ -104,7 +106,7 @@ handler 和 restart 是 Predicament 的 special 变量，所以也自然挂在 c
 - GC 不必等待长时间阻塞在 C 里的线程；
 - 以后的 sysmon：检测到 FFI 调用阻塞太久，就把这个 OS 线程让给它，另起线程继续跑调度器。“阻塞检测”和“GC 协作”用同一个状态机。
 
-**栈上夹着外部帧时**（FFI 回调进 Lisp）：倾向只允许用 handle，不对外部帧做保守扫描。Rust 宿主模块（[rust-interop.md](rust-interop.md)）按这个倾向设计：外部帧里只持有登记过的根，Lisp 的非局部退出在边界上转成返回值，外部代码返回后再继续展开，unwinder 不需要认识外部帧。
+**栈上夹着外部帧时**（FFI 回调进 Lisp）：只允许用 handle，不对外部帧做保守扫描。Rust 宿主模块（[rust-interop.md](rust-interop.md)）按此约束设计：外部帧里只持有登记过的根，Lisp 的非局部退出在边界上转成返回值，外部代码返回后再继续展开，unwinder 不需要认识外部帧。
 
 ## C7 condition 的 handler 查找由 runtime 自己控制
 

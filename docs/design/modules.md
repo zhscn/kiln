@@ -1,9 +1,11 @@
 # 复用的模块和 kiln 的模块划分
 
+编译器目标组件划分见 [compiler.md](compiler.md)：Lisp 持有语义 HIR 与求值器，计划中的 `kiln-interop` 封装 runtime 边界，`kiln-mir` 提供不依赖 Lisp 堆的中端，`kiln-compiler` 组织导入和代码生成。现有 `kiln-cg` 继续提供 Cranelift 后端。以下五个 Lisp 模块及加载顺序描述当前构建，尚未接入新的 Rust 中端。
+
 ## 决定
 
 - **复用 SICL 生态里的独立模块，不复用 SICL 本体。** SICL 本体的 bootstrap 和它自己的对象表示、GC 设计、代码生成绑得很紧，至今没有原生后端，也不产出 image（[sicl-survey.md](../research/sicl-survey.md)）。kiln 的底层约束（context 指针、Cranelift、MMTk、精确栈图、帧可搬动）和它不同。真正有价值的是 s-expressionists 那批为“装进新实现”而写的模块。先例是 Clasp：复用 Eclector 和 Cleavir，后端自己接 LLVM。
-- **AST 以下的编译器、对象表示、runtime 全部自己写。** 非局部退出、`unwind-protect`、context、poll 点、栈图都在这一层定义，SICL 在这一层只有设计文字。
+- **语义 HIR、中端、对象表示和 runtime 由 kiln 维护。** 非局部退出、`unwind-protect`、context、poll 点、栈图都在这一层定义，SICL 在这一层只有设计文字。
 - **vendor 规则**：要改的模块先原样 vendor 进 `vendor/` 一个提交，再打补丁；补丁记在 `vendor/README.md`，不往上游提。不改的模块按 `deps.lock` 固定 commit。
 
 ## 复用和自研的划分

@@ -1,5 +1,7 @@
 # 自举和构建
 
+目标管线保留 SBCL 和 kiln 两个 Lisp 前端适配器，两者导出相同版本的 HIR 请求，交给同一 Rust MIR 和代码生成核心。SBCL 使用可移植常量对象图，不向 kiln 传递宿主堆指针；image 适配器用 roots 持有 literal。Rust 核心由 Cargo 构建，Lisp 语义前端及库继续参与自举。当前脚本仍运行 Lisp → KIR 路径，下述命令和阶段描述这一实现。接入 MIR 后继续比较规范化产物及最终可执行文件的确定性，见 [compiler-protocol.md](compiler-protocol.md)。
+
 ## 决定
 
 - SBCL 只做宿主：在 SBCL 里运行 kiln 编译器，交叉编译出第一个 kiln（kiln0），之后 kiln 编译自己。

@@ -1,5 +1,7 @@
 # 运行期求值、编译和文件加载
 
+目标原生路径为共用 Lisp 语义前端 → HIR 请求 → Rust MIR → KIR → Cranelift，HIR 求值器继续留在 Lisp。当前模块加载与原生入口仍采用下述 Lisp 直接降级路径。迁移将语义求值与 Rust 编译服务分开，解释执行不依赖 MIR 或机器后端；FASL 继续保留现有对象图和 KIR 载荷。image literal 经请求 roots 转交安装后的持久 roots，依赖验证后才发布定义，见 [compiler-protocol.md](compiler-protocol.md)。
+
 运行期与编译期共用 HIR 前端。eval 模块提供词法环境、宏展开、HIR 分析与求值，
 compiler 模块安装 HIR → KIR → Cranelift 的原生入口。两种执行方式构造的函数
 都可与 AOT 函数互相调用；全局函数、特殊变量及宏定义属于同一个运行中 image。
@@ -86,7 +88,7 @@ compiler 模块载入后，`eval` 也走原生编译（`native-eval`，挂在 `k
 
 每个形式至少多花几毫秒的编译时间，交互时察觉不到。对只为展开宏或只运行几次的代码，编译时间占主导：这样的 `compile` 要把 `*compile-function*` 绑成 NIL，构造 HIR 求值闭包。交叉编译的编译期求值用 HIR 求值器（构造宿主闭包），不经过 `compile`。
 
-`symbol-macrolet` 在字节码和原生前端都拒绝常量、全局特殊变量，以及对自身绑定的 `special` 声明；内层自由声明和新变量绑定仍可遮蔽外层 symbol macro。HIR 语法错误属于 `program-error`，同时保留编译器的错误信息和源码位置。
+`symbol-macrolet` 在共用 HIR 前端都拒绝常量、全局特殊变量，以及对自身绑定的 `special` 声明；内层自由声明和新变量绑定仍可遮蔽外层 symbol macro。HIR 语法错误属于 `program-error`，同时保留编译器的错误信息和源码位置。
 
 ## 原生 `compile-file` 和 FASL
 
