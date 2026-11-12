@@ -117,6 +117,28 @@ fn immediate_class_tests_preserve_kir_and_reject_unknown_classes() {
 }
 
 #[test]
+fn dynamic_entries_preserve_layout_and_reject_mismatched_kinds() {
+    use packet::schema::KIR_PAYLOAD;
+    let module = |slots, body| format!("(module \"dynamic\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars) (slots {slots}) (block b {body} (return a0 1))))");
+    for (kind, code) in [("catch", 1), ("unwind-protect", 2), ("exit-point", 5), ("bind", 6), ("progv", 7)] {
+        let old = module("(entry 48)".to_string(), format!("(store (slot entry) 0 {code}) (store (slot entry) 8 (load ctx 8)) (store (slot entry) 16 (fp)) (store (slot entry) 24 a0) (store (slot entry) 32 0) (store (slot entry) 40 0) (store ctx 8 (slot entry)) (store ctx 8 (load (slot entry) 8))"));
+        let new = module(format!("(entry (dynamic-entry {kind}))"), format!("(dynamic-enter entry {kind} a0) (dynamic-leave entry)"));
+        let old = kiln_cg::kir::parse_module(&sexp::parse_one(&old).unwrap()).unwrap();
+        let new = sexp::parse_one(&new).unwrap();
+        let new = packet::load(&packet::encode(&new, KIR_PAYLOAD).unwrap()).unwrap();
+        assert_eq!(format!("{old:?}"), format!("{new:?}"));
+    }
+    for (slots, body) in [
+        ("(entry (dynamic-entry catch))", "(dynamic-enter entry bind a0)"),
+        ("(entry (dynamic-entry unknown))", ""),
+        ("(entry 48)", "(dynamic-leave entry)"),
+        ("(entry (stack-roots-entry))", "(dynamic-enter entry catch a0)"),
+    ] {
+        assert!(kiln_cg::kir::parse_module(&sexp::parse_one(&module(slots.to_string(), body.to_string())).unwrap()).is_err());
+    }
+}
+
+#[test]
 fn stack_root_regions_initialize_before_linking_and_validate_slots() {
     use packet::schema::*;
     let module = |slots, body| format!("(module \"roots\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars) (slots {slots}) (block b {body} (return a0 1))))");

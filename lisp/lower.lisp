@@ -505,7 +505,7 @@ through POLL-RETRY."
 (defun pop-entry (region)
   (if (eq (region-kind region) :stack-roots)
       (emit `(:stack-roots-leave ,(region-slot region)))
-      (emit `(:store :ctx ,+ctx-dynenv+ (:load (:slot ,(region-slot region)) ,+dyn-prev+)))))
+      (emit `(:dynamic-leave ,(region-slot region)))))
 
 (defun emit-local-exit (target-regions)
   "Leaves the regions entered since TARGET-REGIONS, running cleanups."
@@ -523,23 +523,11 @@ through POLL-RETRY."
 (defun establish-entry (kind &optional (tag 0))
   "Links a new dynamic-environment entry into the context. Returns its
 region; code inside it runs with the region pushed on *REGIONS*."
-  (let* ((slot (new-slot +dynentry-size+))
+  (let* ((slot (new-slot `(:dynamic-entry ,kind)))
          (region (make-region :kind kind :slot slot
                               :handler (if (member kind '(:bind :progv)) nil (new-block))
                               :outer *regions*)))
-    (emit `(:store (:slot ,slot) ,+dyn-kind+ ,(ecase kind
-                                                 (:catch +dyn-catch+)
-                                                 (:unwind-protect +dyn-unwind-protect+)
-                                                 (:exit-point +dyn-exit-point+)
-                                                 (:bind +dyn-bind+)
-                                                 (:progv +dyn-progv+))))
-    (emit `(:store (:slot ,slot) ,+dyn-prev+ (:load :ctx ,+ctx-dynenv+)))
-    (emit `(:store (:slot ,slot) ,+dyn-fp+ (:fp)))
-    ;; Initialize object fields and range descriptors before linking the entry.
-    (emit `(:store (:slot ,slot) ,+dyn-tag+ ,tag))
-    (emit `(:store (:slot ,slot) ,+dyn-pend-target+ 0))
-    (emit `(:store (:slot ,slot) ,+dyn-pend-value+ 0))
-    (emit `(:store :ctx ,+ctx-dynenv+ (:slot ,slot)))
+    (emit `(:dynamic-enter ,slot ,kind ,tag))
     region))
 
 (defun start-dispatch (region land)

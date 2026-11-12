@@ -477,6 +477,7 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
     let mut alloc_number = 0usize;
     let mut stack_objects = std::collections::HashMap::new();
     let mut stack_root_entries = std::collections::HashSet::new();
+    let mut dynamic_entries = std::collections::HashMap::new();
     for part in body {
         let (h, items) = head(list(part)?)?;
         match h {
@@ -516,6 +517,14 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                                 f.slots.push((name, core::mem::size_of::<kiln_rt::context::DynEntry>() as u32));
                                 continue;
                             }
+                            if kind == "dynamic-entry" {
+                                arity(kind, args, 1)?;
+                                let entry_kind = sym(&args[0])?;
+                                crate::lir::dynamic_entry_kind(entry_kind)?;
+                                if dynamic_entries.insert(name.clone(), entry_kind.to_string()).is_some() { return Err("duplicate dynamic entry".into()); }
+                                f.slots.push((name, core::mem::size_of::<kiln_rt::context::DynEntry>() as u32));
+                                continue;
+                            }
                             if kind != "stack-object" { return Err("unknown slot descriptor".into()); }
                             arity(kind, args, 2)?;
                             let class = u32::try_from(int(&args[0])?).map_err(|_| "invalid stack object class")?;
@@ -543,6 +552,23 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                 for stmt in stmts {
                     validate_stack_references(stmt, &stack_objects)?;
                     let (head_name, operands) = head(list(stmt)?)?;
+                    if head_name == "dynamic-enter" {
+                        arity(head_name, operands, 3)?;
+                        let entry = sym(&operands[0])?;
+                        let kind = sym(&operands[1])?;
+                        if dynamic_entries.get(entry).map(String::as_str) != Some(kind) {
+                            return Err("dynamic-enter does not match entry slot".into());
+                        }
+                        lowered.extend(crate::lir::enter_dynamic_entry(entry.to_string(), kind, parse_expr(&operands[2])?)?);
+                        continue;
+                    }
+                    if head_name == "dynamic-leave" {
+                        arity(head_name, operands, 1)?;
+                        let entry = sym(&operands[0])?;
+                        if !dynamic_entries.contains_key(entry) { return Err("dynamic-leave requires a dynamic entry".into()); }
+                        lowered.push(crate::lir::leave_dynamic_entry(entry.to_string()));
+                        continue;
+                    }
                     if head_name == "stack-roots-enter" {
                         arity(head_name, operands, 4)?;
                         let entry = sym(&operands[0])?;
@@ -559,7 +585,7 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                         arity(head_name, operands, 1)?;
                         let entry = sym(&operands[0])?;
                         if !stack_root_entries.contains(entry) { return Err("stack-roots-leave requires a roots entry".into()); }
-                        lowered.push(crate::lir::leave_stack_roots(entry.to_string()));
+                        lowered.push(crate::lir::leave_dynamic_entry(entry.to_string()));
                         continue;
                     }
                     if head_name == "stack-closure" {

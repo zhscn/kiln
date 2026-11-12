@@ -10,6 +10,8 @@
 
 栈上的 cons 和闭包以对象种类及引用项数量声明栈槽，由 Rust 决定大小、header、清零、引用字段起点和对象初始化。生成方标注栈根区域的进入与退出，Rust 初始化并链接动态根条目；rest 列表按生成方选择的栈槽地址初始化 cons。
 
+catch、unwind-protect、跨函数退出点、special 绑定和 progv 的动态条目也由 Rust 按语义种类建立和撤销。Lisp 仍编排控制流及绑定、cleanup 的求值，部分条目内容和展开 payload 仍使用兼容载荷。
+
 `alloc-vector` 接收 simple-vector 或字符串的种类、未装箱长度和初值，Rust 负责尺寸、header、对齐及填充。字符串初值为字符码点，simple-vector 初值为对象；动态长度须由生成方检查范围。`alloc-vector-elements` 接收已求值的多个对象，按顺序初始化 simple-vector。填充过程没有 safepoint。
 
 `vector-ref` 和 `vector-set` 访问 simple-vector 的对象元素，`string-ref` 和 `string-set` 访问字符串的字符；这些操作接收未装箱下标，对象类型与下标范围由生成方检查。`vector-length` 读取未装箱长度，并屏蔽 header 中的身份哈希。fixnum 和字符的装箱、拆箱操作负责立即数与机器字之间的转换。

@@ -234,7 +234,35 @@ pub fn enter_stack_roots(entry: String, object: String, class: u32, count: i64) 
     ])
 }
 
-pub fn leave_stack_roots(entry: String) -> Stmt {
+pub fn dynamic_entry_kind(kind: &str) -> Result<i64, String> {
+    use kiln_rt::context::*;
+    Ok(match kind {
+        "catch" => DYN_CATCH,
+        "unwind-protect" => DYN_UNWIND_PROTECT,
+        "exit-point" => DYN_EXIT_POINT,
+        "bind" => DYN_BIND,
+        "progv" => DYN_PROGV,
+        _ => return Err(format!("unknown dynamic entry kind {kind}")),
+    } as i64)
+}
+
+pub fn enter_dynamic_entry(entry: String, kind: &str, tag: Expr) -> Result<Vec<Stmt>, String> {
+    use kiln_rt::context::{Context, DynEntry};
+    let field = |offset: usize, value| Stmt::Store(Expr::Slot(entry.clone()), offset as i32, value);
+    let context = || Expr::Var("ctx".into());
+    let dynenv = core::mem::offset_of!(Context, dynenv) as i32;
+    Ok(vec![
+        field(core::mem::offset_of!(DynEntry, kind), Expr::Int(dynamic_entry_kind(kind)?)),
+        field(core::mem::offset_of!(DynEntry, prev), Expr::Load(Box::new(context()), dynenv)),
+        field(core::mem::offset_of!(DynEntry, fp), Expr::Fp),
+        field(core::mem::offset_of!(DynEntry, tag), tag),
+        field(core::mem::offset_of!(DynEntry, pend_target), Expr::Int(0)),
+        field(core::mem::offset_of!(DynEntry, pend_value), Expr::Int(0)),
+        Stmt::Store(context(), dynenv, Expr::Slot(entry)),
+    ])
+}
+
+pub fn leave_dynamic_entry(entry: String) -> Stmt {
     use kiln_rt::context::{Context, DynEntry};
     Stmt::Store(Expr::Var("ctx".into()), core::mem::offset_of!(Context, dynenv) as i32,
         Expr::Load(Box::new(Expr::Slot(entry)), core::mem::offset_of!(DynEntry, prev) as i32))

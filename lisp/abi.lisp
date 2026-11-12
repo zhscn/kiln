@@ -67,15 +67,6 @@
 (defconstant +values-max+ 1021)
 
 ;;; Dynamic-environment entries (stack-allocated in the establishing frame).
-(defconstant +dyn-catch+ 1)
-(defconstant +dyn-unwind-protect+ 2)
-(defconstant +dyn-exit-point+ 5)
-(defconstant +dyn-bind+ 6)
-(defconstant +dyn-progv+ 7)
-(defconstant +dynentry-size+ 48)
-(defconstant +dyn-kind+ 0)
-(defconstant +dyn-prev+ 8)
-(defconstant +dyn-fp+ 16)
 (defconstant +dyn-tag+ 24)
 (defconstant +dyn-pend-target+ 32)
 (defconstant +dyn-pend-value+ 40)
