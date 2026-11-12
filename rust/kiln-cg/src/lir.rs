@@ -256,6 +256,27 @@ pub fn structure_layout(object: Expr) -> Expr {
     Expr::Load(Box::new(object), size_of::<u64>() as i32 - TAG_GENERAL as i32)
 }
 
+pub fn structure_allocation_layout(count: &Expr) -> Result<(Expr, Expr), String> {
+    use crate::kir::{BinOp, ShiftOp};
+    use kiln_rt::object::{KIND_STRUCTURE_INSTANCE, LENGTH_MASK, LENGTH_SHIFT};
+    if let Expr::Int(n) = count {
+        if *n < 0 || *n as u64 > LENGTH_MASK { return Err("structure slot count out of range".into()); }
+        return Ok((Expr::Int(2 * size_of::<u64>() as i64 + n * size_of::<u64>() as i64),
+                   Expr::Int(((*n as u64) << LENGTH_SHIFT | KIND_STRUCTURE_INSTANCE) as i64)));
+    }
+    Ok((Expr::Bin(BinOp::Add, Box::new(Expr::Int((2 * size_of::<u64>()) as i64)),
+                  Box::new(Expr::Shift(ShiftOp::Shl, Box::new(count.clone()), 3))),
+        Expr::Bin(BinOp::Or, Box::new(Expr::Int(KIND_STRUCTURE_INSTANCE as i64)),
+                  Box::new(Expr::Shift(ShiftOp::Shl, Box::new(count.clone()), LENGTH_SHIFT as i64)))))
+}
+
+pub fn initialize_structure(result: String, address: String, layout: Expr) -> Vec<Stmt> {
+    vec![
+        Stmt::Store(Expr::Var(address.clone()), size_of::<u64>() as i32, layout),
+        Stmt::Set(result, Expr::Bin(crate::kir::BinOp::Add, Box::new(Expr::Var(address)), Box::new(Expr::Int(TAG_GENERAL as i64)))),
+    ]
+}
+
 pub fn structure_slot(object: Expr, index: Expr) -> Expr {
     Expr::Load(Box::new(indexed_object_address(object, index)), (2 * size_of::<u64>()) as i32 - TAG_GENERAL as i32)
 }

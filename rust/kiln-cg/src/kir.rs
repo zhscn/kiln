@@ -701,6 +701,34 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                         lowered.extend(crate::lir::initialize_stack_object(slot.to_string(), class, count)?);
                         continue;
                     }
+                    if head_name == "alloc-structure" {
+                        arity(head_name, operands, 5)?;
+                        let result = sym(&operands[0])?.to_string();
+                        let layout = parse_expr(&operands[1])?;
+                        let count = parse_expr(&operands[2])?;
+                        for operand in [&layout, &count] {
+                            match operand {
+                                Expr::Int(_) => (),
+                                Expr::Var(name) if name != &result => (),
+                                _ => return Err("alloc-structure requires stable operands distinct from the result".into()),
+                            }
+                        }
+                        let (bytes, header) = crate::lir::structure_allocation_layout(&count)?;
+                        let name = format!("{prefix}{alloc_number}");
+                        alloc_number += 1;
+                        let raw = format!("{name}_object");
+                        f.vars.push((raw.clone(), VarKind::Raw));
+                        let (vars, blocks, next_name, mut next_stmts) = crate::lir::allocate_raw(
+                            &name, block_name, lowered, raw.clone(), bytes, header, true,
+                            string(&operands[3])?.to_string(), handler(&operands[4])?,
+                        )?;
+                        f.vars.extend(vars);
+                        f.blocks.extend(blocks);
+                        next_stmts.extend(crate::lir::initialize_structure(result, raw, layout));
+                        block_name = next_name;
+                        lowered = next_stmts;
+                        continue;
+                    }
                     if head_name == "alloc-closure" {
                         arity(head_name, operands, 5)?;
                         let result = sym(&operands[0])?.to_string();

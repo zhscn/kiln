@@ -120,6 +120,27 @@ fn immediate_class_tests_preserve_kir_and_reject_unknown_classes() {
 }
 
 #[test]
+fn structure_allocation_uses_slot_count_and_roots_layout() {
+    let module = |body| format!("(module \"structure\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj) (n raw) (layout obj)) (slots) (block b {body} (return v 1)) (block caught (return exn1 1))))");
+    let program = module("(alloc-structure v layout 2 \"kiln_rt_alloc\" caught)");
+    let program = sexp::parse_one(&program).unwrap();
+    let result = packet::load(&packet::encode(&program, packet::schema::KIR_PAYLOAD).unwrap()).unwrap();
+    let blocks = &result.funcs[0].blocks;
+    let fast = format!("{:?}", blocks[1]);
+    assert!(fast.contains("Int(525)"));
+    assert!(fast.contains("16, Int(0)"));
+    assert!(fast.contains("24, Int(0)"));
+    assert!(format!("{:?}", blocks[2]).contains("handler: Some(\"caught\")"));
+    assert!(format!("{:?}", blocks[3]).contains("8, Var(\"layout\")"));
+    let dynamic = module("(alloc-structure v layout n \"kiln_rt_alloc\" nil)");
+    let dynamic = kiln_cg::kir::parse_module(&sexp::parse_one(&dynamic).unwrap()).unwrap();
+    assert!(format!("{:?}", dynamic.funcs[0]).contains("Shl, Var(\"n\"), 8"));
+    for body in ["(alloc-structure v layout -1 \"kiln_rt_alloc\" nil)", "(alloc-structure v layout 4294967296 \"kiln_rt_alloc\" nil)", "(alloc-structure v v 1 \"kiln_rt_alloc\" nil)"] {
+        assert!(kiln_cg::kir::parse_module(&sexp::parse_one(&module(body)).unwrap()).is_err());
+    }
+}
+
+#[test]
 fn instance_and_structure_fields_use_runtime_layout() {
     let module = |body| format!("(module \"objects\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj) (i raw)) (slots) (block b {body} (return v 1))))");
     let rack = "(load (add a0 (select (eq (and (load a0 -5) 255) 9) 0 8)) 3)";
