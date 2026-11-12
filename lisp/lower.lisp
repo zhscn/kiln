@@ -143,6 +143,7 @@ to their indices in the literal words; else NIL.")
   (cond ((integerp word) word)
         ((eq (first word) :literal)
          `(:load (:addr ,+literals-label+) ,(* 8 (second word))))
+        ((eq (first word) :fixnum) `(:fixnum-tag ,(second word)))
         ((eq (first word) :character) `(:character-tag ,(second word)))
         ((eq (first word) :single-float) `(:single-float-tag ,(second word)))
         ((eq (first word) :object-data)
@@ -291,7 +292,7 @@ name of its package as a string."
   (typecase x
     (integer
      (if (<= +most-negative-fixnum+ x +most-positive-fixnum+)
-         (ash x +fixnum-shift+)
+         `(:fixnum ,x)
          (or (gethash x *constants*)
              (let ((label (fresh-label "kiln_bignum_"))
                    (n (ceiling (1+ (integer-length x)) 64)))

@@ -442,6 +442,14 @@ fn parse_word(s: &Sexp) -> R<Word> {
                     arity(h, rest, 2)?;
                     Ok(Word::DataAddr(string(&rest[0])?.to_string(), crate::lir::static_object_tag(sym(&rest[1])?)?))
                 }
+                "fixnum" => {
+                    arity(h, rest, 1)?;
+                    let value = int(&rest[0])?;
+                    if !(-(1_i64 << 62)..(1_i64 << 62)).contains(&value) {
+                        return Err("fixnum out of range".into());
+                    }
+                    Ok(Word::Int(value << 1))
+                }
                 "character" => {
                     arity(h, rest, 1)?;
                     let code = int(&rest[0])?;
@@ -1430,6 +1438,8 @@ mod tests {
     fn immediate_data_words_validate_and_preserve_bits() {
         let word = |s: &str| parse_word(&crate::sexp::parse_one(s).unwrap());
         for (input, expected) in [
+            ("(fixnum -4611686018427387904)", i64::MIN),
+            ("(fixnum 4611686018427387903)", i64::MAX - 1),
             ("(character 0)", 0x0b_i64),
             ("(character 128512)", (128512_i64 << 8) | 0x0b),
             ("(single-float 0)", 0x1b),
@@ -1438,7 +1448,7 @@ mod tests {
         ] {
             assert!(matches!(word(input).unwrap(), Word::Int(n) if n == expected), "{input}");
         }
-        for input in ["(character -1)", "(character 1114112)",
+        for input in ["(fixnum -4611686018427387905)", "(fixnum 4611686018427387904)", "(character -1)", "(character 1114112)",
                       "(single-float -1)", "(single-float 4294967296)"] {
             assert!(word(input).is_err(), "{input}");
         }

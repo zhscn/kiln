@@ -1,0 +1,6 @@
+(defun literal-fixnum-bounds ()
+  (list -4611686018427387904 0 4611686018427387903))
+(let ((static '#(-4611686018427387904 0 4611686018427387903)))
+  (%gc)
+  (print (list (literal-fixnum-bounds)
+               (svref static 0) (svref static 1) (svref static 2))))
