@@ -22,6 +22,8 @@ catch、unwind-protect、跨函数退出点、special 绑定和 progv 的动态�
 
 double-float 的未装箱位模式和 complex 的实部、虚部通过字段操作读取。double 位模式是机器值，函数入口与 double 位模式均不能作为对象引用字段写入。
 
+实例的 rack、class 和按位置访问的槽，funcallable instance 的函数，以及原生结构的 layout 和槽由后端按对象种类展开。槽位置传入机器字；生成方负责类型和位置的有效性。
+
 `invalid-vector-length` 检查带 tag 的候选长度是否为非负 fixnum 且不超过运行时 header 可表示的最大长度；生成方负责错误路径。常量长度在后端展开时也检查同一上限。
 
 LIR（low-level IR）是表示选择后的后端输入语言，也是编译协议的程序载荷。它不设独立的优化管线。初期由 HIR 降级产生，后续由 MIR 产生；两者使用同一 schema。它已经确定了“做什么”：每个值的表示、每个对象的存储、闭包的内容、控制流和动态范围；还没有确定“怎么做”：tag、对象和 context 的偏移、调用序列、展开 payload 的编码、栈图。后者由 kiln-cg 降级成 KIR 时按 kiln-rt 的布局决定。

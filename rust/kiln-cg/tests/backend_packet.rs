@@ -120,6 +120,30 @@ fn immediate_class_tests_preserve_kir_and_reject_unknown_classes() {
 }
 
 #[test]
+fn instance_and_structure_fields_use_runtime_layout() {
+    let module = |body| format!("(module \"objects\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj) (i raw)) (slots) (block b {body} (return v 1))))");
+    let rack = "(load (add a0 (select (eq (and (load a0 -5) 255) 9) 0 8)) 3)";
+    let cases = [
+        (format!("(set v {rack})"), "(set v (instance-rack a0))".to_string()),
+        ("(store (add a0 (select (eq (and (load a0 -5) 255) 9) 0 8)) 3 a1)".to_string(), "(instance-rack-set a0 a1)".to_string()),
+        (format!("(set v (load {rack} 3))"), "(set v (instance-class a0))".to_string()),
+        (format!("(set v (load (add {rack} (shl i 3)) 27))"), "(set v (instance-slot a0 i))".to_string()),
+        (format!("(store (add {rack} (shl i 3)) 27 a1)"), "(instance-slot-set a0 i a1)".to_string()),
+        ("(set v (load a0 3))".to_string(), "(set v (structure-layout a0))".to_string()),
+        ("(set v (load (add a0 (shl i 3)) 11))".to_string(), "(set v (structure-slot a0 i))".to_string()),
+        ("(store (add a0 (shl i 3)) 11 a1)".to_string(), "(structure-slot-set a0 i a1)".to_string()),
+        ("(set v (load a0 19))".to_string(), "(set v (funcallable-function a0))".to_string()),
+        ("(store a0 19 a1)".to_string(), "(funcallable-function-set a0 a1)".to_string()),
+    ];
+    for (old, new) in cases {
+        let old = kiln_cg::kir::parse_module(&sexp::parse_one(&module(old)).unwrap()).unwrap();
+        let new = sexp::parse_one(&module(new)).unwrap();
+        let new = packet::load(&packet::encode(&new, packet::schema::KIR_PAYLOAD).unwrap()).unwrap();
+        assert_eq!(format!("{old:?}"), format!("{new:?}"));
+    }
+}
+
+#[test]
 fn poll_tests_preserve_entry_and_loop_checks() {
     let module = |body| format!("(module \"poll\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (p raw) (q raw)) (slots) (block b {body} (return a0 1))))");
     let old = module("(set p (lt (fp) (load ctx 80))) (set q (load ctx 0))");

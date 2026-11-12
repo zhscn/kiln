@@ -220,6 +220,58 @@ pub fn string_set(object: Expr, index: Expr, value: Expr) -> Stmt {
     Stmt::Store32(string_element_address(object, index), size_of::<u64>() as i32 - TAG_GENERAL as i32, character_untag(value))
 }
 
+fn instance_rack_address(object: Expr) -> Result<Expr, String> {
+    use crate::kir::BinOp;
+    let is_standard = test_header_class(CLASS_INSTANCE, object.clone())?;
+    let offset = Expr::Select(Box::new(is_standard), Box::new(Expr::Int(0)), Box::new(Expr::Int(size_of::<u64>() as i64)));
+    Ok(Expr::Bin(BinOp::Add, Box::new(object), Box::new(offset)))
+}
+
+pub fn instance_rack(object: Expr) -> Result<Expr, String> {
+    Ok(Expr::Load(Box::new(instance_rack_address(object)?), size_of::<u64>() as i32 - TAG_GENERAL as i32))
+}
+
+pub fn set_instance_rack(object: Expr, value: Expr) -> Result<Stmt, String> {
+    Ok(Stmt::Store(instance_rack_address(object)?, size_of::<u64>() as i32 - TAG_GENERAL as i32, value))
+}
+
+fn indexed_object_address(object: Expr, index: Expr) -> Expr {
+    Expr::Bin(crate::kir::BinOp::Add, Box::new(object),
+        Box::new(Expr::Shift(crate::kir::ShiftOp::Shl, Box::new(index), 3)))
+}
+
+pub fn instance_class(object: Expr) -> Result<Expr, String> {
+    Ok(Expr::Load(Box::new(instance_rack(object)?), size_of::<u64>() as i32 - TAG_GENERAL as i32))
+}
+
+pub fn instance_slot(object: Expr, index: Expr) -> Result<Expr, String> {
+    Ok(Expr::Load(Box::new(indexed_object_address(instance_rack(object)?, index)), (4 * size_of::<u64>()) as i32 - TAG_GENERAL as i32))
+}
+
+pub fn set_instance_slot(object: Expr, index: Expr, value: Expr) -> Result<Stmt, String> {
+    Ok(Stmt::Store(indexed_object_address(instance_rack(object)?, index), (4 * size_of::<u64>()) as i32 - TAG_GENERAL as i32, value))
+}
+
+pub fn structure_layout(object: Expr) -> Expr {
+    Expr::Load(Box::new(object), size_of::<u64>() as i32 - TAG_GENERAL as i32)
+}
+
+pub fn structure_slot(object: Expr, index: Expr) -> Expr {
+    Expr::Load(Box::new(indexed_object_address(object, index)), (2 * size_of::<u64>()) as i32 - TAG_GENERAL as i32)
+}
+
+pub fn set_structure_slot(object: Expr, index: Expr, value: Expr) -> Stmt {
+    Stmt::Store(indexed_object_address(object, index), (2 * size_of::<u64>()) as i32 - TAG_GENERAL as i32, value)
+}
+
+pub fn funcallable_function(object: Expr) -> Expr {
+    Expr::Load(Box::new(object), (3 * size_of::<u64>()) as i32 - TAG_GENERAL as i32)
+}
+
+pub fn set_funcallable_function(object: Expr, value: Expr) -> Stmt {
+    Stmt::Store(object, (3 * size_of::<u64>()) as i32 - TAG_GENERAL as i32, value)
+}
+
 fn closure_offset(index: i64) -> Result<i32, String> {
     let index = usize::try_from(index).map_err(|_| "invalid closure index")?;
     let offset = index.checked_mul(size_of::<u64>())

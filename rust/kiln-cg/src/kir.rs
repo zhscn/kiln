@@ -877,6 +877,22 @@ fn parse_stmt(s: &Sexp) -> R<Stmt> {
             arity(h, r, 3)?;
             crate::lir::string_set(parse_expr(&r[0])?, parse_expr(&r[1])?, parse_expr(&r[2])?)
         }
+        "instance-rack-set" => {
+            arity(h, r, 2)?;
+            return crate::lir::set_instance_rack(parse_expr(&r[0])?, parse_expr(&r[1])?);
+        }
+        "instance-slot-set" => {
+            arity(h, r, 3)?;
+            return crate::lir::set_instance_slot(parse_expr(&r[0])?, parse_expr(&r[1])?, parse_expr(&r[2])?);
+        }
+        "structure-slot-set" => {
+            arity(h, r, 3)?;
+            crate::lir::set_structure_slot(parse_expr(&r[0])?, parse_expr(&r[1])?, parse_expr(&r[2])?)
+        }
+        "funcallable-function-set" => {
+            arity(h, r, 2)?;
+            crate::lir::set_funcallable_function(parse_expr(&r[0])?, parse_expr(&r[1])?)
+        }
         "tls-write" => {
             arity(h, r, 2)?;
             return crate::lir::tls_write(parse_expr(&r[0])?, parse_expr(&r[1])?);
@@ -1092,6 +1108,30 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
         "string-ref" => {
             arity(h, r, 2)?;
             crate::lir::string_ref(parse_expr(&r[0])?, parse_expr(&r[1])?)
+        }
+        "instance-rack" => {
+            arity(h, r, 1)?;
+            return crate::lir::instance_rack(parse_expr(&r[0])?);
+        }
+        "instance-class" => {
+            arity(h, r, 1)?;
+            return crate::lir::instance_class(parse_expr(&r[0])?);
+        }
+        "instance-slot" => {
+            arity(h, r, 2)?;
+            return crate::lir::instance_slot(parse_expr(&r[0])?, parse_expr(&r[1])?);
+        }
+        "structure-layout" => {
+            arity(h, r, 1)?;
+            crate::lir::structure_layout(parse_expr(&r[0])?)
+        }
+        "structure-slot" => {
+            arity(h, r, 2)?;
+            crate::lir::structure_slot(parse_expr(&r[0])?, parse_expr(&r[1])?)
+        }
+        "funcallable-function" => {
+            arity(h, r, 1)?;
+            crate::lir::funcallable_function(parse_expr(&r[0])?)
         }
         "vector-ref" => {
             arity(h, r, 2)?;
