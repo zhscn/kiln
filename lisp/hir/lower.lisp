@@ -861,14 +861,14 @@ unsupported call. Arguments retain their evaluation order and effects."
       (let* ((vals (lower-args (coerce args 'list))) (v (first vals)) (i (second vals)))
         (return-from hir-lower-typed-call
           (values (emit-svref-fast-path
-                   v i (lambda () `(:load (:add ,v (:shl ,i 2)) ,+vector-data+))
+                   v i (lambda () `(:vector-ref ,v (:fixnum-untag ,i)))
                    (lambda () (emit-slow-call 'svref v i)) t) t))))
     (when (and (= count 3) (member name '((setf aref) (setf svref) (setf elt)) :test #'equal)
                (eq (hir-node-type (svref args 1)) 'simple-vector))
       (let* ((vals (lower-args (coerce args 'list))) (x (first vals)) (v (second vals)) (i (third vals)))
         (return-from hir-lower-typed-call
           (values (emit-svref-fast-path
-                   v i (lambda () (emit `(:store (:add ,v (:shl ,i 2)) ,+vector-data+ ,x)) x)
+                   v i (lambda () (emit `(:vector-set ,v (:fixnum-untag ,i) ,x)) x)
                    (lambda () (emit-slow-call name x v i)) t) t))))
     (when (and (= count 1) (eq name 'length)
                (member (hir-node-type (svref args 0)) '(simple-vector :native-string)))

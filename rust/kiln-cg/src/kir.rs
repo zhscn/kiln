@@ -651,6 +651,10 @@ fn parse_stmt(s: &Sexp) -> R<Stmt> {
             return crate::lir::field_store(u32::try_from(int(&r[0])?).map_err(|_| "invalid field ID")?,
                 parse_expr(&r[1])?, parse_expr(&r[2])?);
         }
+        "vector-set" => {
+            arity(h, r, 3)?;
+            crate::lir::vector_set(parse_expr(&r[0])?, parse_expr(&r[1])?, parse_expr(&r[2])?)
+        }
         "closure-set" => {
             arity(h, r, 3)?;
             return crate::lir::closure_set(parse_expr(&r[0])?, int(&r[1])?, parse_expr(&r[2])?);
@@ -818,6 +822,14 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
         "field-load" => {
             arity(h, r, 2)?;
             return crate::lir::field_load(u32::try_from(int(&r[0])?).map_err(|_| "invalid field ID")?, parse_expr(&r[1])?);
+        }
+        "fixnum-untag" => {
+            arity(h, r, 1)?;
+            crate::lir::fixnum_untag(parse_expr(&r[0])?)
+        }
+        "vector-ref" => {
+            arity(h, r, 2)?;
+            crate::lir::vector_ref(parse_expr(&r[0])?, parse_expr(&r[1])?)
         }
         "test-class" => {
             arity(h, r, 2)?;

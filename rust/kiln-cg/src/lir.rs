@@ -76,6 +76,24 @@ pub fn field_store(field: u32, object: Expr, value: Expr) -> Result<Stmt, String
     Ok(Stmt::Store(object, field_offset(field)?, value))
 }
 
+pub fn fixnum_untag(value: Expr) -> Expr {
+    Expr::Shift(crate::kir::ShiftOp::Sar, Box::new(value), 1)
+}
+
+fn vector_element_address(object: Expr, index: Expr) -> Expr {
+    use crate::kir::{BinOp, ShiftOp};
+    Expr::Bin(BinOp::Add, Box::new(object),
+        Box::new(Expr::Shift(ShiftOp::Shl, Box::new(index), 3)))
+}
+
+pub fn vector_ref(object: Expr, index: Expr) -> Expr {
+    Expr::Load(Box::new(vector_element_address(object, index)), size_of::<u64>() as i32 - TAG_GENERAL as i32)
+}
+
+pub fn vector_set(object: Expr, index: Expr, value: Expr) -> Stmt {
+    Stmt::Store(vector_element_address(object, index), size_of::<u64>() as i32 - TAG_GENERAL as i32, value)
+}
+
 fn closure_offset(index: i64) -> Result<i32, String> {
     let index = usize::try_from(index).map_err(|_| "invalid closure index")?;
     let offset = index.checked_mul(size_of::<u64>())

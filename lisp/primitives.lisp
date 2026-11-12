@@ -604,17 +604,17 @@ are compared (no short circuit), which also checks every argument."
 
 (define-primop :svref (v i)
   (emit-check-index v i)
-  (copy-to-var `(:load (:add ,v (:shl ,i 2)) ,+vector-data+)))
+  (copy-to-var `(:vector-ref ,v (:fixnum-untag ,i))))
 (define-primop :svref-unchecked (v i)
   ;; V is known to be a simple vector and I a valid index of it (CLOS's
   ;; dispatch caches, whose indices are masked to their size).
-  (copy-to-var `(:load (:add ,v (:shl ,i 2)) ,+vector-data+)))
+  (copy-to-var `(:vector-ref ,v (:fixnum-untag ,i))))
 (define-primop :set-svref (v i x)
   (emit-check-index v i)
-  (emit `(:store (:add ,v (:shl ,i 2)) ,+vector-data+ ,x))
+  (emit `(:vector-set ,v (:fixnum-untag ,i) ,x))
   x)
 (define-primop :set-svref-unchecked (v i x)
-  (emit `(:store (:add ,v (:shl ,i 2)) ,+vector-data+ ,x))
+  (emit `(:vector-set ,v (:fixnum-untag ,i) ,x))
   x)
 
 ;;; SVREF, (SETF SVREF) and LENGTH are open-coded for simple vectors (and
@@ -641,12 +641,12 @@ of it, SLOW-FN otherwise; both return an operand. Returns the result."
 
 (define-primitive svref (v i)
   (emit-svref-fast-path v i
-                        (lambda () `(:load (:add ,v (:shl ,i 2)) ,+vector-data+))
+                        (lambda () `(:vector-ref ,v (:fixnum-untag ,i)))
                         (lambda () (emit-slow-call 'svref v i))))
 
 (define-primitive (setf svref) (x v i)
   (emit-svref-fast-path v i
-                        (lambda () (emit `(:store (:add ,v (:shl ,i 2)) ,+vector-data+ ,x)) x)
+                        (lambda () (emit `(:vector-set ,v (:fixnum-untag ,i) ,x)) x)
                         (lambda () (emit-slow-call '(setf svref) x v i))))
 
 (defun emit-schar (s i c slow-name &optional known-string)
@@ -702,9 +702,9 @@ of it, SLOW-FN otherwise; both return an operand. Returns the result."
     (br bad-index slow fast-vector)
     (start-block fast-vector)
     (if x
-        (progn (emit `(:store (:add ,v (:shl ,i 2)) ,+vector-data+ ,x))
+        (progn (emit `(:vector-set ,v (:fixnum-untag ,i) ,x))
                (emit `(:set ,r ,x)))
-        (emit `(:set ,r (:load (:add ,v (:shl ,i 2)) ,+vector-data+))))
+        (emit `(:set ,r (:vector-ref ,v (:fixnum-untag ,i)))))
     (jump done)
     (start-block string)
     (br (if x

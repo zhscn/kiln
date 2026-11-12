@@ -117,6 +117,22 @@ fn immediate_class_tests_preserve_kir_and_reject_unknown_classes() {
 }
 
 #[test]
+fn vector_element_access_uses_word_indices() {
+    let module = |body| format!("(module \"vector\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj) (i raw)) (slots) (block b {body} (return v 1))))");
+    let old = module("(set v (load (add a0 (shl i 3)) 3)) (store (add a0 (shl i 3)) 3 a1)".to_string());
+    let new = module("(set v (vector-ref a0 i)) (vector-set a0 i a1)".to_string());
+    let old = kiln_cg::kir::parse_module(&sexp::parse_one(&old).unwrap()).unwrap();
+    let new = sexp::parse_one(&new).unwrap();
+    let new = packet::load(&packet::encode(&new, packet::schema::KIR_PAYLOAD).unwrap()).unwrap();
+    assert_eq!(format!("{old:?}"), format!("{new:?}"));
+    let old = module("(set i (sar a0 1))".to_string());
+    let new = module("(set i (fixnum-untag a0))".to_string());
+    let old = kiln_cg::kir::parse_module(&sexp::parse_one(&old).unwrap()).unwrap();
+    let new = kiln_cg::kir::parse_module(&sexp::parse_one(&new).unwrap()).unwrap();
+    assert_eq!(format!("{old:?}"), format!("{new:?}"));
+}
+
+#[test]
 fn vector_elements_initialize_in_order_after_allocation() {
     let module = |body| format!("(module \"vector\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj) (x obj)) (slots) (block b {body} (return v 1))))");
     for (fields, count) in [("", 0), ("x 4 a0", 3)] {
