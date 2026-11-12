@@ -979,10 +979,8 @@ host or kiln)."
 ;;; Calls
 
 (defun emit-check-function (f)
-  (let ((general (new-block)) (bad (new-block)) (ok (new-block)))
-    (br `(:test-class ,kiln.kir::+packet-class-general+ ,f) general bad)
-    (start-block general)
-    (br `(:test-header-class ,kiln.kir::+packet-class-function+ ,f) ok bad)
+  (let ((bad (new-block)) (ok (new-block)))
+    (br (emit-kind-test f kiln.kir::+packet-class-function+) ok bad)
     (start-block bad)
     (emit-error +err-not-function+ f)
     (start-block ok)))
@@ -991,13 +989,11 @@ host or kiln)."
   "Returns a variable holding the function designated by F: F itself if
 it is a function, the global function of F if it is a symbol."
   (let ((r (copy-to-var f))
-        (general (new-block)) (not-function (new-block)) (symbol (new-block))
+        (not-function (new-block)) (symbol (new-block))
         (bad (new-block)) (ok (new-block)))
-    (br `(:test-class ,kiln.kir::+packet-class-general+ ,r) general bad)
-    (start-block general)
-    (br `(:test-header-class ,kiln.kir::+packet-class-function+ ,r) ok not-function)
+    (br (emit-kind-test r kiln.kir::+packet-class-function+) ok not-function)
     (start-block not-function)
-    (br `(:test-header-class ,kiln.kir::+packet-class-symbol+ ,r) symbol bad)
+    (br (emit-kind-test r kiln.kir::+packet-class-symbol+) symbol bad)
     (start-block symbol)
     (emit `(:set ,r (:field-load ,kiln.kir::+packet-field-symbol-function+ ,r)))
     (jump ok)
@@ -1007,10 +1003,8 @@ it is a function, the global function of F if it is a symbol."
     r))
 
 (defun emit-check-symbol (s)
-  (let ((general (new-block)) (bad (new-block)) (ok (new-block)))
-    (br `(:test-class ,kiln.kir::+packet-class-general+ ,s) general bad)
-    (start-block general)
-    (br `(:test-header-class ,kiln.kir::+packet-class-symbol+ ,s) ok bad)
+  (let ((bad (new-block)) (ok (new-block)))
+    (br (emit-kind-test s kiln.kir::+packet-class-symbol+) ok bad)
     (start-block bad)
     (emit-error +err-not-symbol+ s)
     (start-block ok)))

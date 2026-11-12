@@ -2,7 +2,7 @@
 
 状态：**操作层正在接入**。[结构化封套](compiler-protocol.md)已支持文件与运行期交接，当前承载 KIR，兼容载荷已支持 fixnum、cons、character 和 single-float 的表示类测试、`field-load`/`field-store`、闭包环境读写、传递区读写和根计数设置，以及普通函数对象 `invoke`，fixnum、字符和 single-float 常量以数值、码点和 IEEE 位模式传入，Rust 在构造 KIR 时展开立即数表示、布局和调用约定。动态传递区下标和根计数的范围由生成方保证。其余操作尚未迁移，不能视作完成 LIR。现在 Lisp 主要生成 KIR（[codegen.md](codegen.md)）。分层和迁移见 [compiler.md](compiler.md)。
 
-兼容载荷中的堆对象测试分为一般对象 tag 测试和受该测试保护的 header 类测试；生成方必须确保只有一般对象到达后者。完整 LIR 的类型测试将把安全检查与表示类测试作为同一操作处理。
+兼容载荷的 `guarded-class-test` 由后端生成一般对象检查和 header 类测试，对任意 Lisp 值安全。兼容输入仍接受单独的 header 类测试，生成方必须确保只有一般对象到达该操作。完整 LIR 的类型测试将把安全检查与表示类测试作为同一操作处理。
 
 兼容载荷的 `alloc-fixed` 接收对象种类和已求值的字段，Rust 据此分配和初始化堆 cons、double-float、complex 和 CLOS 实例；对象字段变量跨分配慢路径保持 GC root。兼容输入中的 `alloc-raw` 由生成方提供大小和 header；Rust 展开定长小对象的 bump 分配、清零与慢路径，其他大小调用 runtime 分配器。`alloc-raw` 的结果是未加 tag 的地址，生成方须在下一个 safepoint 前完成初始化并转换为对象引用。完整 LIR 的分配操作将改用对象种类、存储方式和字段。
 
