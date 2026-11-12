@@ -552,6 +552,19 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                 for stmt in stmts {
                     validate_stack_references(stmt, &stack_objects)?;
                     let (head_name, operands) = head(list(stmt)?)?;
+                    if head_name == "ensure-tls-index" {
+                        arity(head_name, operands, 3)?;
+                        let result = sym(&operands[0])?.to_string();
+                        let symbol = sym(&operands[1])?.to_string();
+                        if result == symbol { return Err("ensure-tls-index result must differ from symbol".into()); }
+                        let name = format!("{prefix}{alloc_number}");
+                        alloc_number += 1;
+                        let (blocks, next_name) = crate::lir::ensure_tls_index(&name, block_name, lowered, result, symbol, string(&operands[2])?.to_string())?;
+                        f.blocks.extend(blocks);
+                        block_name = next_name;
+                        lowered = Vec::new();
+                        continue;
+                    }
                     if head_name == "special-ref" || head_name == "special-set" {
                         arity(head_name, operands, 2)?;
                         let (result, symbol, value) = if head_name == "special-ref" {
@@ -854,6 +867,10 @@ fn parse_stmt(s: &Sexp) -> R<Stmt> {
             arity(h, r, 3)?;
             crate::lir::string_set(parse_expr(&r[0])?, parse_expr(&r[1])?, parse_expr(&r[2])?)
         }
+        "tls-write" => {
+            arity(h, r, 2)?;
+            return crate::lir::tls_write(parse_expr(&r[0])?, parse_expr(&r[1])?);
+        }
         "closure-set" => {
             arity(h, r, 3)?;
             return crate::lir::closure_set(parse_expr(&r[0])?, int(&r[1])?, parse_expr(&r[2])?);
@@ -1029,6 +1046,10 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
         "tls-address" => {
             arity(h, r, 1)?;
             crate::lir::tls_address(parse_expr(&r[0])?)
+        }
+        "tls-read" => {
+            arity(h, r, 1)?;
+            return crate::lir::tls_read(parse_expr(&r[0])?);
         }
         "no-tls-p" => {
             arity(h, r, 1)?;

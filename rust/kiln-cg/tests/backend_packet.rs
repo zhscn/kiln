@@ -117,6 +117,25 @@ fn immediate_class_tests_preserve_kir_and_reject_unknown_classes() {
 }
 
 #[test]
+fn tls_index_and_slot_operations_preserve_binding_layout() {
+    let module = |body| format!("(module \"tls\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj) (i raw)) (slots) (block b {body} (return v 1))))");
+    let old = module("(set v (load (add (load ctx 48) (shl (load a0 35) 2)) 0)) (store (add (load ctx 48) (shl (load a0 35) 2)) 0 a1)");
+    let new = module("(set v (tls-read a0)) (tls-write a0 a1)");
+    let old = kiln_cg::kir::parse_module(&sexp::parse_one(&old).unwrap()).unwrap();
+    let new = sexp::parse_one(&new).unwrap();
+    let new = packet::load(&packet::encode(&new, packet::schema::KIR_PAYLOAD).unwrap()).unwrap();
+    assert_eq!(format!("{old:?}"), format!("{new:?}"));
+    let program = module("(ensure-tls-index i a0 \"kiln_rt_tls_index\")");
+    let result = kiln_cg::kir::parse_module(&sexp::parse_one(&program).unwrap()).unwrap();
+    assert_eq!(result.funcs[0].blocks.len(), 3);
+    let assign = format!("{:?}", result.funcs[0].blocks[1]);
+    assert!(assign.contains("kiln_rt_tls_index"));
+    assert!(assign.contains("handler: None"));
+    let invalid = module("(ensure-tls-index i i \"kiln_rt_tls_index\")");
+    assert!(kiln_cg::kir::parse_module(&sexp::parse_one(&invalid).unwrap()).is_err());
+}
+
+#[test]
 fn special_access_expands_global_and_dynamic_paths() {
     let module = |body| format!("(module \"special\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj)) (slots) (block b {body} (return v 1))))");
     let program = sexp::parse_one(&module("(special-ref v a0) (special-set a0 a1)")).unwrap();

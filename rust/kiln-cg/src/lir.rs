@@ -90,6 +90,32 @@ pub fn no_tls_value(value: Expr) -> Expr {
     Expr::Cmp(crate::kir::CmpOp::Eq, Box::new(value), Box::new(Expr::Int(kiln_rt::special::NO_TLS_VALUE as i64)))
 }
 
+pub fn tls_read(symbol: Expr) -> Result<Expr, String> {
+    Ok(Expr::Load(Box::new(tls_address(field_load(FIELD_SYMBOL_TLS_INDEX, symbol)?)), 0))
+}
+
+pub fn tls_write(symbol: Expr, value: Expr) -> Result<Stmt, String> {
+    Ok(Stmt::Store(tls_address(field_load(FIELD_SYMBOL_TLS_INDEX, symbol)?), 0, value))
+}
+
+#[allow(clippy::type_complexity)]
+pub fn ensure_tls_index(name: &str, block: String, mut preceding: Vec<Stmt>, result: String,
+                        symbol: String, runtime: String)
+    -> Result<(Vec<crate::kir::Block>, String), String> {
+    use crate::kir::{Block, CmpOp};
+    let assign = format!("{name}_assign");
+    let done = format!("{name}_done");
+    preceding.push(Stmt::Set(result.clone(), field_load(FIELD_SYMBOL_TLS_INDEX, Expr::Var(symbol.clone()))?));
+    preceding.push(Stmt::Br(Expr::Cmp(CmpOp::Eq, Box::new(Expr::Var(result.clone())), Box::new(Expr::Int(0))), assign.clone(), done.clone()));
+    Ok((vec![
+        Block { name: block, stmts: preceding },
+        Block { name: assign, stmts: vec![
+            Stmt::CallRt { name: runtime, results: vec![result], args: vec![Expr::Var("ctx".into()), Expr::Var(symbol)], handler: None, loc: None },
+            Stmt::Jump(done.clone()),
+        ] },
+    ], done))
+}
+
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn special_access(name: &str, block: String, mut preceding: Vec<Stmt>, symbol: String,
                       result: Option<String>, value: Option<Expr>)

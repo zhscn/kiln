@@ -824,13 +824,8 @@ known to hold one), and true; else NIL and NIL."
 (defun emit-tls-index (sym)
   "Raw variable holding the TLS index of the symbol operand SYM, assigned
 if needed (not a safepoint)."
-  (let ((index (copy-to-var `(:field-load ,kiln.kir::+packet-field-symbol-tls-index+ ,sym) :raw))
-        (assign (new-block)) (have (new-block)))
-    (br `(:eq ,index 0) assign have)
-    (start-block assign)
-    (emit `(:call-rt ,(rt-tls-index) (,index) (:ctx ,sym) :nil))
-    (jump have)
-    (start-block have)
+  (let ((sym (copy-to-var sym)) (index (new-var :raw)))
+    (emit `(:ensure-tls-index ,index ,sym ,(rt-tls-index)))
     index))
 
 (defun emit-unbind-progv (region)
@@ -843,8 +838,8 @@ if needed (not a safepoint)."
     (br `(:eq ,l ,(nil-value)) done body)
     (start-block body)
     (let ((pair (copy-to-var `(:field-load ,kiln.kir::+packet-field-cons-car+ ,l))))
-      (emit `(:store (:tls-address (:field-load ,kiln.kir::+packet-field-symbol-tls-index+ (:field-load ,kiln.kir::+packet-field-cons-car+ ,pair)))
-                     0 (:field-load ,kiln.kir::+packet-field-cons-cdr+ ,pair))))
+      (emit `(:tls-write (:field-load ,kiln.kir::+packet-field-cons-car+ ,pair)
+                         (:field-load ,kiln.kir::+packet-field-cons-cdr+ ,pair))))
     (emit `(:set ,l (:field-load ,kiln.kir::+packet-field-cons-cdr+ ,l)))
     (jump head)
     (start-block done)))
