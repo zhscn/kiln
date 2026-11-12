@@ -1,6 +1,6 @@
 (in-package #:kiln.compiler)
 
-;;;; Compile-time evaluation for the cross client: a form is converted to
+;;;; Evaluation in cross and image environments: a form is converted to
 ;;;; HIR (CST-TO-HIR's converter and analysis), and the HIR is turned into
 ;;;; host closures, one per node, which run it. The node kind is
 ;;;; dispatched on once, when the closures are built.
@@ -15,13 +15,15 @@
 ;;;; So functions made by evaluated code are ordinary host functions: macro
 ;;;; expanders defined at compile time are called by the converter.
 ;;;;
-;;;; Globals are those of the compile-time environment (a Clostrum
+;;;; Cross globals are those of the compile-time environment (a Clostrum
 ;;;; environment): a function call reads the car of the name's operator
 ;;;; cell, a special variable is the car of its variable cell (the cdr is
 ;;;; the unbound marker), both cells looked up when the closures are
 ;;;; built. A dynamic binding stores the new value in the cell and restores
 ;;;; the old one on the way out (shallow binding), so the host functions
 ;;;; that the environment holds (SYMBOL-VALUE, BOUNDP) see it too.
+;;;; Image globals use FDEFINITION and SYMBOL-VALUE directly; dynamic
+;;;; bindings use PROGV and therefore the runtime context.
 ;;;;
 ;;;; CATCH, THROW and UNWIND-PROTECT are the host's. A BLOCK or TAGBODY that
 ;;;; is left by a non-local exit (from a nested function, or from a
@@ -105,26 +107,37 @@ function being built) to the value: a fresh cell for a cell variable."
 ;;; Globals
 
 (defun hir-eval-variable-cell (name)
-  (clo:ensure-variable-cell *hir-eval-client* *hir-eval-global* name))
+  (if (compiles-into-image-p *hir-eval-client*)
+      name
+      (clo:ensure-variable-cell *hir-eval-client* *hir-eval-global* name)))
 
-(defun hir-eval-operator-cell (name)
-  (clo:ensure-operator-cell *hir-eval-client* *hir-eval-global* name))
+(defun hir-eval-global-function (name)
+  (if (compiles-into-image-p *hir-eval-client*)
+      (lambda () (fdefinition name))
+      (let ((cell (clo:ensure-operator-cell *hir-eval-client* *hir-eval-global* name)))
+        (lambda () (car cell)))))
+
+(defun hir-eval-set-global-value (cell value)
+  (if (symbolp cell) (setf (symbol-value cell) value) (setf (car cell) value)))
 
 (defmacro hir-eval-with-binding ((cell value) &body body)
-  "BODY with CELL, a variable cell, holding VALUE."
-  (let ((c (gensym "CELL")) (old (gensym "OLD")))
-    `(let* ((,c ,cell) (,old (car ,c)))
-       (setf (car ,c) ,value)
-       (unwind-protect (progn ,@body)
-         (setf (car ,c) ,old)))))
+  "Bind an image special through the runtime, or a cross-environment cell."
+  (let ((c (gensym "CELL")) (v (gensym "VALUE")) (old (gensym "OLD")))
+    `(let* ((,c ,cell) (,v ,value))
+       (if (symbolp ,c)
+           (progv (list ,c) (list ,v) ,@body)
+           (let ((,old (car ,c)))
+             (setf (car ,c) ,v)
+             (unwind-protect (progn ,@body)
+               (setf (car ,c) ,old)))))))
 
 (defun hir-eval-designator (client global)
-  "A function turning a function designator into a function, symbols
-naming the compile-time environment's functions."
-  (lambda (designator)
-    (if (functionp designator)
-        designator
-        (clo:fdefinition client global designator))))
+  "Resolve function designators in the environment owning the evaluated code."
+  (if (compiles-into-image-p client)
+      (lambda (designator)
+        (if (functionp designator) designator (fdefinition designator)))
+      (lambda (designator)
+        (if (functionp designator) designator (clo:fdefinition client global designator)))))
 
 ;;; Nodes
 
@@ -163,8 +176,8 @@ simple-vector ARGUMENTS, the arity dispatched on when the closure is made."
 (defun hir-eval-call (node)
   (let ((callee (hir-node-a node)) (arguments (hir-eval-subs (hir-node-b node))))
     (cond ((or (symbolp callee) (consp callee))
-           (let ((cell (hir-eval-operator-cell callee)))
-             (hir-eval-call-form (car cell) arguments frame)))
+           (let ((reader (hir-eval-global-function callee)))
+             (hir-eval-call-form (funcall reader) arguments frame)))
           ((and (hir-fun-p callee) (hir-fun-binding callee))
            (let ((function (hir-eval-reader (hir-fun-binding callee))))
              (hir-eval-call-form (funcall function frame) arguments frame)))
@@ -287,10 +300,13 @@ simple-vector ARGUMENTS, the arity dispatched on when the closure is made."
   (let ((symbols (hir-eval-sub (hir-node-a node)))
         (values (hir-eval-sub (hir-node-b node)))
         (body (hir-eval-node (hir-node-c node)))
-        (client *hir-eval-client*) (global *hir-eval-global*))
+        (client *hir-eval-client*) (global *hir-eval-global*)
+        (imagep (compiles-into-image-p *hir-eval-client*)))
     (lambda (frame)
-      (let* ((symbols (funcall symbols frame)) (values (funcall values frame))
-             (cells (mapcar (lambda (symbol)
+      (let* ((symbols (funcall symbols frame)) (values (funcall values frame)))
+        (if imagep
+            (progv symbols values (funcall body frame))
+            (let* ((cells (mapcar (lambda (symbol)
                               (check-type symbol symbol)
                               (clo:ensure-variable-cell client global symbol))
                             symbols))
@@ -301,7 +317,7 @@ simple-vector ARGUMENTS, the arity dispatched on when the closure is made."
                (loop for cell in cells
                      do (setf (car cell) (if values (pop values) (cdr cell))))
                (funcall body frame))
-          (loop for cell in cells for value in old do (setf (car cell) value)))))))
+          (loop for cell in cells for value in old do (setf (car cell) value)))))))))
 
 (defun hir-eval-load-time-value (node)
   ;; Evaluated once, when the form that contains it is prepared.
@@ -315,12 +331,14 @@ simple-vector ARGUMENTS, the arity dispatched on when the closure is made."
     (3 (let ((cell (hir-eval-variable-cell (hir-node-a node))) (name (hir-node-a node)))
          (lambda (frame)
            (declare (ignore frame))
-           (let ((value (car cell)))
-             (if (eq value (cdr cell)) (error 'unbound-variable :name name) value)))))
+           (if (symbolp cell)
+               (symbol-value cell)
+               (let ((value (car cell)))
+                 (if (eq value (cdr cell)) (error 'unbound-variable :name name) value))))))
     (4 (let ((cell (hir-eval-variable-cell (hir-node-a node))) (value (hir-eval-sub (hir-node-b node))))
-         (lambda (frame) (setf (car cell) (funcall value frame)))))
-    (5 (let ((cell (hir-eval-operator-cell (hir-node-a node))))
-         (lambda (frame) (declare (ignore frame)) (car cell))))
+         (lambda (frame) (hir-eval-set-global-value cell (funcall value frame)))))
+    (5 (let ((reader (hir-eval-global-function (hir-node-a node))))
+         (lambda (frame) (declare (ignore frame)) (funcall reader))))
     (6 (let ((fun (hir-node-a node)))
          (if (hir-fun-binding fun)
              (hir-eval-reader (hir-fun-binding fun))

@@ -4,13 +4,13 @@
 
 ## 为什么先有 Maclina
 
-原生编译器是最后载入的模块，而在它之前，REPL、`load` 和载入期间的 `eval`、`compile` 就要能用；编译器在 image 里编译时，编译期求值也需要一个不依赖它自己的求值器。所以 `eval` 和 `compile` 不能等编译器。
+原生编译器是最后载入的模块，而在它之前，REPL、`load` 和载入期间的 `eval`、`compile` 就要能用；编译期形式使用 HIR 求值器，共用原生前端并直接构造可执行闭包。所以 `eval` 和 `compile` 不能等编译器。
 
 **决定：eval 模块用 Maclina。** Maclina 是用可移植 CL 写的字节码编译器、VM 和 FASL 加载器。字节码函数是 funcallable instance，能和原生函数互相调用。它依赖少（closer-mop、alexandria、Trucler、Ecclesia），不依赖编译器，所以没有循环依赖。它同时提供：
 
 - 一个能用的 REPL 和 `eval`；
 - compiler 模块载入之前的 `compile`；
-- image-client 的编译期求值（[front-end.md](front-end.md)）；
+- 原生编译器就绪前的运行期求值；
 - 交付期可选的轻量求值器（不带 Cranelift 的发行版里执行扩展，[editor.md](editor.md)）。
 
 ## eval 模块
@@ -98,8 +98,7 @@ compiler 模块提供 `compile-file`。文件沿用原生前端处理顶层形�
 `*package*` 开始，使用调用者的 features 和指定的 external format。
 `eval-when`、宏定义和声明按文件编译规则生效，普通顶层代码留到加载时运行。
 编译期间绑定 `*compile-file-pathname*` 和 `*compile-file-truename*`，并保存调用者的
-package 和 readtable 绑定。编译期字节码求值使用运行期宏 client，原生前端的词法
-环境仍由 image client 处理。
+package 和 readtable 绑定。编译期 HIR 求值使用运行期宏 client，词法环境与原生前端共用。
 
 每个处理后的顶层形式生成一个 image 模式的 KIR 模块。FASL 使用 Maclina 的二进制
 对象图容器保存 KIR 字符串、字面量和加载调用，加载时通过 Cranelift 生成机器码并

@@ -1,6 +1,6 @@
 # HIR：高层中间表示
 
-状态：**HIR 是唯一的前端**。原生结构对象、KIR `:switch` 和 CST → HIR → KIR 路径都已接入；旧的 Iconoclast 前端、Common-boot 的 HIR 求值器以及它们的依赖（Common-boot、Iconoclast、s-expression-syntax、parser.packrat、builder 协议）已经删除。cross-client 的编译期求值用 HIR 求值器（`lisp/hir/eval.lisp`，见下面“编译期求值”），image-client 用 Maclina。宏展开结果里原样传下来的用户子形式，在转换第一次遇到普通 cons 时才按顶层形式 CST 惰性建一次 `eq` 表取源码位置，不再调用 `cst:reconstruct`。调试信息上和旧前端的差别：没有 `let` 改写出的多余 lambda，只调用一次的局部函数内联后不再单独成帧。现在的流水线见 [front-end.md](front-end.md) 和 [lowering.md](lowering.md)。
+状态：**HIR 是唯一的前端**。原生结构对象、KIR `:switch` 和 CST → HIR → KIR 路径都已接入；旧的 Iconoclast 前端、Common-boot 的 HIR 求值器以及它们的依赖（Common-boot、Iconoclast、s-expression-syntax、parser.packrat、builder 协议）已经删除。cross-client 和 image-client 的编译期求值共用 HIR 求值器（`lisp/hir/eval.lisp`，见下面“编译期求值”）。宏展开结果里原样传下来的用户子形式，在转换第一次遇到普通 cons 时才按顶层形式 CST 惰性建一次 `eq` 表取源码位置，不再调用 `cst:reconstruct`。调试信息上和旧前端的差别：没有 `let` 改写出的多余 lambda，只调用一次的局部函数内联后不再单独成帧。现在的流水线见 [front-end.md](front-end.md) 和 [lowering.md](lowering.md)。
 
 ## 流水线与职责
 
@@ -295,7 +295,7 @@ HIR 的遍历按节点种类分派。三种做法：
 
 ## 编译期求值
 
-cross-client 在编译期求值的形式（`eval-when` 的 `:compile-toplevel`、宏定义的编译期部分、`#.`、编译期环境里的 `eval`）和局部宏的展开函数，都由 `lisp/hir/eval.lisp` 执行。入口是 front.lisp 的泛函 `evaluate-at-compile-time` 和 convert.lisp 的 `hir-local-macro-expander`，按 client 分派：cross-client 走 HIR 求值器，其他 client 走 `cb:eval-cst`（image-client 的方法是 Maclina）。
+cross-client 和 image-client 在编译期求值的形式（`eval-when` 的 `:compile-toplevel`、宏定义的编译期部分、`#.`、编译期环境里的 `eval`）和局部宏的展开函数，都由 `lisp/hir/eval.lisp` 执行。入口是 front.lisp 的泛函 `evaluate-at-compile-time` 和 convert.lisp 的 `hir-local-macro-expander`，两个 client 共用转换、分析与闭包构造，按环境选择全局访问：cross-client 使用 Clostrum cell，image-client 访问运行中 image 的函数和变量。image 的 special 绑定通过 `progv` 进入运行时动态环境，包含未绑定值与非局部退出恢复。
 
 做法是闭包编译：形式先用同一个转换器和分析（`hir-convert`、`analyze-hir`，关闭 inline 展开和编译器宏）变成 HIR，再按节点构造宿主闭包，每个节点一个，`kind` 只在构造时分派一次。运行时没有解释循环，也不再分派。
 
@@ -709,7 +709,6 @@ image 中查询的类型名字记录为依赖，别名链中任一名字重定�
 - **类型推导的扩展**：在本地循环固定点之上扩展跨嵌套控制结构的状态传播、更精细的递归结果摘要和调用点特化，再用于更广的访问特化及拆箱。
 - **内联**：现在 inline 记录的是函数的源码形式，调用处重新转换。以后可以记录 HIR，在 HIR 上复制。
 - **局部函数**：直接调用、lambda lifting、逃逸分析和 `dynamic-extent`，都只需要 `fun` 上已有的标志。
-- **image-client 的编译期求值**：HIR 求值器现在只用于 cross-client。image-client 换成它（全局定义改用 image 本身，动态绑定用宿主的 `progv`）以后，运行期 `compile`/`eval` 定义的宏函数也不必再走 Maclina 字节码。
 - **交接**：降级直接通过 `kiln_rt_*` 调用在 Rust 侧构建 KIR，不再打印成文本（[specialization.md](specialization.md) 的“编译结果的缓存”也以 KIR 为单位）。
 
 ## 实施步骤
@@ -719,7 +718,7 @@ image 中查询的类型名字记录为依赖，别名链中任一名字重定�
 3. **HIR 和转换**（已完成）：`lisp/hir/`，定义结构、转换函数、构造后的那一遍。
 4. **新的降级**（已完成）：从 HIR 生成 KIR，验证方式是全量测试和自举闭合（stage1 和 stage2 逐字节相同，kiln0 和 kiln1 相同）。
 5. **切换并删除旧路径**（已完成）：HIR 成为唯一的前端，Iconoclast 的降级、`simplify-ast` 和 Common-boot 的钩子都已删除。
-6. **HIR 求值器**（已完成，cross-client）：取代 Common-boot 的 HIR 求值器。image-client 不在顶层的 `macrolet` 由 Maclina 从定义形式求值。compiler 模块不再带 Common-boot、Iconoclast、s-expression-syntax、parser.packrat 和 builder 协议。
+6. **HIR 求值器**：cross-client 和 image-client 共用，包含局部宏展开函数的构造。compiler 模块不再带 Common-boot、Iconoclast、s-expression-syntax、parser.packrat 和 builder 协议。
 7. **在内存里交接 KIR**。
 
 每一步都测量自编译时间，记进 [performance.md](../research/performance.md)。

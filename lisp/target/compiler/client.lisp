@@ -2,8 +2,7 @@
 ;;;; after front.lisp and cross.lisp. The compile-time environment is the run-time one,
 ;;;; as in other implementations: macros, special variables and constants
 ;;;; are the global environment's, and the code evaluated at compile time
-;;;; (EVAL-WHEN, DEFMACRO, the proclamations of DEFVAR) runs in Maclina's VM
-;;;; (the eval module), so its definitions take effect in the running image.
+;;;; (EVAL-WHEN, DEFMACRO, the proclamations of DEFVAR) runs in the HIR evaluator, so its definitions take effect in the running image.
 ;;;; What the host's front end knew when it compiled the modules loaded
 ;;;; before the compiler (inline functions) comes from session.lisp.
 
@@ -95,34 +94,15 @@
   (make-instance 'trucler-reference:environment
     :global-environment *run-time-environment*))
 
-;;; Compile-time evaluation: Maclina, in an environment with the local
-;;; macros and symbol macros of the Trucler environment (MACROLET and
-;;; SYMBOL-MACROLET at top level); the rest of a lexical environment is
-;;; not visible to code evaluated at compile time.
-
-(defun maclina-environment (environment)
-  (let ((env nil))
-    (flet ((lexenv ()
-             (or env (setf env (maclina.compile::make-null-lexical-environment nil)))))
-      (dolist (d (reverse (trucler-reference::function-description environment)))
-        (when (typep d 'trucler:local-macro-description)
-          (setf env (trucler:add-local-macro maclina.machine:*client* (lexenv)
-                                             (trucler:name d) (trucler:expander d)))))
-      (dolist (d (reverse (trucler-reference::variable-description environment)))
-        (when (typep d 'trucler:local-symbol-macro-description)
-          (setf env (trucler:add-local-symbol-macro maclina.machine:*client* (lexenv)
-                                                    (trucler:name d) (trucler:expansion d))))))
-    env))
+;;; Compile-time evaluation retains local macro and symbol-macro scopes.
 
 (defmethod evaluate-at-compile-time ((client image-client) input environment)
   (let ((kiln.cmd:*client* kiln.kernel::*runtime-macro-client*))
-    (maclina.compile:eval (if (typep input 'cst:cst) (cst:raw input) input)
-                          (maclina-environment environment))))
+    (hir-eval input environment)))
 
 (defmethod hir-local-macro-expander ((client image-client) name lambda-list body environment)
-  (let ((kiln.cmd:*client* kiln.kernel::*runtime-macro-client*))
-    (maclina.compile:eval (ecclesia:parse-macro name lambda-list body)
-                          (maclina-environment (hir-evaluation-environment environment)))))
+  (hir-eval `(function ,(ecclesia:parse-macro name lambda-list body))
+            (hir-macrolet-environment environment)))
 
 ;;; Runtime proclamations also update the table shared by image sessions.
 ;;; During module initialization the host table is not installed yet.

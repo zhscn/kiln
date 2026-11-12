@@ -528,8 +528,7 @@ the second value."
 
 (defgeneric evaluate-at-compile-time (client input environment)
   (:documentation "Evaluates INPUT, a CST or a form, at compile time in the
-Trucler ENVIRONMENT, for CLIENT. The cross client uses the HIR evaluator
-(lisp/hir/eval.lisp), the image client Maclina."))
+Trucler ENVIRONMENT, for CLIENT. Cross and image clients use the HIR evaluator."))
 
 (defun compile-time-eval (cst)
   (evaluate-at-compile-time *client* cst *environment*))

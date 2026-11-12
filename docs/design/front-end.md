@@ -18,7 +18,7 @@ HIR ── 降级（lisp/hir/lower.lisp，用 lisp/lower.lisp、lisp/values.lisp
 KIR
 ```
 
-HIR 的词法绑定、自由变量、赋值、退出点和闭包布局直接记录在结构中；宏展开结果直接转换，不重建 CST，源码位置按顶层形式 CST 里记下的位置取。编译期求值按 client 分派（`evaluate-at-compile-time`）：cross-client 用 HIR 求值器（`lisp/hir/eval.lisp`），image-client 用 Maclina。数据结构、源码位置和分析规则见 [hir.md](hir.md)。
+HIR 的词法绑定、自由变量、赋值、退出点和闭包布局直接记录在结构中；宏展开结果直接转换，不重建 CST，源码位置按顶层形式 CST 里记下的位置取。编译期求值按 client 分派（`evaluate-at-compile-time`）：cross-client 和 image-client 共用 HIR 求值器（`lisp/hir/eval.lisp`）。数据结构、源码位置和分析规则见 [hir.md](hir.md)。
 
 ## 编译 client 与会话
 
@@ -54,7 +54,7 @@ HIR 的词法绑定、自由变量、赋值、退出点和闭包布局直接记�
 运行期 `compile`、`eval`、`load` 用它（[eval-compile.md](eval-compile.md)）。编译期环境就是运行期的环境，和一般的实现一样：
 
 - Trucler 的全局环境是一个 `run-time-environment` 对象，对它的查询转给 eval 模块的 Maclina client：宏、特殊变量、常量、已定义的函数都来自运行中的 image。依赖追踪在这里记录查询（[dependencies.md](dependencies.md)）。
-- 编译期求值用 Maclina。顶层 `macrolet`、`symbol-macrolet` 的局部宏换成 Maclina 词法环境里的局部宏。不在顶层的 `macrolet`：展开函数由 Maclina 从定义形式求值（`hir-local-macro-expander`），所在环境含外层的局部宏和 symbol macro。
+- 编译期求值使用 HIR 求值器，直接保留前端的局部宏和 symbol macro 环境。`macrolet` 的展开函数由同一转换器和求值器构造；其环境保留外层的局部宏、symbol macro 和 special 声明，屏蔽词法值及局部函数。
 - 编译期的效果直接落在 image 里：`defmacro` 定义宏，`defvar` 宣告特殊变量，`deftype` 和 `define-setf-expander` 记在 plist 上。`declaim inline` 经 kernel `proclaim` 的 `*proclaim-hook*` 通知前端。
 - image 里所有的编译会话共用一张内联函数表（`*image-inline-functions*`），初始内容是宿主编完 compiler 模块那一刻的 inline 表（`host-inline-functions`）。
 
