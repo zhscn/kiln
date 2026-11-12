@@ -35,7 +35,7 @@
 会 signal `step-finished-condition`；非局部退出依靠动态绑定恢复之前的步进状态。
 嵌套 STEP 有独立的继续和跳出状态。
 
-原生 IR 转换器和 Maclina 字节码编译器共用 `step-forms.lisp` 的包装形式，私有
+原生 HIR 转换器和 Maclina 字节码编译器共用 `step-forms.lisp` 的包装形式，私有
 编译标记分别控制插桩、原始调用和静默代码。局部宏展开器的编译保持静默，完成
 通知也不产生额外的调用观察点。
 
@@ -225,7 +225,7 @@ key 和 value 的 cons。未绑定槽和无法读取的 NIL 元素类型数组�
 
 前端用顶层 CST 的原始 cons 到源码位置的映射，保留宏展开中传下来的用户子形式
 的位置；宏新建的形式继承外层调用位置。追踪事件可在 `process-toplevel` 和
-`ir-convert` 的宏展开处记录宏名、展开前后的形式及位置。
+`hir-convert` 的宏展开处记录宏名、展开前后的形式及位置。
 
 宏展开查看器可以基于事件流逐步展示变换，并按包或宏名隐藏库内部展开，
 参考 Racket 的 macro stepper。

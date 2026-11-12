@@ -1,8 +1,8 @@
 (in-package #:kiln.compiler)
 
 ;;;; Lowering to KIR: the module, functions, calls, special variables,
-;;;; non-local exits, allocation and constants. lisp/ir/lower.lisp walks
-;;;; the IR of each top-level form and emits its nodes with these; the
+;;;; non-local exits, allocation and constants. lisp/hir/lower.lisp walks
+;;;; the HIR of each top-level form and emits its nodes with these; the
 ;;;; top-level forms of a file run in order from the module's init
 ;;;; function.
 
@@ -591,7 +591,7 @@ word is a list of them and the flag is 1."
 ;;; form: kiln-cg records where the variables are during each call.
 
 (defstruct (toplevel-form (:constructor make-toplevel-form (ast file source definition form)))
-  "A top-level form to compile (front.lisp): its IR, the name
+  "A top-level form to compile (front.lisp): its HIR, the name
 of its file, its source range (START . END), the definition it belongs
 to, (NAME . FUNCTION-P) as DEFINITION-NAME returns them, or NIL, and the
 outermost form as written (before macro expansion)."
@@ -666,21 +666,21 @@ in the function being compiled."
 in the source: it occurs in the top-level form. Variables that macros
 introduce do not; their names are of no use, and differ between the host
 and kiln, where some macro packages have other names."
-  (let ((name (and definition (ir-var-name definition))))
-    (and name (>= (ir-policy-quality (ir-var-policy definition) :debug) 2)
+  (let ((name (and definition (hir-var-name definition))))
+    (and name (>= (hir-policy-quality (hir-var-policy definition) :debug) 2)
          (symbolp name) (symbol-package name) *toplevel*
          (gethash name (toplevel-symbols *toplevel*))
          name)))
 
-(defvar *ir-entry-p* nil)
+(defvar *hir-entry-p* nil)
 
 (defun bind-var (definition operand &key (name (source-variable-name definition)) cell)
   "Binds the variable DEFINITION to a new KIR variable holding OPERAND.
 NAME is the source variable's name for the debug info, NIL for none; CELL
 true if the variable holds the cell of the variable NAME."
   (let ((v (copy-to-var operand)))
-    (setf (ir-var-lowering definition) v)
-    (unless *ir-entry-p*
+    (setf (hir-var-lowering definition) v)
+    (unless *hir-entry-p*
       (note-debug-var v name cell))
     v))
 
@@ -726,12 +726,12 @@ true if the variable holds the cell of the variable NAME."
   "The value of AST if it is a constant (QUOTE, a literal, or a variable
 known to hold one), and true; else NIL and NIL."
   (typecase ast
-    (ir-node
-     (case (ir-node-kind ast)
-       (0 (values (ir-node-a ast) t))
-       (1 (let ((var (ir-node-a ast)))
-            (values (ir-var-constant var)
-                    (and (ir-var-constant-p var) (not (logtest 1 (ir-var-flags var)))))))
+    (hir-node
+     (case (hir-node-kind ast)
+       (0 (values (hir-node-a ast) t))
+       (1 (let ((var (hir-node-a ast)))
+            (values (hir-var-constant var)
+                    (and (hir-var-constant-p var) (not (logtest 1 (hir-var-flags var)))))))
        (otherwise (values nil nil))))
     (t (values nil nil))))
 
@@ -763,7 +763,7 @@ known to hold one), and true; else NIL and NIL."
     (if effect (values (nil-value) 1) (values r n))))
 
 
-;;; Tests (the test of an IF, IR-LOWER-BRANCH): a predicate's (:SELECT
+;;; Tests (the test of an IF, HIR-LOWER-BRANCH): a predicate's (:SELECT
 ;;; condition T NIL) becomes a branch on the condition. The unused SELECT
 ;;; is left to kiln-cg's dead code elimination.
 
@@ -1155,7 +1155,7 @@ returns LOW, HIGH and T; else NIL, NIL and NIL."
          (values +most-negative-fixnum+ +most-positive-fixnum+ t))
         ((eq type 'bit)
          (values 0 1 t))
-        ((and (consp type) (ir-proper-list-p (rest type)))
+        ((and (consp type) (hir-proper-list-p (rest type)))
          (let ((head (first type)) (args (rest type)))
            (multiple-value-bind (low high)
                (case head
@@ -1193,7 +1193,7 @@ returns LOW, HIGH and T; else NIL, NIL and NIL."
   (cond ((member type '(t nil boolean)) t)
         ((nth-value 2 (type-fixnum-bounds type)) t)
         ((and (symbolp type) (assoc type *type-predicates*)) t)
-        ((and (consp type) (ir-proper-list-p (rest type)))
+        ((and (consp type) (hir-proper-list-p (rest type)))
          (case (first type)
            (eql (= (length (rest type)) 1))
            (member (<= (length (rest type)) 8))
@@ -1217,7 +1217,7 @@ returns LOW, HIGH and T; else NIL, NIL and NIL."
                  (funcall primitive (list val))
                  (emit-lisp-call (function-cell-value predicate) (list val)))))
           ((eq (first type) 'eql)
-           (let ((c (ir-node 0 nil (second type))))
+           (let ((c (hir-node 0 nil (second type))))
              (if (eq-comparable-constant-p c)
                  (boolean-value `(:eq ,val ,(constant-object (second type))))
                  (funcall (gethash 'eql *primitives*)
@@ -1225,7 +1225,7 @@ returns LOW, HIGH and T; else NIL, NIL and NIL."
           ((eq (first type) 'member)
            (let ((items (rest type)))
              (cond ((null items) (nil-value))
-                   ((every (lambda (x) (eq-comparable-constant-p (ir-node 0 nil x))) items)
+                   ((every (lambda (x) (eq-comparable-constant-p (hir-node 0 nil x))) items)
                     (boolean-value
                      (reduce (lambda (a b) `(:or ,a ,b))
                              (mapcar (lambda (x) `(:eq ,val ,(constant-object x))) items))))
@@ -1271,7 +1271,7 @@ returns LOW, HIGH and T; else NIL, NIL and NIL."
          (and type
               (not (member (symbol-package type)
                            (list (find-package '#:common-lisp) (find-package '#:keyword))))))
-        ((and (consp type) (ir-proper-list-p (rest type)))
+        ((and (consp type) (hir-proper-list-p (rest type)))
          (case (first type)
            ((or and)
             (and (every (lambda (x) (or (symbolp x) (cached-typep-specifier-p x))) (rest type))
@@ -1282,7 +1282,7 @@ returns LOW, HIGH and T; else NIL, NIL and NIL."
         (t nil)))
 
 (defun call-ast (name arg-asts)
-  (ir-node 7 nil name (coerce arg-asts 'simple-vector)))
+  (hir-node 7 nil name (coerce arg-asts 'simple-vector)))
 
 (defun long-call-ast (name arg-asts)
   "An AST equivalent to the call of NAME (LIST, LIST*, VECTOR, NCONC or
@@ -1290,7 +1290,7 @@ APPEND) with ARG-ASTS, whose calls have few enough arguments: (LIST* a1
 ... an REST) in chunks, (COERCE list 'SIMPLE-VECTOR) for VECTOR, nested
 calls for the associative NCONC and APPEND."
   (let ((chunk 60))
-    (labels ((literal (value) (ir-node 0 nil value))
+    (labels ((literal (value) (hir-node 0 nil value))
              (list-ast (asts tail-ast)
                ;; The list of ASTS's values followed by TAIL-AST's value.
                (if (<= (length asts) chunk)
@@ -1325,7 +1325,7 @@ make that the test, with no key: none, or :TEST #'EQL, #'EQ, 'EQL or
         ((and (= (length keyword-asts) 2)
               (eq (constant-value (first keyword-asts)) :test))
          (let* ((test (second keyword-asts))
-                (name (cond ((and (ir-node-p test) (= (ir-node-kind test) 5)) (ir-node-a test))
+                (name (cond ((and (hir-node-p test) (= (hir-node-kind test) 5)) (hir-node-a test))
                             (t (multiple-value-bind (value constantp) (constant-value test)
                                  (and constantp value))))))
            (and (member name '(eq eql)) name)))
@@ -1404,8 +1404,8 @@ LOWER-CACHED-SLOT-VALUE."
 
 (defun list-call-elements (ast)
   "The argument ASTs of AST if it is a call to LIST, and T; else NIL and NIL."
-  (if (and (ir-node-p ast) (= (ir-node-kind ast) 7) (eq (ir-node-a ast) 'list))
-      (values (coerce (ir-node-b ast) 'list) t)
+  (if (and (hir-node-p ast) (= (hir-node-kind ast) 7) (eq (hir-node-a ast) 'list))
+      (values (coerce (hir-node-b ast) 'list) t)
       (values nil nil)))
 
 (defun null-constant-p (ast)
@@ -1424,7 +1424,7 @@ after a LIST call."
                      ((and rest (or (null-constant-p ast) (and listp (null elems)))))
                      ((and (null rest) listp (null elems))
                       (unless (and out (nth-value 1 (list-call-elements (first out))))
-                        (push (ir-node 0 nil nil) out)))
+                        (push (hir-node 0 nil nil) out)))
                      ((and listp out (nth-value 1 (list-call-elements (first out))))
                       (setf (first out)
                             (call-ast 'list (append (list-call-elements (first out)) elems))))
@@ -1508,7 +1508,7 @@ after a LIST call."
                                            ((assoc eq) . kiln.kernel::%assoc-eq))
                                          :test #'equal))
                              (subseq arg-asts 0 2))))))
-  ;; (FUNCALL #'F ...) and %PRIMOP are converted before (lisp/ir/convert.lisp).
+  ;; (FUNCALL #'F ...) and %PRIMOP are converted before (lisp/hir/convert.lisp).
   (progn
       (let ((constant-name (and (equal name '(setf fdefinition))
                                 (= (length arg-asts) 2)
@@ -1633,7 +1633,7 @@ returns the operand of its (static) function object."
         (emit-poll)
         (dolist (form asts)
           (let ((*toplevel* form))
-            (ir-lower-toplevel (toplevel-form-ast form))))
+            (hir-lower-toplevel (toplevel-form-ast form))))
         (emit `(:return ,(nil-value) 1)))
       (let ((*toplevel* (and (= (length files) 1) (first files)
                              (make-toplevel-form nil (first files) nil nil nil))))
@@ -1737,9 +1737,9 @@ IMAGE true: the module is to be loaded into the running image; its
 literals are the image's objects, and it has no symbol table.
 Returns the module and the vector of its literals."
   (let ((*module* (make-kmodule module-name))
-        (*ir-lowering-epoch* (list nil))
-        (*ir-native-environments* nil)
-        (*ir-lifted-environments* nil)
+        (*hir-lowering-epoch* (list nil))
+        (*hir-native-environments* nil)
+        (*hir-lifted-environments* nil)
         (*image-literals* (and image (make-hash-table :test 'eq)))
         (*image-literal-objects* '())
         (*module-label* (mangle module-name))

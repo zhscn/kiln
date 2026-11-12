@@ -119,10 +119,10 @@
     (maclina.compile:eval (if (typep input 'cst:cst) (cst:raw input) input)
                           (maclina-environment environment))))
 
-(defmethod ir-local-macro-expander ((client image-client) name lambda-list body environment)
+(defmethod hir-local-macro-expander ((client image-client) name lambda-list body environment)
   (let ((kiln.cmd:*client* kiln.kernel::*runtime-macro-client*))
     (maclina.compile:eval (ecclesia:parse-macro name lambda-list body)
-                          (maclina-environment (ir-evaluation-environment environment)))))
+                          (maclina-environment (hir-evaluation-environment environment)))))
 
 ;;; Runtime proclamations also update the table shared by image sessions.
 ;;; During module initialization the host table is not installed yet.

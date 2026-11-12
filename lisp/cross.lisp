@@ -1,6 +1,6 @@
 ;;;; Cross compilation: the compile-time environment is a
 ;;;; Clostrum environment, separate from the image that compiles, in which
-;;;; the IR evaluator (lisp/ir/eval.lisp) runs the code evaluated at
+;;;; the HIR evaluator (lisp/hir/eval.lisp) runs the code evaluated at
 ;;;; compile time.
 ;;;; The functions of the compiling image ("the host") are imported into
 ;;;; it, so macro expanders can call them. SBCL compiles kiln this way, and

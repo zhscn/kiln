@@ -41,7 +41,7 @@
 
 ### lambda list
 
-IR 前端转换 lambda list 之后（`lisp/ir/convert.lisp`），每个 `&optional` 和 `&key` 参数都有 supplied-p 变量，默认值在函数体里根据 supplied-p 计算，所以函数入口只需要：
+HIR 前端转换 lambda list 之后（`lisp/hir/convert.lisp`），每个 `&optional` 和 `&key` 参数都有 supplied-p 变量，默认值在函数体里根据 supplied-p 计算，所以函数入口只需要：
 
 1. 读出位置参数：必需参数和 `&optional` 参数，按 `nargs` 选择实参或 NIL，同时设置 supplied-p。这一步在第一个 safepoint 之前。
 2. 检查参数个数。

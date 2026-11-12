@@ -2,7 +2,7 @@
 
 ;;;; Front end (M2): Eclector reads CSTs; top-level forms are processed
 ;;;; here as in COMPILE-FILE (CLHS 3.2.3.1); each form to be compiled is
-;;;; converted to IR (lisp/ir/convert.lisp), which lisp/ir/lower.lisp
+;;;; converted to HIR (lisp/hir/convert.lisp), which lisp/hir/lower.lisp
 ;;;; translates to KIR.
 ;;;;
 ;;;; This file is the compiler's in the host (SBCL) and on kiln (the
@@ -10,7 +10,7 @@
 ;;;; lisp/target/compiler/client.lisp, loaded after it, and in a few #+KILN
 ;;;; branches here. In cross compilation, compile-time evaluation
 ;;;; (EVAL-WHEN :COMPILE-TOPLEVEL, macro definitions, DEFVAR proclamations)
-;;;; runs through the IR evaluator (lisp/ir/eval.lisp), in a Clostrum
+;;;; runs through the HIR evaluator (lisp/hir/eval.lisp), in a Clostrum
 ;;;; environment that holds the compile-time definitions; compiling into
 ;;;; the image on kiln, the compile-time environment is the run-time one,
 ;;;; and Maclina evaluates.
@@ -178,7 +178,7 @@ of local macros): an expansion can use the kernel's internals.")
 where REQUIRED is a list of symbols, OPTIONAL is a list of (VAR INITFORM),
 and KEYS is a list of (KEYWORD VAR INITFORM); or NIL if LAMBDA-LIST is not
 eligible for inlining."
-  (when (ir-proper-list-p lambda-list)
+  (when (hir-proper-list-p lambda-list)
     (let ((state :required) (required '()) (optional '()) (keys '()) (keyp nil))
       (dolist (item lambda-list
                (list (nreverse required) (nreverse optional) (nreverse keys) keyp))
@@ -218,7 +218,7 @@ eligible for inlining."
                      (t (return nil)))))))))
 
 (defun inline-arguments-valid-p (parsed arguments)
-  (and (ir-proper-list-p arguments)
+  (and (hir-proper-list-p arguments)
        (destructuring-bind (required optional keys keyp) parsed
          (let ((n (length arguments))
                (nreq (length required))
@@ -269,18 +269,18 @@ expands into; else NIL."
   "True if any symbol in SYMBOLS has a local function, local macro, or
 local symbol-macro binding in ENVIRONMENT."
   (when symbols
-    (loop for env = environment then (ir-env-parent env)
-          while (ir-env-p env)
-          do (dolist (entry (ir-env-funcs env))
+    (loop for env = environment then (hir-env-parent env)
+          while (hir-env-p env)
+          do (dolist (entry (hir-env-funcs env))
                (when (and (symbolp (car entry))
                           (member (car entry) symbols :test #'eq))
                  (return-from local-shadowed-p t)))
-             (dolist (entry (ir-env-vars env))
+             (dolist (entry (hir-env-vars env))
                (when (and (consp (cdr entry))
                           (eq (cadr entry) :symbol-macro)
                           (member (car entry) symbols :test #'eq))
                  (return-from local-shadowed-p t))))
-    (let ((base (if (ir-env-p environment) (ir-env-base environment) environment))
+    (let ((base (if (hir-env-p environment) (hir-env-base environment) environment))
           (*dependencies* nil))
       (if (typep base 'trucler-reference:environment)
           (or (loop for d in (trucler-reference::function-description base)
@@ -300,7 +300,7 @@ local symbol-macro binding in ENVIRONMENT."
 (defun inline-call-p (client environment form)
   (multiple-value-bind (name arguments) (inline-call form)
    (and *inline-enabled*
-       (ir-policy-optimize-p *ir-policy*)
+       (hir-policy-optimize-p *hir-policy*)
        name
        (let ((entry (and (boundp '*inline-functions*)
                          (gethash name *inline-functions*))))
@@ -418,7 +418,7 @@ true; else NIL and NIL."
 (defun compiler-macro-expansion (client environment form)
   "The expansion of FORM, a call of a global function, by its compiler
 macro. The second value distinguishes a NIL expansion from declining."
-  (when (and *inline-enabled* (ir-policy-optimize-p *ir-policy*) (< *compiler-macro-depth* 64))
+  (when (and *inline-enabled* (hir-policy-optimize-p *hir-policy*) (< *compiler-macro-depth* 64))
     (let* ((name (compiler-macro-call-name form))
            (expander (and name (compiler-macro-expander client environment name))))
       (when expander
@@ -528,8 +528,8 @@ the second value."
 
 (defgeneric evaluate-at-compile-time (client input environment)
   (:documentation "Evaluates INPUT, a CST or a form, at compile time in the
-Trucler ENVIRONMENT, for CLIENT. The cross client uses the IR evaluator
-(lisp/ir/eval.lisp), the image client Maclina."))
+Trucler ENVIRONMENT, for CLIENT. The cross client uses the HIR evaluator
+(lisp/hir/eval.lisp), the image client Maclina."))
 
 (defun compile-time-eval (cst)
   (evaluate-at-compile-time *client* cst *environment*))
@@ -537,7 +537,7 @@ Trucler ENVIRONMENT, for CLIENT. The cross client uses the IR evaluator
 (defun compile-toplevel-form (cst compile-time-too)
   (when compile-time-too
     (compile-time-eval cst))
-  (push (make-toplevel-form (let ((*inline-enabled* t)) (cst-to-ir cst *environment*))
+  (push (make-toplevel-form (let ((*inline-enabled* t)) (cst-to-hir cst *environment*))
                             *source-file* *toplevel-source* *definition-name*
                             *toplevel-raw*)
         *toplevel-asts*))
@@ -565,8 +565,8 @@ Trucler ENVIRONMENT, for CLIENT. The cross client uses the IR evaluator
         (values form nil))))
 
 (defun process-eval-when (cst compile-time-too)
-  (let* ((parts (rest (ir-parts cst)))
-         (situations (ir-raw (first parts)))
+  (let* ((parts (rest (hir-parts cst)))
+         (situations (hir-raw (first parts)))
          (body (rest parts))
          (ct (intersection situations '(:compile-toplevel compile)))
          (lt (intersection situations '(:load-toplevel load)))
@@ -579,24 +579,24 @@ Trucler ENVIRONMENT, for CLIENT. The cross client uses the IR evaluator
            (dolist (c body) (compile-time-eval c))))))
 
 (defun declaration-cst-p (cst)
-  (let ((raw (ir-raw cst)))
+  (let ((raw (hir-raw cst)))
     (and (consp raw) (eq (first raw) 'declare))))
 
 (defun check-symbol-macro-name (name environment)
   (unless (and (symbolp name) name (not (eq name t)) (not (keywordp name)))
-    (ir-error "Invalid symbol macro name ~S" name))
+    (hir-error "Invalid symbol macro name ~S" name))
   (let ((description (trucler:describe-variable *client* environment name)))
     (when (typep description '(or trucler:constant-variable-description
                                  trucler:global-special-variable-description))
-      (ir-error "Symbol macro ~S names a constant or special variable" name))))
+      (hir-error "Symbol macro ~S names a constant or special variable" name))))
 
 (defun process-toplevel-body (cst compile-time-too)
   "LOCALLY, MACROLET and SYMBOL-MACROLET at top level: their body forms are
 top-level forms too (CLHS 3.2.3.1), processed in the environment with the
 local macros added. A body that starts with declarations is compiled as a
 whole instead (the declarations would otherwise be lost)."
-  (let* ((form (ir-raw cst))
-         (parts (ir-parts cst))
+  (let* ((form (hir-raw cst))
+         (parts (hir-parts cst))
          (body (if (eq (first form) 'locally)
                    (rest parts)
                    (cddr parts))))
@@ -621,7 +621,7 @@ whole instead (the declarations would otherwise be lost)."
                      (dolist (binding (second form) env)
                        (unless (and (consp binding) (consp (cdr binding))
                                     (null (cddr binding)))
-                         (ir-error "Invalid symbol macro binding ~S" binding))
+                         (hir-error "Invalid symbol macro binding ~S" binding))
                        (check-symbol-macro-name (first binding) *environment*)
                        (setf env (trucler:add-local-symbol-macro
                                   *client* env (first binding) (second binding)))))))))
@@ -648,7 +648,7 @@ module).")
     (if entry (cdr entry) (string designator))))
 
 (defun process-toplevel (cst compile-time-too)
-  (let* ((form (ir-raw cst))
+  (let* ((form (hir-raw cst))
          (*macro-source* (or (cst-source-range cst) *macro-source*))
          (*definition-name* (multiple-value-bind (name function-p) (definition-name form)
                               (if name (cons name function-p) *definition-name*))))
@@ -657,7 +657,7 @@ module).")
     (if (and (consp form) (symbolp (first form)))
         (case (first form)
           (progn
-            (dolist (c (rest (ir-parts cst)))
+            (dolist (c (rest (hir-parts cst)))
               (process-toplevel c compile-time-too)))
           (eval-when
            (process-eval-when cst compile-time-too))
@@ -717,7 +717,7 @@ programs compiled after it."
   ;; Inline proclamations and expansions (*INLINE-FUNCTIONS*).
   ;; Keys are function names: symbols and (SETF symbol).
   (inline-functions (make-hash-table :test 'equal))
-  (ir-source-files (make-ir-buffer)))
+  (hir-source-files (make-hir-buffer)))
 
 (defun make-session (&key (client-class #-kiln 'cross-client #+kiln 'image-client))
   "A session whose client is an instance of CLIENT-CLASS: CROSS-CLIENT, or
@@ -808,7 +808,7 @@ created."
 (defun process-toplevel-cst (cst compile-time-too)
   (forget-global-descriptions *environment*)
   (when *trace-toplevel*
-    (let ((raw (ir-raw cst)))
+    (let ((raw (hir-raw cst)))
       (format *error-output* "~&  ~S~@[ ~S~]~%"
               (if (consp raw) (first raw) raw)
               (and (consp raw) (consp (rest raw))
@@ -820,10 +820,10 @@ created."
         (*toplevel-source* (cst-source-range cst))
         (*macro-source* (cst-source-range cst))
         (*definition-name* *eval-definition*)
-        (*toplevel-raw* (or *eval-form* (ir-raw cst)))
-        (*ir-file-id* (ir-source-file-number *source-file*))
-        (*ir-top-cst* (and (typep cst 'cst:cst) cst))
-        (*ir-form-sources* nil))
+        (*toplevel-raw* (or *eval-form* (hir-raw cst)))
+        (*hir-file-id* (hir-source-file-number *source-file*))
+        (*hir-top-cst* (and (typep cst 'cst:cst) cst))
+        (*hir-form-sources* nil))
     (process-toplevel cst compile-time-too)))
 
 (defun call-with-front-end (session thunk)
@@ -840,8 +840,8 @@ order, and the host packages that DEFPACKAGE forms created."
          (*structures* (session-structures session))
          (*inline-functions* (session-inline-functions session))
          (*toplevel-environment* *environment*)
-         (*ir-source-files* (session-ir-source-files session))
-         (*ir-current-source-file* :uninitialized) (*ir-file-id* 0))
+         (*hir-source-files* (session-hir-source-files session))
+         (*hir-current-source-file* :uninitialized) (*hir-file-id* 0))
     ;; Calls to functions defined later in the file are fine: report
     ;; undefined functions at the end (CLHS 3.2.2.3).
     (funcall thunk)

@@ -1,7 +1,7 @@
 (in-package #:kiln.compiler)
 
 ;;;; Compile-time evaluation for the cross client: a form is converted to
-;;;; IR (CST-TO-IR's converter and analysis), and the IR is turned into
+;;;; HIR (CST-TO-HIR's converter and analysis), and the HIR is turned into
 ;;;; host closures, one per node, which run it. The node kind is
 ;;;; dispatched on once, when the closures are built.
 ;;;;
@@ -11,7 +11,7 @@
 ;;;; is captured and assigned (the analysis' cell flag) holds a cons whose
 ;;;; car is the value. A function object is a host closure over its
 ;;;; environment vector: the values (or cells) of its free variables,
-;;;; in the order of IR-FUN-FREE, copied when the function object is made.
+;;;; in the order of HIR-FUN-FREE, copied when the function object is made.
 ;;;; So functions made by evaluated code are ordinary host functions: macro
 ;;;; expanders defined at compile time are called by the converter.
 ;;;;
@@ -32,50 +32,50 @@
 ;;;; TAGBODY returns a marker of the target (a cons private to the
 ;;;; TAGBODY), which the TAGBODY's statement loop recognizes.
 
-(defvar *ir-eval-function*)              ; the IR function being built
-(defvar *ir-eval-tail* '()
+(defvar *hir-eval-function*)              ; the HIR function being built
+(defvar *hir-eval-tail* '()
   "The exits (BLOCK exits and TAGBODY groups) for whose BLOCK body or
 TAGBODY statement the node being built is in tail position.")
-(defvar *ir-eval-client*)
-(defvar *ir-eval-global*)                ; the Clostrum environment
+(defvar *hir-eval-client*)
+(defvar *hir-eval-global*)                ; the Clostrum environment
 
-;;; Exit information, in IR-EXIT-LOWERING while the closures are built.
+;;; Exit information, in HIR-EXIT-LOWERING while the closures are built.
 ;;; A BLOCK exit or a TAGBODY group: CATCH-P is set when some exit to it
 ;;; must throw. A TAGBODY tag: MARKER is what a GO in tail position returns.
-(defstruct (ir-eval-exit (:constructor make-ir-eval-exit (&optional marker)))
+(defstruct (hir-eval-exit (:constructor make-hir-eval-exit (&optional marker)))
   (catch-p nil) (marker nil))
 
 ;;; Variables
 
-(defun ir-eval-assign-slots (fun)
+(defun hir-eval-assign-slots (fun)
   "Numbers the variables of FUN from 1; returns the frame size."
   (let ((index 1))
-    (loop for var across (ir-buffer-data (ir-fun-vars fun))
-          repeat (ir-buffer-count (ir-fun-vars fun))
-          when (eq (ir-var-owner var) fun)
-            do (setf (ir-var-lowering var) index)
+    (loop for var across (hir-buffer-data (hir-fun-vars fun))
+          repeat (hir-buffer-count (hir-fun-vars fun))
+          when (eq (hir-var-owner var) fun)
+            do (setf (hir-var-lowering var) index)
                (incf index))
     index))
 
-(defun ir-eval-location (var)
+(defun hir-eval-location (var)
   "The frame index of VAR, or NIL and its index in the closure environment."
-  (if (eq (ir-var-owner var) *ir-eval-function*)
-      (values (ir-var-lowering var) nil)
-      (values nil (or (position var (ir-fun-free *ir-eval-function*) :test #'eq)
-                      (fail "IR variable ~S is missing from the closure layout"
-                            (ir-var-name var))))))
+  (if (eq (hir-var-owner var) *hir-eval-function*)
+      (values (hir-var-lowering var) nil)
+      (values nil (or (position var (hir-fun-free *hir-eval-function*) :test #'eq)
+                      (fail "HIR variable ~S is missing from the closure layout"
+                            (hir-var-name var))))))
 
-(defun ir-eval-raw-reader (var)
+(defun hir-eval-raw-reader (var)
   "A closure of a frame returning what VAR's location holds (a cell for a
 cell variable)."
-  (multiple-value-bind (index free) (ir-eval-location var)
+  (multiple-value-bind (index free) (hir-eval-location var)
     (if index
         (lambda (frame) (svref frame index))
         (lambda (frame) (svref (svref frame 0) free)))))
 
-(defun ir-eval-reader (var)
-  (multiple-value-bind (index free) (ir-eval-location var)
-    (if (logtest 4 (ir-var-flags var))
+(defun hir-eval-reader (var)
+  (multiple-value-bind (index free) (hir-eval-location var)
+    (if (logtest 4 (hir-var-flags var))
         (if index
             (lambda (frame) (car (svref frame index)))
             (lambda (frame) (car (svref (svref frame 0) free))))
@@ -83,34 +83,34 @@ cell variable)."
             (lambda (frame) (svref frame index))
             (lambda (frame) (svref (svref frame 0) free))))))
 
-(defun ir-eval-writer (var value)
+(defun hir-eval-writer (var value)
   "A closure of a frame assigning VAR the value of the closure VALUE."
-  (multiple-value-bind (index free) (ir-eval-location var)
-    (cond ((and index (logtest 4 (ir-var-flags var)))
+  (multiple-value-bind (index free) (hir-eval-location var)
+    (cond ((and index (logtest 4 (hir-var-flags var)))
            (lambda (frame) (setf (car (svref frame index)) (funcall value frame))))
           (index (lambda (frame) (setf (svref frame index) (funcall value frame))))
-          ((logtest 4 (ir-var-flags var))
+          ((logtest 4 (hir-var-flags var))
            (lambda (frame) (setf (car (svref (svref frame 0) free)) (funcall value frame))))
-          (t (fail "IR variable ~S is assigned but not in a cell" (ir-var-name var))))))
+          (t (fail "HIR variable ~S is assigned but not in a cell" (hir-var-name var))))))
 
-(defun ir-eval-binder (var)
+(defun hir-eval-binder (var)
   "A function of a frame and a value that binds VAR (a variable of the
 function being built) to the value: a fresh cell for a cell variable."
-  (let ((index (ir-eval-location var)))
-    (unless index (fail "IR variable ~S is bound outside its function" (ir-var-name var)))
-    (if (logtest 4 (ir-var-flags var))
+  (let ((index (hir-eval-location var)))
+    (unless index (fail "HIR variable ~S is bound outside its function" (hir-var-name var)))
+    (if (logtest 4 (hir-var-flags var))
         (lambda (frame value) (setf (svref frame index) (list value)))
         (lambda (frame value) (setf (svref frame index) value)))))
 
 ;;; Globals
 
-(defun ir-eval-variable-cell (name)
-  (clo:ensure-variable-cell *ir-eval-client* *ir-eval-global* name))
+(defun hir-eval-variable-cell (name)
+  (clo:ensure-variable-cell *hir-eval-client* *hir-eval-global* name))
 
-(defun ir-eval-operator-cell (name)
-  (clo:ensure-operator-cell *ir-eval-client* *ir-eval-global* name))
+(defun hir-eval-operator-cell (name)
+  (clo:ensure-operator-cell *hir-eval-client* *hir-eval-global* name))
 
-(defmacro ir-eval-with-binding ((cell value) &body body)
+(defmacro hir-eval-with-binding ((cell value) &body body)
   "BODY with CELL, a variable cell, holding VALUE."
   (let ((c (gensym "CELL")) (old (gensym "OLD")))
     `(let* ((,c ,cell) (,old (car ,c)))
@@ -118,7 +118,7 @@ function being built) to the value: a fresh cell for a cell variable."
        (unwind-protect (progn ,@body)
          (setf (car ,c) ,old)))))
 
-(defun ir-eval-designator (client global)
+(defun hir-eval-designator (client global)
   "A function turning a function designator into a function, symbols
 naming the compile-time environment's functions."
   (lambda (designator)
@@ -128,17 +128,17 @@ naming the compile-time environment's functions."
 
 ;;; Nodes
 
-(defun ir-eval-sub (node)
+(defun hir-eval-sub (node)
   "The closure of NODE, which is not in tail position."
-  (let ((*ir-eval-tail* '())) (ir-eval-node node)))
+  (let ((*hir-eval-tail* '())) (hir-eval-node node)))
 
-(defun ir-eval-subs (nodes)
-  (map 'simple-vector #'ir-eval-sub nodes))
+(defun hir-eval-subs (nodes)
+  (map 'simple-vector #'hir-eval-sub nodes))
 
-(defun ir-eval-constant (value)
+(defun hir-eval-constant (value)
   (lambda (frame) (declare (ignore frame)) value))
 
-(defmacro ir-eval-call-form (function arguments frame)
+(defmacro hir-eval-call-form (function arguments frame)
   "A closure calling the value of the form FUNCTION (evaluated in the
 closure, before the arguments) with the values of the closures in the
 simple-vector ARGUMENTS, the arity dispatched on when the closure is made."
@@ -160,28 +160,28 @@ simple-vector ARGUMENTS, the arity dispatched on when the closure is made."
        (t (lambda (,frame)
             (apply ,function (loop for ,a across ,arguments collect (funcall ,a ,frame))))))))
 
-(defun ir-eval-call (node)
-  (let ((callee (ir-node-a node)) (arguments (ir-eval-subs (ir-node-b node))))
+(defun hir-eval-call (node)
+  (let ((callee (hir-node-a node)) (arguments (hir-eval-subs (hir-node-b node))))
     (cond ((or (symbolp callee) (consp callee))
-           (let ((cell (ir-eval-operator-cell callee)))
-             (ir-eval-call-form (car cell) arguments frame)))
-          ((and (ir-fun-p callee) (ir-fun-binding callee))
-           (let ((function (ir-eval-reader (ir-fun-binding callee))))
-             (ir-eval-call-form (funcall function frame) arguments frame)))
-          ((ir-fun-p callee)
-           (let ((function (ir-eval-closure callee)))
-             (ir-eval-call-form (funcall function frame) arguments frame)))
+           (let ((cell (hir-eval-operator-cell callee)))
+             (hir-eval-call-form (car cell) arguments frame)))
+          ((and (hir-fun-p callee) (hir-fun-binding callee))
+           (let ((function (hir-eval-reader (hir-fun-binding callee))))
+             (hir-eval-call-form (funcall function frame) arguments frame)))
+          ((hir-fun-p callee)
+           (let ((function (hir-eval-closure callee)))
+             (hir-eval-call-form (funcall function frame) arguments frame)))
           (t
-           (let ((function (ir-eval-sub callee))
-                 (designator (ir-eval-designator *ir-eval-client* *ir-eval-global*)))
-             (ir-eval-call-form (funcall designator (funcall function frame)) arguments frame))))))
+           (let ((function (hir-eval-sub callee))
+                 (designator (hir-eval-designator *hir-eval-client* *hir-eval-global*)))
+             (hir-eval-call-form (funcall designator (funcall function frame)) arguments frame))))))
 
-(defun ir-eval-progn (nodes)
+(defun hir-eval-progn (nodes)
   (let ((count (length nodes)))
     (if (zerop count)
-        (ir-eval-constant nil)
-        (let ((forms (map 'simple-vector #'ir-eval-sub (subseq nodes 0 (1- count))))
-              (last (ir-eval-node (svref nodes (1- count)))))
+        (hir-eval-constant nil)
+        (let ((forms (map 'simple-vector #'hir-eval-sub (subseq nodes 0 (1- count))))
+              (last (hir-eval-node (svref nodes (1- count)))))
           (case (length forms)
             (0 last)
             (1 (let ((a (svref forms 0)))
@@ -192,13 +192,13 @@ simple-vector ARGUMENTS, the arity dispatched on when the closure is made."
                  (loop for form across forms do (funcall form frame))
                  (funcall last frame))))))))
 
-(defun ir-eval-let (node)
-  (let ((binders (map 'simple-vector #'ir-eval-binder (ir-node-a node)))
-        (inits (ir-eval-subs (ir-node-b node)))
-        (body (ir-eval-node (ir-node-c node))))
+(defun hir-eval-let (node)
+  (let ((binders (map 'simple-vector #'hir-eval-binder (hir-node-a node)))
+        (inits (hir-eval-subs (hir-node-b node)))
+        (body (hir-eval-node (hir-node-c node))))
     ;; The variables are new: an init form never sees an earlier one, so
     ;; each is bound as soon as its value is known.
-    (cond ((ir-node-d node)
+    (cond ((hir-node-d node)
            (let ((init (svref inits 0)))
              (lambda (frame)
                (let ((values (multiple-value-list (funcall init frame))))
@@ -214,50 +214,50 @@ simple-vector ARGUMENTS, the arity dispatched on when the closure is made."
                    do (funcall binder frame (funcall init frame)))
              (funcall body frame))))))
 
-(defun ir-eval-if (node)
-  (let ((test (ir-eval-sub (ir-node-a node)))
-        (then (ir-eval-node (ir-node-b node)))
-        (else (ir-eval-node (ir-node-c node))))
+(defun hir-eval-if (node)
+  (let ((test (hir-eval-sub (hir-node-a node)))
+        (then (hir-eval-node (hir-node-b node)))
+        (else (hir-eval-node (hir-node-c node))))
     (lambda (frame) (if (funcall test frame) (funcall then frame) (funcall else frame)))))
 
-(defun ir-eval-block (node)
-  (let* ((exit (ir-node-a node)) (info (make-ir-eval-exit)))
-    (setf (ir-exit-lowering exit) info)
-    (let ((body (let ((*ir-eval-tail* (cons exit *ir-eval-tail*))) (ir-eval-node (ir-node-b node)))))
-      (if (ir-eval-exit-catch-p info)
-          (let ((bind (ir-eval-binder (ir-exit-token exit))))
+(defun hir-eval-block (node)
+  (let* ((exit (hir-node-a node)) (info (make-hir-eval-exit)))
+    (setf (hir-exit-lowering exit) info)
+    (let ((body (let ((*hir-eval-tail* (cons exit *hir-eval-tail*))) (hir-eval-node (hir-node-b node)))))
+      (if (hir-eval-exit-catch-p info)
+          (let ((bind (hir-eval-binder (hir-exit-token exit))))
             (lambda (frame)
               (let ((tag (list nil)))
                 (funcall bind frame tag)
                 (catch tag (funcall body frame)))))
           body))))
 
-(defun ir-eval-return (node)
-  (let* ((exit (ir-node-a node)) (value (or (ir-node-b node) (ir-node 0 nil nil))))
-    (if (member exit *ir-eval-tail* :test #'eq)
-        (ir-eval-node value)
-        (let ((token (ir-eval-reader (ir-exit-token (ir-exit-group exit))))
-              (value (ir-eval-sub value)))
-          (setf (ir-eval-exit-catch-p (ir-exit-lowering exit)) t)
+(defun hir-eval-return (node)
+  (let* ((exit (hir-node-a node)) (value (or (hir-node-b node) (hir-node 0 nil nil))))
+    (if (member exit *hir-eval-tail* :test #'eq)
+        (hir-eval-node value)
+        (let ((token (hir-eval-reader (hir-exit-token (hir-exit-group exit))))
+              (value (hir-eval-sub value)))
+          (setf (hir-eval-exit-catch-p (hir-exit-lowering exit)) t)
           (lambda (frame) (throw (funcall token frame) (funcall value frame)))))))
 
-(defun ir-eval-tagbody (node)
-  (let* ((segments (ir-node-a node)) (group (ir-node-b node))
-         (key (list :go)) (statements (make-ir-buffer)) (info nil))
+(defun hir-eval-tagbody (node)
+  (let* ((segments (hir-node-a node)) (group (hir-node-b node))
+         (key (list :go)) (statements (make-hir-buffer)) (info nil))
     ;; Each segment's statements are numbered in order; a tag is the
     ;; number of its first statement. The first segment's exit is the
     ;; group, which no GO names.
     (loop for segment across segments
-          do (setf (ir-exit-lowering (car segment))
-                   (make-ir-eval-exit (cons key (ir-buffer-count statements))))
+          do (setf (hir-exit-lowering (car segment))
+                   (make-hir-eval-exit (cons key (hir-buffer-count statements))))
              (let ((form (cdr segment)))
-               (cond ((= (ir-node-kind form) 10)
-                      (loop for statement across (ir-node-a form) do (ir-push statement statements)))
-                     ((and (= (ir-node-kind form) 0) (null (ir-node-a form))))
-                     (t (ir-push form statements)))))
-    (setf info (ir-exit-lowering group))
-    (let* ((closures (let ((*ir-eval-tail* (list group)))
-                       (map 'simple-vector #'ir-eval-node (ir-vector statements))))
+               (cond ((= (hir-node-kind form) 10)
+                      (loop for statement across (hir-node-a form) do (hir-push statement statements)))
+                     ((and (= (hir-node-kind form) 0) (null (hir-node-a form))))
+                     (t (hir-push form statements)))))
+    (setf info (hir-exit-lowering group))
+    (let* ((closures (let ((*hir-eval-tail* (list group)))
+                       (map 'simple-vector #'hir-eval-node (hir-vector statements))))
            (count (length closures)))
       (flet ((run (frame pc)
                (loop while (< pc count)
@@ -265,8 +265,8 @@ simple-vector ARGUMENTS, the arity dispatched on when the closure is made."
                           (if (and (consp result) (eq (car result) key))
                               (setf pc (cdr result))
                               (incf pc))))))
-        (if (ir-eval-exit-catch-p info)
-            (let ((bind (ir-eval-binder (ir-exit-token group))))
+        (if (hir-eval-exit-catch-p info)
+            (let ((bind (hir-eval-binder (hir-exit-token group))))
               (lambda (frame)
                 (let ((tag (list nil)) (pc 0))
                   (funcall bind frame tag)
@@ -274,20 +274,20 @@ simple-vector ARGUMENTS, the arity dispatched on when the closure is made."
                         (when (minusp pc) (return nil))))))
             (lambda (frame) (run frame 0) nil))))))
 
-(defun ir-eval-go (node)
-  (let* ((exit (ir-node-a node)) (group (ir-exit-group exit))
-         (marker (ir-eval-exit-marker (ir-exit-lowering exit))))
-    (if (member group *ir-eval-tail* :test #'eq)
-        (ir-eval-constant marker)
-        (let ((token (ir-eval-reader (ir-exit-token group))) (pc (cdr marker)))
-          (setf (ir-eval-exit-catch-p (ir-exit-lowering group)) t)
+(defun hir-eval-go (node)
+  (let* ((exit (hir-node-a node)) (group (hir-exit-group exit))
+         (marker (hir-eval-exit-marker (hir-exit-lowering exit))))
+    (if (member group *hir-eval-tail* :test #'eq)
+        (hir-eval-constant marker)
+        (let ((token (hir-eval-reader (hir-exit-token group))) (pc (cdr marker)))
+          (setf (hir-eval-exit-catch-p (hir-exit-lowering group)) t)
           (lambda (frame) (throw (funcall token frame) pc))))))
 
-(defun ir-eval-progv (node)
-  (let ((symbols (ir-eval-sub (ir-node-a node)))
-        (values (ir-eval-sub (ir-node-b node)))
-        (body (ir-eval-node (ir-node-c node)))
-        (client *ir-eval-client*) (global *ir-eval-global*))
+(defun hir-eval-progv (node)
+  (let ((symbols (hir-eval-sub (hir-node-a node)))
+        (values (hir-eval-sub (hir-node-b node)))
+        (body (hir-eval-node (hir-node-c node)))
+        (client *hir-eval-client*) (global *hir-eval-global*))
     (lambda (frame)
       (let* ((symbols (funcall symbols frame)) (values (funcall values frame))
              (cells (mapcar (lambda (symbol)
@@ -303,53 +303,53 @@ simple-vector ARGUMENTS, the arity dispatched on when the closure is made."
                (funcall body frame))
           (loop for cell in cells for value in old do (setf (car cell) value)))))))
 
-(defun ir-eval-load-time-value (node)
+(defun hir-eval-load-time-value (node)
   ;; Evaluated once, when the form that contains it is prepared.
-  (ir-eval-constant (funcall (funcall (ir-eval-function (ir-node-a node)) #()))))
+  (hir-eval-constant (funcall (funcall (hir-eval-function (hir-node-a node)) #()))))
 
-(defun ir-eval-node (node)
-  (case (ir-node-kind node)
-    (0 (ir-eval-constant (ir-node-a node)))
-    (1 (ir-eval-reader (ir-node-a node)))
-    (2 (ir-eval-writer (ir-node-a node) (ir-eval-sub (ir-node-b node))))
-    (3 (let ((cell (ir-eval-variable-cell (ir-node-a node))) (name (ir-node-a node)))
+(defun hir-eval-node (node)
+  (case (hir-node-kind node)
+    (0 (hir-eval-constant (hir-node-a node)))
+    (1 (hir-eval-reader (hir-node-a node)))
+    (2 (hir-eval-writer (hir-node-a node) (hir-eval-sub (hir-node-b node))))
+    (3 (let ((cell (hir-eval-variable-cell (hir-node-a node))) (name (hir-node-a node)))
          (lambda (frame)
            (declare (ignore frame))
            (let ((value (car cell)))
              (if (eq value (cdr cell)) (error 'unbound-variable :name name) value)))))
-    (4 (let ((cell (ir-eval-variable-cell (ir-node-a node))) (value (ir-eval-sub (ir-node-b node))))
+    (4 (let ((cell (hir-eval-variable-cell (hir-node-a node))) (value (hir-eval-sub (hir-node-b node))))
          (lambda (frame) (setf (car cell) (funcall value frame)))))
-    (5 (let ((cell (ir-eval-operator-cell (ir-node-a node))))
+    (5 (let ((cell (hir-eval-operator-cell (hir-node-a node))))
          (lambda (frame) (declare (ignore frame)) (car cell))))
-    (6 (let ((fun (ir-node-a node)))
-         (if (ir-fun-binding fun)
-             (ir-eval-reader (ir-fun-binding fun))
-             (ir-eval-closure fun))))
-    (7 (ir-eval-call node))
-    (8 (let ((name (ir-node-b node)))
+    (6 (let ((fun (hir-node-a node)))
+         (if (hir-fun-binding fun)
+             (hir-eval-reader (hir-fun-binding fun))
+             (hir-eval-closure fun))))
+    (7 (hir-eval-call node))
+    (8 (let ((name (hir-node-b node)))
          (lambda (frame)
            (declare (ignore frame))
            (error "The primitive operation ~S cannot be evaluated at compile time." name))))
-    (9 (ir-eval-if node))
-    (10 (ir-eval-progn (ir-node-a node)))
-    (11 (ir-eval-let node))
-    (12 (let ((cell (ir-eval-variable-cell (ir-node-a node)))
-              (value (ir-eval-sub (ir-node-b node))) (body (ir-eval-node (ir-node-c node))))
+    (9 (hir-eval-if node))
+    (10 (hir-eval-progn (hir-node-a node)))
+    (11 (hir-eval-let node))
+    (12 (let ((cell (hir-eval-variable-cell (hir-node-a node)))
+              (value (hir-eval-sub (hir-node-b node))) (body (hir-eval-node (hir-node-c node))))
           (lambda (frame)
-            (ir-eval-with-binding (cell (funcall value frame)) (funcall body frame)))))
-    (13 (ir-eval-local-functions node))
-    (14 (ir-eval-block node))
-    (15 (ir-eval-return node))
-    (16 (ir-eval-tagbody node))
-    (17 (ir-eval-go node))
-    (18 (let ((tag (ir-eval-sub (ir-node-a node))) (body (ir-eval-node (ir-node-b node))))
+            (hir-eval-with-binding (cell (funcall value frame)) (funcall body frame)))))
+    (13 (hir-eval-local-functions node))
+    (14 (hir-eval-block node))
+    (15 (hir-eval-return node))
+    (16 (hir-eval-tagbody node))
+    (17 (hir-eval-go node))
+    (18 (let ((tag (hir-eval-sub (hir-node-a node))) (body (hir-eval-node (hir-node-b node))))
           (lambda (frame) (catch (funcall tag frame) (funcall body frame)))))
-    (19 (let ((tag (ir-eval-sub (ir-node-a node))) (value (ir-eval-sub (ir-node-b node))))
+    (19 (let ((tag (hir-eval-sub (hir-node-a node))) (value (hir-eval-sub (hir-node-b node))))
           (lambda (frame) (throw (funcall tag frame) (funcall value frame)))))
-    (20 (let ((form (ir-eval-node (ir-node-a node))) (cleanup (ir-eval-sub (ir-node-b node))))
+    (20 (let ((form (hir-eval-node (hir-node-a node))) (cleanup (hir-eval-sub (hir-node-b node))))
           (lambda (frame) (unwind-protect (funcall form frame) (funcall cleanup frame)))))
-    (21 (let ((function (ir-eval-sub (ir-node-a node))) (arguments (ir-eval-subs (ir-node-b node)))
-              (designator (ir-eval-designator *ir-eval-client* *ir-eval-global*)))
+    (21 (let ((function (hir-eval-sub (hir-node-a node))) (arguments (hir-eval-subs (hir-node-b node)))
+              (designator (hir-eval-designator *hir-eval-client* *hir-eval-global*)))
           (if (= (length arguments) 1)
               (let ((argument (svref arguments 0)))
                 (lambda (frame)
@@ -359,39 +359,39 @@ simple-vector ARGUMENTS, the arity dispatched on when the closure is made."
                 (let ((function (funcall designator (funcall function frame))))
                   (apply function (loop for argument across arguments
                                         nconc (multiple-value-list (funcall argument frame)))))))))
-    (22 (let ((first (ir-eval-sub (ir-node-a node))) (rest (ir-eval-sub (ir-node-b node))))
+    (22 (let ((first (hir-eval-sub (hir-node-a node))) (rest (hir-eval-sub (hir-node-b node))))
           (lambda (frame) (multiple-value-prog1 (funcall first frame) (funcall rest frame)))))
-    (23 (ir-eval-node (ir-node-b node)))
-    (24 (ir-eval-load-time-value node))
-    (25 (ir-eval-progv node))
-    (otherwise (fail "Unknown IR node kind ~S" (ir-node-kind node)))))
+    (23 (hir-eval-node (hir-node-b node)))
+    (24 (hir-eval-load-time-value node))
+    (25 (hir-eval-progv node))
+    (otherwise (fail "Unknown HIR node kind ~S" (hir-node-kind node)))))
 
 ;;; Functions
 
-(defun ir-eval-environment-filler (fun)
+(defun hir-eval-environment-filler (fun)
   "A function of a frame of the function being built and an environment
 vector for FUN, which fills the vector with FUN's free variables."
-  (let ((readers (map 'simple-vector #'ir-eval-raw-reader (ir-fun-free fun))))
+  (let ((readers (map 'simple-vector #'hir-eval-raw-reader (hir-fun-free fun))))
     (lambda (frame environment)
       (loop for reader across readers for index from 0
             do (setf (svref environment index) (funcall reader frame)))
       environment)))
 
-(defun ir-eval-closure (fun)
+(defun hir-eval-closure (fun)
   "A closure of a frame making a function object for FUN, a lambda."
-  (let ((maker (ir-eval-function fun)) (size (length (ir-fun-free fun))))
+  (let ((maker (hir-eval-function fun)) (size (length (hir-fun-free fun))))
     (if (zerop size)
         (lambda (frame) (declare (ignore frame)) (funcall maker #()))
-        (let ((fill (ir-eval-environment-filler fun)))
+        (let ((fill (hir-eval-environment-filler fun)))
           (lambda (frame) (funcall maker (funcall fill frame (make-array size))))))))
 
-(defun ir-eval-local-functions (node)
-  (let* ((functions (ir-node-a node))
-         (makers (map 'simple-vector #'ir-eval-function functions))
-         (sizes (map 'simple-vector (lambda (fun) (length (ir-fun-free fun))) functions))
-         (fillers (map 'simple-vector #'ir-eval-environment-filler functions))
-         (binders (map 'simple-vector (lambda (fun) (ir-eval-binder (ir-fun-binding fun))) functions))
-         (body (ir-eval-node (ir-node-b node))))
+(defun hir-eval-local-functions (node)
+  (let* ((functions (hir-node-a node))
+         (makers (map 'simple-vector #'hir-eval-function functions))
+         (sizes (map 'simple-vector (lambda (fun) (length (hir-fun-free fun))) functions))
+         (fillers (map 'simple-vector #'hir-eval-environment-filler functions))
+         (binders (map 'simple-vector (lambda (fun) (hir-eval-binder (hir-fun-binding fun))) functions))
+         (body (hir-eval-node (hir-node-b node))))
     (lambda (frame)
       ;; The functions can refer to one another: every function object is
       ;; bound before the environments are filled.
@@ -402,42 +402,42 @@ vector for FUN, which fills the vector with FUN's free variables."
               do (funcall fill frame environment)))
       (funcall body frame))))
 
-(defun ir-eval-parameter-chain (fun body)
+(defun hir-eval-parameter-chain (fun body)
   "BODY preceded by the initialization of FUN's parameters that were not
 supplied, in order, each special parameter bound around what follows it."
-  (let ((specials (ir-fun-parameter-specials fun)) (next body))
-    (dolist (parameter (reverse (ir-parameter-list fun)) next)
+  (let ((specials (hir-fun-parameter-specials fun)) (next body))
+    (dolist (parameter (reverse (hir-parameter-list fun)) next)
       (let* ((var (svref parameter 0)) (init (svref parameter 1)) (supplied (svref parameter 2))
              (special (car (rassoc var specials)))
              (rest next))
         (when special
-          (let ((cell (ir-eval-variable-cell special)) (value (ir-eval-reader var)) (after rest))
+          (let ((cell (hir-eval-variable-cell special)) (value (hir-eval-reader var)) (after rest))
             (setf rest (lambda (frame)
-                         (ir-eval-with-binding (cell (funcall value frame)) (funcall after frame))))))
+                         (hir-eval-with-binding (cell (funcall value frame)) (funcall after frame))))))
         (setf next
               (if supplied
-                  (let ((supplied-p (ir-eval-reader supplied))
-                        (initialize (ir-eval-writer var (ir-eval-sub init)))
+                  (let ((supplied-p (hir-eval-reader supplied))
+                        (initialize (hir-eval-writer var (hir-eval-sub init)))
                         (after rest))
                     (lambda (frame)
                       (unless (funcall supplied-p frame) (funcall initialize frame))
                       (funcall after frame)))
                   rest))))))
 
-(define-condition ir-eval-argument-error (program-error simple-error) ())
+(define-condition hir-eval-argument-error (program-error simple-error) ())
 
-(defun ir-eval-argument-error (name control &rest arguments)
-  (error 'ir-eval-argument-error
+(defun hir-eval-argument-error (name control &rest arguments)
+  (error 'hir-eval-argument-error
          :format-control "~@[~S: ~]~?" :format-arguments (list name control arguments)))
 
-(defun ir-eval-function (fun)
+(defun hir-eval-function (fun)
   "A function of an environment vector making a function object for FUN."
-  (let* ((*ir-eval-function* fun) (*ir-eval-tail* '())
-         (size (ir-eval-assign-slots fun))
-         (ll (ir-fun-lambda-list fun))
-         (required (map 'list #'ir-eval-binder (ir-lambda-list-required ll)))
-         (name (ir-fun-name fun))
-         (body (ir-eval-parameter-chain fun (ir-eval-node (ir-fun-body fun))))
+  (let* ((*hir-eval-function* fun) (*hir-eval-tail* '())
+         (size (hir-eval-assign-slots fun))
+         (ll (hir-fun-lambda-list fun))
+         (required (map 'list #'hir-eval-binder (hir-lambda-list-required ll)))
+         (name (hir-fun-name fun))
+         (body (hir-eval-parameter-chain fun (hir-eval-node (hir-fun-body fun))))
          (r0 (first required)) (r1 (second required)) (r2 (third required)))
     (declare (ignorable r0 r1 r2))
     (macrolet ((entry (parameters)
@@ -448,35 +448,35 @@ supplied, in order, each special parameter bound around what follows it."
                         ,@(loop for parameter in parameters for binder in '(r0 r1 r2)
                                 collect `(funcall ,binder frame ,parameter))
                         (funcall body frame))))))
-      (if (and (zerop (length (ir-lambda-list-optional ll))) (null (ir-lambda-list-rest ll))
-               (not (ir-lambda-list-key-p ll)) (<= (length required) 3))
+      (if (and (zerop (length (hir-lambda-list-optional ll))) (null (hir-lambda-list-rest ll))
+               (not (hir-lambda-list-key-p ll)) (<= (length required) 3))
           (ecase (length required)
             (0 (entry ()))
             (1 (entry (a)))
             (2 (entry (a b)))
             (3 (entry (a b c))))
-          (ir-eval-general-entry fun size required body name)))))
+          (hir-eval-general-entry fun size required body name)))))
 
-(defun ir-eval-general-entry (fun size required body name)
-  (let* ((ll (ir-fun-lambda-list fun))
+(defun hir-eval-general-entry (fun size required body name)
+  (let* ((ll (hir-fun-lambda-list fun))
          (optional (map 'list (lambda (parameter)
-                                (cons (ir-eval-binder (svref parameter 0))
-                                      (ir-eval-binder (svref parameter 2))))
-                        (ir-lambda-list-optional ll)))
-         (rest (and (ir-lambda-list-rest ll) (ir-eval-binder (ir-lambda-list-rest ll))))
-         (key-p (ir-lambda-list-key-p ll))
-         (allow-other-keys (ir-lambda-list-allow-other-keys ll))
+                                (cons (hir-eval-binder (svref parameter 0))
+                                      (hir-eval-binder (svref parameter 2))))
+                        (hir-lambda-list-optional ll)))
+         (rest (and (hir-lambda-list-rest ll) (hir-eval-binder (hir-lambda-list-rest ll))))
+         (key-p (hir-lambda-list-key-p ll))
+         (allow-other-keys (hir-lambda-list-allow-other-keys ll))
          (keys (map 'list (lambda (parameter)
                             (list (svref parameter 3)
-                                  (ir-eval-binder (svref parameter 0))
-                                  (ir-eval-binder (svref parameter 2))))
-                    (ir-lambda-list-keys ll))))
+                                  (hir-eval-binder (svref parameter 0))
+                                  (hir-eval-binder (svref parameter 2))))
+                    (hir-lambda-list-keys ll))))
     (lambda (environment)
       (lambda (&rest arguments)
         (let ((frame (make-array size)) (more arguments))
           (setf (svref frame 0) environment)
           (dolist (binder required)
-            (when (null more) (ir-eval-argument-error name "too few arguments: ~S" arguments))
+            (when (null more) (hir-eval-argument-error name "too few arguments: ~S" arguments))
             (funcall binder frame (pop more)))
           (loop for (binder . supplied) in optional
                 do (if more
@@ -485,7 +485,7 @@ supplied, in order, each special parameter bound around what follows it."
           (when rest (funcall rest frame more))
           (cond (key-p
                  (unless (evenp (length more))
-                   (ir-eval-argument-error name "odd number of keyword arguments: ~S" more))
+                   (hir-eval-argument-error name "odd number of keyword arguments: ~S" more))
                  (loop for (keyword binder supplied) in keys
                        do (loop for tail on more by #'cddr
                                 when (eq (car tail) keyword)
@@ -498,14 +498,14 @@ supplied, in order, each special parameter bound around what follows it."
                    (loop for tail on more by #'cddr
                          unless (or (eq (car tail) :allow-other-keys)
                                     (find (car tail) keys :key #'first))
-                           do (ir-eval-argument-error name "unknown keyword argument ~S" (car tail)))))
+                           do (hir-eval-argument-error name "unknown keyword argument ~S" (car tail)))))
                 ((and more (not rest))
-                 (ir-eval-argument-error name "too many arguments: ~S" arguments)))
+                 (hir-eval-argument-error name "too many arguments: ~S" arguments)))
           (funcall body frame))))))
 
 ;;; Entry points
 
-(defun ir-eval (input environment)
+(defun hir-eval (input environment)
   "Evaluates INPUT, a CST or a form, in the Trucler ENVIRONMENT (the
 compile-time environment and the local macros visible to INPUT)."
   (let* ((*inline-enabled* nil)
@@ -515,35 +515,35 @@ compile-time environment and the local macros visible to INPUT)."
          (*referenced-functions* (if (boundp '*referenced-functions*)
                                      *referenced-functions*
                                      (make-hash-table :test 'equal)))
-         (*ir-eval-client* *client*)
-         (*ir-eval-global* (trucler:global-environment *client* environment))
-         (root (make-ir-fun :name '(:top-level-form) :lambda-list (make-ir-lambda-list))))
-    (let ((*ir-function* root) (*ir-source* nil) (*ir-conversion-depth* 0)
-          (*ir-file-id* 0) (*ir-top-cst* nil) (*ir-form-sources* nil))
-      (setf (ir-fun-body root) (ir-convert input (ir-env environment)))
-      (analyze-ir root))
-    (funcall (funcall (ir-eval-function root) #()))))
+         (*hir-eval-client* *client*)
+         (*hir-eval-global* (trucler:global-environment *client* environment))
+         (root (make-hir-fun :name '(:top-level-form) :lambda-list (make-hir-lambda-list))))
+    (let ((*hir-function* root) (*hir-source* nil) (*hir-conversion-depth* 0)
+          (*hir-file-id* 0) (*hir-top-cst* nil) (*hir-form-sources* nil))
+      (setf (hir-fun-body root) (hir-convert input (hir-env environment)))
+      (analyze-hir root))
+    (funcall (funcall (hir-eval-function root) #()))))
 
-(defun ir-macrolet-environment (environment)
+(defun hir-macrolet-environment (environment)
   "The environment in which the expander of a local macro is evaluated:
 the local macros, symbol macros and special declarations of ENVIRONMENT,
 never its variables, functions, blocks or tags."
   (let ((variables '()) (functions '()) (seen-variables '()) (seen-functions '()))
-    (loop for env = environment then (ir-env-parent env) while (ir-env-p env)
-          do (dolist (entry (ir-env-vars env))
+    (loop for env = environment then (hir-env-parent env) while (hir-env-p env)
+          do (dolist (entry (hir-env-vars env))
                (unless (member (car entry) seen-variables :test #'eq)
                  (push (car entry) seen-variables)
-                 (unless (ir-var-p (cdr entry)) (push entry variables))))
-             (dolist (entry (ir-env-funcs env))
+                 (unless (hir-var-p (cdr entry)) (push entry variables))))
+             (dolist (entry (hir-env-funcs env))
                (unless (member (car entry) seen-functions :test #'equal)
                  (push (car entry) seen-functions)
-                 (unless (ir-fun-p (cdr entry)) (push entry functions)))))
-    (ir-env (ir-base-environment environment)
+                 (unless (hir-fun-p (cdr entry)) (push entry functions)))))
+    (hir-env (hir-base-environment environment)
             :vars (nreverse variables) :funcs (nreverse functions))))
 
 (defmethod evaluate-at-compile-time ((client cross-client) input environment)
-  (ir-eval input environment))
+  (hir-eval input environment))
 
-(defmethod ir-local-macro-expander ((client cross-client) name lambda-list body environment)
-  (ir-eval `(function ,(ecclesia:parse-macro name lambda-list body))
-           (ir-macrolet-environment environment)))
+(defmethod hir-local-macro-expander ((client cross-client) name lambda-list body environment)
+  (hir-eval `(function ,(ecclesia:parse-macro name lambda-list body))
+           (hir-macrolet-environment environment)))

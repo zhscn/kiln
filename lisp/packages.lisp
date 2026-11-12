@@ -74,7 +74,7 @@
   (:use #:cl #:kiln.abi #:kiln.kir)
   (:local-nicknames (#:cmd #:common-macro-definitions)
                     (#:clo #:clostrum))
-  (:documentation "The compiler: front end, IR, lowering to KIR.")
+  (:documentation "The compiler: front end, HIR, lowering to KIR.")
   (:export #:front-end #:make-session #:compile-module #:kiln-compile-error
            #:use-host-macros))
 

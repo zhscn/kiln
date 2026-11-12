@@ -32,7 +32,7 @@
 后五行（`(:class c)` 等）是 [specialization.md](specialization.md) 的假设：每次 `change-assumption` 都把键交给同一个重定义钩子，所以它们和宏、内联函数一样能成为在 image 里编译的定义的依赖。类型展开已经记录 `(:type name)`；其他键由相应的调用点特化、生成的判别函数等记录，但报告和 `kiln.sys:dependents` 已经认识它们。
 
 在哪里记录：
-- 前端查询全局环境时（`lisp/target/compiler/client.lisp` 的 `run-time-environment`）：IR 转换展开宏、宏用 `&environment` 调用 `macro-function`，都会经过这里。查到宏、查不到定义、查到常量时记下依赖。
+- 前端查询全局环境时（`lisp/target/compiler/client.lisp` 的 `run-time-environment`）：HIR 转换展开宏、宏用 `&environment` 调用 `macro-function`，都会经过这里。查到宏、查不到定义、查到常量时记下依赖。
 - `front.lisp`：内联展开时（`convert-maybe-inline`）。检查内联函数体里的名字是否被局部遮蔽，这些查询不算依赖。
 - image-client 的 `get-setf-expansion`。
 - `native-eval` 自己展开顶层宏形式时（定义的宏本身）。

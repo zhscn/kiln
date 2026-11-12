@@ -14,7 +14,7 @@
 | 语法树 | Concrete-Syntax-Tree | 带源码位置，debugger 和报错都需要 |
 | 全局环境 | Clostrum | 交叉编译的编译期环境，隔离宿主和目标 |
 | 词法环境查询 | Trucler | |
-| 前端（CST 到 IR）、编译期求值 | 自研（`lisp/ir/`，[ir.md](ir.md)） | 原来用 Common-boot 的 cst-to-ast、Iconoclast 的 AST 和 HIR 求值器，已换掉 |
+| 前端（CST 到 HIR）、编译期求值 | 自研（`lisp/hir/`，[hir.md](hir.md)） | 原来用 Common-boot 的 cst-to-ast、Iconoclast 的 AST 和 Common-boot 的 HIR 求值器，已换掉 |
 | 标准宏 | Common-macros（vendor） | 编译期展开；运行期由 eval 模块提供 |
 | 代码解析工具 | Ecclesia | lambda list 解析等 |
 | 类型 | ctype（vendor） | kiln 自己的 client，否则会默认使用 SBCL 的 fixnum 范围和 UAET |
@@ -47,7 +47,7 @@ kiln 的 Lisp 代码编成五个模块，按顺序载入，每个模块只编译
 | clos | Clostrophilia 和 CLOS 引导，Predicament、Salmagundi、Parcl、ctype、Regalia、Anatomicl 的目标端部分、Trinsic、Cyclosis、文件和 pathname、Acclimation、Incless、Inravina、Invistra、Khazern、alexandria、Eclector 的 reader，以及调试接口 | `clos-` |
 | frontend | Concrete-Syntax-Tree、Eclector 的 parse-result 和 CST 读取器 | `fe-` |
 | eval | Ecclesia、Common-macros（运行期标准宏）、Trucler、Maclina、`lisp/target/eval/`（evaluator、REPL、后端协议） | `ev-` |
-| compiler | Trucler reference、Clostrum、Anatomicl，以及 kiln 自己的 `lisp/*.lisp`、`lisp/ir/` 和 `lisp/target/compiler/` | `co-` |
+| compiler | Trucler reference、Clostrum、Anatomicl，以及 kiln 自己的 `lisp/*.lisp`、`lisp/hir/` 和 `lisp/target/compiler/` | `co-` |
 
 frontend 不进 CLOS 模块，以免拖慢所有 CLOS 测试的启动。
 

@@ -1,20 +1,20 @@
-# 降级：IR 到 KIR
+# 降级：HIR 到 KIR
 
-`lisp/ir/lower.lisp` 按 IR 节点的整数 kind 分派（`ir-lower-mv`），返回保存结果的 KIR 操作数；模块、函数、调用、特殊变量、非局部退出、分配和常量的发射工具在 `lisp/lower.lisp`、`lisp/values.lisp` 和 `lisp/primitives.lisp`。输入是前端的输出（[front-end.md](front-end.md)、[ir.md](ir.md)），输出的 KIR 见 [codegen.md](codegen.md)，ABI 见 [abi.md](abi.md)。
+`lisp/hir/lower.lisp` 按 HIR 节点的整数 kind 分派（`hir-lower-mv`），返回保存结果的 KIR 操作数；模块、函数、调用、特殊变量、非局部退出、分配和常量的发射工具在 `lisp/lower.lisp`、`lisp/values.lisp` 和 `lisp/primitives.lisp`。输入是前端的输出（[front-end.md](front-end.md)、[hir.md](hir.md)），输出的 KIR 见 [codegen.md](codegen.md)，ABI 见 [abi.md](abi.md)。
 
-## IR 输入
+## HIR 输入
 
-顶层形式保存 `ir-fun`。变量的 lowering 字段记录所属函数中的 KIR 变量，跨函数引用按照 free 向量的下标读取 self 的环境。需要 cell 的变量在绑定时装箱，函数入口先保护所有实参，再分配参数的 cell。
+顶层形式保存 `hir-fun`。变量的 lowering 字段记录所属函数中的 KIR 变量，跨函数引用按照 free 向量的下标读取 self 的环境。需要 cell 的变量在绑定时装箱，函数入口先保护所有实参，再分配参数的 cell。
 
 降级用下面的多值、动态环境、常量和原语工具。退出点自己的 lowering 字段保存目标块及动态作用域；只有跨函数退出才分配令牌。`load-time-value` 的形式在空词法环境中转换为独立函数，在模块初始化时调用一次并存入 GC root cell。已知局部函数通过代码标签直接调用，同时传递承载闭包环境的 self。
 
-降级期间的当前调用位置保持 IR 的打包 fixnum 表示，子节点缺少位置时继承外层位置。
+降级期间的当前调用位置保持 HIR 的打包 fixnum 表示，子节点缺少位置时继承外层位置。
 仅在发射调用的 `:loc` 记录时提取起止偏移，避免每经过一个节点都分配范围 cons。
 模块初始化按固定大小顺序收集顶层形式，每个形式只在分块时访问一次，保持执行顺序。
 
 ## 函数、变量和闭包
 
-- **函数**：每个 `ir-fun` 编译成一个 KIR 函数。没有自由变量的函数用静态函数对象（大多数顶层 `defun` 都是这种），闭包按捕获布局的长度分配，再填写 env。已证明身份留在词法绑定内的闭包可使用固定栈槽，其他闭包使用堆存储。一组局部函数（`flet`、`labels`）先全部分配，再逐个填写，所以互相递归的函数能捕获彼此。
+- **函数**：每个 `hir-fun` 编译成一个 KIR 函数。没有自由变量的函数用静态函数对象（大多数顶层 `defun` 都是这种），闭包按捕获布局的长度分配，再填写 env。已证明身份留在词法绑定内的闭包可使用固定栈槽，其他闭包使用堆存储。一组局部函数（`flet`、`labels`）先全部分配，再逐个填写，所以互相递归的函数能捕获彼此。
 - **变量**：每个变量对应它所属 KIR 函数里的一个 `obj` 变量；别的函数引用它时，从 self 的 env 里按 free 向量的下标读。
 - **闭包变量用到时再读**：如果在函数入口读出全部捕获变量，它们跨调用存活，会被溢出到栈上。闭包环境不可变（被赋值的变量在 cell 里），所以每次引用时直接从函数对象读。
 - **cell**：用一个 cons，car 存值。
@@ -33,11 +33,11 @@
 
 ## 多值
 
-`lower-mv` 返回主值的操作数和值的个数（整数或 raw 变量）。会把值传递出去的节点（`progn`、`if`、`let`、局部函数、`block`、`catch`、`unwind-protect`、绑定、函数调用等）在 `ir-lower-mv` 里传出全部值，`ir-lower` 只取主值。函数体用 `lower-mv`，所以函数返回它最后一个形式的全部值。`multiple-value-bind` 展开出的 `(multiple-value-call (lambda (&optional ... &rest g) (declare (ignore g)) ...) form)` 由 IR 转换识别并归约为多值 `let` 节点（`ir-node-d` 为真），降级时直接按返回值个数用 `:select` 从主值和 `ctx.values` 取出绑定，不生成闭包，也不会让主体里的赋值或 `return-from`/`go` 变成跨函数的单元或非局部退出。`multiple-value-call` 在被调函数是 `#'list`（即 `multiple-value-list` 的展开）时直接把推入的值 `nreverse` 后返回，其余情况收集成列表再按 `apply` 调用。保留和传递多值的约定见 [abi.md](abi.md)。
+`lower-mv` 返回主值的操作数和值的个数（整数或 raw 变量）。会把值传递出去的节点（`progn`、`if`、`let`、局部函数、`block`、`catch`、`unwind-protect`、绑定、函数调用等）在 `hir-lower-mv` 里传出全部值，`hir-lower` 只取主值。函数体用 `lower-mv`，所以函数返回它最后一个形式的全部值。`multiple-value-bind` 展开出的 `(multiple-value-call (lambda (&optional ... &rest g) (declare (ignore g)) ...) form)` 由 HIR 转换识别并归约为多值 `let` 节点（`hir-node-d` 为真），降级时直接按返回值个数用 `:select` 从主值和 `ctx.values` 取出绑定，不生成闭包，也不会让主体里的赋值或 `return-from`/`go` 变成跨函数的单元或非局部退出。`multiple-value-call` 在被调函数是 `#'list`（即 `multiple-value-list` 的展开）时直接把推入的值 `nreverse` 后返回，其余情况收集成列表再按 `apply` 调用。保留和传递多值的约定见 [abi.md](abi.md)。
 
 ## 分支
 
-谓词原语的结果是 `(:select c T NIL)`；放在 `if` 的测试位置时不先物化成 T/NIL 再和 NIL 比较，而是直接按 `c` 分支。`and`、`or`（展开成 `(let ((g x)) (if g g y))`）、`not`、嵌套的 `if`、常量在测试位置也都展开成分支（IR 降级里是 `ir-lower-branch`；`or` 的临时变量只在只有这两处引用、没有赋值和捕获时才省掉）。
+谓词原语的结果是 `(:select c T NIL)`；放在 `if` 的测试位置时不先物化成 T/NIL 再和 NIL 比较，而是直接按 `c` 分支。`and`、`or`（展开成 `(let ((g x)) (if g g y))`）、`not`、嵌套的 `if`、常量在测试位置也都展开成分支（HIR 降级里是 `hir-lower-branch`；`or` 的临时变量只在只有这两处引用、没有赋值和捕获时才省掉）。
 
 在产生值的位置，同一个词法变量与至少三个不同 fixnum 键比较的 `if` 链生成 `:switch`，包括 `case` 的单键和分组键分支。先检查输入是 fixnum，再去掉 tag；非 fixnum 直接走默认分支。重复键采用第一次出现的分支，多个键可以共用一个目标块，各分支保留全部返回值。Cranelift 按键的分布选择比较和跳转表。
 
@@ -82,7 +82,7 @@
 
 小对象的堆分配就地生成 bump pointer 快路径（`emit-alloc`），见 [gc.md](gc.md) 的“内联分配”。
 词法 cons 和闭包在逃逸证明通过后也可使用固定栈槽，引用字段通过动态环境登记为精确根；
-布局选择、调试器限制和保守回退见 [ir.md](ir.md) 的“保留身份的 cons 栈存储”。
+布局选择、调试器限制和保守回退见 [hir.md](hir.md) 的“保留身份的 cons 栈存储”。
 
 ## 还没有的优化
 
