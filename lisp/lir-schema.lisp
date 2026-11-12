@@ -22,5 +22,8 @@
 (defconstant +packet-field-symbol-plist+ 108)
 (defconstant +packet-field-symbol-setf-function+ 109)
 (defconstant +packet-field-function-entry+ 110)
+(defconstant +packet-class-fixnum+ 201)
+(defconstant +packet-class-cons+ 202)
+(defconstant +packet-class-character+ 203)
 (defconstant +packet-max-expanded-bytes+ 1073741824)
 (defconstant +packet-expansion-record-bytes+ 32)

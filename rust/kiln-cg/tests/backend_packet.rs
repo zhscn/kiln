@@ -99,6 +99,24 @@ fn named_fields_preserve_the_legacy_kir_program() {
 }
 
 #[test]
+fn immediate_class_tests_preserve_kir_and_reject_unknown_classes() {
+    use packet::schema::*;
+    let module = |body| format!("(module \"classes\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v raw)) (slots) (block b {body} (return a0 1))))");
+    for (class, mask, tag) in [(CLASS_FIXNUM, 1, 0), (CLASS_CONS, 7, 1), (CLASS_CHARACTER, 255, 11)] {
+        let old = module(format!("(set v (eq (and a0 {mask}) {tag}))"));
+        let new = module(format!("(set v (test-class {class} a0))"));
+        let old = kiln_cg::kir::parse_module(&sexp::parse_one(&old).unwrap()).unwrap();
+        let new = sexp::parse_one(&new).unwrap();
+        let new = packet::load(&packet::encode(&new, KIR_PAYLOAD).unwrap()).unwrap();
+        assert_eq!(format!("{old:?}"), format!("{new:?}"));
+    }
+    for class in [-1_i64, 0, i64::MAX] {
+        let program = module(format!("(set v (test-class {class} a0))"));
+        assert!(kiln_cg::kir::parse_module(&sexp::parse_one(&program).unwrap()).is_err());
+    }
+}
+
+#[test]
 fn dynamic_transfer_slots_expand_to_context_accesses() {
     let module = |body| format!("(module \"transfer\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj) (i raw)) (slots) (block b {body} (return v 1))))");
     let old = module("(set v (load (add ctx (shl i 3)) 88)) (store (add ctx (shl i 3)) 88 a0)".to_string());
