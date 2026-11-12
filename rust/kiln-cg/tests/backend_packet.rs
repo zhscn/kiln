@@ -120,6 +120,23 @@ fn immediate_class_tests_preserve_kir_and_reject_unknown_classes() {
 }
 
 #[test]
+fn static_object_relocations_and_cons_roots_preserve_layout() {
+    use packet::schema::*;
+    let module = |data, body| format!("(module \"reloc\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) {data} (func \"body\" (vars (v obj)) (slots) (block b {body} (return v 1))))");
+    let old = module("(data \"a\" (words 3 (data \"a\" 1) (data \"b\" 5))) (root \"a\" 1)".to_string(), "(set v (addr \"a\" 1))".to_string());
+    let new = module(format!("(data \"a\" (static-cons (object-data \"a\" cons) (object-data \"b\" general))) (field-root \"a\" {FIELD_CONS_CAR})"), "(set v (object-address \"a\" cons))".to_string());
+    let old = kiln_cg::kir::parse_module(&sexp::parse_one(&old).unwrap()).unwrap();
+    let new = sexp::parse_one(&new).unwrap();
+    let new = packet::load(&packet::encode(&new, KIR_PAYLOAD).unwrap()).unwrap();
+    assert_eq!(format!("{old:?}"), format!("{new:?}"));
+    for data in ["(data \"a\" (static-cons (object-data \"a\" unknown) 0))".to_string(), format!("(field-root \"a\" {FIELD_DOUBLE_BITS})")] {
+        assert!(kiln_cg::kir::parse_module(&sexp::parse_one(&module(data, String::new())).unwrap()).is_err());
+    }
+    let invalid = module(String::new(), "(set v (object-address \"a\" unknown))".to_string());
+    assert!(kiln_cg::kir::parse_module(&sexp::parse_one(&invalid).unwrap()).is_err());
+}
+
+#[test]
 fn static_symbol_layout_and_roots_preserve_relocations() {
     use packet::schema::*;
     let module = |declarations| format!("(module \"symbol\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) {declarations} (func \"body\" (vars) (slots) (block b (return a0 1))))");

@@ -144,7 +144,7 @@
     (return-from hir-variable-operand *self*))
   (when (hir-static-function-binding-p var)
     (return-from hir-variable-operand
-      (copy-to-var `(:addr ,(cddr (hir-var-lowering var)) ,+tag-general+))))
+      (copy-to-var `(:object-address ,(cddr (hir-var-lowering var)) :general))))
   (if (eq (hir-var-owner var) *hir-lowering-function*)
       (let ((value (or (hir-var-lowering var) (fail "HIR variable ~S is not bound" (hir-var-name var)))))
         (if (hir-raw-double-variable-p var) (cdr value) value))
@@ -343,7 +343,7 @@ Return the storage slot and its root region, if any."
     (if (zerop count)
         (let ((data (kiln.kir::kir-name label "_fobj")))
           (module-data data `(:static-function ,label))
-          (copy-to-var `(:addr ,data ,+tag-general+)))
+          (copy-to-var `(:object-address ,data :general)))
         (let ((slot (cdr (assoc fun *hir-stack-slots* :test #'eq))))
           (if slot
               (let ((result (new-var)))
@@ -362,7 +362,7 @@ Return the storage slot and its root region, if any."
 (defun hir-lower-function (fun)
   (when (hir-lifted-environment fun)
     (return-from hir-lower-function
-      (copy-to-var `(:addr ,(hir-static-function-data fun) ,+tag-general+))))
+      (copy-to-var `(:object-address ,(hir-static-function-data fun) :general))))
   (if (hir-fun-binding fun)
       (hir-variable-value (hir-fun-binding fun))
       (let ((object (hir-allocate-function fun))) (hir-fill-function fun object))))

@@ -4,6 +4,21 @@ use crate::kir::{Expr, Stmt};
 use crate::packet::schema::*;
 use kiln_rt::object::{FunctionObj, SymbolObj, TAG_CONS, TAG_GENERAL};
 
+pub fn static_object_tag(kind: &str) -> Result<i64, String> {
+    match kind {
+        "cons" => Ok(TAG_CONS as i64),
+        "general" => Ok(TAG_GENERAL as i64),
+        _ => Err(format!("unknown static object representation {kind}")),
+    }
+}
+
+pub fn static_field_root_index(field: u32) -> Result<u32, String> {
+    match field {
+        FIELD_CONS_CAR | FIELD_CONS_CDR => Ok(((field_offset(field)? + TAG_CONS as i32) / size_of::<u64>() as i32) as u32),
+        _ => symbol_root_index(field),
+    }
+}
+
 pub fn test_class(class: u32, object: Expr) -> Result<Expr, String> {
     use crate::kir::{BinOp, CmpOp};
     use kiln_rt::object::{CHARACTER_TAG, FIXNUM_MASK, IMMEDIATE_MASK, TAG_MASK};

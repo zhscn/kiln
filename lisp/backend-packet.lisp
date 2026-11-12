@@ -7,6 +7,10 @@
                         ,+packet-field-symbol-plist+ ,+packet-field-symbol-setf-function+)
         (kmodule-roots *module*)))
 
+(defun module-cons-car-root (data)
+  "Declare the car of a static cons as a GC root."
+  (push `(:field-root ,data ,+packet-field-cons-car+) (kmodule-roots *module*)))
+
 ;;;; Indexed backend records. Program data is encoded without invoking
 ;;;; the Lisp printer or reader; IDs are local to this request.
 

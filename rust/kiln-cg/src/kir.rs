@@ -359,6 +359,11 @@ pub fn parse_module(s: &Sexp) -> R<Module> {
                     m.roots.push((name.clone(), crate::lir::symbol_root_index(field)?));
                 }
             }
+            "field-root" => {
+                arity(h, rest, 2)?;
+                let field = u32::try_from(int(&rest[1])?).map_err(|_| "invalid root field")?;
+                m.roots.push((string(&rest[0])?.to_string(), crate::lir::static_field_root_index(field)?));
+            }
             "func" => m.funcs.push(parse_func(rest)?),
             _ => return Err(format!("unknown module declaration {h}")),
         }
@@ -432,6 +437,10 @@ fn parse_word(s: &Sexp) -> R<Word> {
                     if rest.len() != 1 && rest.len() != 2 { return Err("data word: expected name and optional addend".into()); }
                     let addend = if rest.len() > 1 { int(&rest[1])? } else { 0 };
                     Ok(Word::DataAddr(string(&rest[0])?.to_string(), addend))
+                }
+                "object-data" => {
+                    arity(h, rest, 2)?;
+                    Ok(Word::DataAddr(string(&rest[0])?.to_string(), crate::lir::static_object_tag(sym(&rest[1])?)?))
                 }
                 "func" => {
                     arity(h, rest, 1)?;
@@ -1312,6 +1321,10 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
             if r.len() != 1 && r.len() != 2 { return Err("addr: expected name and optional addend".into()); }
             let addend = if r.len() > 1 { int(&r[1])? } else { 0 };
             Expr::Addr(string(&r[0])?.to_string(), addend)
+        }
+        "object-address" => {
+            arity(h, r, 2)?;
+            Expr::Addr(string(&r[0])?.to_string(), crate::lir::static_object_tag(sym(&r[1])?)?)
         }
         "fp" => {
             arity(h, r, 0)?;

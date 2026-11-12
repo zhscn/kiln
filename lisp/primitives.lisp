@@ -999,7 +999,7 @@ error when called."
           (emit-error +err-not-function+ :self)))
       (module-shared (module-data "kiln_funcallable_unset_fobj"
                                   `(:static-function ,name))))
-    `(:addr "kiln_funcallable_unset_fobj" ,+tag-general+)))
+    `(:object-address "kiln_funcallable_unset_fobj" :general)))
 
 (defun emit-allocate-rack (class size)
   "A rack for CLASS with SIZE cells after the class word (stamp, slot list

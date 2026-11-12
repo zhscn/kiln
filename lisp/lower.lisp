@@ -143,6 +143,8 @@ to their indices in the literal words; else NIL.")
   (cond ((integerp word) word)
         ((eq (first word) :literal)
          `(:load (:addr ,+literals-label+) ,(* 8 (second word))))
+        ((eq (first word) :object-data)
+         `(:object-address ,@(rest word)))
         (t `(:addr ,@(rest word)))))
 
 (defun emit-literal-words ()
@@ -160,8 +162,8 @@ NAME, and returns NAME; else NIL (the caller defines it)."
   (when *image-literals*
     (module-import-data name)))
 
-(defun nil-word () `(:data ,(module-import-data "kiln_nil") ,+tag-general+))
-(defun t-word () `(:data ,(module-import-data "kiln_t") ,+tag-general+))
+(defun nil-word () `(:object-data ,(module-import-data "kiln_nil") :general))
+(defun t-word () `(:object-data ,(module-import-data "kiln_t") :general))
 (defun nil-value () (word-operand (nil-word)))
 (defun t-value () (word-operand (t-word)))
 (defun boolean-value (condition)
@@ -191,17 +193,16 @@ its first env word. Every function cell starts out holding one."
     name))
 
 (defun function-cell-place (name)
-  "The address operand and offset of the global function cell of NAME."
-  (multiple-value-bind (symbol index)
-      (cond ((symbolp name) (values name 3))
+  "The symbol operand and field ID of the global function cell of NAME."
+  (multiple-value-bind (symbol field)
+      (cond ((symbolp name) (values name kiln.kir::+packet-field-symbol-function+))
             ((and (consp name) (eq (first name) 'setf) (symbolp (second name))
                   (second name) (not (eq (second name) t)))
-             ;; (SETF symbol): the symbol's setf function word.
-             (values (second name) 7))
+             (values (second name) kiln.kir::+packet-field-symbol-setf-function+))
             (t (fail "invalid function name ~S" name)))
     (if *image-literals*
-        (values (constant-object symbol) (- (* 8 index) +tag-general+))
-        (values `(:addr ,(symbol-data symbol)) (* 8 index)))))
+        (values (constant-object symbol) field)
+        (values `(:object-address ,(symbol-data symbol) :general) field))))
 
 (defun string-data (label string)
   "Defines LABEL as a static string object holding STRING (once)."
@@ -213,8 +214,8 @@ its first env word. Every function cell starts out holding one."
 name of its package as a string."
   (if package
       (let ((name (target-package-name package)))
-        `(:data ,(module-shared (string-data (format nil "kiln_pkg_~A" (mangle name)) name))
-                ,+tag-general+))
+        `(:object-data ,(module-shared (string-data (format nil "kiln_pkg_~A" (mangle name)) name))
+                       :general))
       (nil-word)))
 
 (defvar *module-symbols*)               ; symbols with static data, newest first
@@ -233,14 +234,14 @@ name of its package as a string."
       (let ((name (string-data (kiln.kir::kir-name "kiln_name_" label) (module-symbol-name sym)))
             (undef (kiln.kir::kir-name "kiln_undef_" label))
             (undef-setf (kiln.kir::kir-name "kiln_undef_setf_" label)))
-        (module-data undef `(:static-function ,(undefined-function-entry) (:data ,obj ,+tag-general+)))
-        (module-data undef-setf `(:static-function ,(undefined-setf-function-entry) (:data ,obj ,+tag-general+)))
-        (module-data obj `(:static-symbol (:data ,name ,+tag-general+)
+        (module-data undef `(:static-function ,(undefined-function-entry) (:object-data ,obj :general)))
+        (module-data undef-setf `(:static-function ,(undefined-setf-function-entry) (:object-data ,obj :general)))
+        (module-data obj `(:static-symbol (:object-data ,name :general)
                                          ,(package-name-word (symbol-package sym))
-                                         (:data ,undef ,+tag-general+)
-                                         ,(if (keywordp sym) `(:data ,obj ,+tag-general+) '(:unbound))
+                                         (:object-data ,undef :general)
+                                         ,(if (keywordp sym) `(:object-data ,obj :general) '(:unbound))
                                          ,(nil-word)
-                                         (:data ,undef-setf ,+tag-general+)))
+                                         (:object-data ,undef-setf :general)))
         (module-shared name)
         (module-shared undef)
         (module-shared undef-setf)
@@ -256,7 +257,7 @@ name of its package as a string."
   (cond ((null sym) (nil-word))
         ((eq sym t) (t-word))
         (*image-literals* (literal-word sym))
-        (t `(:data ,(symbol-data sym) ,+tag-general+))))
+        (t `(:object-data ,(symbol-data sym) :general))))
 
 (defconstant +most-positive-fixnum+ (1- (ash 1 62)))
 (defconstant +most-negative-fixnum+ (- (ash 1 62)))
@@ -296,7 +297,7 @@ name of its package as a string."
                (module-data label `(:static-bignum ,@(loop for i below n
                                                    collect (let ((d (ldb (byte 64 (* 64 i)) x)))
                                                              (if (logbitp 63 d) (- d (ash 1 64)) d)))))
-               (setf (gethash x *constants*) `(:data ,label ,+tag-general+))))))
+               (setf (gethash x *constants*) `(:object-data ,label :general))))))
     (symbol (symbol-word x))
     (single-float
      (signed-word (logior (ash (single-float-bits x) 32)
@@ -307,19 +308,19 @@ name of its package as a string."
            (module-data label `(:static-double ,(signed-word
                                          (logior (ash (double-float-high-bits x) 32)
                                                  (double-float-low-bits x)))))
-           (setf (gethash x *constants*) `(:data ,label ,+tag-general+)))))
+           (setf (gethash x *constants*) `(:object-data ,label :general)))))
     (ratio
      (or (gethash x *constants*)
          (let ((label (fresh-label "kiln_ratio_")))
            (module-data label `(:static-ratio ,(constant-word (numerator x))
                                        ,(constant-word (denominator x))))
-           (setf (gethash x *constants*) `(:data ,label ,+tag-general+)))))
+           (setf (gethash x *constants*) `(:object-data ,label :general)))))
     (complex
      (or (gethash x *constants*)
          (let ((label (fresh-label "kiln_complex_")))
            (module-data label `(:static-complex ,(constant-word (realpart x))
                                        ,(constant-word (imagpart x))))
-           (setf (gethash x *constants*) `(:data ,label ,+tag-general+)))))
+           (setf (gethash x *constants*) `(:object-data ,label :general)))))
     (character
      (logior (ash (char-code x) +character-shift+) +character-tag+))
     (string
@@ -327,13 +328,13 @@ name of its package as a string."
          (setf (gethash x *constants*)
                (or (gethash x *string-constants*)
                    (setf (gethash x *string-constants*)
-                         `(:data ,(string-data (fresh-label "kiln_string_") x) ,+tag-general+))))))
+                         `(:object-data ,(string-data (fresh-label "kiln_string_") x) :general))))))
     (simple-vector
      (or (gethash x *constants*)
          (let ((label (fresh-label "kiln_vector_")))
-           (setf (gethash x *constants*) `(:data ,label ,+tag-general+))
+           (setf (gethash x *constants*) `(:object-data ,label :general))
            (module-data label `(:static-vector ,@(map 'list #'constant-word x)))
-           `(:data ,label ,+tag-general+))))
+           `(:object-data ,label :general))))
     (cons
      ;; Static conses: the GC neither moves nor scans them, and they only
      ;; point to static data. Conses with the same car and cdr words are
@@ -347,7 +348,7 @@ name of its package as a string."
              (return-from constant-word
                (or word
                    (setf (gethash x *pending-conses*)
-                         `(:data ,(fresh-label "kiln_const_") ,+tag-cons+)))))
+                         `(:object-data ,(fresh-label "kiln_const_") :cons)))))
            (setf (gethash x *pending-conses*) nil)
            (let* ((car-word (constant-word (car x)))
                   (cdr-word (constant-word (cdr x)))
@@ -356,7 +357,7 @@ name of its package as a string."
              (remhash x *pending-conses*)
              (setf (gethash x *constants*)
                    (or (and (not cyclic) (gethash key *cons-words*))
-                       (let ((word (or cyclic `(:data ,(fresh-label "kiln_const_") ,+tag-cons+))))
+                       (let ((word (or cyclic `(:object-data ,(fresh-label "kiln_const_") :cons))))
                          (module-data (second word) `(:static-cons ,car-word ,cdr-word))
                          (unless cyclic
                            (setf (gethash key *cons-words*) word))
@@ -1030,8 +1031,8 @@ it is a function, the global function of F if it is a symbol."
     (values v0 nv)))
 
 (defun function-cell-value (name)
-  (multiple-value-bind (base offset) (function-cell-place name)
-    (copy-to-var `(:load ,base ,offset))))
+  (multiple-value-bind (base field) (function-cell-place name)
+    (copy-to-var `(:field-load ,field ,base))))
 
 (defun lower-args (asts)
   (mapcar (lambda (a) (copy-to-var (lower a))) asts))
@@ -1253,7 +1254,7 @@ no pointer, the cons need not be scanned by the GC."
         (label (fresh-label "kiln_typep_cache_")))
     (module-data label `(:static-cons ,(nil-word) ,(nil-word)))
     (emit-lisp-call (function-cell-value 'kiln.kernel::%typep-cached)
-                    (list object (constant-object type) `(:addr ,label ,+tag-cons+)))))
+                    (list object (constant-object type) `(:object-address ,label :cons)))))
 
 (defun lower-cached-slot-value (object-ast slot-name)
   "(SLOT-VALUE OBJECT 'SLOT-NAME) at a call site: a call to
@@ -1267,7 +1268,7 @@ support.lisp)."
     (module-data label `(:static-cons ,(nil-word) ,(nil-word)))
     (emit-lisp-call (function-cell-value 'kiln.kernel::%slot-value-cached)
                     (list object (constant-object slot-name)
-                          `(:addr ,label ,+tag-cons+)))))
+                          `(:object-address ,label :cons)))))
 
 (defun lower-cached-set-slot-value (value-ast object-ast slot-name)
   "(SETF (SLOT-VALUE OBJECT 'SLOT-NAME) VALUE), the same cache as
@@ -1278,14 +1279,14 @@ LOWER-CACHED-SLOT-VALUE."
     (module-data label `(:static-cons ,(nil-word) ,(nil-word)))
     (emit-lisp-call (function-cell-value 'kiln.kernel::%set-slot-value-cached)
                     (list value object (constant-object slot-name)
-                          `(:addr ,label ,+tag-cons+)))))
+                          `(:object-address ,label :cons)))))
 
 (defun call-site-root ()
   "A mutable cache cons whose object-valued car is a static GC root."
   (let ((label (fresh-label "kiln_call_site_")))
     (module-data label `(:static-cons ,(nil-word) ,(nil-word)))
-    (module-root label 1)
-    `(:addr ,label ,+tag-cons+)))
+    (kiln.kir::module-cons-car-root label)
+    `(:object-address ,label :cons)))
 
 (defun call-site-specialization-p ()
   ;; The construction protocol itself (kernel, CLOS) calls MAKE-INSTANCE plainly.
@@ -1434,8 +1435,8 @@ after a LIST call."
                                        (eq (first constant-name) 'setf))))
            (let ((f (copy-to-var (lower (first arg-asts)))))
              (emit-check-function f)
-             (multiple-value-bind (base offset) (function-cell-place constant-name)
-               (emit `(:store ,base ,offset ,f)))
+             (multiple-value-bind (base field) (function-cell-place constant-name)
+               (emit `(:field-store ,field ,base ,f)))
              ;; Early kernel definitions precede the notification function.
              (let* ((notify (function-cell-value 'kiln.kernel::note-function-change))
                     (entry (copy-to-var `(:field-load ,kiln.kir::+packet-field-function-entry+ ,notify) :raw))
@@ -1552,7 +1553,7 @@ returns the operand of its (static) function object."
         (set-function-debug '(:top-level-form) nil))))
   (let ((fobj (kiln.kir::kir-name name "_fobj")))
     (module-data fobj `(:static-function ,name))
-    `(:data ,fobj ,+tag-general+)))
+    `(:object-data ,fobj :general)))
 
 (defun compile-toplevel-function (asts)
   "The module's init function: registers the module's symbols, then runs
