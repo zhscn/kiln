@@ -868,3 +868,10 @@ fn invoke_preserves_argument_transfer_handlers_and_locations() {
         .is_err()
     );
 }
+
+#[test]
+fn runtime_abi_description_is_current() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../lisp/abi.lisp");
+    assert_eq!(std::fs::read_to_string(path).unwrap(), packet::abi_description(),
+        "regenerate with kiln-cg abi-description");
+}
