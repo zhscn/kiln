@@ -958,8 +958,32 @@ pub fn invoke_prepared(v0: String, nv: String, callee: String, count: Expr,
         .any(|v| !matches!(v, Expr::Int(_) | Expr::Var(_))) {
         return Err("invoke-prepared requires stable count and saved register arguments".into());
     }
+    if let Expr::Int(n) = &count {
+        let limit = crate::kir::REG_ARGS + kiln_rt::context::VALUES_MAX;
+        if *n < 0 || *n as u64 > limit as u64 {
+            return Err("invoke-prepared argument count out of range".into());
+        }
+    }
     let mut args = vec![Expr::Var("ctx".into()), Expr::Var(callee.clone()), count];
     args.extend(saved);
     Ok(vec![Stmt::CallLisp { v0, nv, entry: field_load(FIELD_FUNCTION_ENTRY, Expr::Var(callee))?,
         args, handler, loc }])
+}
+
+#[cfg(test)]
+#[test]
+fn prepared_call_validates_counts_and_preserves_unwind_metadata() {
+    let saved = || vec![Expr::Int(0); crate::kir::REG_ARGS];
+    let call = |count, registers| invoke_prepared("v".into(), "n".into(), "f".into(),
+        count, registers, Some("caught".into()), Some((12, 24)));
+    for n in [0, (crate::kir::REG_ARGS + kiln_rt::context::VALUES_MAX) as i64] {
+        let result = call(Expr::Int(n), saved()).unwrap();
+        assert!(matches!(&result[0], Stmt::CallLisp { args, handler: Some(h), loc: Some((12, 24)), .. }
+            if args.len() == 3 + crate::kir::REG_ARGS && h == "caught"));
+    }
+    assert!(call(Expr::Int(-1), saved()).is_err());
+    assert!(call(Expr::Int(1025), saved()).is_err());
+    assert!(call(Expr::Int(0), Vec::new()).is_err());
+    assert!(call(Expr::Var("count".into()), saved()).is_ok());
+    assert!(call(Expr::Load(Box::new(Expr::Int(0)), 0), saved()).is_err());
 }
