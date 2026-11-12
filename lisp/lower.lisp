@@ -783,7 +783,7 @@ known to hold one), and true; else NIL and NIL."
 
 (defun emit-check-bound (v sym)
   (let ((bad (new-block)) (ok (new-block)))
-    (br `(:eq ,v ,+unbound+) bad ok)
+    (br `(:eq ,v (:unbound-value)) bad ok)
     (start-block bad)
     (emit-error +err-unbound-variable+ sym)
     (start-block ok)))
@@ -1514,7 +1514,7 @@ its global value is used directly."
          (old (new-var))
          (unbound (new-block)) (join (new-block)))
     (emit `(:set ,old (:field-load ,kiln.kir::+packet-field-symbol-value+ ,sym)))
-    (br `(:eq ,old ,+unbound+) unbound join)
+    (br `(:eq ,old (:unbound-value)) unbound join)
     (start-block unbound)
     (emit `(:set ,old ,(nil-value)))
     (jump join)

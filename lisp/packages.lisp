@@ -7,7 +7,6 @@
            #:+kind-ratio+ #:+kind-double+ #:+kind-complex+ #:+single-float-tag+
            #:+kind-structure-instance+ #:+kind-instance+ #:+kind-funcallable-instance+ #:+kind-rack+
            #:+immediate-mask+ #:+character-tag+ #:+character-shift+ #:+char-code-limit+
-              #:+unbound+
            #:+length-shift+
            #:+cons-bytes+
            #:+values-max+
@@ -16,7 +15,7 @@
            #:+err-undefined-function+ #:+err-unbound-variable+ #:+err-not-symbol+
            #:+err-odd-keywords+ #:+err-unknown-keyword+
            #:+err-not-character+ #:+err-not-string+ #:+err-not-vector+
-           #:+err-index+ #:+err-not-sequence+ #:+err-not-integer+ #:+err-division-by-zero+ #:+err-not-number+ #:+err-bad-type+ #:+err-lisp-error+ #:+err-undefined-setf-function+ #:+err-no-catch-tag+ #:+err-expired-exit+ #:+unbound-slot+
+           #:+err-index+ #:+err-not-sequence+ #:+err-not-integer+ #:+err-division-by-zero+ #:+err-not-number+ #:+err-bad-type+ #:+err-lisp-error+ #:+err-undefined-setf-function+ #:+err-no-catch-tag+ #:+err-expired-exit+
            #:+reg-args+))
 
 (defpackage #:kiln.kir

@@ -39,12 +39,6 @@
 
 ;;; Symbol layout: [header, name, package, function, value, TLS index,
 ;;; plist, setf function]. Offsets from a tagged pointer. The TLS index is a fixnum.
-;;; Unbound value marker (an immediate the GC ignores).
-(defconstant +unbound+ #x13)
-;;; Value of a standard-object slot that is unbound (Clostrophilia's
-;;; +UNBOUND-SLOT-VALUE+), an immediate distinct from +UNBOUND+ so that it
-;;; can be the value of a variable.
-(defconstant +unbound-slot+ #x2b)
 
 ;;; Function object layout: [header (env length << 8), entry, env...].
 (defconstant +length-shift+ 8)

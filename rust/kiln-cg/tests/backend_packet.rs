@@ -120,6 +120,17 @@ fn immediate_class_tests_preserve_kir_and_reject_unknown_classes() {
 }
 
 #[test]
+fn unbound_markers_are_distinct_runtime_values() {
+    let module = |body| format!("(module \"markers\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj) (w obj)) (slots) (block b {body} (return v 1))))");
+    let old = module("(set v 19) (set w 43)");
+    let new = module("(set v (unbound-value)) (set w (unbound-slot-value))");
+    let old = kiln_cg::kir::parse_module(&sexp::parse_one(&old).unwrap()).unwrap();
+    let new = sexp::parse_one(&new).unwrap();
+    let new = packet::load(&packet::encode(&new, packet::schema::KIR_PAYLOAD).unwrap()).unwrap();
+    assert_eq!(format!("{old:?}"), format!("{new:?}"));
+}
+
+#[test]
 fn static_object_relocations_and_cons_roots_preserve_layout() {
     use packet::schema::*;
     let module = |data, body| format!("(module \"reloc\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) {data} (func \"body\" (vars (v obj)) (slots) (block b {body} (return v 1))))");

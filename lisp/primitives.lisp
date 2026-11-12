@@ -436,7 +436,7 @@ are compared (no short circuit), which also checks every argument."
 
 (define-primitive boundp (name)
   (emit-check-symbol name)
-  (boolean-value `(:ne ,(emit-symbol-value name) ,+unbound+)))
+  (boolean-value `(:ne ,(emit-symbol-value name) (:unbound-value))))
 
 
 ;;; kiln.sys
@@ -797,7 +797,7 @@ cells (both by default)."
 (define-primop :makunbound (s)
   (let ((s (copy-to-var s)))
     (emit-check-symbol s)
-    (emit-set-symbol-value s +unbound+)
+    (emit-set-symbol-value s '(:unbound-value))
     s))
 (define-primop :symbol-plist (s) (copy-to-var `(:field-load ,kiln.kir::+packet-field-symbol-plist+ ,s)))
 (define-primop :set-symbol-plist (s v) (emit `(:field-store ,kiln.kir::+packet-field-symbol-plist+ ,s ,v)) v)
@@ -1025,7 +1025,7 @@ and slots), zero-filled."
          (unset (copy-to-var (funcallable-unset))))
     (emit-fixed-object kiln.kir::+packet-class-funcallable-instance+ (list entry rack unset))))
 
-(define-primop :unbound-slot-value () +unbound-slot+)
+(define-primop :unbound-slot-value () '(:unbound-slot-value))
 
 ;;; Hashing (Salmagundi). The identity hash survives moving collections
 ;;; (header bits 40..64, rust/kiln-rt/src/rtfun.rs).

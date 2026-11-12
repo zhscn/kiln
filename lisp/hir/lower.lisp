@@ -1187,7 +1187,7 @@ unsupported call. Arguments retain their evaluation order and effects."
       (br `(:eq ,cur ,(nil-value)) done body)
       (start-block body)
       ;; Symbols without a value become unbound.
-      (let ((v (copy-to-var `(:select (:eq ,vcur ,(nil-value)) ,+unbound+ (:field-load ,kiln.kir::+packet-field-cons-car+ ,vcur)))))
+      (let ((v (copy-to-var `(:select (:eq ,vcur ,(nil-value)) (:unbound-value) (:field-load ,kiln.kir::+packet-field-cons-car+ ,vcur)))))
         (emit `(:tls-write (:field-load ,kiln.kir::+packet-field-cons-car+ ,cur) ,v)))
       (emit `(:set ,cur (:field-load ,kiln.kir::+packet-field-cons-cdr+ ,cur)))
       (emit `(:set ,vcur (:select (:eq ,vcur ,(nil-value)) ,vcur (:field-load ,kiln.kir::+packet-field-cons-cdr+ ,vcur))))
