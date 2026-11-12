@@ -117,6 +117,29 @@ fn immediate_class_tests_preserve_kir_and_reject_unknown_classes() {
 }
 
 #[test]
+fn guarded_header_class_tests_preserve_kir() {
+    use packet::schema::*;
+    let module = |body| format!("(module \"classes\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v raw)) (slots) (block b {body} (return a0 1))))");
+    for (class, mask, kind) in [
+        (CLASS_SYMBOL, 255, 1), (CLASS_FUNCTION, 247, 2),
+        (CLASS_SIMPLE_VECTOR, 255, 4), (CLASS_STRING, 255, 5),
+        (CLASS_BIGNUM, 255, 6), (CLASS_RATIO, 255, 7),
+        (CLASS_DOUBLE, 255, 8), (CLASS_INSTANCE, 255, 9),
+        (CLASS_FUNCALLABLE_INSTANCE, 255, 10), (CLASS_COMPLEX, 255, 12),
+        (CLASS_STRUCTURE_INSTANCE, 255, 13),
+    ] {
+        let old = module(format!("(set v (eq (and (load a0 -5) {mask}) {kind}))"));
+        let new = module(format!("(set v (test-header-class {class} a0))"));
+        let old = kiln_cg::kir::parse_module(&sexp::parse_one(&old).unwrap()).unwrap();
+        let new = sexp::parse_one(&new).unwrap();
+        let new = packet::load(&packet::encode(&new, KIR_PAYLOAD).unwrap()).unwrap();
+        assert_eq!(format!("{old:?}"), format!("{new:?}"));
+    }
+    let invalid = module("(set v (test-header-class 202 a0))".into());
+    assert!(kiln_cg::kir::parse_module(&sexp::parse_one(&invalid).unwrap()).is_err());
+}
+
+#[test]
 fn dynamic_transfer_slots_expand_to_context_accesses() {
     let module = |body| format!("(module \"transfer\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj) (i raw)) (slots) (block b {body} (return v 1))))");
     let old = module("(set v (load (add ctx (shl i 3)) 88)) (store (add ctx (shl i 3)) 88 a0)".to_string());

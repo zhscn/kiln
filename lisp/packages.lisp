@@ -5,7 +5,7 @@
            #:+kind-mask+ #:+kind-symbol+ #:+kind-function+ #:+kind-cons+
            #:+kind-simple-vector+ #:+kind-string+ #:+kind-bignum+
            #:+kind-ratio+ #:+kind-double+ #:+kind-complex+ #:+single-float-tag+
-           #:+kind-structure-instance+ #:+kind-instance+ #:+kind-funcallable-instance+ #:+kind-rack+ #:+function-kind-mask+
+           #:+kind-structure-instance+ #:+kind-instance+ #:+kind-funcallable-instance+ #:+kind-rack+
            #:+immediate-mask+ #:+character-tag+ #:+character-shift+ #:+char-code-limit+
                #:+vector-data+
               #:+unbound+

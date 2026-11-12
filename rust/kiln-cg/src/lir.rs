@@ -11,6 +11,7 @@ pub fn test_class(class: u32, object: Expr) -> Result<Expr, String> {
         CLASS_FIXNUM => (FIXNUM_MASK, 0),
         CLASS_CONS => (TAG_MASK, TAG_CONS),
         CLASS_CHARACTER => (IMMEDIATE_MASK, CHARACTER_TAG),
+        CLASS_GENERAL => (TAG_MASK, TAG_GENERAL),
         _ => return Err(format!("unknown representation class {class}")),
     };
     Ok(Expr::Cmp(
@@ -18,6 +19,31 @@ pub fn test_class(class: u32, object: Expr) -> Result<Expr, String> {
         Box::new(Expr::Bin(BinOp::And, Box::new(object), Box::new(Expr::Int(mask as i64)))),
         Box::new(Expr::Int(tag as i64)),
     ))
+}
+
+/// The caller must guard this operation with a general-object test.
+pub fn test_header_class(class: u32, object: Expr) -> Result<Expr, String> {
+    use crate::kir::{BinOp, CmpOp};
+    use kiln_rt::object::*;
+    let (mask, kind) = match class {
+        CLASS_SYMBOL => (KIND_MASK, KIND_SYMBOL),
+        CLASS_FUNCTION => (KIND_MASK ^ (KIND_FUNCTION ^ KIND_FUNCALLABLE_INSTANCE), KIND_FUNCTION),
+        CLASS_SIMPLE_VECTOR => (KIND_MASK, KIND_SIMPLE_VECTOR),
+        CLASS_STRING => (KIND_MASK, KIND_STRING),
+        CLASS_BIGNUM => (KIND_MASK, KIND_BIGNUM),
+        CLASS_RATIO => (KIND_MASK, KIND_RATIO),
+        CLASS_DOUBLE => (KIND_MASK, KIND_DOUBLE),
+        CLASS_INSTANCE => (KIND_MASK, KIND_INSTANCE),
+        CLASS_FUNCALLABLE_INSTANCE => (KIND_MASK, KIND_FUNCALLABLE_INSTANCE),
+        CLASS_COMPLEX => (KIND_MASK, KIND_COMPLEX),
+        CLASS_STRUCTURE_INSTANCE => (KIND_MASK, KIND_STRUCTURE_INSTANCE),
+        _ => return Err(format!("unknown header class {class}")),
+    };
+    Ok(Expr::Cmp(CmpOp::Eq,
+        Box::new(Expr::Bin(BinOp::And,
+            Box::new(Expr::Load(Box::new(object), -(TAG_GENERAL as i32))),
+            Box::new(Expr::Int(mask as i64)))),
+        Box::new(Expr::Int(kind as i64))))
 }
 
 fn field_offset(field: u32) -> Result<i32, String> {

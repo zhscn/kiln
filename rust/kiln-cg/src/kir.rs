@@ -701,6 +701,10 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
             arity(h, r, 2)?;
             return crate::lir::test_class(u32::try_from(int(&r[0])?).map_err(|_| "invalid class ID")?, parse_expr(&r[1])?);
         }
+        "test-header-class" => {
+            arity(h, r, 2)?;
+            return crate::lir::test_header_class(u32::try_from(int(&r[0])?).map_err(|_| "invalid class ID")?, parse_expr(&r[1])?);
+        }
         "closure-ref" => {
             arity(h, r, 2)?;
             return crate::lir::closure_ref(parse_expr(&r[0])?, int(&r[1])?);
