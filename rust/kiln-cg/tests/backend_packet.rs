@@ -117,6 +117,27 @@ fn immediate_class_tests_preserve_kir_and_reject_unknown_classes() {
 }
 
 #[test]
+fn vector_allocation_checks_lengths_and_builds_fill_paths() {
+    use packet::schema::*;
+    let module = |body| format!("(module \"vector\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj) (n raw) (x obj)) (slots) (block b {body} (return v 1))))");
+    for (class, length, bytes, header) in [(CLASS_STRING, 3, 24, 773), (CLASS_SIMPLE_VECTOR, 3, 32, 772)] {
+        let program = module(format!("(alloc-vector v {class} {length} x \"kiln_rt_alloc\" nil)"));
+        let result = kiln_cg::kir::parse_module(&sexp::parse_one(&program).unwrap()).unwrap();
+        let dump = format!("{:?}", result.funcs[0]);
+        assert!(dump.contains(&format!("Int({bytes})")));
+        assert!(dump.contains(&format!("Int({header})")));
+        assert_eq!(dump.matches(if class == CLASS_STRING { "Store32(" } else { "Store(" }).count(), if class == CLASS_STRING { 3 } else { 5 });
+    }
+    let dynamic = module(format!("(alloc-vector v {CLASS_SIMPLE_VECTOR} n x \"kiln_rt_alloc\" nil)"));
+    let result = kiln_cg::kir::parse_module(&sexp::parse_one(&dynamic).unwrap()).unwrap();
+    assert!(format!("{:?}", result.funcs[0]).contains("fill_head"));
+    for (class, length, value) in [(CLASS_STRING, "-1", "x"), (CLASS_STRING, "4294967296", "x"), (CLASS_CONS, "1", "x"), (CLASS_STRING, "v", "x"), (CLASS_STRING, "n", "(load x 0)")] {
+        let program = module(format!("(alloc-vector v {class} {length} {value} \"kiln_rt_alloc\" nil)"));
+        assert!(kiln_cg::kir::parse_module(&sexp::parse_one(&program).unwrap()).is_err());
+    }
+}
+
+#[test]
 fn fixed_allocations_validate_class_and_initialize_fields() {
     use packet::schema::*;
     let module = |body| format!("(module \"fixed\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj) (x obj)) (slots) (block b {body} (return v 1))))");

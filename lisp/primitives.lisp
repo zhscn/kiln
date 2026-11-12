@@ -502,19 +502,6 @@ are compared (no short circuit), which also checks every argument."
     (emit-error +err-index+ i)
     (start-block ok)))
 
-(defun emit-fill-loop (n store)
-  "Calls STORE with a raw index variable for each index below the raw
-operand N."
-  (let ((i (copy-to-var 0 :raw)) (head (new-block)) (body (new-block)) (done (new-block)))
-    (jump head)
-    (start-block head)
-    (br `(:lt ,i ,n) body done)
-    (start-block body)
-    (funcall store i)
-    (emit `(:set ,i (:add ,i 1)))
-    (jump head)
-    (start-block done)))
-
 (defun emit-check-length (n)
   "N must be a non-negative fixnum that fits the header's length field."
   (let ((bad (new-block)) (ok (new-block)))
@@ -617,11 +604,8 @@ operand N."
 (define-primop :make-string (n c)
   (emit-check-length n)
   (let* ((len (copy-to-var `(:sar ,n ,+fixnum-shift+) :raw))
-         (code (copy-to-var `(:shr ,c ,+character-shift+) :raw))
-         (p (emit-alloc `(:add 8 (:and (:add (:shl ,len 2) 7) -8))
-                        `(:or (:shl ,len ,+length-shift+) ,+kind-string+))))
-    (emit-fill-loop len (lambda (i) (emit `(:store32 (:add ,p (:shl ,i 2)) 8 ,code))))
-    (copy-to-var `(:add ,p ,+tag-general+))))
+         (code (copy-to-var `(:shr ,c ,+character-shift+) :raw)))
+    (emit-vector-object kiln.kir::+packet-class-string+ len code)))
 
 (define-primop :svref (v i)
   (emit-check-index v i)
@@ -768,12 +752,8 @@ of it, SLOW-FN otherwise; both return an operand. Returns the result."
   (emit-check-length n)
   (let* ((len (copy-to-var `(:sar ,n ,+fixnum-shift+) :raw))
          (zero (eql x 0))
-         (x (if zero 0 (copy-to-var x)))
-         (p (emit-alloc `(:add 8 (:shl ,len 3))
-                        `(:or (:shl ,len ,+length-shift+) ,+kind-simple-vector+))))
-    (unless zero
-      (emit-fill-loop len (lambda (i) (emit `(:store (:add ,p (:shl ,i 3)) 8 ,x)))))
-    (copy-to-var `(:add ,p ,+tag-general+))))
+         (x (if zero 0 (copy-to-var x))))
+    (emit-vector-object kiln.kir::+packet-class-simple-vector+ len x)))
 
 (define-nary-primitive kiln.kernel::make-simple-vector (vals)
   (unless (<= 1 (length vals) 2)
@@ -783,15 +763,8 @@ of it, SLOW-FN otherwise; both return an operand. Returns the result."
     (if (and (integerp n) (zerop (logand n 1))
              (<= 0 (ash n (- +fixnum-shift+)) 15))
         (let* ((len (ash n (- +fixnum-shift+)))
-               (zero (eql x 0))
-               (x (if (integerp x) x (copy-to-var x)))
-               (p (emit-alloc (+ 8 (* 8 len))
-                              (logior (ash len +length-shift+) +kind-simple-vector+)
-                              zero)))
-          (unless zero
-            (dotimes (i len)
-              (emit `(:store ,p ,(+ 8 (* 8 i)) ,x))))
-          (copy-to-var `(:add ,p ,+tag-general+)))
+               (x (if (integerp x) x (copy-to-var x))))
+          (emit-vector-object kiln.kir::+packet-class-simple-vector+ len x))
         (funcall (gethash :make-simple-vector *primops*) (list n x)))))
 
 (define-primop :symbol-name (s) (copy-to-var `(:field-load ,kiln.kir::+packet-field-symbol-name+ ,s)))

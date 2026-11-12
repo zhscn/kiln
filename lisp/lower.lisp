@@ -899,6 +899,12 @@ before the address is tagged and stored in an obj variable."
     (emit `(:alloc-fixed ,result ,class ,fields ,(rt-alloc) ,(handler)))
     result))
 
+(defun emit-vector-object (class length initial-value)
+  "Allocate and fill a vector using evaluated length and initial value."
+  (let ((result (new-var)))
+    (emit `(:alloc-vector ,result ,class ,length ,initial-value ,(rt-alloc) ,(handler)))
+    result))
+
 (defun emit-cons (a b)
   ;; A and B are live across the allocation; as variables they are spilled
   ;; and reloaded around it (stack maps).

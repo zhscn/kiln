@@ -157,6 +157,57 @@ pub fn initialize_fixed(result: String, address: String, class: u32, fields: Vec
     Ok(stmts)
 }
 
+pub fn vector_layout(class: u32, length: &Expr) -> Result<(Expr, Expr, u32), String> {
+    use crate::kir::{BinOp, ShiftOp};
+    use kiln_rt::object::{KIND_SIMPLE_VECTOR, KIND_STRING, LENGTH_SHIFT};
+    let (kind, shift) = match class {
+        CLASS_SIMPLE_VECTOR => (KIND_SIMPLE_VECTOR, 3),
+        CLASS_STRING => (KIND_STRING, 2),
+        _ => return Err("unsupported vector allocation class".into()),
+    };
+    if let Expr::Int(n) = length {
+        if !(0..=u32::MAX as i64).contains(n) { return Err("vector length out of range".into()); }
+        let bytes = 8 + (((n << shift) + 7) & !7);
+        return Ok((Expr::Int(bytes), Expr::Int((n << LENGTH_SHIFT) | kind as i64), shift));
+    }
+    let payload = Expr::Shift(ShiftOp::Shl, Box::new(length.clone()), shift as i64);
+    let aligned = if shift == 2 {
+        Expr::Bin(BinOp::And, Box::new(Expr::Bin(BinOp::Add, Box::new(payload), Box::new(Expr::Int(7)))), Box::new(Expr::Int(-8)))
+    } else { payload };
+    Ok((Expr::Bin(BinOp::Add, Box::new(Expr::Int(8)), Box::new(aligned)),
+        Expr::Bin(BinOp::Or, Box::new(Expr::Shift(ShiftOp::Shl, Box::new(length.clone()), LENGTH_SHIFT as i64)), Box::new(Expr::Int(kind as i64))), shift))
+}
+
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+pub fn initialize_vector(name: &str, block: String, mut preceding: Vec<Stmt>, result: String,
+                         address: String, length: Expr, value: Expr, shift: u32)
+    -> (Vec<(String, crate::kir::VarKind)>, Vec<crate::kir::Block>, String, Vec<Stmt>) {
+    use crate::kir::{BinOp, Block, CmpOp, ShiftOp, VarKind};
+    let var = |s: &str| Expr::Var(s.to_string());
+    preceding.push(Stmt::Set(result, Expr::Bin(BinOp::Add, Box::new(var(&address)), Box::new(Expr::Int(TAG_GENERAL as i64)))));
+    if matches!(value, Expr::Int(0)) { return (vec![], vec![], block, preceding); }
+    let store = |index: Expr| {
+        let base = Expr::Bin(BinOp::Add, Box::new(var(&address)), Box::new(Expr::Shift(ShiftOp::Shl, Box::new(index), shift as i64)));
+        if shift == 2 { Stmt::Store32(base, 8, value.clone()) } else { Stmt::Store(base, 8, value.clone()) }
+    };
+    if let Expr::Int(n @ 0..=15) = length {
+        for i in 0..n { preceding.push(store(Expr::Int(i))); }
+        return (vec![], vec![], block, preceding);
+    }
+    let index = format!("{name}_index");
+    let head = format!("{name}_fill_head");
+    let body = format!("{name}_fill_body");
+    let done = format!("{name}_fill_done");
+    preceding.push(Stmt::Set(index.clone(), Expr::Int(0)));
+    preceding.push(Stmt::Jump(head.clone()));
+    let blocks = vec![
+        Block { name: block, stmts: preceding },
+        Block { name: head, stmts: vec![Stmt::Br(Expr::Cmp(CmpOp::Lt, Box::new(var(&index)), Box::new(length)), body.clone(), done.clone())] },
+        Block { name: body, stmts: vec![store(var(&index)), Stmt::Set(index.clone(), Expr::Bin(BinOp::Add, Box::new(var(&index)), Box::new(Expr::Int(1)))), Stmt::Jump(format!("{name}_fill_head"))] },
+    ];
+    (vec![(index, VarKind::Raw)], blocks, done, vec![])
+}
+
 /// Expand allocation after operand evaluation; only the slow path can safepoint.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn allocate_raw(

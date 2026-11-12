@@ -503,6 +503,40 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                 let mut lowered = Vec::new();
                 for stmt in stmts {
                     let (head_name, operands) = head(list(stmt)?)?;
+                    if head_name == "alloc-vector" {
+                        arity(head_name, operands, 6)?;
+                        let result = sym(&operands[0])?.to_string();
+                        let class = u32::try_from(int(&operands[1])?).map_err(|_| "invalid allocation class")?;
+                        let length = parse_expr(&operands[2])?;
+                        let value = parse_expr(&operands[3])?;
+                        for operand in [&length, &value] {
+                            match operand {
+                                Expr::Int(_) => (),
+                                Expr::Var(name) if name != &result => (),
+                                _ => return Err("alloc-vector: length and value must be stable operands distinct from the result".into()),
+                            }
+                        }
+                        let (bytes, header, shift) = crate::lir::vector_layout(class, &length)?;
+                        let name = format!("{prefix}{alloc_number}");
+                        alloc_number += 1;
+                        let raw = format!("{name}_object");
+                        f.vars.push((raw.clone(), VarKind::Raw));
+                        let zero = shift == 2 || matches!(value, Expr::Int(0));
+                        let (vars, blocks, next_name, next_stmts) = crate::lir::allocate_raw(
+                            &name, block_name, lowered, raw.clone(), bytes, header, zero,
+                            string(&operands[4])?.to_string(), handler(&operands[5])?,
+                        )?;
+                        f.vars.extend(vars);
+                        f.blocks.extend(blocks);
+                        let (vars, blocks, next_name, next_stmts) = crate::lir::initialize_vector(
+                            &name, next_name, next_stmts, result, raw, length, value, shift,
+                        );
+                        f.vars.extend(vars);
+                        f.blocks.extend(blocks);
+                        block_name = next_name;
+                        lowered = next_stmts;
+                        continue;
+                    }
                     if head_name == "alloc-raw" || head_name == "alloc-cons" || head_name == "alloc-fixed" {
                         arity(head_name, operands, if head_name == "alloc-raw" { 6 } else { 5 })?;
                         let result = sym(&operands[0])?.to_string();
