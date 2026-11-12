@@ -85,6 +85,14 @@ pub fn transfer_set_dynamic(index: Expr, value: Expr) -> Stmt {
     Stmt::Store(transfer_address(index), core::mem::offset_of!(kiln_rt::context::Context, values) as i32, value)
 }
 
+pub fn transfer_roots(count: Expr) -> Stmt {
+    Stmt::Store(
+        Expr::Var("ctx".into()),
+        core::mem::offset_of!(kiln_rt::context::Context, values_live) as i32,
+        count,
+    )
+}
+
 /// Materialize the target calling convention after the front end has
 /// evaluated the callee and every argument into stable operands.
 pub fn invoke(

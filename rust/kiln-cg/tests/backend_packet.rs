@@ -110,6 +110,17 @@ fn dynamic_transfer_slots_expand_to_context_accesses() {
 }
 
 #[test]
+fn transfer_roots_preserve_kir() {
+    let module = |body| format!("(module \"roots\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (n raw)) (slots) (block b {body} (return a0 1))))");
+    let old = module("(store ctx 56 n) (store ctx 56 0)");
+    let new = module("(transfer-roots n) (transfer-roots 0)");
+    let old = kiln_cg::kir::parse_module(&sexp::parse_one(&old).unwrap()).unwrap();
+    let new = sexp::parse_one(&new).unwrap();
+    let new = packet::load(&packet::encode(&new, packet::schema::KIR_PAYLOAD).unwrap()).unwrap();
+    assert_eq!(format!("{old:?}"), format!("{new:?}"));
+}
+
+#[test]
 fn fixed_transfer_slots_preserve_kir_and_check_bounds() {
     let module = |body| format!("(module \"transfer\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj)) (slots) (block b {body} (return v 1))))");
     for index in [0, 1, 1020] {

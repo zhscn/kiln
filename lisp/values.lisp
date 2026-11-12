@@ -24,7 +24,7 @@ first, so the result holds them in reverse order. Returns the new list."
               (fin (new-block)) (done (new-block)))
           (br `(:eq ,n 0) done some)
           (start-block some)
-          (emit `(:store :ctx ,+ctx-values-live+ (:sub ,n 1)))
+          (emit `(:transfer-roots (:sub ,n 1)))
           (emit `(:set ,r ,(emit-cons v0 r)))
           (emit `(:set ,i 1))
           (jump head)
@@ -36,7 +36,7 @@ first, so the result holds them in reverse order. Returns the new list."
           (emit `(:set ,i (:add ,i 1)))
           (jump head)
           (start-block fin)
-          (emit `(:store :ctx ,+ctx-values-live+ 0))
+          (emit `(:transfer-roots 0))
           (jump done)
           (start-block done)))
     r))
@@ -168,7 +168,7 @@ provided, are initialized cons slots with registered reference fields;
 use them only when the entire list fits, otherwise allocate on the heap."
   (let ((list (copy-to-var (nil-value))) (i (new-var :raw))
         (head (new-block)) (body (new-block)) (done (new-block)))
-    (emit `(:store :ctx ,+ctx-values-live+
+    (emit `(:transfer-roots
                    (:select (:gt :nargs ,+reg-args+) (:sub :nargs ,+reg-args+) 0)))
     (emit `(:set ,i :nargs))
     (jump head)
@@ -210,5 +210,5 @@ use them only when the entire list fits, otherwise allocate on the heap."
           (emit `(:set ,list ,(emit-cons x list)))))
     (jump head)
     (start-block done)
-    (emit `(:store :ctx ,+ctx-values-live+ 0))
+    (emit `(:transfer-roots 0))
     list))

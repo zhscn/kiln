@@ -541,6 +541,10 @@ fn parse_stmt(s: &Sexp) -> R<Stmt> {
             arity(h, r, 2)?;
             crate::lir::transfer_set_dynamic(parse_expr(&r[0])?, parse_expr(&r[1])?)
         }
+        "transfer-roots" => {
+            arity(h, r, 1)?;
+            crate::lir::transfer_roots(parse_expr(&r[0])?)
+        }
         "store" => {
             arity(h, r, 3)?;
             Stmt::Store(parse_expr(&r[0])?, int(&r[1])? as i32, parse_expr(&r[2])?)

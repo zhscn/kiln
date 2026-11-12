@@ -68,7 +68,6 @@
 (defconstant +no-tls-value+ #x23)
 (defconstant +values-max+ 1021)
 ;;; Number of words of the transfer area that are GC roots (normally 0).
-(defconstant +ctx-values-live+ 56)
 ;;; Addresses of the cursor and the limit of the context's bump allocator
 ;;; (inline allocation).
 (defconstant +ctx-alloc-cursor+ 64)

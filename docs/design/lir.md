@@ -1,6 +1,6 @@
 # LIR：Lisp 编译器与 Rust 后端的输入契约
 
-状态：**操作层正在接入**。[结构化封套](compiler-protocol.md)已支持文件与运行期交接，当前承载 KIR，兼容载荷已支持 `field-load`/`field-store`、闭包环境读写、传递区读写和普通函数对象 `invoke`，Rust 在构造 KIR 时展开布局和调用约定。动态传递区下标的范围由生成方保证。其余操作尚未迁移，不能视作完成 LIR。现在 Lisp 主要生成 KIR（[codegen.md](codegen.md)）。分层和迁移见 [compiler.md](compiler.md)。
+状态：**操作层正在接入**。[结构化封套](compiler-protocol.md)已支持文件与运行期交接，当前承载 KIR，兼容载荷已支持 `field-load`/`field-store`、闭包环境读写、传递区读写和根计数设置，以及普通函数对象 `invoke`，Rust 在构造 KIR 时展开布局和调用约定。动态传递区下标和根计数的范围由生成方保证。其余操作尚未迁移，不能视作完成 LIR。现在 Lisp 主要生成 KIR（[codegen.md](codegen.md)）。分层和迁移见 [compiler.md](compiler.md)。
 
 LIR（low-level IR）是表示选择后的后端输入语言，也是编译协议的程序载荷。它不设独立的优化管线。初期由 HIR 降级产生，后续由 MIR 产生；两者使用同一 schema。它已经确定了“做什么”：每个值的表示、每个对象的存储、闭包的内容、控制流和动态范围；还没有确定“怎么做”：tag、对象和 context 的偏移、调用序列、展开 payload 的编码、栈图。后者由 kiln-cg 降级成 KIR 时按 kiln-rt 的布局决定。
 
