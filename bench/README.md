@@ -10,6 +10,41 @@ Both are copied unchanged in their own commit; kiln's changes to them are listed
 
 `tools/bench.sh [--no-build] [--kiln-only | --sbcl-only] [NAME|GROUP ...]` runs cl-bench on kiln (an AOT executable with the five modules, each benchmark in a process of its own with a timeout) and on SBCL (`sbcl --script`, default optimization), and prints a table of milliseconds per run and the ratio. The harness is `cl-bench-prelude.lisp` (DEFBENCH, `*misc-dir*`) and `cl-bench-driver.lisp` (selection, timing, errors), around cl-bench's `files/` and `tests.lisp`, which are used unchanged; they replace cl-bench's `support.lisp` and `cl-bench.lisp` (ASDF, trivial-garbage, report files).
 
+`python3 tools/bench-game.py [NAME ...]` compares the portable, single-threaded
+Benchmarks Game submissions listed below. It builds kiln with the release runtime,
+compiles each submission with both kiln and SBCL, and checks the complete output
+for every pair of runs. `--no-build` reuses existing executables and FASLs;
+`--runs`, `--warmup`, and `--timeout` default to 3 measured pairs, 1 discarded
+pair, and 30 seconds per process. Results and
+per-process output are kept under `build/bench-game/`; `--output` selects another
+directory. Build or runtime failures produce a nonzero exit status after the
+remaining cases have run.
+
+| Name | Source under `benchmarksgame/` | Input |
+|---|---|---|
+| binarytrees | `binarytrees.sbcl` | depth 14 |
+| fannkuchredux | `fannkuchredux.sbcl-2.sbcl` | n = 9 |
+| fasta | `fasta.sbcl` | n = 100000 |
+| knucleotide | `knucleotide.sbcl-2.sbcl` | FASTA output for n = 100000 |
+| nbody | `nbody.sbcl` | 100000 steps |
+| pidigits | `pidigits.sbcl-2.sbcl` | 1000 digits |
+| revcomp | `revcomp.sbcl` | FASTA output for n = 100000 |
+| spectralnorm | `spectralnorm.sbcl` | n = 500 |
+
+The driver adapts SBCL command-line access to a fixed argument list in generated
+copies and calls `main`; it preserves the algorithms and source optimization
+declarations. Both input-consuming programs receive the same SBCL-generated
+FASTA file. The vendored Mandelbrot versions depend on SBCL VOP/SIMD or low-level
+thread interfaces, and regex-redux needs CL-PPCRE, which kiln does not integrate;
+the driver reports these cases as unsupported.
+
+Timing covers each whole process, including startup, module or FASL loading, and
+I/O. After discarded warmup pairs, runs alternate implementation order and report
+the median for each implementation. Output comparison happens outside timing.
+kiln uses kernel and CLOS modules, a fixed 1 GiB SemiSpace heap, and a 1 GiB Lisp
+stack; SBCL has an 8 GiB dynamic-space limit. These diagnostic input sizes and
+process timings are separate from the Benchmarks Game website's measurements.
+
 `local-calls.lisp` isolates propagation across two local call sites. Compile it
 as a program after the kernel, or run it with `sbcl --script`. The outer
 `benchmark-local-calls` function remains callable for hardware counters; its

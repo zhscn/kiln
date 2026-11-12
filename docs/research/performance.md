@@ -1,6 +1,6 @@
 # 性能测量
 
-**整理日期：2026-11-11。** 本文汇总编译延迟、与 SBCL 的
+**整理日期：2026-11-12。** 本文汇总编译延迟、与 SBCL 的
 运行性能对照，以及能解释优化收益的专项测量。数据对应各节注明的工作负载和
 实现阶段，不随代码更新；不同实验的绝对时间不能直接拼接比较。
 
@@ -32,6 +32,7 @@ python3 tools/bench-compiler.py --warmup 1 --runs 5
 
 ```sh
 BENCH_BUDGET=1 BENCH_TIMEOUT=30 tools/bench.sh
+python3 tools/bench-game.py
 tools/bench-fe-read.sh
 sbcl --script bench/compare.lisp
 ```
@@ -99,24 +100,127 @@ sbcl --script bench/compare.lisp
 
 ### cl-bench 全量扫描
 
-2026-11-10 使用 `BENCH_BUDGET=1 BENCH_TIMEOUT=30 tools/bench.sh` 扫描，
-Rust 后端和 runtime 为 release 构建，SBCL 为 2.6.10-1.fc45。下表列出差距较大的已完成项目，倍数为 kiln 耗时除以 SBCL 耗时。
+2026-11-12 使用以下命令扫描全部 74 个项目；kiln 从当前源码重新构建，
+Rust 后端和 runtime 使用 release 配置，基准程序由 SBCL 上的 kiln 前端交叉编译为
+KIR，再经 Cranelift 生成 AOT 可执行文件。SBCL 也在同轮重新测量。
 
-| 项目 | 耗时倍数 |
-|---|---:|
-| FFT | 907× |
-| mandelbrot/dfloat | 486× |
-| bignum/elem-100-1000 | 351× |
-| 2d-arrays | 230× |
-| slurp-lines | 113× |
-| search-sequence | 74× |
+```sh
+BENCH_BUDGET=1 BENCH_TIMEOUT=30 tools/bench.sh
+```
 
-`bignum/elem-1000-100`、`bignum/elem-10000-1`、`htable-string-fair`、
-`3d-arrays`、`bitvectors` 和 `string-concat` 超时，无法给出耗时倍数。
+测量机器为 AMD Ryzen 9 7940HS（8 核、16 线程），Fedora Linux 45，
+Linux 7.3.3-300.fc45.x86_64；工具链为 Rust 1.99.1、SBCL 2.6.10-1.fc45。
+kiln 使用默认的 1 GiB SemiSpace 堆、最多 8 个 GC 线程和驱动设置的 1 GiB
+Lisp 栈；SBCL 使用驱动设置的 8 GiB dynamic-space 上限。两边保留基准源码的
+优化声明，未额外覆盖编译策略。测量在桌面环境运行，未隔离 CPU。
 
-这次扫描早于后续前端特化。下文专项实验显示部分项目已经改善，但尚无覆盖这些
-改动的完整扫描，不能把上述倍数视为当前版本的成绩，也不能用不同实验的加速比
-推算新的 SBCL 倍数。
+每项在准备完成后计时，执行到原基准的次数上限或累计达到 1 秒；单轮超过预算
+仍会执行完。每格是这一个计时区间的每轮均值，不是多个独立进程的中位数。
+kiln 每项独立进程，30 秒超时包含启动和准备；CLOS 项目会先在同一进程执行
+其前置项目，以建立所需的类、方法与实例。SBCL 按原顺序在同一进程运行全部项目。
+随机数据由各实现生成，未固定跨实现相同的随机序列。
+
+kiln 的 66 项得到耗时，6 项超时；两边的 `compiler`、`load-fasl` 均因驱动
+不支持而跳过，SBCL 另外按基准声明跳过 `walk-list/mess`。可配对的 65 项中，
+kiln/SBCL 耗时比的中位数为 **4.30×**。这只是已配对项目的分布摘要，未包含
+超时项，也没有按工作量加权，不能解释成整个实现的总体性能倍数。
+
+下表覆盖全部项目，单位为毫秒/轮，倍数为 kiln 耗时除以 SBCL 耗时，低于 1
+表示 kiln 在该项扫描中耗时更少。`超时` 表示 kiln 进程超过 30 秒，不能将
+30 秒换算为每轮耗时；`跳过` 表示该实现未运行该项。
+
+| 项目 | 组 | kiln ms/轮 | SBCL ms/轮 | kiln/SBCL |
+|---|---|---:|---:|---:|
+| `compiler` | misc | 跳过 | 跳过 | — |
+| `load-fasl` | misc | 跳过 | 跳过 | — |
+| `sum-permutations` | misc | 245.921 | 32.335 | 7.61× |
+| `walk-list/seq` | misc | 0.109 | 0.040 | 2.73× |
+| `walk-list/mess` | misc | 1.486 | 跳过 | — |
+| `boyer` | gabriel | 5.264 | 3.867 | 1.36× |
+| `browse` | gabriel | 14.550 | 5.600 | 2.60× |
+| `dderiv` | gabriel | 3.012 | 1.940 | 1.55× |
+| `deriv` | gabriel | 2.760 | 1.717 | 1.61× |
+| `destructive` | gabriel | 1.355 | 0.610 | 2.22× |
+| `div2-test-1` | gabriel | 1.383 | 0.880 | 1.57× |
+| `div2-test-2` | gabriel | 1.555 | 1.135 | 1.37× |
+| `fft` | gabriel | 43.087 | 0.133 | 324.0× |
+| `frpoly/fixnum` | gabriel | 1.040 | 0.750 | 1.39× |
+| `frpoly/bignum` | gabriel | 12.782 | 2.333 | 5.48× |
+| `frpoly/float` | gabriel | 11.616 | 1.060 | 11.0× |
+| `puzzle` | gabriel | 151.213 | 0.753 | 200.8× |
+| `tak` | gabriel | 0.196 | 0.127 | 1.54× |
+| `ctak` | gabriel | 0.461 | 0.087 | 5.30× |
+| `trtak` | gabriel | 0.192 | 0.127 | 1.51× |
+| `takl` | gabriel | 1.923 | 0.870 | 2.21× |
+| `stak` | gabriel | 0.739 | 0.420 | 1.76× |
+| `fprint/ugly` | gabriel | 19.018 | 0.435 | 43.7× |
+| `fprint/pretty` | gabriel | 54.117 | 1.900 | 28.5× |
+| `traverse` | gabriel | 23.160 | 13.700 | 1.69× |
+| `triangle` | gabriel | 55.031 | 24.001 | 2.29× |
+| `richards` | misc | 43.438 | 39.801 | 1.09× |
+| `factorial` | math | 0.224 | 0.057 | 3.93× |
+| `fib` | math | 0.801 | 0.720 | 1.11× |
+| `fib-ratio` | math | 0.423 | 0.006 | 70.5× |
+| `ackermann` | math | 1017.316 | 659.023 | 1.54× |
+| `mandelbrot/complex` | math | 18.144 | 0.910 | 19.9× |
+| `mandelbrot/dfloat` | math | 4.301 | 0.010 | 430.1× |
+| `mrg32k3a` | math | 1462.487 | 5.000 | 292.5× |
+| `crc40` | math | 151.475 | 80.504 | 1.88× |
+| `bignum/elem-100-1000` | bignum | 4462.295 | 11.700 | 381.4× |
+| `bignum/elem-1000-100` | bignum | 超时 | 14.000 | — |
+| `bignum/elem-10000-1` | bignum | 超时 | 11.200 | — |
+| `bignum/pari-100-10` | bignum | 102.728 | 2.400 | 42.8× |
+| `bignum/pari-200-5` | bignum | 633.232 | 9.100 | 69.6× |
+| `pi-decimal/small` | bignum | 42.224 | 1.200 | 35.2× |
+| `pi-decimal/big` | bignum | 2703.992 | 24.001 | 112.7× |
+| `pi-atan` | bignum | 50.068 | 0.530 | 94.5× |
+| `pi-ratios` | bignum | 423.565 | 130.505 | 3.25× |
+| `htable-string-small` | hash | 22.785 | 4.500 | 5.06× |
+| `htable-string-large` | hash | 12.249 | 1.250 | 9.80× |
+| `htable-string-fair` | hash | 超时 | 171.256 | — |
+| `htable-mixbag` | hash | 22.309 | 30.001 | 0.74× |
+| `htable-fixnum` | hash | 300.038 | 149.755 | 2.00× |
+| `htable-equalp-numbers` | hash | 21.944 | 3.501 | 6.27× |
+| `htable-sparse` | hash | 2.403 | 1.000 | 2.40× |
+| `htable-set+remove` | hash | 10.761 | 2.500 | 4.30× |
+| `sxhash-string-small` | hash | 30.488 | 2.750 | 11.1× |
+| `sxhash-string-large` | hash | 0.596 | 65.752 | 0.0091× |
+| `sxhash-fixnum` | hash | 8.167 | 4.500 | 1.81× |
+| `slurp-lines` | gc | 1926.511 | 17.267 | 111.6× |
+| `boehm-gc` | gc | 391.328 | 251.008 | 1.56× |
+| `deflate-file` | misc | 4.755 | 0.180 | 26.4× |
+| `1d-arrays` | sequence | 182.379 | 7.750 | 23.5× |
+| `2d-arrays` | sequence | 21882.096 | 96.004 | 227.9× |
+| `3d-arrays` | sequence | 超时 | 263.009 | — |
+| `bitvectors` | sequence | 超时 | 41.668 | — |
+| `bench-strings` | sequence | 1562.116 | 355.679 | 4.39× |
+| `fill-strings/adjustable` | sequence | 8873.257 | 471.017 | 18.8× |
+| `string-concat` | sequence | 超时 | 4552.162 | — |
+| `search-sequence` | sequence | 2354.215 | 66.002 | 35.7× |
+| `CLOS/defclass` | clos | 201.541 | 108.004 | 1.87× |
+| `CLOS/defmethod` | clos | 175.302 | 189.507 | 0.93× |
+| `CLOS/instantiate` | clos | 879.475 | 57.752 | 15.2× |
+| `CLOS/simple-instantiate` | clos | 1.022 | 0.230 | 4.44× |
+| `CLOS/methodcalls` | clos | 183.424 | 1066.038 | 0.17× |
+| `CLOS/method+after` | clos | 208.829 | 89.803 | 2.33× |
+| `CLOS/complex-methods` | clos | 30.376 | 22.401 | 1.36× |
+| `eql-specialized-fib` | clos | 69.708 | 16.001 | 4.36× |
+
+本轮差距最大的已完成项目为 `mandelbrot/dfloat`（430.1×）、
+`bignum/elem-100-1000`（381.4×）、`fft`（324.0×）、`mrg32k3a`（292.5×）、
+`2d-arrays`（227.9×）和 `puzzle`（200.8×）。`1d-arrays` 为 23.5×，
+`search-sequence` 为 35.7×；一维访问和常量搜索特化的专项实验见下一节。
+多维数组、大整数及部分浮点、流和序列操作仍有明显差距。
+
+短项目需要结合总计时理解：SBCL 的 `mandelbrot/dfloat` 执行 100 轮，
+总计时仅约 1 ms，因此其倍数只适合判断数量级。CLOS 项目包含运行期编译、
+首次调用和缓存建立的成本；`CLOS/methodcalls` 在 SBCL 中只完成一轮、kiln
+完成五轮，不能把本表直接当作预热后的泛函分派吞吐量。
+
+`sxhash-string-large` 的输入是 4096 字符字符串。kiln 的字符串 `sxhash`
+按默认预算只混入前 10 个字符及长度，因而本项耗时很低；这种采样策略不能代表
+完整字符串遍历速度。相同前后缀、差异在中间的 `htable-string-fair` 在 kiln
+中仍超时，说明散列分布与哈希表负载也需要一起考察。
 
 ### 库路径的成对测量
 
@@ -153,6 +257,53 @@ SEARCH 实验使用 `BENCH_SELECT=1d-arrays BENCH_BUDGET=2`，预热后交替
 `slot-value` 在调用点缓存实验中从 24.7 ns 降至 9.9 ns，与访问器方法的
 10.4 ns 相近。这些结果适用于分派和槽访问路径，不能代表实例构造、初始化或
 整个 CLOS 协议的成本。
+
+### Benchmarks Game 的单线程程序
+
+2026-11-12 使用仓库内的 Computer Language Benchmarks Game SBCL 提交，
+选取单线程、无需 SBCL 专用底层接口的版本进行诊断规模对比。源码版本与固定
+输入见 [bench/README.md](../../bench/README.md)，可用以下命令重现：
+
+```sh
+python3 tools/bench-game.py
+```
+
+机器、Rust 和 SBCL 版本与本节 cl-bench 扫描相同。kiln 使用 release runtime，
+只链接 kernel、CLOS 和基准模块；SBCL 先用 `compile-file` 生成 FASL。
+驱动只在生成的源码副本中将 SBCL 命令行参数访问替换为固定参数列表，再调用
+`main`，保留算法和优化声明。kiln 固定 1 GiB SemiSpace 堆、1 GiB Lisp 栈；
+SBCL 的 dynamic-space 上限为 8 GiB。
+
+每项丢弃一对预热进程，再交替顺序测量三对独立进程，报告各实现墙钟中位数。
+墙钟覆盖整个进程的启动、模块或 FASL 加载、计算和 I/O，不含编译与链接；
+每个进程最多运行 30 秒。每对输出在计时结束后逐字节比较，只有输出一致的
+项目才报告倍数。此处不是预热后的纯计算吞吐量，也不能与网站上的不同输入、
+不同程序及并行版本的数字直接比较。
+
+| 项目 | 输入 | kiln s | SBCL s | kiln/SBCL |
+|---|---|---:|---:|---:|
+| `binarytrees` | 深度 14 | 0.199463 | 0.069805 | 2.86× |
+| `fannkuchredux` | n = 9 | 1.643583 | 0.034508 | 47.63× |
+| `fasta` | n = 100000 | 7.448295 | 0.039877 | 186.78× |
+| `pidigits` | 1000 位 | 8.032321 | 0.092739 | 86.61× |
+| `spectralnorm` | n = 500 | 5.378219 | 0.044684 | 120.36× |
+
+其余项目保留实际状态，不计入性能倍数：
+
+| 项目 | 源码或输入 | 状态与原因 |
+|---|---|---|
+| `nbody` | `nbody.sbcl`，100000 步 | 编译失败：typed-vector `defstruct` 的位置构造器宏展开出现槽布局参数数目不匹配 |
+| `knucleotide` | `knucleotide.sbcl-2.sbcl`，FASTA n = 100000 | 运行失败：源码用 `schar` 访问 `read-line` 的结果，kiln 返回的行字符串不是 simple-string，触发类型错误 |
+| `revcomp` | `revcomp.sbcl`，FASTA n = 100000 | 编译失败：KIR 常量发射尚不支持 256 元素的 `(unsigned-byte 8)` 特化数组 |
+| `mandelbrot` | 仓库内的 SBCL 版本 | 未测：依赖 SBCL VOP/SIMD 或底层线程接口 |
+| `regexredux` | `regexredux.sbcl-4.sbcl` | 未测：依赖尚未接入 kiln 的 CL-PPCRE |
+
+`knucleotide` 和 `revcomp` 的输入由 SBCL 的 FASTA 程序生成，两边使用相同的
+文件字节。上述兼容性失败会使驱动在完成其他项目后以非零状态退出。
+
+binary-trees 的差距相对较小；数组密集的 fannkuch-redux、浮点数组密集的
+spectral-norm、字符串生成与输出的 FASTA，以及大整数 pi-digits 仍有明显差距。
+这些项目没有剖析归因，因此不能单凭墙钟把差距归结为某一项前端优化缺失。
 
 ## 生成代码的专项测量
 
