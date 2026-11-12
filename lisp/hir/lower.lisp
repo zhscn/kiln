@@ -349,9 +349,9 @@ Return the storage slot and its root region, if any."
           (copy-to-var `(:addr ,data ,+tag-general+)))
         (let ((slot (cdr (assoc fun *hir-stack-slots* :test #'eq))))
           (if slot
-              (progn
-                (emit `(:store (:slot ,slot) 8 (:addr ,label)))
-                (copy-to-var `(:add (:slot ,slot) ,+tag-general+)))
+              (let ((result (new-var)))
+                (emit `(:stack-closure ,result ,slot ,label))
+                result)
               (let ((result (new-var)))
                 (emit `(:alloc-closure ,result ,label ,count ,(rt-alloc) ,(handler)))
                 result))))))
@@ -897,9 +897,9 @@ unsupported call. Arguments retain their evaluation order and effects."
   (let ((slot (cdr (assoc node *hir-stack-slots* :test #'eq))))
     (when slot
       (let ((args (lower-args (coerce (hir-node-b node) 'list))))
-        (emit `(:store (:slot ,slot) 8 ,(first args)))
-        (emit `(:store (:slot ,slot) 16 ,(second args)))
-        (return-from hir-lower-call (values (copy-to-var `(:add (:slot ,slot) ,+tag-cons+)) 1)))))
+        (let ((result (new-var)))
+          (emit `(:stack-cons ,result (:slot ,slot) ,(first args) ,(second args)))
+          (return-from hir-lower-call (values result 1))))))
   (multiple-value-bind (value specialized) (hir-lower-typed-call node)
     (when specialized (return-from hir-lower-call (values value 1))))
   (let ((callee (hir-node-a node)) (args (coerce (hir-node-b node) 'list)))

@@ -171,6 +171,23 @@ pub fn initialize_closure(result: String, address: String, entry: String) -> Vec
     ]
 }
 
+pub fn initialize_stack_closure(result: String, slot: String, entry: String) -> Vec<Stmt> {
+    use crate::kir::BinOp;
+    vec![
+        Stmt::Store(Expr::Slot(slot.clone()), core::mem::offset_of!(FunctionObj, entry) as i32, Expr::Addr(entry, 0)),
+        Stmt::Set(result, Expr::Bin(BinOp::Add, Box::new(Expr::Slot(slot)), Box::new(Expr::Int(TAG_GENERAL as i64)))),
+    ]
+}
+
+pub fn initialize_stack_cons(result: String, address: Expr, car: Expr, cdr: Expr) -> Vec<Stmt> {
+    use crate::kir::BinOp;
+    vec![
+        Stmt::Store(address.clone(), size_of::<u64>() as i32, car),
+        Stmt::Store(address.clone(), (2 * size_of::<u64>()) as i32, cdr),
+        Stmt::Set(result, Expr::Bin(BinOp::Add, Box::new(address), Box::new(Expr::Int(TAG_CONS as i64)))),
+    ]
+}
+
 pub fn stack_object_layout(class: u32, count: i64) -> Result<(u32, i64, i32), String> {
     match class {
         CLASS_CONS if count == 2 => Ok((kiln_rt::object::CONS_BYTES as u32, kiln_rt::object::KIND_CONS as i64, size_of::<u64>() as i32)),

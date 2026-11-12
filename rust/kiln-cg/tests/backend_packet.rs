@@ -117,6 +117,30 @@ fn immediate_class_tests_preserve_kir_and_reject_unknown_classes() {
 }
 
 #[test]
+fn stack_object_construction_preserves_field_order_and_aliases() {
+    use packet::schema::*;
+    let module = |slots, body| format!("(module \"stack\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj) (p raw)) (slots {slots}) (block b {body} (return v 1))))");
+    let old = module("(s 24)".to_string(), "(store (slot s) 8 a0) (store (slot s) 16 v) (set v (add (slot s) 1)) (store p 8 a0) (store p 16 v) (set v (add p 1))".to_string());
+    let new = module(format!("(s (stack-object {CLASS_CONS} 2))"), "(stack-cons v (slot s) a0 v) (stack-cons v p a0 v)".to_string());
+    let old = kiln_cg::kir::parse_module(&sexp::parse_one(&old).unwrap()).unwrap();
+    let new = kiln_cg::kir::parse_module(&sexp::parse_one(&new).unwrap()).unwrap();
+    assert_eq!(format!("{old:?}"), format!("{new:?}"));
+    let old = module("(s 32)".to_string(), "(store (slot s) 8 (addr \"entry\")) (set v (add (slot s) 5))".to_string());
+    let new = module(format!("(s (stack-object {CLASS_FUNCTION} 2))"), "(stack-closure v s \"entry\")".to_string());
+    let old = kiln_cg::kir::parse_module(&sexp::parse_one(&old).unwrap()).unwrap();
+    let new = kiln_cg::kir::parse_module(&sexp::parse_one(&new).unwrap()).unwrap();
+    assert_eq!(format!("{old:?}"), format!("{new:?}"));
+    for (slots, body) in [
+        (format!("(s (stack-object {CLASS_CONS} 2))"), "(stack-closure v s \"entry\")".to_string()),
+        (format!("(s (stack-object {CLASS_FUNCTION} 2))"), "(stack-cons v (slot s) a0 v)".to_string()),
+        (String::new(), "(stack-cons v v a0 v)".to_string()),
+        (String::new(), "(stack-cons v p (load a0 0) v)".to_string()),
+    ] {
+        assert!(kiln_cg::kir::parse_module(&sexp::parse_one(&module(slots, body)).unwrap()).is_err());
+    }
+}
+
+#[test]
 fn stack_objects_lower_slot_layout_and_validate_initialization() {
     use packet::schema::*;
     let module = |slots, body| format!("(module \"stack\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v raw)) (slots {slots}) (block b {body} (return a0 1))))");

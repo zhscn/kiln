@@ -536,6 +536,33 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                 for stmt in stmts {
                     validate_stack_references(stmt, &stack_objects)?;
                     let (head_name, operands) = head(list(stmt)?)?;
+                    if head_name == "stack-closure" {
+                        arity(head_name, operands, 3)?;
+                        let result = sym(&operands[0])?.to_string();
+                        let slot = sym(&operands[1])?;
+                        if !matches!(stack_objects.get(slot), Some((crate::packet::schema::CLASS_FUNCTION, _))) {
+                            return Err("stack-closure requires a closure slot".into());
+                        }
+                        lowered.extend(crate::lir::initialize_stack_closure(result, slot.to_string(), string(&operands[2])?.to_string()));
+                        continue;
+                    }
+                    if head_name == "stack-cons" {
+                        arity(head_name, operands, 4)?;
+                        let result = sym(&operands[0])?.to_string();
+                        let address = parse_expr(&operands[1])?;
+                        match &address {
+                            Expr::Slot(slot) if stack_objects.get(slot) == Some(&(crate::packet::schema::CLASS_CONS, 2)) => (),
+                            Expr::Var(name) if name != &result => (),
+                            _ => return Err("stack-cons requires a cons slot or a stable address variable".into()),
+                        }
+                        let car = parse_expr(&operands[2])?;
+                        let cdr = parse_expr(&operands[3])?;
+                        if !matches!(car, Expr::Var(_) | Expr::Int(_)) || !matches!(cdr, Expr::Var(_) | Expr::Int(_)) {
+                            return Err("stack-cons fields must be stable operands".into());
+                        }
+                        lowered.extend(crate::lir::initialize_stack_cons(result, address, car, cdr));
+                        continue;
+                    }
                     if head_name == "stack-object-init" {
                         arity(head_name, operands, 3)?;
                         let slot = sym(&operands[0])?;
