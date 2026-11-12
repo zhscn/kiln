@@ -1,7 +1,7 @@
 ;;;; COMPILE to native code (M5.5): the lambda expression is
 ;;;; compiled by the image's front end and lower.lisp into a KIR module
 ;;;; whose literals are the image's objects, which kiln-cg, linked into the
-;;;; runtime, compiles into memory (kiln_rt_jit). The compiler module's
+;;;; runtime, compiles indexed records into memory (kiln_rt_compile_packet). The compiler module's
 ;;;; native entry points: from here on the kernel's COMPILE and EVAL (so LOAD) use
 ;;;; the native execution path.
 

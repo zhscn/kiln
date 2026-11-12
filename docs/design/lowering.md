@@ -1,6 +1,6 @@
 # 降级：HIR 到 KIR
 
-本文描述现在的实现。目标设计里降级分成两段（[compiler.md](compiler.md)）：Lisp 的 MIR 完成表示选择后输出 LIR（[mir.md](mir.md)、[lir.md](lir.md)），kiln-cg 把 LIR 降级成 KIR。下面的闭包、退出点、多值、常量和分配规则届时分别归入 MIR 的表示选择（存储、闭包转换、退出令牌）和 Rust 的 LIR 降级（布局、条目、payload、静态数据）；“降级时的改写”改由 MIR 的类型驱动改写实现。
+本文描述现在的实现。cons/symbol 固定字段及函数入口读取已经改为 schema 字段 ID，由 Rust 展开偏移；其他布局与控制流发射仍由 Lisp 负责。目标设计里降级分成两段（[compiler.md](compiler.md)）：Lisp 的 MIR 完成表示选择后输出 LIR（[mir.md](mir.md)、[lir.md](lir.md)），kiln-cg 把 LIR 降级成 KIR。下面的闭包、退出点、多值、常量和分配规则届时分别归入 MIR 的表示选择（存储、闭包转换、退出令牌）和 Rust 的 LIR 降级（布局、条目、payload、静态数据）；“降级时的改写”改由 MIR 的类型驱动改写实现。
 
 `lisp/hir/lower.lisp` 按 HIR 节点的整数 kind 分派（`hir-lower-mv`），返回保存结果的 KIR 操作数；模块、函数、调用、特殊变量、非局部退出、分配和常量的发射工具在 `lisp/lower.lisp`、`lisp/values.lisp` 和 `lisp/primitives.lisp`。输入是前端的输出（[front-end.md](front-end.md)、[hir.md](hir.md)），输出的 KIR 见 [codegen.md](codegen.md)，ABI 见 [abi.md](abi.md)。
 

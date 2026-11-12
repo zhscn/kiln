@@ -1,10 +1,10 @@
 # LIR 编译协议
 
-状态：结构化传输已实现，布局无关的 LIR 操作仍在迁移。当前 payload 1 保存已有 KIR 操作树，payload 2 为 LIR 保留，后端暂时拒绝；二进制 KIR 不等同于完成 LIR 降级。LIR 是后端输入语言，本文定义其编码、调用和资源生命周期；操作含义见 [lir.md](lir.md)。它是编译器专用单向协议，不依赖通用 Rust 宿主模块、对象借用或 Lisp 回调网关。
+状态：结构化传输已实现，布局无关的 LIR 操作仍在迁移。当前 payload 1 保存兼容操作树（KIR 与迁移中的字段操作），payload 2 为 LIR 保留，后端暂时拒绝；二进制 KIR 不等同于完成 LIR 降级。LIR 是后端输入语言，本文定义其编码、调用和资源生命周期；操作含义见 [lir.md](lir.md)。它是编译器专用单向协议，不依赖通用 Rust 宿主模块、对象借用或 Lisp 回调网关。
 
 ## 已实现的封套
 
-`protocol/lir-schema.def` 定义记录种类和版本，`tools/gen-lir-schema.py` 生成 Lisp 与 Rust 常量，`--check` 检查副本。`kiln-cg target-description` 生成 `lisp/backend-target.lisp`；目标指纹涵盖 runtime 对象与 context 定义以及目标架构、系统，采用严格的构建匹配，不承诺布局相同时跨构建兼容。修改这些定义后重新生成目标描述。
+`protocol/lir-schema.def` 定义记录种类和版本，`tools/gen-lir-schema.py` 生成 Lisp 与 Rust 常量，`--check` 检查副本。`kiln-cg target-description` 生成 `lisp/backend-target.lisp`；目标指纹涵盖 runtime 对象与 context 定义、共享 schema 以及目标架构、系统，采用严格的构建匹配，不承诺布局相同时跨构建兼容。修改这些定义后重新生成目标描述。
 
 头部为 64 字节，整数按小端编码：
 
@@ -22,6 +22,10 @@
 Lisp 的共享编码器支持宿主和 image，运行期使用 simple-vector octets，由 runtime 批量复制为 native bytes 后解码。当前入口以 NIL 和 stderr 报告编译失败，结构化诊断与独立产物 handle 尚未接入；Rust panic 仍遵守工作区的 abort 配置。此载体每个 octet 占一个 Lisp 槽，不能把它称为紧凑的原生字节数组；后续可优化载体而保持 wire schema。纯编译入口没有 Lisp 分配或 safepoint，单 mutator 下由调用帧保持 literal 向量存活，安装后转为静态 roots；尚不支持并发 mutator 的 native 状态切换。
 
 `.lir` 输出选择二进制封套，旧 `.kir` 文件及 `kiln_rt_jit` 文本入口保留用于迁移对照。原生 `compile`、`eval`、FASL 加载使用 `:compile-packet`，缓存和定义指纹也采用规范化记录字节。FASL 格式版本为 2，记录标签 6 保存 packet octets；旧版本会拒绝加载。
+
+## 已接入的字段操作
+
+`field-load(field-id, object)` 和 `field-store(field-id, object, value)` 使用共享 schema 的字段编号。Rust 负责 cons 的 car/cdr、symbol 的槽及函数入口偏移；函数入口只允许读取，其他已接入字段保存对象引用。类型检查和错误路径仍由 Lisp 生成。迁移期 KIR 文本读取器也接受这些操作，构造的内部 KIR 只含普通 load/store，便于保持旧后端和差分验证。
 
 ## LIR 载荷的目标契约
 

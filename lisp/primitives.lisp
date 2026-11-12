@@ -251,13 +251,13 @@ are compared (no short circuit), which also checks every argument."
 
 (define-primitive cons (a b) (emit-cons a b))
 
-(defun emit-car-cdr (x offset)
+(defun emit-car-cdr (x field)
   (let ((r (new-var))
         (is-cons (new-block)) (other (new-block)) (is-nil (new-block))
         (bad (new-block)) (join (new-block)))
     (br `(:eq (:and ,x ,+tag-mask+) ,+tag-cons+) is-cons other)
     (start-block is-cons)
-    (emit `(:set ,r (:load ,x ,offset)))
+    (emit `(:set ,r (:field-load ,field ,x)))
     (jump join)
     (start-block other)
     (br `(:eq ,x ,(nil-value)) is-nil bad)
@@ -269,16 +269,16 @@ are compared (no short circuit), which also checks every argument."
     (start-block join)
     r))
 
-(define-primitive car (x) (emit-car-cdr x +cons-car+))
-(define-primitive cdr (x) (emit-car-cdr x +cons-cdr+))
+(define-primitive car (x) (emit-car-cdr x kiln.kir::+packet-field-cons-car+))
+(define-primitive cdr (x) (emit-car-cdr x kiln.kir::+packet-field-cons-cdr+))
 
-(define-primitive first (x) (emit-car-cdr x +cons-car+))
-(define-primitive rest (x) (emit-car-cdr x +cons-cdr+))
-(define-primitive cadr (x) (emit-car-cdr (emit-car-cdr x +cons-cdr+) +cons-car+))
-(define-primitive second (x) (emit-car-cdr (emit-car-cdr x +cons-cdr+) +cons-car+))
+(define-primitive first (x) (emit-car-cdr x kiln.kir::+packet-field-cons-car+))
+(define-primitive rest (x) (emit-car-cdr x kiln.kir::+packet-field-cons-cdr+))
+(define-primitive cadr (x) (emit-car-cdr (emit-car-cdr x kiln.kir::+packet-field-cons-cdr+) kiln.kir::+packet-field-cons-car+))
+(define-primitive second (x) (emit-car-cdr (emit-car-cdr x kiln.kir::+packet-field-cons-cdr+) kiln.kir::+packet-field-cons-car+))
 (define-primitive third (x)
-  (emit-car-cdr (emit-car-cdr (emit-car-cdr x +cons-cdr+) +cons-cdr+) +cons-car+))
-(define-primitive cddr (x) (emit-car-cdr (emit-car-cdr x +cons-cdr+) +cons-cdr+))
+  (emit-car-cdr (emit-car-cdr (emit-car-cdr x kiln.kir::+packet-field-cons-cdr+) kiln.kir::+packet-field-cons-cdr+) kiln.kir::+packet-field-cons-car+))
+(define-primitive cddr (x) (emit-car-cdr (emit-car-cdr x kiln.kir::+packet-field-cons-cdr+) kiln.kir::+packet-field-cons-cdr+))
 
 (define-primitive endp (x)
   (let ((r (new-var))
@@ -311,14 +311,14 @@ are compared (no short circuit), which also checks every argument."
     (start-block head)
     (br `(:gt ,i 0) body done)
     (start-block body)
-    (emit `(:set ,cur ,(emit-car-cdr cur +cons-cdr+)))
+    (emit `(:set ,cur ,(emit-car-cdr cur kiln.kir::+packet-field-cons-cdr+)))
     (emit `(:set ,i (:sub ,i ,(ash 1 +fixnum-shift+))))
     (jump head)
     (start-block done)
     cur))
 
 (define-primitive nthcdr (n list) (emit-nthcdr n list))
-(define-primitive nth (n list) (emit-car-cdr (emit-nthcdr n list) +cons-car+))
+(define-primitive nth (n list) (emit-car-cdr (emit-nthcdr n list) kiln.kir::+packet-field-cons-car+))
 
 (defun emit-check-cons (x)
   (let ((bad (new-block)) (ok (new-block)))
@@ -328,10 +328,10 @@ are compared (no short circuit), which also checks every argument."
     (start-block ok)))
 
 ;;; No write barrier yet: only non-generational GC plans.
-(define-primitive (setf car) (v x) (emit-check-cons x) (emit `(:store ,x ,+cons-car+ ,v)) v)
-(define-primitive (setf cdr) (v x) (emit-check-cons x) (emit `(:store ,x ,+cons-cdr+ ,v)) v)
-(define-primitive rplaca (x v) (emit-check-cons x) (emit `(:store ,x ,+cons-car+ ,v)) x)
-(define-primitive rplacd (x v) (emit-check-cons x) (emit `(:store ,x ,+cons-cdr+ ,v)) x)
+(define-primitive (setf car) (v x) (emit-check-cons x) (emit `(:field-store ,kiln.kir::+packet-field-cons-car+ ,x ,v)) v)
+(define-primitive (setf cdr) (v x) (emit-check-cons x) (emit `(:field-store ,kiln.kir::+packet-field-cons-cdr+ ,x ,v)) v)
+(define-primitive rplaca (x v) (emit-check-cons x) (emit `(:field-store ,kiln.kir::+packet-field-cons-car+ ,x ,v)) x)
+(define-primitive rplacd (x v) (emit-check-cons x) (emit `(:field-store ,kiln.kir::+packet-field-cons-cdr+ ,x ,v)) x)
 
 (defun emit-list (vals tail)
   (let ((r tail))
@@ -391,7 +391,7 @@ are compared (no short circuit), which also checks every argument."
     (start-block head)
     (br `(:eq (:and ,cur ,+tag-mask+) ,+tag-cons+) cons-b other)
     (start-block cons-b)
-    (emit `(:set ,cur (:load ,cur ,+cons-cdr+)))
+    (emit `(:set ,cur (:field-load ,kiln.kir::+packet-field-cons-cdr+ ,cur)))
     (jump head)
     (start-block other)
     (br `(:eq ,cur ,(nil-value)) done bad)
@@ -408,23 +408,23 @@ are compared (no short circuit), which also checks every argument."
 ;;; stores into the cell directly (LOWER-GLOBAL-CALL).
 (define-primop :symbol-function (name)
   (emit-check-symbol name)
-  (copy-to-var `(:load ,name ,+symbol-function+)))
+  (copy-to-var `(:field-load ,kiln.kir::+packet-field-symbol-function+ ,name)))
 (define-primop :set-symbol-function (name function)
   (emit-check-function function)
   (emit-check-symbol name)
-  (emit `(:store ,name ,+symbol-function+ ,function))
+  (emit `(:field-store ,kiln.kir::+packet-field-symbol-function+ ,name ,function))
   function)
 (define-primop :symbol-setf-function (name)
   (emit-check-symbol name)
-  (copy-to-var `(:load ,name ,+symbol-setf-function+)))
+  (copy-to-var `(:field-load ,kiln.kir::+packet-field-symbol-setf-function+ ,name)))
 (define-primop :set-symbol-setf-function (name function)
   (emit-check-function function)
   (emit-check-symbol name)
-  (emit `(:store ,name ,+symbol-setf-function+ ,function))
+  (emit `(:field-store ,kiln.kir::+packet-field-symbol-setf-function+ ,name ,function))
   function)
 (define-primop :undefined-function-p (f)
   ;; F is the content of a function cell.
-  (let ((entry (copy-to-var `(:load ,f ,+fobj-entry+) :raw)))
+  (let ((entry (copy-to-var `(:field-load ,kiln.kir::+packet-field-function-entry+ ,f) :raw)))
     (boolean-value `(:or (:eq ,entry (:addr ,(undefined-function-entry)))
                          (:eq ,entry (:addr ,(undefined-setf-function-entry)))))))
 
@@ -794,8 +794,8 @@ of it, SLOW-FN otherwise; both return an operand. Returns the result."
           (copy-to-var `(:add ,p ,+tag-general+)))
         (funcall (gethash :make-simple-vector *primops*) (list n x)))))
 
-(define-primop :symbol-name (s) (copy-to-var `(:load ,s ,+symbol-name+)))
-(define-primop :symbol-package (s) (copy-to-var `(:load ,s ,+symbol-package+)))
+(define-primop :symbol-name (s) (copy-to-var `(:field-load ,kiln.kir::+packet-field-symbol-name+ ,s)))
+(define-primop :symbol-package (s) (copy-to-var `(:field-load ,kiln.kir::+packet-field-symbol-package+ ,s)))
 (define-primop :make-symbol (name)
   ;; An uninterned symbol; both function cells hold an undefined-function
   ;; object for it.
@@ -814,13 +814,13 @@ of it, SLOW-FN otherwise; both return an operand. Returns the result."
   "Stores new undefined-function objects for the symbol S into its function
 cells (both by default)."
   (dolist (cell (append (and function
-                             (list (cons +symbol-function+ (undefined-function-entry))))
+                             (list (cons kiln.kir::+packet-field-symbol-function+ (undefined-function-entry))))
                         (and setf-function
-                             (list (cons +symbol-setf-function+ (undefined-setf-function-entry))))))
+                             (list (cons kiln.kir::+packet-field-symbol-setf-function+ (undefined-setf-function-entry))))))
     (let ((f (emit-alloc 24 (logior +kind-function+ (ash 1 +length-shift+)))))
       (emit `(:store ,f 8 (:addr ,(cdr cell))))
       (emit `(:store ,f 16 ,s))
-      (emit `(:store ,s ,(car cell) (:add ,f ,+tag-general+))))))
+      (emit `(:field-store ,(car cell) ,s (:add ,f ,+tag-general+))))))
 ;; NIL and T are defined by the runtime with empty function cells; the
 ;; kernel fills them in first thing.
 (define-primop :init-function-cells (s)
@@ -842,13 +842,13 @@ cells (both by default)."
     (emit-check-symbol s)
     (emit-set-symbol-value s +unbound+)
     s))
-(define-primop :symbol-plist (s) (copy-to-var `(:load ,s ,+symbol-plist+)))
-(define-primop :set-symbol-plist (s v) (emit `(:store ,s ,+symbol-plist+ ,v)) v)
+(define-primop :symbol-plist (s) (copy-to-var `(:field-load ,kiln.kir::+packet-field-symbol-plist+ ,s)))
+(define-primop :set-symbol-plist (s v) (emit `(:field-store ,kiln.kir::+packet-field-symbol-plist+ ,s ,v)) v)
 ;; The package system sets the home package of a symbol, and
 ;; makes a new keyword its own (global) value.
-(define-primop :set-symbol-package (s p) (emit `(:store ,s ,+symbol-package+ ,p)) p)
-(define-primop :symbol-global-value (s) (copy-to-var `(:load ,s ,+symbol-value+)))
-(define-primop :set-symbol-global-value (s v) (emit `(:store ,s ,+symbol-value+ ,v)) v)
+(define-primop :set-symbol-package (s p) (emit `(:field-store ,kiln.kir::+packet-field-symbol-package+ ,s ,p)) p)
+(define-primop :symbol-global-value (s) (copy-to-var `(:field-load ,kiln.kir::+packet-field-symbol-value+ ,s)))
+(define-primop :set-symbol-global-value (s v) (emit `(:field-store ,kiln.kir::+packet-field-symbol-value+ ,s ,v)) v)
 
 (define-primop :evenp (n)
   (emit-check-fixnums n n)
@@ -997,7 +997,7 @@ intact."
       (let ((*regions* '()))
         (with-function (name)
           (let ((f (copy-to-var `(:load :self ,(- 24 +tag-general+)))))
-            (emit `(:tail-call-lisp (:load ,f ,+fobj-entry+) (:ctx ,f :nargs :a0 :a1 :a2)))))))
+            (emit `(:tail-call-lisp (:field-load ,kiln.kir::+packet-field-function-entry+ ,f) (:ctx ,f :nargs :a0 :a1 :a2)))))))
     name))
 
 (defun emit-tail-call (fobj vals)
@@ -1006,7 +1006,7 @@ current function's. Nothing after it in the block is reached."
   (when (> (length vals) (+ +reg-args+ +values-max+))
     (fail "calls with more than ~D arguments are not supported"
           (+ +reg-args+ +values-max+)))
-  (let ((entry (copy-to-var `(:load ,fobj ,+fobj-entry+) :raw)))
+  (let ((entry (copy-to-var `(:field-load ,kiln.kir::+packet-field-function-entry+ ,fobj) :raw)))
     (loop for v in (nthcdr +reg-args+ vals)
           for i from 0
           do (emit `(:store :ctx ,(+ +ctx-values+ (* 8 i)) ,v)))

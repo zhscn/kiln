@@ -15,6 +15,7 @@ pub fn target_fingerprint() -> u64 {
     for bytes in [
         include_bytes!("../../kiln-rt/src/object.rs").as_slice(),
         include_bytes!("../../kiln-rt/src/context.rs").as_slice(),
+        include_bytes!("packet_schema.rs").as_slice(),
         std::env::consts::ARCH.as_bytes(),
         std::env::consts::OS.as_bytes(),
     ] {

@@ -55,3 +55,42 @@ fn target_description_is_current() {
         "regenerate with kiln-cg target-description"
     );
 }
+
+#[test]
+fn named_fields_preserve_the_legacy_kir_program() {
+    use packet::schema::*;
+    for (field, offset, writable) in [
+        (FIELD_CONS_CAR, 7, true),
+        (FIELD_CONS_CDR, 15, true),
+        (FIELD_SYMBOL_NAME, 3, true),
+        (FIELD_SYMBOL_PACKAGE, 11, true),
+        (FIELD_SYMBOL_FUNCTION, 19, true),
+        (FIELD_SYMBOL_VALUE, 27, true),
+        (FIELD_SYMBOL_TLS_INDEX, 35, true),
+        (FIELD_SYMBOL_PLIST, 43, true),
+        (FIELD_SYMBOL_SETF_FUNCTION, 51, true),
+        (FIELD_FUNCTION_ENTRY, 3, false),
+    ] {
+        let legacy_store = if writable {
+            format!("(store a0 {offset} a1)")
+        } else {
+            String::new()
+        };
+        let named_store = if writable {
+            format!("(field-store {field} a0 a1)")
+        } else {
+            String::new()
+        };
+        let module = |body| {
+            format!(
+                "(module \"fields\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj)) (slots) (block b {body} (return v 1))))"
+            )
+        };
+        let old = module(format!("(set v (load a0 {offset})) {legacy_store}"));
+        let new = module(format!("(set v (field-load {field} a0)) {named_store}"));
+        let old = kiln_cg::kir::parse_module(&sexp::parse_one(&old).unwrap()).unwrap();
+        let new = sexp::parse_one(&new).unwrap();
+        let new = packet::load(&packet::encode(&new, KIR_PAYLOAD).unwrap()).unwrap();
+        assert_eq!(format!("{old:?}"), format!("{new:?}"));
+    }
+}

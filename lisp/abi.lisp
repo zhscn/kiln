@@ -41,13 +41,6 @@
 
 ;;; Symbol layout: [header, name, package, function, value, TLS index,
 ;;; plist, setf function]. Offsets from a tagged pointer. The TLS index is a fixnum.
-(defconstant +symbol-name+ (- 8 +tag-general+))
-(defconstant +symbol-package+ (- 16 +tag-general+))
-(defconstant +symbol-function+ (- 24 +tag-general+))
-(defconstant +symbol-value+ (- 32 +tag-general+))
-(defconstant +symbol-tls-index+ (- 40 +tag-general+))
-(defconstant +symbol-plist+ (- 48 +tag-general+))
-(defconstant +symbol-setf-function+ (- 56 +tag-general+)) ; the function (SETF symbol)
 ;;; Unbound value marker (an immediate the GC ignores).
 (defconstant +unbound+ #x13)
 ;;; Value of a standard-object slot that is unbound (Clostrophilia's
@@ -61,8 +54,6 @@
 
 ;;; Cons layout: [header, car, cdr].
 (defconstant +cons-bytes+ 24)
-(defconstant +cons-car+ (- 8 +tag-cons+))
-(defconstant +cons-cdr+ (- 16 +tag-cons+))
 
 ;;; Context field offsets.
 (defconstant +ctx-poll-flag+ 0)
@@ -102,9 +93,6 @@
 
 ;;; Offset of the first element of a simple vector or string.
 (defconstant +vector-data+ (- 8 +tag-general+))
-
-;;; Offset of the entry address from a tagged function object pointer.
-(defconstant +fobj-entry+ (- 8 +tag-general+))
 
 ;;; Error codes for kiln_rt_error.
 (defconstant +err-not-fixnum+ 1)
