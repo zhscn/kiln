@@ -117,6 +117,22 @@ fn immediate_class_tests_preserve_kir_and_reject_unknown_classes() {
 }
 
 #[test]
+fn string_element_access_uses_word_indices_and_character_values() {
+    let module = |body| format!("(module \"string\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj) (i raw)) (slots) (block b {body} (return v 1))))");
+    let old = module("(set v (or (shl (load32 (add a0 (shl i 2)) 3) 8) 11)) (store32 (add a0 (shl i 2)) 3 (shr a1 8))");
+    let new = module("(set v (string-ref a0 i)) (string-set a0 i a1)");
+    let old = kiln_cg::kir::parse_module(&sexp::parse_one(&old).unwrap()).unwrap();
+    let new = sexp::parse_one(&new).unwrap();
+    let new = packet::load(&packet::encode(&new, packet::schema::KIR_PAYLOAD).unwrap()).unwrap();
+    assert_eq!(format!("{old:?}"), format!("{new:?}"));
+    let old = module("(set v (or (shl i 8) 11)) (set i (shr a0 8))");
+    let new = module("(set v (character-tag i)) (set i (character-untag a0))");
+    let old = kiln_cg::kir::parse_module(&sexp::parse_one(&old).unwrap()).unwrap();
+    let new = kiln_cg::kir::parse_module(&sexp::parse_one(&new).unwrap()).unwrap();
+    assert_eq!(format!("{old:?}"), format!("{new:?}"));
+}
+
+#[test]
 fn vector_element_access_uses_word_indices() {
     let module = |body| format!("(module \"vector\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj) (i raw)) (slots) (block b {body} (return v 1))))");
     let old = module("(set v (load (add a0 (shl i 3)) 3)) (store (add a0 (shl i 3)) 3 a1)".to_string());

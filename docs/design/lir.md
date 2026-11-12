@@ -8,7 +8,7 @@
 
 `alloc-vector` 接收 simple-vector 或字符串的种类、未装箱长度和初值，Rust 负责尺寸、header、对齐及填充。字符串初值为字符码点，simple-vector 初值为对象；动态长度须由生成方检查范围。`alloc-vector-elements` 接收已求值的多个对象，按顺序初始化 simple-vector。填充过程没有 safepoint。
 
-`vector-ref` 和 `vector-set` 访问 simple-vector 的对象元素，接收未装箱下标；对象类型与下标范围由生成方检查。`fixnum-untag` 将已知 fixnum 转为机器字。
+`vector-ref` 和 `vector-set` 访问 simple-vector 的对象元素，`string-ref` 和 `string-set` 访问字符串的字符；这些操作接收未装箱下标，对象类型与下标范围由生成方检查。`fixnum-untag` 和字符装箱、拆箱操作负责立即数与机器字之间的转换。
 
 LIR（low-level IR）是表示选择后的后端输入语言，也是编译协议的程序载荷。它不设独立的优化管线。初期由 HIR 降级产生，后续由 MIR 产生；两者使用同一 schema。它已经确定了“做什么”：每个值的表示、每个对象的存储、闭包的内容、控制流和动态范围；还没有确定“怎么做”：tag、对象和 context 的偏移、调用序列、展开 payload 的编码、栈图。后者由 kiln-cg 降级成 KIR 时按 kiln-rt 的布局决定。
 

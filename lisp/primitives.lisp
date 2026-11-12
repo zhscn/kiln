@@ -589,17 +589,16 @@ are compared (no short circuit), which also checks every argument."
 
 (define-primop :schar (s i)
   (emit-check-index s i)
-  (copy-to-var `(:or (:shl (:load32 (:add ,s (:shl ,i 1)) ,+vector-data+) ,+character-shift+)
-                     ,+character-tag+)))
+  (copy-to-var `(:string-ref ,s (:fixnum-untag ,i))))
 (define-primop :set-schar (s i c)
   (emit-check-index s i)
-  (emit `(:store32 (:add ,s (:shl ,i 1)) ,+vector-data+ (:shr ,c ,+character-shift+)))
+  (emit `(:string-set ,s (:fixnum-untag ,i) ,c))
   c)
 
 (define-primop :make-string (n c)
   (emit-check-length n)
   (let* ((len (copy-to-var `(:sar ,n ,+fixnum-shift+) :raw))
-         (code (copy-to-var `(:shr ,c ,+character-shift+) :raw)))
+         (code (copy-to-var `(:character-untag ,c) :raw)))
     (emit-vector-object kiln.kir::+packet-class-string+ len code)))
 
 (define-primop :svref (v i)
@@ -657,16 +656,14 @@ of it, SLOW-FN otherwise; both return an operand. Returns the result."
         (br (emit-kind-test s kiln.kir::+packet-class-string+) string slow))
     (start-block string)
     (br (if c
-            `(:or ,bad-index (:ne (:and ,c ,+immediate-mask+) ,+character-tag+))
+            `(:or ,bad-index (:eq (:test-class ,kiln.kir::+packet-class-character+ ,c) 0))
             bad-index)
         slow fast)
     (start-block fast)
     (if c
-        (progn (emit `(:store32 (:add ,s (:shl ,i 1)) ,+vector-data+ (:shr ,c ,+character-shift+)))
+        (progn (emit `(:string-set ,s (:fixnum-untag ,i) ,c))
                (emit `(:set ,r ,c)))
-        (emit `(:set ,r (:or (:shl (:load32 (:add ,s (:shl ,i 1)) ,+vector-data+)
-                                   ,+character-shift+)
-                             ,+character-tag+))))
+        (emit `(:set ,r (:string-ref ,s (:fixnum-untag ,i)))))
     (jump done)
     (start-block slow)
     (emit `(:set ,r ,(if c
@@ -708,16 +705,14 @@ of it, SLOW-FN otherwise; both return an operand. Returns the result."
     (jump done)
     (start-block string)
     (br (if x
-            `(:or ,bad-index (:ne (:and ,x ,+immediate-mask+) ,+character-tag+))
+            `(:or ,bad-index (:eq (:test-class ,kiln.kir::+packet-class-character+ ,x) 0))
             bad-index)
         slow fast-string)
     (start-block fast-string)
     (if x
-        (progn (emit `(:store32 (:add ,v (:shl ,i 1)) ,+vector-data+ (:shr ,x ,+character-shift+)))
+        (progn (emit `(:string-set ,v (:fixnum-untag ,i) ,x))
                (emit `(:set ,r ,x)))
-        (emit `(:set ,r (:or (:shl (:load32 (:add ,v (:shl ,i 1)) ,+vector-data+)
-                                   ,+character-shift+)
-                             ,+character-tag+))))
+        (emit `(:set ,r (:string-ref ,v (:fixnum-untag ,i)))))
     (jump done)
     (start-block slow)
     (emit `(:set ,r ,(if x

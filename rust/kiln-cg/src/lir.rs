@@ -94,6 +94,30 @@ pub fn vector_set(object: Expr, index: Expr, value: Expr) -> Stmt {
     Stmt::Store(vector_element_address(object, index), size_of::<u64>() as i32 - TAG_GENERAL as i32, value)
 }
 
+pub fn character_untag(value: Expr) -> Expr {
+    Expr::Shift(crate::kir::ShiftOp::Shr, Box::new(value), kiln_rt::object::CHARACTER_SHIFT as i64)
+}
+
+pub fn character_tag(code: Expr) -> Expr {
+    use crate::kir::{BinOp, ShiftOp};
+    Expr::Bin(BinOp::Or,
+        Box::new(Expr::Shift(ShiftOp::Shl, Box::new(code), kiln_rt::object::CHARACTER_SHIFT as i64)),
+        Box::new(Expr::Int(kiln_rt::object::CHARACTER_TAG as i64)))
+}
+
+fn string_element_address(object: Expr, index: Expr) -> Expr {
+    use crate::kir::{BinOp, ShiftOp};
+    Expr::Bin(BinOp::Add, Box::new(object), Box::new(Expr::Shift(ShiftOp::Shl, Box::new(index), 2)))
+}
+
+pub fn string_ref(object: Expr, index: Expr) -> Expr {
+    character_tag(Expr::Load32(Box::new(string_element_address(object, index)), size_of::<u64>() as i32 - TAG_GENERAL as i32))
+}
+
+pub fn string_set(object: Expr, index: Expr, value: Expr) -> Stmt {
+    Stmt::Store32(string_element_address(object, index), size_of::<u64>() as i32 - TAG_GENERAL as i32, character_untag(value))
+}
+
 fn closure_offset(index: i64) -> Result<i32, String> {
     let index = usize::try_from(index).map_err(|_| "invalid closure index")?;
     let offset = index.checked_mul(size_of::<u64>())

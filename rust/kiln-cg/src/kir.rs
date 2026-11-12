@@ -655,6 +655,10 @@ fn parse_stmt(s: &Sexp) -> R<Stmt> {
             arity(h, r, 3)?;
             crate::lir::vector_set(parse_expr(&r[0])?, parse_expr(&r[1])?, parse_expr(&r[2])?)
         }
+        "string-set" => {
+            arity(h, r, 3)?;
+            crate::lir::string_set(parse_expr(&r[0])?, parse_expr(&r[1])?, parse_expr(&r[2])?)
+        }
         "closure-set" => {
             arity(h, r, 3)?;
             return crate::lir::closure_set(parse_expr(&r[0])?, int(&r[1])?, parse_expr(&r[2])?);
@@ -826,6 +830,18 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
         "fixnum-untag" => {
             arity(h, r, 1)?;
             crate::lir::fixnum_untag(parse_expr(&r[0])?)
+        }
+        "character-untag" => {
+            arity(h, r, 1)?;
+            crate::lir::character_untag(parse_expr(&r[0])?)
+        }
+        "character-tag" => {
+            arity(h, r, 1)?;
+            crate::lir::character_tag(parse_expr(&r[0])?)
+        }
+        "string-ref" => {
+            arity(h, r, 2)?;
+            crate::lir::string_ref(parse_expr(&r[0])?, parse_expr(&r[1])?)
         }
         "vector-ref" => {
             arity(h, r, 2)?;
