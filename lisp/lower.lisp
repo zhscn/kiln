@@ -943,7 +943,7 @@ before the address is tagged and stored in an obj variable."
 arguments; later ones are in the transfer area."
   (if (< i +reg-args+)
       (nth i args)
-      `(:load :ctx ,(+ +ctx-values+ (* 8 (- i +reg-args+))))))
+      `(:transfer-ref ,(- i +reg-args+))))
 
 (defun emit-nargs-check (min max)
   "MAX is NIL for no upper limit."

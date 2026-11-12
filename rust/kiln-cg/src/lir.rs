@@ -52,6 +52,23 @@ pub fn closure_set(object: Expr, index: i64, value: Expr) -> Result<Stmt, String
     Ok(Stmt::Store(object, closure_offset(index)?, value))
 }
 
+fn transfer_offset(index: i64) -> Result<i32, String> {
+    use kiln_rt::context::{Context, VALUES_MAX};
+    let index = usize::try_from(index).map_err(|_| "invalid transfer index")?;
+    if index >= VALUES_MAX {
+        return Err("transfer index out of range".into());
+    }
+    Ok((core::mem::offset_of!(Context, values) + index * size_of::<u64>()) as i32)
+}
+
+pub fn transfer_ref(index: i64) -> Result<Expr, String> {
+    Ok(Expr::Load(Box::new(Expr::Var("ctx".into())), transfer_offset(index)?))
+}
+
+pub fn transfer_set(index: i64, value: Expr) -> Result<Stmt, String> {
+    Ok(Stmt::Store(Expr::Var("ctx".into()), transfer_offset(index)?, value))
+}
+
 /// Materialize the target calling convention after the front end has
 /// evaluated the callee and every argument into stable operands.
 pub fn invoke(

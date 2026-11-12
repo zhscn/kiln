@@ -533,6 +533,10 @@ fn parse_stmt(s: &Sexp) -> R<Stmt> {
             arity(h, r, 3)?;
             return crate::lir::closure_set(parse_expr(&r[0])?, int(&r[1])?, parse_expr(&r[2])?);
         }
+        "transfer-set" => {
+            arity(h, r, 2)?;
+            return crate::lir::transfer_set(int(&r[0])?, parse_expr(&r[1])?);
+        }
         "store" => {
             arity(h, r, 3)?;
             Stmt::Store(parse_expr(&r[0])?, int(&r[1])? as i32, parse_expr(&r[2])?)
@@ -688,6 +692,10 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
         "closure-ref" => {
             arity(h, r, 2)?;
             return crate::lir::closure_ref(parse_expr(&r[0])?, int(&r[1])?);
+        }
+        "transfer-ref" => {
+            arity(h, r, 1)?;
+            return crate::lir::transfer_ref(int(&r[0])?);
         }
         "load" => {
             arity(h, r, 2)?;

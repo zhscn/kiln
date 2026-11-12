@@ -361,7 +361,7 @@ are compared (no short circuit), which also checks every argument."
   ;; All arguments are evaluated: store the values after the first.
   (loop for v in (rest vals)
         for i from 0
-        do (emit `(:store :ctx ,(+ +ctx-values+ (* 8 i)) ,v)))
+        do (emit `(:transfer-set ,i ,v)))
   (values (if vals (first vals) (nil-value)) (length vals)))
 
 (define-primitive values-list (list)
@@ -1009,7 +1009,7 @@ current function's. Nothing after it in the block is reached."
   (let ((entry (copy-to-var `(:field-load ,kiln.kir::+packet-field-function-entry+ ,fobj) :raw)))
     (loop for v in (nthcdr +reg-args+ vals)
           for i from 0
-          do (emit `(:store :ctx ,(+ +ctx-values+ (* 8 i)) ,v)))
+          do (emit `(:transfer-set ,i ,v)))
     (emit `(:tail-call-lisp ,entry
                             (:ctx ,fobj ,(length vals)
                                   ,@(subseq vals 0 (min (length vals) +reg-args+)))))

@@ -512,11 +512,11 @@ used nowhere else: test and rest."
                            (copy-to-var
                             (cond ((integerp n)
                                    (if (> n i)
-                                       `(:load :ctx ,(+ +ctx-values+ (* 8 (1- i))))
+                                       `(:transfer-ref ,(1- i))
                                        (nil-value)))
                                   ((> i +values-max+) (nil-value))
                                   (t `(:select (:gt ,n ,i)
-                                               (:load :ctx ,(+ +ctx-values+ (* 8 (1- i))))
+                                               (:transfer-ref ,(1- i))
                                                ,(nil-value)))))))
             (loop for var across vars for value across values
                   do (hir-check-declaration value (hir-var-type var))
@@ -921,7 +921,7 @@ unsupported call. Arguments retain their evaluation order and effects."
                  (emit-lisp-call (emit-function-designator object) values)
                  (let ((r (new-var)) (n (new-var :raw)))
                    (loop for value in (nthcdr +reg-args+ values) for i from 0
-                         do (emit `(:store :ctx ,(+ +ctx-values+ (* 8 i)) ,value)))
+                         do (emit `(:transfer-set ,i ,value)))
                    (emit `(:call-lisp ,r ,n (:addr ,(hir-function-label callee))
                                       (:ctx ,object ,(length values)
                                             ,@(subseq values 0 (min (length values) +reg-args+)))
