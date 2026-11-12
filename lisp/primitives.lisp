@@ -349,8 +349,8 @@ are compared (no short circuit), which also checks every argument."
 ;;; those that return one value omit it.
 
 (define-nary-primitive values (vals)
-  (when (> (length vals) (1+ +values-max+))
-    (fail "VALUES with more than ~D arguments" (1+ +values-max+)))
+  (when (> (length vals) (1+ kiln.kir::+backend-values-max+))
+    (fail "VALUES with more than ~D arguments" (1+ kiln.kir::+backend-values-max+)))
   ;; All arguments are evaluated: store the values after the first.
   (loop for v in (rest vals)
         for i from 0
@@ -952,16 +952,16 @@ intact."
 (defun emit-tail-call (fobj vals)
   "Tail-calls FOBJ with the argument operands VALS: its values are the
 current function's. Nothing after it in the block is reached."
-  (when (> (length vals) (+ +reg-args+ +values-max+))
+  (when (> (length vals) (+ kiln.kir::+backend-reg-args+ kiln.kir::+backend-values-max+))
     (fail "calls with more than ~D arguments are not supported"
-          (+ +reg-args+ +values-max+)))
+          (+ kiln.kir::+backend-reg-args+ kiln.kir::+backend-values-max+)))
   (let ((entry (copy-to-var `(:field-load ,kiln.kir::+packet-field-function-entry+ ,fobj) :raw)))
-    (loop for v in (nthcdr +reg-args+ vals)
+    (loop for v in (nthcdr kiln.kir::+backend-reg-args+ vals)
           for i from 0
           do (emit `(:transfer-set ,i ,v)))
     (emit `(:tail-call-lisp ,entry
                             (:ctx ,fobj ,(length vals)
-                                  ,@(subseq vals 0 (min (length vals) +reg-args+)))))
+                                  ,@(subseq vals 0 (min (length vals) kiln.kir::+backend-reg-args+)))))
     (nil-value)))
 
 ;;; (%PRIMOP :TAIL-FUNCALL F ARG...): calls the function F, leaving no

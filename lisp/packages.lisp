@@ -2,14 +2,12 @@
   (:use #:cl)
   (:documentation "Constants shared with the runtime.")
   (:export #:+fixnum-shift+ #:+char-code-limit+
-           #:+values-max+
            #:+err-not-fixnum+ #:+err-overflow+ #:+err-wrong-nargs+
            #:+err-not-list+ #:+err-not-function+
            #:+err-undefined-function+ #:+err-unbound-variable+ #:+err-not-symbol+
            #:+err-odd-keywords+ #:+err-unknown-keyword+
            #:+err-not-character+ #:+err-not-string+ #:+err-not-vector+
-           #:+err-index+ #:+err-not-sequence+ #:+err-not-integer+ #:+err-division-by-zero+ #:+err-not-number+ #:+err-bad-type+ #:+err-lisp-error+ #:+err-undefined-setf-function+ #:+err-no-catch-tag+ #:+err-expired-exit+
-           #:+reg-args+))
+           #:+err-index+ #:+err-not-sequence+ #:+err-not-integer+ #:+err-division-by-zero+ #:+err-not-number+ #:+err-bad-type+ #:+err-lisp-error+ #:+err-undefined-setf-function+ #:+err-no-catch-tag+ #:+err-expired-exit+))
 
 (defpackage #:kiln.kir
   (:use #:cl #:kiln.abi)

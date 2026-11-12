@@ -101,12 +101,12 @@
                    (> (+ (length (gethash fun layouts))
                          (length (hir-lambda-list-required (hir-fun-lambda-list fun)))
                          (length (hir-lambda-list-optional (hir-fun-lambda-list fun))))
-                      (+ +reg-args+ +values-max+)))
+                      (+ kiln.kir::+backend-reg-args+ kiln.kir::+backend-values-max+)))
           (return-from hir-prepare-native-environments nil)))
       (dolist (call calls)
         (when (and (gethash (svref call 0) lifted)
                    (> (+ (svref call 2) (length (gethash (svref call 0) layouts)))
-                      (+ +reg-args+ +values-max+)))
+                      (+ kiln.kir::+backend-reg-args+ kiln.kir::+backend-values-max+)))
           (return-from hir-prepare-native-environments nil)))
       (unless *hir-native-environments* (setf *hir-native-environments* (make-hash-table :test #'eq)))
       (unless *hir-lifted-environments* (setf *hir-lifted-environments* (make-hash-table :test #'eq)))
@@ -315,7 +315,7 @@ Return the storage slot and its root region, if any."
                  ;; on the slow path (EMIT-ENTRY-POLL).
                  (early-poll (and (not (ll-rest ll)) (not (ll-key-p ll))
                                   (<= (+ (length (ll-required ll)) (length (ll-optional ll)))
-                                      +reg-args+))))
+                                      kiln.kir::+backend-reg-args+))))
             (when early-poll (emit-entry-poll))
             (multiple-value-bind (v n)
                 (hir-with-stack-storage
@@ -510,7 +510,7 @@ used nowhere else: test and rest."
                                    (if (> n i)
                                        `(:transfer-ref ,(1- i))
                                        (nil-value)))
-                                  ((> i +values-max+) (nil-value))
+                                  ((> i kiln.kir::+backend-values-max+) (nil-value))
                                   (t `(:select (:gt ,n ,i)
                                                (:transfer-ref ,(1- i))
                                                ,(nil-value)))))))
@@ -902,7 +902,7 @@ unsupported call. Arguments retain their evaluation order and effects."
   (let ((callee (hir-node-a node)) (args (coerce (hir-node-b node) 'list)))
     (cond ((or (symbolp callee) (consp callee)) (lower-global-call callee args))
           (t
-           (when (> (length args) (+ +reg-args+ +values-max+))
+           (when (> (length args) (+ kiln.kir::+backend-reg-args+ kiln.kir::+backend-values-max+))
              (fail "HIR call has too many arguments: ~D" (length args)))
            (let* ((object (if (hir-fun-p callee) (hir-lower-function callee)
                               (copy-to-var (hir-lower callee))))
@@ -914,11 +914,11 @@ unsupported call. Arguments retain their evaluation order and effects."
              (if (hir-node-p callee)
                  (emit-lisp-call (emit-function-designator object) values)
                  (let ((r (new-var)) (n (new-var :raw)))
-                   (loop for value in (nthcdr +reg-args+ values) for i from 0
+                   (loop for value in (nthcdr kiln.kir::+backend-reg-args+ values) for i from 0
                          do (emit `(:transfer-set ,i ,value)))
                    (emit `(:call-lisp ,r ,n (:addr ,(hir-function-label callee))
                                       (:ctx ,object ,(length values)
-                                            ,@(subseq values 0 (min (length values) +reg-args+)))
+                                            ,@(subseq values 0 (min (length values) kiln.kir::+backend-reg-args+)))
                                       ,(handler) ,@(call-loc)))
                    (values r n))))))))
 

@@ -76,7 +76,7 @@ Returns the primary value and the count. No allocation."
     (br `(:eq ,cur ,(nil-value)) done body)
     (start-block body)
     (let ((bad (new-block)) (ok (new-block)))
-      (br `(:gt ,n ,+values-max+) bad ok)
+      (br `(:gt ,n ,kiln.kir::+backend-values-max+) bad ok)
       (start-block bad)
       (emit-error +err-wrong-nargs+ `(:fixnum-tag ,n))
       (start-block ok))
@@ -122,7 +122,7 @@ else a list."
 (defun emit-apply (f list)
   "Calls the function object F (already checked) with the elements of the
 proper list LIST as arguments. Returns the primary value and the count."
-  (let ((args (loop repeat +reg-args+ collect (copy-to-var 0)))
+  (let ((args (loop repeat kiln.kir::+backend-reg-args+ collect (copy-to-var 0)))
         (cur (copy-to-var list)) (i (new-var :raw))
         (head (new-block)) (body (new-block)) (done (new-block)))
     (emit `(:set ,i 0))
@@ -132,7 +132,7 @@ proper list LIST as arguments. Returns the primary value and the count."
     (start-block body)
     (let ((x `(:field-load ,kiln.kir::+packet-field-cons-car+ ,cur))
           (bad (new-block)) (stack (new-block)) (next (new-block)))
-      (br `(:ge ,i ,(+ +reg-args+ +values-max+)) bad stack)
+      (br `(:ge ,i ,(+ kiln.kir::+backend-reg-args+ kiln.kir::+backend-values-max+)) bad stack)
       (start-block bad)
       (emit-error +err-wrong-nargs+ `(:fixnum-tag ,i))
       (start-block stack)
@@ -145,7 +145,7 @@ proper list LIST as arguments. Returns the primary value and the count."
                  (emit `(:set ,a ,x))
                  (jump next)
                  (start-block other)))
-      (emit `(:transfer-set-dynamic (:sub ,i ,+reg-args+) ,x))
+      (emit `(:transfer-set-dynamic (:sub ,i ,kiln.kir::+backend-reg-args+) ,x))
       (jump next)
       (start-block next))
     (emit `(:set ,cur (:field-load ,kiln.kir::+packet-field-cons-cdr+ ,cur)))
@@ -169,7 +169,7 @@ use them only when the entire list fits, otherwise allocate on the heap."
   (let ((list (copy-to-var (nil-value))) (i (new-var :raw))
         (head (new-block)) (body (new-block)) (done (new-block)))
     (emit `(:transfer-roots
-                   (:select (:gt :nargs ,+reg-args+) (:sub :nargs ,+reg-args+) 0)))
+                   (:select (:gt :nargs ,kiln.kir::+backend-reg-args+) (:sub :nargs ,kiln.kir::+backend-reg-args+) 0)))
     (emit `(:set ,i :nargs))
     (jump head)
     (start-block head)
@@ -186,7 +186,7 @@ use them only when the entire list fits, otherwise allocate on the heap."
                  (emit `(:set ,x ,a))
                  (jump join)
                  (start-block other)))
-      (emit `(:set ,x (:transfer-ref-dynamic (:sub ,i ,+reg-args+))))
+      (emit `(:set ,x (:transfer-ref-dynamic (:sub ,i ,kiln.kir::+backend-reg-args+))))
       (jump join)
       (start-block join)
       (if stack-slots

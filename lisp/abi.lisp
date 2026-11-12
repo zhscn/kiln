@@ -7,10 +7,6 @@
 
 (defconstant +char-code-limit+ #x110000)
 
-;;; Transfer area: arguments beyond the register arguments, and (later)
-;;; values beyond the first. VALUES_MAX words, at the end of the context.
-(defconstant +values-max+ 1021)
-
 ;;; Error codes for kiln_rt_error.
 (defconstant +err-not-fixnum+ 1)
 (defconstant +err-overflow+ 2)
@@ -36,6 +32,3 @@
 (defconstant +err-stack-exhausted+ 22)        ; KILN.KERNEL::%STACK-EXHAUSTED       ; ERROR before the condition system
 (defconstant +err-no-catch-tag+ 23)
 (defconstant +err-expired-exit+ 24)
-
-;;; Argument registers in the Lisp calling convention.
-(defconstant +reg-args+ 3)
