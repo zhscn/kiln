@@ -34,6 +34,24 @@ pub fn field_store(field: u32, object: Expr, value: Expr) -> Result<Stmt, String
     Ok(Stmt::Store(object, field_offset(field)?, value))
 }
 
+fn closure_offset(index: i64) -> Result<i32, String> {
+    let index = usize::try_from(index).map_err(|_| "invalid closure index")?;
+    let offset = index.checked_mul(size_of::<u64>())
+        .and_then(|n| n.checked_add(size_of::<FunctionObj>()))
+        .and_then(|n| n.checked_sub(TAG_GENERAL as usize))
+        .and_then(|n| i32::try_from(n).ok())
+        .ok_or("closure index out of range")?;
+    Ok(offset)
+}
+
+pub fn closure_ref(object: Expr, index: i64) -> Result<Expr, String> {
+    Ok(Expr::Load(Box::new(object), closure_offset(index)?))
+}
+
+pub fn closure_set(object: Expr, index: i64, value: Expr) -> Result<Stmt, String> {
+    Ok(Stmt::Store(object, closure_offset(index)?, value))
+}
+
 /// Materialize the target calling convention after the front end has
 /// evaluated the callee and every argument into stable operands.
 pub fn invoke(

@@ -9,7 +9,7 @@
            #:+immediate-mask+ #:+character-tag+ #:+character-shift+ #:+char-code-limit+
                #:+vector-data+
               #:+unbound+
-           #:+length-shift+ #:+fobj-env+
+           #:+length-shift+
            #:+cons-bytes+
            #:+ctx-poll-flag+ #:+ctx-dynenv+ #:+ctx-values+ #:+values-max+ #:+ctx-values-live+ #:+ctx-alloc-cursor+ #:+ctx-alloc-limit+ #:+ctx-stack-limit+ #:+ctx-tls+ #:+no-tls-value+
            #:+dyn-catch+ #:+dyn-unwind-protect+ #:+dyn-exit-point+ #:+dyn-bind+ #:+dyn-progv+ #:+dyn-stack-roots+ #:+dynentry-size+

@@ -176,7 +176,7 @@ its first env word. Every function cell starts out holding one."
       (module-shared name)
       (let ((*regions* '()))
         (with-function (name)
-          (emit-error +err-undefined-function+ `(:load :self ,+fobj-env+)))))
+          (emit-error +err-undefined-function+ `(:closure-ref :self 0)))))
     name))
 
 (defun undefined-setf-function-entry ()
@@ -187,7 +187,7 @@ its first env word. Every function cell starts out holding one."
       (module-shared name)
       (let ((*regions* '()))
         (with-function (name)
-          (emit-error +err-undefined-setf-function+ `(:load :self ,+fobj-env+)))))
+          (emit-error +err-undefined-setf-function+ `(:closure-ref :self 0)))))
     name))
 
 (defun function-cell-place (name)

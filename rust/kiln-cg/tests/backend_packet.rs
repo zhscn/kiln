@@ -99,6 +99,25 @@ fn named_fields_preserve_the_legacy_kir_program() {
 }
 
 #[test]
+fn closure_environment_operations_preserve_kir_and_reject_invalid_indices() {
+    let module = |body| format!("(module \"closure\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj)) (slots) (block b {body} (return v 1))))");
+    for index in [0, 1, 37] {
+        let offset = 11 + index * 8;
+        let old = module(format!("(set v (load a0 {offset})) (store a0 {offset} a1)"));
+        let new = module(format!("(set v (closure-ref a0 {index})) (closure-set a0 {index} a1)"));
+        let old = kiln_cg::kir::parse_module(&sexp::parse_one(&old).unwrap()).unwrap();
+        let new = sexp::parse_one(&new).unwrap();
+        let new = packet::load(&packet::encode(&new, packet::schema::KIR_PAYLOAD).unwrap()).unwrap();
+        assert_eq!(format!("{old:?}"), format!("{new:?}"));
+    }
+    for index in [-1_i64, i64::MAX] {
+        for body in [format!("(set v (closure-ref a0 {index}))"), format!("(closure-set a0 {index} a1)")] {
+            assert!(kiln_cg::kir::parse_module(&sexp::parse_one(&module(body)).unwrap()).is_err());
+        }
+    }
+}
+
+#[test]
 fn invoke_preserves_argument_transfer_handlers_and_locations() {
     for count in [0, 1, 3, 4, 7, 1024] {
         let args = (0..count).map(|i| (i * 2).to_string()).collect::<Vec<_>>();

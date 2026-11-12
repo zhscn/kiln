@@ -50,7 +50,6 @@
 
 ;;; Function object layout: [header (env length << 8), entry, env...].
 (defconstant +length-shift+ 8)
-(defconstant +fobj-env+ (- 16 +tag-general+))
 
 ;;; Cons layout: [header, car, cdr].
 (defconstant +cons-bytes+ 24)

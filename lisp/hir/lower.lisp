@@ -151,7 +151,7 @@
         (if (hir-raw-double-variable-p var) (cdr value) value))
       (let ((index (position var *hir-closure-layout* :test #'eq)))
         (unless index (fail "HIR variable ~S is missing from closure layout" (hir-var-name var)))
-        (copy-to-var `(:load ,*self* ,(+ +fobj-env+ (* 8 index)))))))
+        (copy-to-var `(:closure-ref ,*self* ,index)))))
 
 (defun hir-variable-value (var)
   (let ((value (hir-variable-operand var)))
@@ -360,7 +360,7 @@ Return the storage slot and its root region, if any."
 (defun hir-fill-function (fun object)
   (when (logtest 128 (hir-fun-flags fun)) (return-from hir-fill-function object))
   (loop for var across (hir-native-environment fun) for index from 0
-        do (emit `(:store ,object ,(+ +fobj-env+ (* 8 index)) ,(hir-variable-operand var))))
+        do (emit `(:closure-set ,object ,index ,(hir-variable-operand var))))
   object)
 
 (defun hir-lower-function (fun)

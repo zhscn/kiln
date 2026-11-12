@@ -529,6 +529,10 @@ fn parse_stmt(s: &Sexp) -> R<Stmt> {
             return crate::lir::field_store(u32::try_from(int(&r[0])?).map_err(|_| "invalid field ID")?,
                 parse_expr(&r[1])?, parse_expr(&r[2])?);
         }
+        "closure-set" => {
+            arity(h, r, 3)?;
+            return crate::lir::closure_set(parse_expr(&r[0])?, int(&r[1])?, parse_expr(&r[2])?);
+        }
         "store" => {
             arity(h, r, 3)?;
             Stmt::Store(parse_expr(&r[0])?, int(&r[1])? as i32, parse_expr(&r[2])?)
@@ -680,6 +684,10 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
         "field-load" => {
             arity(h, r, 2)?;
             return crate::lir::field_load(u32::try_from(int(&r[0])?).map_err(|_| "invalid field ID")?, parse_expr(&r[1])?);
+        }
+        "closure-ref" => {
+            arity(h, r, 2)?;
+            return crate::lir::closure_ref(parse_expr(&r[0])?, int(&r[1])?);
         }
         "load" => {
             arity(h, r, 2)?;
