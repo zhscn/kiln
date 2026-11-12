@@ -19,6 +19,7 @@ fn compute_target_fingerprint() -> u64 {
     let mut hash = 0xcbf29ce484222325u64;
     for bytes in [
         include_bytes!("../../kiln-rt/src/object.rs").as_slice(),
+        include_bytes!("../../kiln-rt/src/number.rs").as_slice(),
         include_bytes!("../../kiln-rt/src/context.rs").as_slice(),
         include_bytes!("packet_schema.rs").as_slice(),
         &(crate::kir::REG_ARGS as u64).to_le_bytes(),
