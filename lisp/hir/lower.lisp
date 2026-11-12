@@ -350,11 +350,14 @@ Return the storage slot and its root region, if any."
         (let ((data (kiln.kir::kir-name label "_fobj")))
           (module-data data `(:words ,+kind-function+ (:func ,label)))
           (copy-to-var `(:addr ,data ,+tag-general+)))
-        (let* ((slot (cdr (assoc fun *hir-stack-slots* :test #'eq)))
-               (p (if slot `(:slot ,slot)
-                      (emit-alloc (+ 16 (* 8 count)) (logior +kind-function+ (ash count +length-shift+))))))
-          (emit `(:store ,p 8 (:addr ,label)))
-          (copy-to-var `(:add ,p ,+tag-general+))))))
+        (let ((slot (cdr (assoc fun *hir-stack-slots* :test #'eq))))
+          (if slot
+              (progn
+                (emit `(:store (:slot ,slot) 8 (:addr ,label)))
+                (copy-to-var `(:add (:slot ,slot) ,+tag-general+)))
+              (let ((result (new-var)))
+                (emit `(:alloc-closure ,result ,label ,count ,(rt-alloc) ,(handler)))
+                result))))))
 
 (defun hir-fill-function (fun object)
   (when (logtest 128 (hir-fun-flags fun)) (return-from hir-fill-function object))

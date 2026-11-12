@@ -6,6 +6,8 @@
 
 兼容载荷的 `alloc-fixed` 接收对象种类和已求值的字段，Rust 据此分配和初始化堆 cons、double-float 和 complex；对象字段变量跨分配慢路径保持 GC root。尚未迁移的分配使用 `alloc-raw`，由生成方提供大小和 header；Rust 展开定长小对象的 bump 分配、清零与慢路径，其他大小调用 runtime 分配器。`alloc-raw` 的结果是未加 tag 的地址，生成方须在下一个 safepoint 前完成初始化并转换为对象引用。完整 LIR 的分配操作将改用对象种类、存储方式和字段。
 
+`alloc-closure` 按入口和捕获项数量分配堆函数对象，初始化入口并把捕获项清零；生成方随后以 `closure-set` 填充捕获项。这允许递归组先建立所有函数对象，再互相引用，即使填充之前发生 GC 也可安全扫描。
+
 `alloc-vector` 接收 simple-vector 或字符串的种类、未装箱长度和初值，Rust 负责尺寸、header、对齐及填充。字符串初值为字符码点，simple-vector 初值为对象；动态长度须由生成方检查范围。`alloc-vector-elements` 接收已求值的多个对象，按顺序初始化 simple-vector。填充过程没有 safepoint。
 
 `vector-ref` 和 `vector-set` 访问 simple-vector 的对象元素，`string-ref` 和 `string-set` 访问字符串的字符；这些操作接收未装箱下标，对象类型与下标范围由生成方检查。`vector-length` 读取未装箱长度，并屏蔽 header 中的身份哈希。fixnum 和字符的装箱、拆箱操作负责立即数与机器字之间的转换。

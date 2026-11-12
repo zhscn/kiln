@@ -117,6 +117,28 @@ fn immediate_class_tests_preserve_kir_and_reject_unknown_classes() {
 }
 
 #[test]
+fn closure_allocation_initializes_entry_and_zeroes_environment() {
+    let module = |body: &str| format!("(module \"closure\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj)) (slots) (block b {body} (return v 1)) (block caught (return exn1 1))))");
+    let program = module("(alloc-closure v \"entry\" 2 \"kiln_rt_alloc\" caught)");
+    let program = sexp::parse_one(&program).unwrap();
+    let result = packet::load(&packet::encode(&program, packet::schema::KIR_PAYLOAD).unwrap()).unwrap();
+    let blocks = &result.funcs[0].blocks;
+    let fast = format!("{:?}", blocks[1]);
+    assert!(fast.contains("Int(514)"));
+    assert!(fast.contains("16, Int(0)"));
+    assert!(fast.contains("24, Int(0)"));
+    assert!(format!("{:?}", blocks[2]).contains("handler: Some(\"caught\")"));
+    let done = format!("{:?}", blocks[3]);
+    assert!(done.contains("8, Addr(\"entry\", 0)"));
+    assert!(done.contains("Int(5)"));
+    for count in [-1_i64, 4294967296] {
+        let body = format!("(alloc-closure v \"entry\" {count} \"kiln_rt_alloc\" nil)");
+        let program = module(&body);
+        assert!(kiln_cg::kir::parse_module(&sexp::parse_one(&program).unwrap()).is_err());
+    }
+}
+
+#[test]
 fn vector_length_check_uses_runtime_header_limit() {
     let module = |body| format!("(module \"length\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v raw)) (slots) (block b {body} (return a0 1))))");
     let old = module("(set v (or (and a0 1) (or (lt a0 0) (gt a0 8589934590))))");

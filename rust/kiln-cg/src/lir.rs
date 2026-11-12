@@ -151,6 +151,26 @@ fn closure_offset(index: i64) -> Result<i32, String> {
     Ok(offset)
 }
 
+pub fn closure_layout(count: i64) -> Result<(i64, i64), String> {
+    use kiln_rt::object::{KIND_FUNCTION, LENGTH_MASK, LENGTH_SHIFT};
+    if count < 0 || count as u64 > LENGTH_MASK {
+        return Err("closure environment length out of range".into());
+    }
+    let size = (count as u64).checked_mul(size_of::<u64>() as u64)
+        .and_then(|n| n.checked_add(size_of::<FunctionObj>() as u64))
+        .and_then(|n| i64::try_from(n).ok())
+        .ok_or("closure allocation size out of range")?;
+    Ok((size, ((count as u64) << LENGTH_SHIFT | KIND_FUNCTION) as i64))
+}
+
+pub fn initialize_closure(result: String, address: String, entry: String) -> Vec<Stmt> {
+    use crate::kir::BinOp;
+    vec![
+        Stmt::Store(Expr::Var(address.clone()), core::mem::offset_of!(FunctionObj, entry) as i32, Expr::Addr(entry, 0)),
+        Stmt::Set(result, Expr::Bin(BinOp::Add, Box::new(Expr::Var(address)), Box::new(Expr::Int(TAG_GENERAL as i64)))),
+    ]
+}
+
 pub fn closure_ref(object: Expr, index: i64) -> Result<Expr, String> {
     Ok(Expr::Load(Box::new(object), closure_offset(index)?))
 }

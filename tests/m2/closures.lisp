@@ -47,3 +47,11 @@
 (print (twice #'car '((1 2) 3)))
 (defun make-adder-3 (x) (+ x 3))
 (print (twice (function make-adder-3) 1))
+
+;; A wide heap closure uses the allocation slow path and keeps all captures.
+(defun make-wide-closure (a b c d e f g h i j k l m n o p cell)
+  (lambda ()
+    (list (+ a b c d e f g h i j k l m n o p) (car cell))))
+(let ((f (make-wide-closure 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 (cons 7 8))))
+  (%gc)
+  (print (funcall f)))
