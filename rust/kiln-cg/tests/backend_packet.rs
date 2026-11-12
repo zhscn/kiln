@@ -117,6 +117,17 @@ fn immediate_class_tests_preserve_kir_and_reject_unknown_classes() {
 }
 
 #[test]
+fn vector_length_and_fixnum_tag_preserve_header_masking() {
+    let module = |body| format!("(module \"length\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj)) (slots) (block b {body} (return v 1))))");
+    let old = module("(set v (shl (and (shr (load a0 -5) 8) 4294967295) 1))");
+    let new = module("(set v (fixnum-tag (vector-length a0)))");
+    let old = kiln_cg::kir::parse_module(&sexp::parse_one(&old).unwrap()).unwrap();
+    let new = sexp::parse_one(&new).unwrap();
+    let new = packet::load(&packet::encode(&new, packet::schema::KIR_PAYLOAD).unwrap()).unwrap();
+    assert_eq!(format!("{old:?}"), format!("{new:?}"));
+}
+
+#[test]
 fn string_element_access_uses_word_indices_and_character_values() {
     let module = |body| format!("(module \"string\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj) (i raw)) (slots) (block b {body} (return v 1))))");
     let old = module("(set v (or (shl (load32 (add a0 (shl i 2)) 3) 8) 11)) (store32 (add a0 (shl i 2)) 3 (shr a1 8))");

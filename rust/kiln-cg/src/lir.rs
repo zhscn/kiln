@@ -80,6 +80,19 @@ pub fn fixnum_untag(value: Expr) -> Expr {
     Expr::Shift(crate::kir::ShiftOp::Sar, Box::new(value), 1)
 }
 
+pub fn fixnum_tag(value: Expr) -> Expr {
+    Expr::Shift(crate::kir::ShiftOp::Shl, Box::new(value), 1)
+}
+
+pub fn vector_length(object: Expr) -> Expr {
+    use crate::kir::{BinOp, ShiftOp};
+    use kiln_rt::object::{LENGTH_MASK, LENGTH_SHIFT};
+    Expr::Bin(BinOp::And,
+        Box::new(Expr::Shift(ShiftOp::Shr,
+            Box::new(Expr::Load(Box::new(object), -(TAG_GENERAL as i32))), LENGTH_SHIFT as i64)),
+        Box::new(Expr::Int(LENGTH_MASK as i64)))
+}
+
 fn vector_element_address(object: Expr, index: Expr) -> Expr {
     use crate::kir::{BinOp, ShiftOp};
     Expr::Bin(BinOp::Add, Box::new(object),

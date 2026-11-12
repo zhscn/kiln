@@ -487,8 +487,7 @@ are compared (no short circuit), which also checks every argument."
 
 (defun vector-length (v)
   "Fixnum length of the vector or string V."
-  ;; The length field is 32 bits; the identity hash is above it.
-  `(:shl (:and (:shr (:load ,v ,(- +tag-general+)) ,+length-shift+) #xffffffff) ,+fixnum-shift+))
+  `(:fixnum-tag (:vector-length ,v)))
 
 (defun emit-check-index (v i)
   (let ((bad (new-block)) (ok (new-block)))
