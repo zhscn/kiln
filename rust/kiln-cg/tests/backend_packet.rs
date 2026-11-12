@@ -563,6 +563,28 @@ fn fixnum_arithmetic_preserves_overflow_and_fast_paths() {
 }
 
 #[test]
+fn fixnum_integer_operations_preserve_kir() {
+    let module = |expr| format!("(module \"fixops\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj)) (slots) (block b (set v {expr}) (return v 1))))");
+    for (old, new) in [
+        ("(eq (and a0 2) 0)", "(fixnum-evenp a0)"),
+        ("(and (sar a0 1) -2)", "(fixnum-half a0)"),
+        ("(shl (sdiv a0 a1) 1)", "(fixnum-quotient a0 a1)"),
+        ("(srem a0 a1)", "(fixnum-remainder a0 a1)"),
+        ("(and a0 a1)", "(fixnum-logand a0 a1)"),
+        ("(or a0 a1)", "(fixnum-logior a0 a1)"),
+        ("(xor a0 a1)", "(fixnum-logxor a0 a1)"),
+        ("(le a0 a1)", "(fixnum-le a0 a1)"),
+        ("(shlv a0 (sar a1 1))", "(fixnum-shift-left a0 a1)"),
+        ("(and (sarv a0 (sar a1 1)) -2)", "(fixnum-shift-right a0 a1)"),
+    ] {
+        let old = kiln_cg::kir::parse_module(&sexp::parse_one(&module(old)).unwrap()).unwrap();
+        let new = sexp::parse_one(&module(new)).unwrap();
+        let new = packet::load(&packet::encode(&new, packet::schema::KIR_PAYLOAD).unwrap()).unwrap();
+        assert_eq!(format!("{old:?}"), format!("{new:?}"));
+    }
+}
+
+#[test]
 fn fixnum_unsigned_bits_preserves_logical_shift() {
     let module = |body| format!("(module \"bits\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v raw)) (slots) (block b {body} (return v 1))))");
     let old = module("(set v (shr a0 1))");

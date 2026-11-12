@@ -165,6 +165,25 @@ pub fn fixnum_arithmetic_ovf(op: crate::kir::OvfOp, result: String, overflow: St
     Stmt::Ovf { op, result, overflow, a, b }
 }
 
+pub fn fixnum_operation(op: &str, a: Expr, b: Option<Expr>) -> Result<Expr, String> {
+    use crate::kir::{BinOp, CmpOp, ShiftOp};
+    let bin = |op, x, y| Expr::Bin(op, Box::new(x), Box::new(y));
+    let b = || b.clone().ok_or_else(|| format!("{op}: missing operand"));
+    Ok(match op {
+        "fixnum-evenp" => Expr::Cmp(CmpOp::Eq, Box::new(bin(BinOp::And, a, Expr::Int(2))), Box::new(Expr::Int(0))),
+        "fixnum-half" => bin(BinOp::And, Expr::Shift(ShiftOp::Sar, Box::new(a), 1), Expr::Int(-2)),
+        "fixnum-quotient" => Expr::Shift(ShiftOp::Shl, Box::new(bin(BinOp::Sdiv, a, b()?)), 1),
+        "fixnum-remainder" => bin(BinOp::Srem, a, b()?),
+        "fixnum-logand" => bin(BinOp::And, a, b()?),
+        "fixnum-logior" => bin(BinOp::Or, a, b()?),
+        "fixnum-logxor" => bin(BinOp::Xor, a, b()?),
+        "fixnum-le" => Expr::Cmp(CmpOp::Le, Box::new(a), Box::new(b()?)),
+        "fixnum-shift-left" => bin(BinOp::Shlv, a, fixnum_untag(b()?)),
+        "fixnum-shift-right" => bin(BinOp::And, bin(BinOp::Sarv, a, fixnum_untag(b()?)), Expr::Int(-2)),
+        _ => return Err(format!("unknown fixnum operation {op}")),
+    })
+}
+
 pub fn fixnum_untag(value: Expr) -> Expr {
     Expr::Shift(crate::kir::ShiftOp::Sar, Box::new(value), 1)
 }

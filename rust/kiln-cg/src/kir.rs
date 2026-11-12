@@ -1263,6 +1263,15 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
             arity(h, r, 2)?;
             return crate::lir::field_load(u32::try_from(int(&r[0])?).map_err(|_| "invalid field ID")?, parse_expr(&r[1])?);
         }
+        "fixnum-evenp" | "fixnum-half" => {
+            arity(h, r, 1)?;
+            return crate::lir::fixnum_operation(h, parse_expr(&r[0])?, None);
+        }
+        "fixnum-quotient" | "fixnum-remainder" | "fixnum-logand" | "fixnum-logior" |
+        "fixnum-logxor" | "fixnum-le" | "fixnum-shift-left" | "fixnum-shift-right" => {
+            arity(h, r, 2)?;
+            return crate::lir::fixnum_operation(h, parse_expr(&r[0])?, Some(parse_expr(&r[1])?));
+        }
         "fixnum-add" | "fixnum-sub" | "fixnum-mul" => {
             arity(h, r, 2)?;
             let op = match h {

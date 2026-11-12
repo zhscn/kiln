@@ -18,7 +18,7 @@ catch、unwind-protect、跨函数退出点、special 绑定和 progv 的动态�
 
 `alloc-vector` 接收 simple-vector 或字符串的种类、未装箱长度和初值，Rust 负责尺寸、header、对齐及填充。字符串初值为字符码点，simple-vector 初值为对象；动态长度须由生成方检查范围。`alloc-vector-elements` 接收已求值的多个对象，按顺序初始化 simple-vector。填充过程没有 safepoint。
 
-`vector-ref` 和 `vector-set` 访问 simple-vector 的对象元素，`string-ref` 和 `string-set` 访问字符串的字符；这些操作接收未装箱下标，对象类型与下标范围由生成方检查。`vector-length` 读取未装箱长度，并屏蔽 header 中的身份哈希。fixnum 和字符的装箱、拆箱操作负责立即数与机器字之间的转换。fixnum 的加、减、乘操作由后端选择带 tag 的计算方式，并可返回溢出标志。
+`vector-ref` 和 `vector-set` 访问 simple-vector 的对象元素，`string-ref` 和 `string-set` 访问字符串的字符；这些操作接收未装箱下标，对象类型与下标范围由生成方检查。`vector-length` 读取未装箱长度，并屏蔽 header 中的身份哈希。fixnum 和字符的装箱、拆箱操作负责立即数与机器字之间的转换。fixnum 的算术、位运算和移位由后端选择带 tag 的计算方式；加、减、乘可以返回溢出标志，除法与移位的输入范围由生成方检查。
 
 `heap-number-p` 在已验证一般对象的路径上判断它是否为堆数值；`identity-hash` 由后端判断对象表示、读取已有哈希并按需调用 runtime。
 

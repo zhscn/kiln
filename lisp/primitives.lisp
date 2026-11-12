@@ -102,14 +102,13 @@
   (cond ((null vals) (hir-error "- needs at least one argument"))
         ((null (rest vals)) (emit-negate (first vals)))
         (t (reduce (lambda (a b) (emit-arith '- a b)) vals))))
-;;; LOGAND, LOGIOR, LOGXOR: fixnums open-coded (tagged fixnums combine
-;;; bitwise as they are); other integers, and errors, by the kernel's
-;;; two-argument functions. Fewer than two arguments: the function.
+;;; LOGAND, LOGIOR, LOGXOR use fixnum operations on the fast path; other
+;;; integers and errors go through the kernel.
 (defun emit-logop (op a b)
   (let ((r (new-var)) (fast (new-block)) (slow (new-block)) (done (new-block)))
     (br `(:or (:eq (:test-class ,kiln.kir::+packet-class-fixnum+ ,a) 0) (:eq (:test-class ,kiln.kir::+packet-class-fixnum+ ,b) 0)) slow fast)
     (start-block fast)
-    (emit `(:set ,r (,op ,a ,b)))
+    (emit `(:set ,r (,(ecase op (:and :fixnum-logand) (:or :fixnum-logior) (:xor :fixnum-logxor)) ,a ,b)))
     (jump done)
     (start-block slow)
     (emit `(:set ,r ,(emit-slow-call (ecase op
@@ -806,10 +805,10 @@ cells (both by default)."
 
 (define-primop :evenp (n)
   (emit-check-fixnums n n)
-  (boolean-value `(:eq (:and ,n 2) 0)))
+  (boolean-value `(:fixnum-evenp ,n)))
 (define-primop :half (n)
   (emit-check-fixnums n n)
-  (copy-to-var `(:and (:sar ,n 1) -2)))
+  (copy-to-var `(:fixnum-half ,n)))
 
 (macrolet ((define-type-error (name code)
              `(define-primop ,name (x)
@@ -847,28 +846,20 @@ cells (both by default)."
     (:integer-compare 7) (:integer-logand 8) (:integer-logior 9) (:integer-logxor 10)
     (:integer-ash 11) (:integer-gcd 12) (:integer-expt 13) (:integer-length 14)))
 
-;;; Fixnum division for the kernel's fast paths: on tagged fixnums, the
-;;; quotient of the tagged values is the untagged quotient, and their
-;;; remainder the tagged remainder. The caller checks that the divisor is
-;;; not 0 and that the quotient is a fixnum.
-(define-primop :fixnum-quotient (a b) (copy-to-var `(:shl (:sdiv ,a ,b) 1)))
-(define-primop :fixnum-remainder (a b) (copy-to-var `(:srem ,a ,b)))
-
-;;; Fixnum-only bit operations, for the kernel's fast paths: on tagged
-;;; fixnums (n << 1), AND, OR and XOR give the tagged result.
-(define-primop :fixnum-logand (a b) (copy-to-var `(:and ,a ,b)))
-;;; A sum known to be a fixnum (no overflow check).
-(define-primop :fixnum+ (a b) (copy-to-var `(:add ,a ,b)))
-(define-primop :fixnum-le (a b) (boolean-value `(:le ,a ,b)))
-(define-primop :fixnum-logior (a b) (copy-to-var `(:or ,a ,b)))
-(define-primop :fixnum-logxor (a b) (copy-to-var `(:xor ,a ,b)))
+;;; The caller checks the divisor and quotient before division.
+(define-primop :fixnum-quotient (a b) (copy-to-var `(:fixnum-quotient ,a ,b)))
+(define-primop :fixnum-remainder (a b) (copy-to-var `(:fixnum-remainder ,a ,b)))
+(define-primop :fixnum-logand (a b) (copy-to-var `(:fixnum-logand ,a ,b)))
+(define-primop :fixnum+ (a b) (copy-to-var `(:fixnum-add ,a ,b)))
+(define-primop :fixnum-le (a b) (boolean-value `(:fixnum-le ,a ,b)))
+(define-primop :fixnum-logior (a b) (copy-to-var `(:fixnum-logior ,a ,b)))
+(define-primop :fixnum-logxor (a b) (copy-to-var `(:fixnum-logxor ,a ,b)))
 (define-primop :type-error-integer (x) (emit-error +err-not-integer+ x) (nil-value))
-;;; Shifts of a tagged fixnum N by a fixnum count C in 0..62, for ASH's
-;;; fast path. Shifting left can overflow: the kernel shifts back to check.
+;;; The shift count is a fixnum in 0..62. The caller checks left overflow.
 (define-primop :fixnum-shift-left (n c)
-  (copy-to-var `(:shlv ,n (:sar ,c 1))))
+  (copy-to-var `(:fixnum-shift-left ,n ,c)))
 (define-primop :fixnum-shift-right (n c)
-  (copy-to-var `(:and (:sarv ,n (:sar ,c 1)) -2)))
+  (copy-to-var `(:fixnum-shift-right ,n ,c)))
 
 (define-primop :ratiop (x) (boolean-value (emit-kind-test x kiln.kir::+packet-class-ratio+)))
 (define-primop :double-float-p (x) (boolean-value (emit-kind-test x kiln.kir::+packet-class-double+)))

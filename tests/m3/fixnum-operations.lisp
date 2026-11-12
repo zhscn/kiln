@@ -1,0 +1,8 @@
+(defun fixnum-operations (a b)
+  (multiple-value-bind (q r) (truncate a b)
+    (list q r (logand a b) (logior a b) (logxor a b)
+          (ash a 2) (ash a -2) (evenp a))))
+(print (fixnum-operations -19 5))
+(print (fixnum-operations 19 -5))
+(print (list (ash -4611686018427387904 -62) (ash 1 61)
+             (ash 4611686018427387903 -61)))
