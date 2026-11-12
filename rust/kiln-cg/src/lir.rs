@@ -928,7 +928,8 @@ pub fn argument_read(prefix: &str, start: String, mut before: Vec<Stmt>, result:
 pub fn argument_write(prefix: &str, start: String, mut before: Vec<Stmt>, index: String,
                       value: Expr, registers: Vec<String>) -> Result<(Vec<crate::kir::Block>, String), String> {
     use crate::kir::{Block, CmpOp, BinOp};
-    if registers.len() != crate::kir::REG_ARGS || registers.iter().any(|r| r == &index) {
+    if registers.len() != crate::kir::REG_ARGS || registers.iter().any(|r| r == &index)
+        || registers.iter().collect::<std::collections::HashSet<_>>().len() != registers.len() {
         return Err("arg-write requires saved registers distinct from the index".into());
     }
     let done = format!("{prefix}_done");
@@ -1095,4 +1096,20 @@ fn tail_invocation_preserves_transfer_order_and_checks_capacity() {
     assert_eq!(format!("{:?}", statements[1]), format!("{:?}", transfer_set(1, Expr::Int(4)).unwrap()));
     assert!(matches!(&statements[2], Stmt::TailCallLisp { args, .. } if args.len() == 6));
     assert!(tail_invoke("f".into(), vec![Expr::Int(0); 1025]).is_err());
+}
+
+#[cfg(test)]
+#[test]
+fn dynamic_argument_routes_have_distinct_blocks_and_common_exit() {
+    let registers = || vec!["saved0".into(), "saved1".into(), "saved2".into()];
+    let (blocks, done) = argument_write("route", "entry".into(), Vec::new(), "index".into(),
+        Expr::Var("value".into()), registers()).unwrap();
+    let names: std::collections::HashSet<_> = blocks.iter().map(|b| &b.name).collect();
+    assert_eq!(names.len(), blocks.len());
+    assert!(!names.contains(&done));
+    assert_eq!(blocks.iter().filter(|b| matches!(b.stmts.last(), Some(Stmt::Jump(name)) if name == &done)).count(),
+               crate::kir::REG_ARGS + 1);
+    assert!(argument_write("route", "entry".into(), Vec::new(), "index".into(), Expr::Int(0),
+        vec!["same".into(); crate::kir::REG_ARGS]).is_err());
+    assert!(argument_write("route", "entry".into(), Vec::new(), "saved0".into(), Expr::Int(0), registers()).is_err());
 }
