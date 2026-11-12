@@ -896,3 +896,30 @@ fn argument_reference_checks_capacity_and_register_boundary() {
     assert!(argument_ref(1024, registers()).is_err());
     assert!(argument_ref(0, Vec::new()).is_err());
 }
+
+/// Read an argument without evaluating a transfer-area address on register paths.
+pub fn argument_read(prefix: &str, start: String, mut before: Vec<Stmt>, result: String,
+                     index: String, registers: Vec<Expr>) -> Result<(Vec<crate::kir::Block>, String), String> {
+    use crate::kir::{Block, CmpOp, BinOp};
+    if registers.len() != crate::kir::REG_ARGS || result == index {
+        return Err("arg-read requires saved register arguments and a distinct index".into());
+    }
+    let done = format!("{prefix}_done");
+    let mut blocks = Vec::new();
+    let mut current = start;
+    for (i, value) in registers.into_iter().enumerate() {
+        let yes = format!("{prefix}_reg{i}");
+        let next = format!("{prefix}_next{i}");
+        before.push(Stmt::Br(Expr::Cmp(CmpOp::Eq, Box::new(Expr::Var(index.clone())),
+            Box::new(Expr::Int(i as i64))), yes.clone(), next.clone()));
+        blocks.push(Block { name: current, stmts: before });
+        blocks.push(Block { name: yes, stmts: vec![Stmt::Set(result.clone(), value), Stmt::Jump(done.clone())] });
+        current = next;
+        before = Vec::new();
+    }
+    before.push(Stmt::Set(result, transfer_ref_dynamic(Expr::Bin(BinOp::Sub,
+        Box::new(Expr::Var(index)), Box::new(Expr::Int(crate::kir::REG_ARGS as i64))))));
+    before.push(Stmt::Jump(done.clone()));
+    blocks.push(Block { name: current, stmts: before });
+    Ok((blocks, done))
+}

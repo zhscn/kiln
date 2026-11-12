@@ -176,19 +176,8 @@ use them only when the entire list fits, otherwise allocate on the heap."
     (br `(:gt ,i ,start) body done)
     (start-block body)
     (emit `(:set ,i (:sub ,i 1)))
-    (let ((x (new-var)) (join (new-block)))
-      ;; x = argument i
-      (loop for a in args
-            for k from 0
-            do (let ((this (new-block)) (other (new-block)))
-                 (br `(:eq ,i ,k) this other)
-                 (start-block this)
-                 (emit `(:set ,x ,a))
-                 (jump join)
-                 (start-block other)))
-      (emit `(:set ,x (:transfer-ref-dynamic (:sub ,i ,kiln.kir::+backend-reg-args+))))
-      (jump join)
-      (start-block join)
+    (let ((x (new-var)))
+      (emit `(:arg-read ,x ,i ,args))
       (if stack-slots
           (let ((stack (new-block)) (heap (new-block)) (next (new-block)))
             (br `(:le :nargs ,(+ start (length stack-slots))) stack heap)
