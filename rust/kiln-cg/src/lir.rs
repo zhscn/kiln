@@ -93,6 +93,16 @@ pub fn vector_length(object: Expr) -> Expr {
         Box::new(Expr::Int(LENGTH_MASK as i64)))
 }
 
+pub fn invalid_vector_length(value: Expr) -> Expr {
+    use crate::kir::{BinOp, CmpOp};
+    use kiln_rt::object::{FIXNUM_MASK, LENGTH_MASK};
+    Expr::Bin(BinOp::Or,
+        Box::new(Expr::Bin(BinOp::And, Box::new(value.clone()), Box::new(Expr::Int(FIXNUM_MASK as i64)))),
+        Box::new(Expr::Bin(BinOp::Or,
+            Box::new(Expr::Cmp(CmpOp::Lt, Box::new(value.clone()), Box::new(Expr::Int(0)))),
+            Box::new(Expr::Cmp(CmpOp::Gt, Box::new(value), Box::new(Expr::Int((LENGTH_MASK << 1) as i64)))))))
+}
+
 fn vector_element_address(object: Expr, index: Expr) -> Expr {
     use crate::kir::{BinOp, ShiftOp};
     Expr::Bin(BinOp::Add, Box::new(object),

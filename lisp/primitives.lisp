@@ -499,7 +499,7 @@ are compared (no short circuit), which also checks every argument."
 (defun emit-check-length (n)
   "N must be a non-negative fixnum that fits the header's length field."
   (let ((bad (new-block)) (ok (new-block)))
-    (br `(:or (:and ,n 1) (:or (:lt ,n 0) (:gt ,n ,(ash (1- (ash 1 48)) +fixnum-shift+)))) bad ok)
+    (br `(:invalid-vector-length ,n) bad ok)
     (start-block bad)
     (emit-error +err-index+ n)
     (start-block ok)))

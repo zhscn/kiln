@@ -839,6 +839,10 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
             arity(h, r, 1)?;
             crate::lir::vector_length(parse_expr(&r[0])?)
         }
+        "invalid-vector-length" => {
+            arity(h, r, 1)?;
+            crate::lir::invalid_vector_length(parse_expr(&r[0])?)
+        }
         "character-untag" => {
             arity(h, r, 1)?;
             crate::lir::character_untag(parse_expr(&r[0])?)

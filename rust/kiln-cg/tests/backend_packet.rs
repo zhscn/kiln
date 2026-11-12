@@ -117,6 +117,16 @@ fn immediate_class_tests_preserve_kir_and_reject_unknown_classes() {
 }
 
 #[test]
+fn vector_length_check_uses_runtime_header_limit() {
+    let module = |body| format!("(module \"length\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v raw)) (slots) (block b {body} (return a0 1))))");
+    let old = module("(set v (or (and a0 1) (or (lt a0 0) (gt a0 8589934590))))");
+    let new = module("(set v (invalid-vector-length a0))");
+    let old = kiln_cg::kir::parse_module(&sexp::parse_one(&old).unwrap()).unwrap();
+    let new = kiln_cg::kir::parse_module(&sexp::parse_one(&new).unwrap()).unwrap();
+    assert_eq!(format!("{old:?}"), format!("{new:?}"));
+}
+
+#[test]
 fn vector_length_and_fixnum_tag_preserve_header_masking() {
     let module = |body| format!("(module \"length\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj)) (slots) (block b {body} (return v 1))))");
     let old = module("(set v (shl (and (shr (load a0 -5) 8) 4294967295) 1))");
