@@ -61,6 +61,49 @@ pub fn test_header_class(class: u32, object: Expr) -> Result<Expr, String> {
         Box::new(Expr::Int(kind as i64))))
 }
 
+pub fn heap_number_test(result: String, temporary: String, object: Expr) -> Vec<Stmt> {
+    use crate::kir::{BinOp, CmpOp};
+    use kiln_rt::object::{KIND_BIGNUM, KIND_COMPLEX, KIND_DOUBLE, KIND_MASK};
+    let kind = || Expr::Var(temporary.clone());
+    let cmp = |op, n| Expr::Cmp(op, Box::new(kind()), Box::new(Expr::Int(n)));
+    vec![
+        Stmt::Set(temporary.clone(), Expr::Bin(BinOp::And,
+            Box::new(Expr::Load(Box::new(object), -(TAG_GENERAL as i32))), Box::new(Expr::Int(KIND_MASK as i64)))),
+        Stmt::Set(result, Expr::Bin(BinOp::Or,
+            Box::new(Expr::Bin(BinOp::And, Box::new(cmp(CmpOp::Ge, KIND_BIGNUM as i64)), Box::new(cmp(CmpOp::Le, KIND_DOUBLE as i64)))),
+            Box::new(cmp(CmpOp::Eq, KIND_COMPLEX as i64)))),
+    ]
+}
+
+#[allow(clippy::type_complexity)]
+pub fn identity_hash(name: &str, block: String, mut preceding: Vec<Stmt>, result: String,
+                     object: String, runtime: String) -> (Vec<(String, crate::kir::VarKind)>, Vec<crate::kir::Block>, String) {
+    use crate::kir::{BinOp, Block, CmpOp, ShiftOp, VarKind};
+    use kiln_rt::object::{HASH_SHIFT, TAG_MASK};
+    let tag = format!("{name}_tag");
+    let hash = format!("{name}_hash");
+    let heap = format!("{name}_heap");
+    let fast = format!("{name}_fast");
+    let slow = format!("{name}_slow");
+    let done = format!("{name}_done");
+    let var = |s: &str| Expr::Var(s.to_string());
+    let eq_tag = |n| Expr::Cmp(CmpOp::Eq, Box::new(var(&tag)), Box::new(Expr::Int(n)));
+    preceding.push(Stmt::Set(tag.clone(), Expr::Bin(BinOp::And, Box::new(var(&object)), Box::new(Expr::Int(TAG_MASK as i64)))));
+    preceding.push(Stmt::Br(Expr::Bin(BinOp::Or, Box::new(eq_tag(TAG_CONS as i64)), Box::new(eq_tag(TAG_GENERAL as i64))), heap.clone(), slow.clone()));
+    let raw = Expr::Bin(BinOp::Sub, Box::new(var(&object)), Box::new(var(&tag)));
+    let heap_stmts = vec![
+        Stmt::Set(hash.clone(), Expr::Shift(ShiftOp::Shr, Box::new(Expr::Load(Box::new(raw), 0)), HASH_SHIFT as i64)),
+        Stmt::Br(Expr::Cmp(CmpOp::Ne, Box::new(var(&hash)), Box::new(Expr::Int(0))), fast.clone(), slow.clone()),
+    ];
+    let blocks = vec![
+        Block { name: block, stmts: preceding },
+        Block { name: heap, stmts: heap_stmts },
+        Block { name: fast, stmts: vec![Stmt::Set(result.clone(), fixnum_tag(var(&hash))), Stmt::Jump(done.clone())] },
+        Block { name: slow, stmts: vec![Stmt::CallRt { name: runtime, results: vec![result], args: vec![var("ctx"), var(&object)], handler: None, loc: None }, Stmt::Jump(done.clone())] },
+    ];
+    (vec![(tag, VarKind::Raw), (hash, VarKind::Raw)], blocks, done)
+}
+
 fn field_offset(field: u32) -> Result<i32, String> {
     let (offset, tag) = match field {
         FIELD_CONS_CAR => (8, TAG_CONS),

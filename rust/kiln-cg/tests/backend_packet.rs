@@ -120,6 +120,26 @@ fn immediate_class_tests_preserve_kir_and_reject_unknown_classes() {
 }
 
 #[test]
+fn heap_number_and_identity_hash_expand_using_runtime_layout() {
+    let module = |body| format!("(module \"hash\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj) (p raw)) (slots) (block b {body} (return v 1))))");
+    let program = module("(heap-number-p p a0) (identity-hash v a0 \"kiln_rt_identity_hash\")");
+    let program = sexp::parse_one(&program).unwrap();
+    let result = packet::load(&packet::encode(&program, packet::schema::KIR_PAYLOAD).unwrap()).unwrap();
+    let blocks = &result.funcs[0].blocks;
+    assert_eq!(blocks.len(), 5);
+    let entry = format!("{:?}", blocks[0]);
+    assert!(entry.contains("Load(Var(\"a0\"), -5)"));
+    assert!(entry.contains("Int(6)"));
+    assert!(entry.contains("Int(8)"));
+    assert!(entry.contains("Int(12)"));
+    assert!(format!("{:?}", blocks[1]).contains("), 40)"));
+    assert!(format!("{:?}", blocks[3]).contains("kiln_rt_identity_hash"));
+    for body in ["(heap-number-p p p)", "(identity-hash v v \"kiln_rt_identity_hash\")"] {
+        assert!(kiln_cg::kir::parse_module(&sexp::parse_one(&module(body)).unwrap()).is_err());
+    }
+}
+
+#[test]
 fn unbound_markers_are_distinct_runtime_values() {
     let module = |body| format!("(module \"markers\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj) (w obj)) (slots) (block b {body} (return v 1))))");
     let old = module("(set v 19) (set w 43)");

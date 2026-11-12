@@ -20,6 +20,8 @@ catch、unwind-protect、跨函数退出点、special 绑定和 progv 的动态�
 
 `vector-ref` 和 `vector-set` 访问 simple-vector 的对象元素，`string-ref` 和 `string-set` 访问字符串的字符；这些操作接收未装箱下标，对象类型与下标范围由生成方检查。`vector-length` 读取未装箱长度，并屏蔽 header 中的身份哈希。fixnum 和字符的装箱、拆箱操作负责立即数与机器字之间的转换。
 
+`heap-number-p` 在已验证一般对象的路径上判断它是否为堆数值；`identity-hash` 由后端判断对象表示、读取已有哈希并按需调用 runtime。
+
 double-float 的未装箱位模式和 complex 的实部、虚部通过字段操作读取。double 位模式是机器值，函数入口与 double 位模式均不能作为对象引用字段写入。
 
 实例的 rack、class 和按位置访问的槽，funcallable instance 的函数，以及原生结构的 layout 和槽由后端按对象种类展开。槽位置传入机器字；生成方负责类型和位置的有效性。

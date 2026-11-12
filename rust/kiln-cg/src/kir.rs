@@ -636,6 +636,31 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                 for stmt in stmts {
                     validate_stack_references(stmt, &stack_objects)?;
                     let (head_name, operands) = head(list(stmt)?)?;
+                    if head_name == "heap-number-p" {
+                        arity(head_name, operands, 2)?;
+                        let result = sym(&operands[0])?.to_string();
+                        let object = sym(&operands[1])?.to_string();
+                        if result == object { return Err("heap-number-p result must differ from object".into()); }
+                        let temp = format!("{prefix}{alloc_number}_kind");
+                        alloc_number += 1;
+                        f.vars.push((temp.clone(), VarKind::Raw));
+                        lowered.extend(crate::lir::heap_number_test(result, temp, Expr::Var(object)));
+                        continue;
+                    }
+                    if head_name == "identity-hash" {
+                        arity(head_name, operands, 3)?;
+                        let result = sym(&operands[0])?.to_string();
+                        let object = sym(&operands[1])?.to_string();
+                        if result == object { return Err("identity-hash result must differ from object".into()); }
+                        let name = format!("{prefix}{alloc_number}");
+                        alloc_number += 1;
+                        let (vars, blocks, next_name) = crate::lir::identity_hash(&name, block_name, lowered, result, object, string(&operands[2])?.to_string());
+                        f.vars.extend(vars);
+                        f.blocks.extend(blocks);
+                        block_name = next_name;
+                        lowered = Vec::new();
+                        continue;
+                    }
                     if head_name == "ensure-tls-index" {
                         arity(head_name, operands, 3)?;
                         let result = sym(&operands[0])?.to_string();

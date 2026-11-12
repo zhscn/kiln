@@ -191,17 +191,15 @@ are compared (no short circuit), which also checks every argument."
   ;; Identical objects are EQL; otherwise only numbers that are heap
   ;; objects (bignums, ratios, double floats, complexes) can be, which the kernel
   ;; decides.
-  (let ((r (copy-to-var (t-value))) (kind (new-var :raw))
+  (let ((a (copy-to-var a)) (r (copy-to-var (t-value))) (number-p (new-var :raw))
         (no (new-block)) (general (new-block)) (slow (new-block)) (false (new-block))
         (done (new-block)))
     (br `(:eq ,a ,b) done no)
     (start-block no)
-    (br `(:eq (:and ,a ,+tag-mask+) ,+tag-general+) general false)
+    (br `(:test-class ,kiln.kir::+packet-class-general+ ,a) general false)
     (start-block general)
-    (emit `(:set ,kind (:and (:load ,a ,(- +tag-general+)) ,+kind-mask+)))
-    (br `(:or (:and (:ge ,kind ,+kind-bignum+) (:le ,kind ,+kind-double+))
-              (:eq ,kind ,+kind-complex+))
-        slow false)
+    (emit `(:heap-number-p ,number-p ,a))
+    (br number-p slow false)
     (start-block slow)
     (emit `(:set ,r ,(emit-slow-call 'kiln.kernel::eql-slow a b)))
     (jump done)
@@ -1029,22 +1027,8 @@ and slots), zero-filled."
 ;;; Hashing (Salmagundi). The identity hash survives moving collections
 ;;; (header bits 40..64, rust/kiln-rt/src/rtfun.rs).
 (define-primop :identity-hash (x)
-  ;; A heap object's hash, once assigned, is in its header above the
-  ;; length (kiln_rt_identity_hash, HASH_SHIFT): read it inline. The
-  ;; runtime assigns it, and hashes static objects and immediates.
-  (let ((r (new-var)) (tag (copy-to-var `(:and ,x 7) :raw))
-        (heap (new-block)) (fast (new-block)) (slow (new-block)) (done (new-block)))
-    (br `(:or (:eq ,tag ,+tag-cons+) (:eq ,tag ,+tag-general+)) heap slow)
-    (start-block heap)
-    (let ((h (copy-to-var `(:shr (:load (:sub ,x ,tag) 0) 40) :raw)))
-      (br `(:ne ,h 0) fast slow)
-      (start-block fast)
-      (emit `(:set ,r (:shl ,h 1)))
-      (jump done))
-    (start-block slow)
-    (emit `(:call-rt ,(rt-identity-hash) (,r) (:ctx ,x) :nil))
-    (jump done)
-    (start-block done)
+  (let ((r (new-var)) (x (copy-to-var x)))
+    (emit `(:identity-hash ,r ,x ,(rt-identity-hash)))
     r))
 ;;; File descriptor I/O (Cyclosis' POSIX file streams): VECTOR
 ;;; is a simple vector of octets as fixnums; the result is the count, or -1.
