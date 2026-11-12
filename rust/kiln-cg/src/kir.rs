@@ -1131,6 +1131,10 @@ fn parse_stmt(s: &Sexp) -> R<Stmt> {
             arity(h, r, 2)?;
             crate::lir::transfer_set_dynamic(parse_expr(&r[0])?, parse_expr(&r[1])?)
         }
+        "argument-roots" | "value-roots" => {
+            arity(h, r, 1)?;
+            return crate::lir::counted_transfer_roots(parse_expr(&r[0])?, h == "argument-roots");
+        }
         "transfer-roots" => {
             arity(h, r, 1)?;
             crate::lir::transfer_roots(parse_expr(&r[0])?)

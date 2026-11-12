@@ -24,7 +24,7 @@ first, so the result holds them in reverse order. Returns the new list."
               (fin (new-block)) (done (new-block)))
           (br `(:eq ,n 0) done some)
           (start-block some)
-          (emit `(:transfer-roots (:sub ,n 1)))
+          (emit `(:value-roots ,n))
           (emit `(:set ,r ,(emit-cons v0 r)))
           (emit `(:set ,i 1))
           (jump head)
@@ -158,8 +158,7 @@ provided, are initialized cons slots with registered reference fields;
 use them only when the entire list fits, otherwise allocate on the heap."
   (let ((list (copy-to-var (nil-value))) (i (new-var :raw))
         (head (new-block)) (body (new-block)) (done (new-block)))
-    (emit `(:transfer-roots
-                   (:select (:gt :nargs ,kiln.kir::+backend-reg-args+) (:sub :nargs ,kiln.kir::+backend-reg-args+) 0)))
+    (emit `(:argument-roots :nargs))
     (emit `(:set ,i :nargs))
     (jump head)
     (start-block head)

@@ -1026,3 +1026,34 @@ fn secondary_values_check_primary_and_capacity_boundaries() {
         assert!(secondary_value_set(Expr::Int(i), Expr::Int(0)).is_err());
     }
 }
+
+/// Protect the transfer portion of incoming arguments or current return values.
+pub fn counted_transfer_roots(count: Expr, arguments: bool) -> Result<Stmt, String> {
+    use crate::kir::{BinOp, CmpOp};
+    let prefix = if arguments { crate::kir::REG_ARGS } else { 1 } as i64;
+    if let Expr::Int(n) = count {
+        if n < 0 || n > prefix + kiln_rt::context::VALUES_MAX as i64 {
+            return Err("rooted value count out of range".into());
+        }
+        return Ok(transfer_roots(Expr::Int((n - prefix).max(0))));
+    }
+    Ok(transfer_roots(Expr::Select(
+        Box::new(Expr::Cmp(CmpOp::Gt, Box::new(count.clone()), Box::new(Expr::Int(prefix)))),
+        Box::new(Expr::Bin(BinOp::Sub, Box::new(count), Box::new(Expr::Int(prefix)))),
+        Box::new(Expr::Int(0)))))
+}
+
+#[cfg(test)]
+#[test]
+fn counted_roots_bound_counts_and_saturate_at_zero() {
+    for arguments in [false, true] {
+        let prefix = if arguments { crate::kir::REG_ARGS } else { 1 } as i64;
+        for n in [0, prefix, prefix + kiln_rt::context::VALUES_MAX as i64] {
+            assert!(counted_transfer_roots(Expr::Int(n), arguments).is_ok());
+        }
+        assert!(counted_transfer_roots(Expr::Int(-1), arguments).is_err());
+        assert!(counted_transfer_roots(Expr::Int(prefix + kiln_rt::context::VALUES_MAX as i64 + 1), arguments).is_err());
+        assert_eq!(format!("{:?}", counted_transfer_roots(Expr::Int(0), arguments).unwrap()),
+                   format!("{:?}", transfer_roots(Expr::Int(0))));
+    }
+}
