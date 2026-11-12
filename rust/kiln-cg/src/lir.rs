@@ -135,6 +135,52 @@ pub fn transfer_roots(count: Expr) -> Stmt {
     )
 }
 
+/// Expand allocation after operand evaluation; only the slow path can safepoint.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+pub fn allocate_raw(
+    name: &str, block: String, mut preceding: Vec<Stmt>, result: String,
+    bytes: Expr, header: Expr, zero: bool, runtime: String, handler: Option<String>,
+) -> Result<(Vec<(String, crate::kir::VarKind)>, Vec<crate::kir::Block>, String, Vec<Stmt>), String> {
+    use crate::kir::{BinOp, Block, CmpOp, VarKind};
+    use kiln_rt::context::Context;
+    let slow_call = || Stmt::CallRt {
+        name: runtime.clone(), results: vec![result.clone()],
+        args: vec![Expr::Var("ctx".into()), bytes.clone(), header.clone()],
+        handler: handler.clone(), loc: None,
+    };
+    let size = match bytes {
+        Expr::Int(n) if (8..=128).contains(&n) && n % 8 == 0 => n,
+        _ => {
+            preceding.push(slow_call());
+            return Ok((vec![], vec![], block, preceding));
+        }
+    };
+    let cursor = format!("{name}_cursor");
+    let end = format!("{name}_end");
+    let fast = format!("{name}_fast");
+    let slow = format!("{name}_slow");
+    let done = format!("{name}_done");
+    let var = |s: &str| Expr::Var(s.to_string());
+    preceding.push(Stmt::Set(cursor.clone(), Expr::Load(Box::new(var("ctx")), core::mem::offset_of!(Context, alloc_cursor) as i32)));
+    preceding.push(Stmt::Set(result.clone(), Expr::Load(Box::new(var(&cursor)), 0)));
+    preceding.push(Stmt::Set(end.clone(), Expr::Bin(BinOp::Add, Box::new(var(&result)), Box::new(Expr::Int(size)))));
+    let limit = Expr::Load(Box::new(Expr::Load(Box::new(var("ctx")), core::mem::offset_of!(Context, alloc_limit) as i32)), 0);
+    preceding.push(Stmt::Br(Expr::Cmp(CmpOp::Le, Box::new(var(&end)), Box::new(limit)), fast.clone(), slow.clone()));
+    let mut fast_stmts = vec![Stmt::Store(var(&cursor), 0, var(&end)), Stmt::Store(var(&result), 0, header.clone())];
+    if zero {
+        for offset in (8..size).step_by(8) {
+            fast_stmts.push(Stmt::Store(var(&result), offset as i32, Expr::Int(0)));
+        }
+    }
+    fast_stmts.push(Stmt::Jump(done.clone()));
+    let blocks = vec![
+        Block { name: block, stmts: preceding },
+        Block { name: fast, stmts: fast_stmts },
+        Block { name: slow, stmts: vec![slow_call(), Stmt::Jump(done.clone())] },
+    ];
+    Ok((vec![(cursor, VarKind::Raw), (end, VarKind::Raw)], blocks, done, vec![]))
+}
+
 /// Materialize the target calling convention after the front end has
 /// evaluated the callee and every argument into stable operands.
 pub fn invoke(

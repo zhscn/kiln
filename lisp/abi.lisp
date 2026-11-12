@@ -65,11 +65,6 @@
 ;;; Empty TLS slot: the symbol is not bound in this context.
 (defconstant +no-tls-value+ #x23)
 (defconstant +values-max+ 1021)
-;;; Number of words of the transfer area that are GC roots (normally 0).
-;;; Addresses of the cursor and the limit of the context's bump allocator
-;;; (inline allocation).
-(defconstant +ctx-alloc-cursor+ 64)
-(defconstant +ctx-alloc-limit+ 72)
 
 ;;; Dynamic-environment entries (stack-allocated in the establishing frame).
 (defconstant +dyn-catch+ 1)

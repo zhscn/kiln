@@ -117,6 +117,32 @@ fn immediate_class_tests_preserve_kir_and_reject_unknown_classes() {
 }
 
 #[test]
+fn allocation_expands_fast_and_slow_paths_with_distinct_names() {
+    let input = r#"(module "alloc" (init "init")
+      (data "init" (words 2 (func "body")))
+      (func "body" (vars (p raw) (q raw) (__kiln_lir_0_cursor raw)) (slots)
+        (block entry
+          (alloc-raw p 24 3 1 "kiln_rt_alloc" caught)
+          (alloc-raw q 136 4 0 "kiln_rt_alloc" caught)
+          (return a0 1))
+        (block caught (return exn1 1))))"#;
+    let program = sexp::parse_one(input).unwrap();
+    let result = packet::load(&packet::encode(&program, packet::schema::KIR_PAYLOAD).unwrap()).unwrap();
+    let function = &result.funcs[0];
+    assert!(function.vars.iter().any(|(name, _)| name == "__kiln_lir__0_cursor"));
+    assert_eq!(function.blocks.len(), 5);
+    let dump = format!("{function:?}");
+    assert!(dump.contains("Load(Var(\"ctx\"), 64)"));
+    assert!(dump.contains("Load(Var(\"ctx\"), 72)"));
+    assert!(dump.contains("Store(Var(\"p\"), 8, Int(0))"));
+    assert!(dump.contains("Store(Var(\"p\"), 16, Int(0))"));
+    assert_eq!(dump.matches("name: \"kiln_rt_alloc\"").count(), 2);
+    assert_eq!(dump.matches("handler: Some(\"caught\")").count(), 2);
+    let invalid = input.replace("p 24 3 1", "p 24 3 2");
+    assert!(kiln_cg::kir::parse_module(&sexp::parse_one(&invalid).unwrap()).is_err());
+}
+
+#[test]
 fn guarded_header_class_tests_preserve_kir() {
     use packet::schema::*;
     let module = |body| format!("(module \"classes\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v raw)) (slots) (block b {body} (return a0 1))))");

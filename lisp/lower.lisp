@@ -885,34 +885,12 @@ if needed (not a safepoint)."
 
 ;;; Allocation
 
-(defparameter *inline-alloc-limit* 128
-  "Objects of at most this many bytes (a constant size) are allocated by
-compiled code itself, bumping the allocator's cursor.")
-
 (defun emit-alloc (bytes header &optional (zero-p t))
   "Allocates an object; returns a raw variable holding its untagged
 address. The payload is zeroed when ZERO-P is true. No safepoint may occur
 before the address is tagged and stored in an obj variable."
   (let ((p (new-var :raw)))
-    (if (and (integerp bytes) (<= 8 bytes *inline-alloc-limit*) (zerop (mod bytes 8)))
-        (let ((cursor (new-var :raw)) (end (new-var :raw))
-              (fast (new-block)) (slow (new-block)) (done (new-block)))
-          (emit `(:set ,cursor (:load :ctx ,+ctx-alloc-cursor+)))
-          (emit `(:set ,p (:load ,cursor 0)))
-          (emit `(:set ,end (:add ,p ,bytes)))
-          (br `(:le ,end (:load (:load :ctx ,+ctx-alloc-limit+) 0)) fast slow)
-          (start-block fast)
-          (emit `(:store ,cursor 0 ,end))
-          (emit `(:store ,p 0 ,header))
-          (when zero-p
-            (loop for offset from 8 below bytes by 8
-                  do (emit `(:store ,p ,offset 0))))
-          (jump done)
-          (start-block slow)
-          (emit `(:call-rt ,(rt-alloc) (,p) (:ctx ,bytes ,header) ,(handler)))
-          (jump done)
-          (start-block done))
-        (emit `(:call-rt ,(rt-alloc) (,p) (:ctx ,bytes ,header) ,(handler))))
+    (emit `(:alloc-raw ,p ,bytes ,header ,(if zero-p 1 0) ,(rt-alloc) ,(handler)))
     p))
 
 (defun emit-cons (a b)

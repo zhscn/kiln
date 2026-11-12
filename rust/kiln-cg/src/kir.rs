@@ -142,7 +142,7 @@ pub enum OvfOp {
     Mul,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Expr {
     Int(i64),
     Var(String),
@@ -445,6 +445,18 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
         blocks: vec![],
         debug: None,
     };
+    fn uses_prefix(value: &Sexp, prefix: &str) -> bool {
+        match value {
+            Sexp::Sym(s) => s.starts_with(prefix),
+            Sexp::List(xs) => xs.iter().any(|x| uses_prefix(x, prefix)),
+            _ => false,
+        }
+    }
+    let mut prefix = "__kiln_lir_".to_string();
+    while body.iter().any(|part| uses_prefix(part, &prefix)) {
+        prefix.push('_');
+    }
+    let mut alloc_number = 0usize;
     for part in body {
         let (h, items) = head(list(part)?)?;
         match h {
@@ -487,12 +499,36 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
             }
             "block" => {
                 let (bname, stmts) = items.split_first().ok_or("block: missing name")?;
+                let mut block_name = sym(bname)?.to_string();
                 let mut lowered = Vec::new();
                 for stmt in stmts {
-                    lowered.extend(parse_statements(stmt)?);
+                    let (head_name, operands) = head(list(stmt)?)?;
+                    if head_name == "alloc-raw" {
+                        arity(head_name, operands, 6)?;
+                        let result = sym(&operands[0])?.to_string();
+                        let bytes = parse_expr(&operands[1])?;
+                        let header = parse_expr(&operands[2])?;
+                        let zero = match int(&operands[3])? {
+                            0 => false, 1 => true,
+                            _ => return Err("alloc-raw: invalid zero flag".into()),
+                        };
+                        let runtime = string(&operands[4])?.to_string();
+                        let handler = handler(&operands[5])?;
+                        let name = format!("{prefix}{alloc_number}");
+                        alloc_number += 1;
+                        let (vars, blocks, next_name, next_stmts) = crate::lir::allocate_raw(
+                            &name, block_name, lowered, result, bytes, header, zero, runtime, handler,
+                        )?;
+                        f.vars.extend(vars);
+                        f.blocks.extend(blocks);
+                        block_name = next_name;
+                        lowered = next_stmts;
+                    } else {
+                        lowered.extend(parse_statements(stmt)?);
+                    }
                 }
                 f.blocks.push(Block {
-                    name: sym(bname)?.to_string(),
+                    name: block_name,
                     stmts: lowered,
                 });
             }
