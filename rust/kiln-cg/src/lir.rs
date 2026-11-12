@@ -950,3 +950,16 @@ pub fn argument_write(prefix: &str, start: String, mut before: Vec<Stmt>, index:
     blocks.push(Block { name: current, stmts: before });
     Ok((blocks, done))
 }
+
+/// Call after the caller has populated the transfer area and saved register arguments.
+pub fn invoke_prepared(v0: String, nv: String, callee: String, count: Expr,
+                       saved: Vec<Expr>, handler: Option<String>, loc: Option<crate::kir::Loc>) -> Result<Vec<Stmt>, String> {
+    if saved.len() != crate::kir::REG_ARGS || saved.iter().chain(std::iter::once(&count))
+        .any(|v| !matches!(v, Expr::Int(_) | Expr::Var(_))) {
+        return Err("invoke-prepared requires stable count and saved register arguments".into());
+    }
+    let mut args = vec![Expr::Var("ctx".into()), Expr::Var(callee.clone()), count];
+    args.extend(saved);
+    Ok(vec![Stmt::CallLisp { v0, nv, entry: field_load(FIELD_FUNCTION_ENTRY, Expr::Var(callee))?,
+        args, handler, loc }])
+}

@@ -1059,6 +1059,12 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
 
 fn parse_statements(s: &Sexp) -> R<Vec<Stmt>> {
     let (h, r) = head(list(s)?)?;
+    if h == "invoke-prepared" {
+        let location = loc(h, r, 6)?;
+        return crate::lir::invoke_prepared(sym(&r[0])?.to_string(), sym(&r[1])?.to_string(),
+            sym(&r[2])?.to_string(), parse_expr(&r[3])?,
+            list(&r[4])?.iter().map(parse_expr).collect::<R<_>>()?, handler(&r[5])?, location);
+    }
     if h != "invoke" {
         return Ok(vec![parse_stmt(s)?]);
     }

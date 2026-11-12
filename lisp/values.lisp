@@ -144,9 +144,8 @@ proper list LIST as arguments. Returns the primary value and the count."
     (jump head)
     (start-block done)
     ;; No safepoint between filling the transfer area and the call.
-    (let ((v0 (new-var)) (nv (new-var :raw))
-          (entry (copy-to-var `(:field-load ,kiln.kir::+packet-field-function-entry+ ,f) :raw)))
-      (emit `(:call-lisp ,v0 ,nv ,entry (:ctx ,f ,i ,@args) ,(handler)))
+    (let ((v0 (new-var)) (nv (new-var :raw)))
+      (emit `(:invoke-prepared ,v0 ,nv ,f ,i ,args ,(handler)))
       (values v0 nv))))
 
 
