@@ -2,9 +2,6 @@
 
 ;;;; Must match rust/kiln-rt.
 
-;;; Fixnum encoding.
-(defconstant +fixnum-shift+ 1)
-
 (defconstant +char-code-limit+ #x110000)
 
 ;;; Error codes for kiln_rt_error.

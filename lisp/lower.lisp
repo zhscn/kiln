@@ -415,7 +415,7 @@ by ending the program."
         (fatal (new-block)))
     (br `(:eq (:field-load ,kiln.kir::+packet-field-function-entry+ ,f) (:addr ,(undefined-function-entry))) fatal lisp)
     (start-block lisp)
-    (emit-lisp-call f (list (ash code +fixnum-shift+) obj))
+    (emit-lisp-call f (list `(:fixnum-tag ,code) obj))
     (jump fatal)
     (start-block fatal)
     (emit-fatal-error code obj)))
@@ -1099,9 +1099,9 @@ returns LOW, HIGH and T; else NIL, NIL and NIL."
   "Raw 0/1 operand: is VAL a fixnum in LOW..HIGH?"
   (let ((cond `(:test-class ,kiln.kir::+packet-class-fixnum+ ,val)))
     (when (> low +most-negative-fixnum+)
-      (setf cond `(:and ,cond (:ge ,val ,(ash low +fixnum-shift+)))))
+      (setf cond `(:and ,cond (:ge ,val (:fixnum-tag ,low)))))
     (when (< high +most-positive-fixnum+)
-      (setf cond `(:and ,cond (:le ,val ,(ash high +fixnum-shift+)))))
+      (setf cond `(:and ,cond (:le ,val (:fixnum-tag ,high)))))
     cond))
 
 (defun inline-typep-specifier-p (type)

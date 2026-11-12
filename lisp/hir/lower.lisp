@@ -823,7 +823,7 @@ unsupported call. Arguments retain their evaluation order and effects."
       (let ((value (copy-to-var (hir-lower (svref args 0)))))
         (return-from hir-lower-typed-call
           (values (hir-lower-fixnum-arithmetic
-                   (if (eq name '1+) '+ '-) value (ash 1 +fixnum-shift+)
+                   (if (eq name '1+) '+ '-) value '(:fixnum-tag 1)
                    (hir-fixnum-type-p (hir-node-type node))) t))))
     (when (and (= count 2) (not (eq (hir-node-d node) :notinline))
                (member name '(< > <= >= = /=))
@@ -962,7 +962,7 @@ unsupported call. Arguments retain their evaluation order and effects."
                        (and (= count 2) (member name '(+ - *))))
                    (every (lambda (arg) (hir-fixnum-type-p (hir-node-type arg))) args))
           (let* ((values (lower-args (coerce args 'list)))
-                 (a (first values)) (b (if (= count 1) (ash 1 +fixnum-shift+) (second values)))
+                 (a (first values)) (b (if (= count 1) '(:fixnum-tag 1) (second values)))
                  (op (case name (1+ '+) (1- '-) (otherwise name)))
                  (value (hir-lower-fixnum-arithmetic op a b
                                                   (hir-fixnum-type-p (hir-node-type init)) t)))
@@ -1237,7 +1237,7 @@ unsupported call. Arguments retain their evaluation order and effects."
     (if (eq (exit-info-func info) *func*)
         (progn (emit-local-exit (exit-info-regions info)) (jump (exit-info-block info)))
         (let ((token (hir-variable-value (hir-exit-token (hir-exit-group exit)))))
-          (emit `(:call-rt ,(rt-exit-to) () (:ctx ,token ,(ash (hir-exit-index exit) +fixnum-shift+) 0) ,(handler)))
+          (emit `(:call-rt ,(rt-exit-to) () (:ctx ,token (:fixnum-tag ,(hir-exit-index exit)) 0) ,(handler)))
           (emit-error +err-expired-exit+ token)))
     (nil-value)))
 

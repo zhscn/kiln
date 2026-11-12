@@ -84,7 +84,7 @@
         (t (reduce (lambda (a b) (emit-arith op a b)) vals))))
 
 (define-nary-primitive + (vals) (fold-arith '+ 0 vals))
-(define-nary-primitive * (vals) (fold-arith '* (ash 1 +fixnum-shift+) vals))
+(define-nary-primitive * (vals) (fold-arith '* '(:fixnum-tag 1) vals))
 (defun emit-negate (n)
   (let ((r (new-var)) (overflow (new-var :raw))
         (fast (new-block)) (slow (new-block)) (done (new-block)))
@@ -130,8 +130,8 @@
   (define-logop logior :or)
   (define-logop logxor :xor))
 
-(define-primitive 1+ (a) (emit-arith '+ a (ash 1 +fixnum-shift+)))
-(define-primitive 1- (a) (emit-arith '- a (ash 1 +fixnum-shift+)))
+(define-primitive 1+ (a) (emit-arith '+ a '(:fixnum-tag 1)))
+(define-primitive 1- (a) (emit-arith '- a '(:fixnum-tag 1)))
 
 (defun emit-compare-pair (op a b)
   "Raw 0/1 variable: does OP hold between the numbers A and B?"
@@ -310,7 +310,7 @@ are compared (no short circuit), which also checks every argument."
     (br `(:gt ,i 0) body done)
     (start-block body)
     (emit `(:set ,cur ,(emit-car-cdr cur kiln.kir::+packet-field-cons-cdr+)))
-    (emit `(:set ,i (:sub ,i ,(ash 1 +fixnum-shift+))))
+    (emit `(:set ,i (:sub ,i (:fixnum-tag 1))))
     (jump head)
     (start-block done)
     cur))

@@ -1,7 +1,7 @@
 (defpackage #:kiln.abi
   (:use #:cl)
   (:documentation "Constants shared with the runtime.")
-  (:export #:+fixnum-shift+ #:+char-code-limit+
+  (:export #:+char-code-limit+
            #:+err-not-fixnum+ #:+err-overflow+ #:+err-wrong-nargs+
            #:+err-not-list+ #:+err-not-function+
            #:+err-undefined-function+ #:+err-unbound-variable+ #:+err-not-symbol+
