@@ -1059,6 +1059,10 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
 
 fn parse_statements(s: &Sexp) -> R<Vec<Stmt>> {
     let (h, r) = head(list(s)?)?;
+    if h == "publish-values" {
+        arity(h, r, 1)?;
+        return crate::lir::publish_values(list(&r[0])?.iter().map(parse_expr).collect::<R<_>>()?);
+    }
     if h == "invoke-prepared" {
         let location = loc(h, r, 6)?;
         return crate::lir::invoke_prepared(sym(&r[0])?.to_string(), sym(&r[1])?.to_string(),

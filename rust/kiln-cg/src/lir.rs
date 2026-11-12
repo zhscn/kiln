@@ -1057,3 +1057,22 @@ fn counted_roots_bound_counts_and_saturate_at_zero() {
                    format!("{:?}", transfer_roots(Expr::Int(0))));
     }
 }
+
+/// Publish secondary values; primary value and count remain explicit operands.
+pub fn publish_values(values: Vec<Expr>) -> Result<Vec<Stmt>, String> {
+    if values.len() > 1 + kiln_rt::context::VALUES_MAX {
+        return Err("too many return values".into());
+    }
+    values.into_iter().skip(1).enumerate().map(|(i, value)| transfer_set(i as i64, value)).collect()
+}
+
+#[cfg(test)]
+#[test]
+fn published_values_preserve_order_and_check_capacity() {
+    assert!(publish_values(Vec::new()).unwrap().is_empty());
+    assert!(publish_values(vec![Expr::Int(7)]).unwrap().is_empty());
+    let result = publish_values(vec![Expr::Int(7), Expr::Int(8), Expr::Int(9)]).unwrap();
+    assert_eq!(format!("{result:?}"), format!("{:?}", vec![transfer_set(0, Expr::Int(8)).unwrap(), transfer_set(1, Expr::Int(9)).unwrap()]));
+    assert!(publish_values(vec![Expr::Int(0); 1 + kiln_rt::context::VALUES_MAX]).is_ok());
+    assert!(publish_values(vec![Expr::Int(0); 2 + kiln_rt::context::VALUES_MAX]).is_err());
+}

@@ -350,10 +350,7 @@ are compared (no short circuit), which also checks every argument."
 (define-nary-primitive values (vals)
   (when (> (length vals) (1+ kiln.kir::+backend-values-max+))
     (fail "VALUES with more than ~D arguments" (1+ kiln.kir::+backend-values-max+)))
-  ;; All arguments are evaluated: store the values after the first.
-  (loop for v in (rest vals)
-        for i from 0
-        do (emit `(:transfer-set ,i ,v)))
+  (emit `(:publish-values ,vals))
   (values (if vals (first vals) (nil-value)) (length vals)))
 
 (define-primitive values-list (list)
