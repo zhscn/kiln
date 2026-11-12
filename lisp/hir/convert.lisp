@@ -12,8 +12,7 @@
 
 (defun hir-variable-name (form)
   (let ((name (hir-raw form)))
-    (unless (and (symbolp name) name (not (eq name t)) (not (keywordp name))
-                 (not (member name lambda-list-keywords)))
+    (unless (and (symbolp name) name (not (eq name t)) (not (keywordp name)))
       (hir-error "Invalid variable name ~S" name))
     (when (typep (trucler:describe-variable *client* (hir-base-environment *environment*) name)
                  'trucler:constant-variable-description)
@@ -21,7 +20,7 @@
     name))
 
 (defun hir-function-name-p (name)
-  (or (and (symbolp name) name)
+  (or (symbolp name)
       (and (consp name) (eq (car name) 'setf) (consp (cdr name))
            (symbolp (second name)) (null (cddr name)))))
 

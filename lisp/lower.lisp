@@ -1497,7 +1497,7 @@ after a LIST call."
                                        slot-name)))))
   ;; MEMBER and ASSOC with EQL or EQ as the test and no key: functions of
   ;; two arguments, without parsing keywords.
-  (when (member name '(member assoc))
+  (when (and (member name '(member assoc)) (>= (length arg-asts) 2))
     (let ((test (simple-sequence-test (rest (rest arg-asts)))))
       (when test
         (return-from lower-global-call

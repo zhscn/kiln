@@ -15,7 +15,7 @@
     `(setf (gethash ',name *primitives*)
            (lambda (,vals)
              (unless (= (length ,vals) ,(length lambda-list))
-               (fail "~S called with ~D arguments, takes ~D"
+               (hir-error "~S called with ~D arguments, takes ~D"
                      ',name (length ,vals) ,(length lambda-list)))
              (destructuring-bind ,lambda-list ,vals ,@body)))))
 
@@ -27,7 +27,7 @@
     `(setf (gethash ,name *primops*)
            (lambda (,vals)
              (unless (= (length ,vals) ,(length lambda-list))
-               (fail "primop ~S called with ~D arguments, takes ~D"
+               (hir-error "primop ~S called with ~D arguments, takes ~D"
                      ,name (length ,vals) ,(length lambda-list)))
              (destructuring-bind ,lambda-list ,vals ,@body)))))
 
@@ -99,7 +99,7 @@
     r))
 
 (define-nary-primitive - (vals)
-  (cond ((null vals) (fail "- needs at least one argument"))
+  (cond ((null vals) (hir-error "- needs at least one argument"))
         ((null (rest vals)) (emit-negate (first vals)))
         (t (reduce (lambda (a b) (emit-arith '- a b)) vals))))
 ;;; LOGAND, LOGIOR, LOGXOR: fixnums open-coded (tagged fixnums combine
@@ -156,7 +156,7 @@
 (defun emit-compare (op vals)
   "Chained comparison: true if OP holds for each adjacent pair. All pairs
 are compared (no short circuit), which also checks every argument."
-  (when (null vals) (fail "comparison needs at least one argument"))
+  (when (null vals) (hir-error "comparison needs at least one argument"))
   (if (null (rest vals))
       (progn (emit-check-number (first vals)
                                (if (eq op :eq) 'kiln.kernel::check-number
@@ -173,7 +173,7 @@ are compared (no short circuit), which also checks every argument."
   (compare < :lt) (compare > :gt) (compare <= :le) (compare >= :ge) (compare = :eq))
 
 (define-nary-primitive /= (vals)
-  (when (null vals) (fail "/= needs at least one argument"))
+  (when (null vals) (hir-error "/= needs at least one argument"))
   (if (null (rest vals))
       (progn (emit-check-number (first vals)) (t-value))
       (let ((all nil))
@@ -340,7 +340,7 @@ are compared (no short circuit), which also checks every argument."
 
 (define-nary-primitive list (vals) (emit-list vals (nil-value)))
 (define-nary-primitive list* (vals)
-  (when (null vals) (fail "LIST* needs at least one argument"))
+  (when (null vals) (hir-error "LIST* needs at least one argument"))
   (emit-list (butlast vals) (car (last vals))))
 (define-nary-primitive vector (vals)
   (let* ((n (length vals))
@@ -369,7 +369,7 @@ are compared (no short circuit), which also checks every argument."
   (emit-list-to-values list))
 
 (define-nary-primitive apply (vals)
-  (when (< (length vals) 2) (fail "APPLY needs a function and a list"))
+  (when (< (length vals) 2) (hir-error "APPLY needs a function and a list"))
   (let ((f (emit-function-designator (first vals)))
         (list (emit-list (butlast (rest vals)) (car (last vals)))))
     (emit-check-proper-list list)
@@ -400,7 +400,7 @@ are compared (no short circuit), which also checks every argument."
     (start-block done)))
 
 (define-nary-primitive funcall (vals)
-  (when (null vals) (fail "FUNCALL needs a function"))
+  (when (null vals) (hir-error "FUNCALL needs a function"))
   (emit-lisp-call (emit-function-designator (first vals)) (rest vals)))
 
 ;;; FDEFINITION and (SETF FDEFINITION) are kernel functions (they take
@@ -575,7 +575,7 @@ operand N."
   (copy-to-var `(:shl (:shr ,c ,+character-shift+) ,+fixnum-shift+)))
 
 (defun emit-char-compare (op vals)
-  (when (null vals) (fail "character comparison needs at least one argument"))
+  (when (null vals) (hir-error "character comparison needs at least one argument"))
   (dolist (c vals) (emit-check-character c))
   (if (null (rest vals))
       (t-value)
@@ -592,7 +592,7 @@ operand N."
   (compare char<= :le) (compare char>= :ge))
 
 (define-nary-primitive char/= (vals)
-  (when (null vals) (fail "CHAR/= needs at least one argument"))
+  (when (null vals) (hir-error "CHAR/= needs at least one argument"))
   (dolist (c vals) (emit-check-character c))
   (if (null (rest vals))
       (t-value)
@@ -777,7 +777,7 @@ of it, SLOW-FN otherwise; both return an operand. Returns the result."
 
 (define-nary-primitive kiln.kernel::make-simple-vector (vals)
   (unless (<= 1 (length vals) 2)
-    (fail "MAKE-SIMPLE-VECTOR takes 1 or 2 arguments"))
+    (hir-error "MAKE-SIMPLE-VECTOR takes 1 or 2 arguments"))
   (let ((n (first vals))
         (x (if (rest vals) (second vals) (nil-value))))
     (if (and (integerp n) (zerop (logand n 1))
@@ -1021,7 +1021,7 @@ current function's. Nothing after it in the block is reached."
 ;;; UNWIND-PROTECT active, since the caller's frame is gone when F runs.
 (setf (gethash :tail-funcall *primops*)
       (lambda (vals)
-        (when (null vals) (fail "primop :TAIL-FUNCALL needs a function"))
+        (when (null vals) (hir-error "primop :TAIL-FUNCALL needs a function"))
         (let ((f (copy-to-var (first vals))))
           (emit-check-function f)
           (emit-tail-call f (mapcar (lambda (v) (copy-to-var v)) (rest vals))))))
@@ -1030,7 +1030,7 @@ current function's. Nothing after it in the block is reached."
 ;;; function object (a dispatch cache's entry, a method's fast function).
 (setf (gethash :tail-funcall-function *primops*)
       (lambda (vals)
-        (when (null vals) (fail "primop :TAIL-FUNCALL-FUNCTION needs a function"))
+        (when (null vals) (hir-error "primop :TAIL-FUNCALL-FUNCTION needs a function"))
         (emit-tail-call (copy-to-var (first vals))
                         (mapcar (lambda (v) (copy-to-var v)) (rest vals)))))
 

@@ -1,0 +1,13 @@
+(dolist (evaluator (list #'eval #+kiln #'kiln.kernel::interpreted-eval #-kiln #'eval))
+  (print (funcall evaluator '((lambda (x y) (declare (ignore x)) "documentation"
+                              (declare (ignore y)) :result) 1 2)))
+  (print (funcall evaluator '(let ((&optional 17)) &optional)))
+  (print (funcall evaluator '(symbol-macrolet ((&whole 23)) &whole)))
+  (print (funcall evaluator '(flet ((nil () :local)) (nil))))
+  (print (funcall evaluator '(labels ((nil (n) (if (zerop n) :recursive (nil (1- n)))))
+                             (nil 5))))
+  (print (every (lambda (form)
+                  (handler-case (progn (funcall evaluator form) nil)
+                    (program-error () t)))
+                '((symbol-value) (symbolp nil nil) (boundp) (cons 1)
+                  (member) (assoc 1) (<) (char=) (funcall) (apply #'list)))))
