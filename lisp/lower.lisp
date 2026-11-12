@@ -839,9 +839,7 @@ has never been bound). The table does not move."
 
 (defun emit-unbind (region)
   "Restores the value saved in the binding entry of REGION."
-  (let ((s `(:slot ,(region-slot region))))
-    (emit `(:store (:add (:load :ctx ,+ctx-tls+) (:shl (:load ,s ,+dyn-pend-target+) 2))
-                   0 (:load ,s ,+dyn-pend-value+)))))
+  (emit `(:special-unbind ,(region-slot region))))
 
 (defun emit-tls-index (sym)
   "Raw variable holding the TLS index of the symbol operand SYM, assigned
@@ -857,8 +855,9 @@ if needed (not a safepoint)."
 
 (defun emit-unbind-progv (region)
   "Restores the bindings saved in the progv entry of REGION. No calls."
-  (let ((l (copy-to-var `(:load (:slot ,(region-slot region)) ,+dyn-tag+)))
+  (let ((l (new-var))
         (head (new-block)) (body (new-block)) (done (new-block)))
+    (emit `(:progv-bindings ,l ,(region-slot region)))
     (jump head)
     (start-block head)
     (br `(:eq ,l ,(nil-value)) done body)

@@ -54,7 +54,6 @@
 
 ;;; Context field offsets.
 (defconstant +ctx-poll-flag+ 0)
-(defconstant +ctx-dynenv+ 8)
 ;;; Transfer area: arguments beyond the register arguments, and (later)
 ;;; values beyond the first. VALUES_MAX words, at the end of the context.
 ;;; Function entries call the poll slow path when their frame pointer is
@@ -67,9 +66,6 @@
 (defconstant +values-max+ 1021)
 
 ;;; Dynamic-environment entries (stack-allocated in the establishing frame).
-(defconstant +dyn-tag+ 24)
-(defconstant +dyn-pend-target+ 32)
-(defconstant +dyn-pend-value+ 40)
 
 ;;; Offset of the first element of a simple vector or string.
 (defconstant +vector-data+ (- 8 +tag-general+))

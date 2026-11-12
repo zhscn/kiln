@@ -552,6 +552,38 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                 for stmt in stmts {
                     validate_stack_references(stmt, &stack_objects)?;
                     let (head_name, operands) = head(list(stmt)?)?;
+                    if head_name == "special-bind" || head_name == "special-unbind" {
+                        arity(head_name, operands, if head_name == "special-bind" { 4 } else { 1 })?;
+                        let entry = sym(&operands[0])?;
+                        if dynamic_entries.get(entry).map(String::as_str) != Some("bind") { return Err("special binding operation requires a bind entry".into()); }
+                        if head_name == "special-bind" {
+                            let index = parse_expr(&operands[1])?;
+                            let address = parse_expr(&operands[2])?;
+                            let value = parse_expr(&operands[3])?;
+                            if [&index, &address, &value].iter().any(|operand| !matches!(operand, Expr::Var(_) | Expr::Int(_))) {
+                                return Err("special-bind requires stable operands".into());
+                            }
+                            lowered.extend(crate::lir::bind_special(entry.to_string(), index, address, value));
+                        } else {
+                            lowered.push(crate::lir::unbind_special(entry.to_string()));
+                        }
+                        continue;
+                    }
+                    if head_name == "progv-bindings" {
+                        arity(head_name, operands, 2)?;
+                        let result = sym(&operands[0])?;
+                        let entry = sym(&operands[1])?;
+                        if dynamic_entries.get(entry).map(String::as_str) != Some("progv") { return Err("progv-bindings requires a progv entry".into()); }
+                        lowered.push(crate::lir::progv_bindings(result.to_string(), entry.to_string()));
+                        continue;
+                    }
+                    if head_name == "dynamic-relink" {
+                        arity(head_name, operands, 1)?;
+                        let entry = sym(&operands[0])?;
+                        if dynamic_entries.get(entry).map(String::as_str) != Some("exit-point") { return Err("dynamic-relink requires an exit-point entry".into()); }
+                        lowered.push(crate::lir::relink_dynamic_entry(entry.to_string()));
+                        continue;
+                    }
                     if head_name == "dynamic-enter" {
                         arity(head_name, operands, 3)?;
                         let entry = sym(&operands[0])?;

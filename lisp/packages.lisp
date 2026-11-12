@@ -11,9 +11,7 @@
               #:+unbound+
            #:+length-shift+
            #:+cons-bytes+
-           #:+ctx-poll-flag+ #:+ctx-dynenv+ #:+values-max+ #:+ctx-stack-limit+ #:+ctx-tls+ #:+no-tls-value+
-           #:+dyn-tag+
-           #:+dyn-pend-target+ #:+dyn-pend-value+
+           #:+ctx-poll-flag+ #:+values-max+ #:+ctx-stack-limit+ #:+ctx-tls+ #:+no-tls-value+
            #:+err-not-fixnum+ #:+err-overflow+ #:+err-wrong-nargs+
            #:+err-not-list+ #:+err-not-function+
            #:+err-undefined-function+ #:+err-unbound-variable+ #:+err-not-symbol+

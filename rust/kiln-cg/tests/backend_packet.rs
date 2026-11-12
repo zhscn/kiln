@@ -117,6 +117,24 @@ fn immediate_class_tests_preserve_kir_and_reject_unknown_classes() {
 }
 
 #[test]
+fn dynamic_entry_payload_operations_preserve_layout_and_check_kinds() {
+    use packet::schema::KIR_PAYLOAD;
+    let module = |slots, body| format!("(module \"dynamic\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (p raw) (i raw) (v obj)) (slots {slots}) (block b {body} (return v 1))))");
+    let old = module("(b 48) (g 48) (e 48)".to_string(), "(store (slot b) 32 i) (store (slot b) 40 (load p 0)) (store p 0 v) (store (add (load ctx 48) (shl (load (slot b) 32) 2)) 0 (load (slot b) 40)) (set v (load (slot g) 24)) (store ctx 8 (slot e))".to_string());
+    let new = module("(b (dynamic-entry bind)) (g (dynamic-entry progv)) (e (dynamic-entry exit-point))".to_string(), "(special-bind b i p v) (special-unbind b) (progv-bindings v g) (dynamic-relink e)".to_string());
+    let old = kiln_cg::kir::parse_module(&sexp::parse_one(&old).unwrap()).unwrap();
+    let new = sexp::parse_one(&new).unwrap();
+    let new = packet::load(&packet::encode(&new, KIR_PAYLOAD).unwrap()).unwrap();
+    assert_eq!(format!("{old:?}"), format!("{new:?}"));
+    for body in ["(special-bind s i p v)", "(special-unbind s)", "(progv-bindings v s)", "(dynamic-relink s)"] {
+        let program = module("(s (dynamic-entry catch))".to_string(), body.to_string());
+        assert!(kiln_cg::kir::parse_module(&sexp::parse_one(&program).unwrap()).is_err());
+    }
+    let invalid = module("(s (dynamic-entry bind))".to_string(), "(special-bind s i (load p 0) v)".to_string());
+    assert!(kiln_cg::kir::parse_module(&sexp::parse_one(&invalid).unwrap()).is_err());
+}
+
+#[test]
 fn dynamic_entries_preserve_layout_and_reject_mismatched_kinds() {
     use packet::schema::KIR_PAYLOAD;
     let module = |slots, body| format!("(module \"dynamic\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars) (slots {slots}) (block b {body} (return a0 1))))");

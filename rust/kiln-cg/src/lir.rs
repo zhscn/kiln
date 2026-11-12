@@ -268,6 +268,33 @@ pub fn leave_dynamic_entry(entry: String) -> Stmt {
         Expr::Load(Box::new(Expr::Slot(entry)), core::mem::offset_of!(DynEntry, prev) as i32))
 }
 
+pub fn bind_special(entry: String, index: Expr, address: Expr, value: Expr) -> Vec<Stmt> {
+    use kiln_rt::context::DynEntry;
+    vec![
+        Stmt::Store(Expr::Slot(entry.clone()), core::mem::offset_of!(DynEntry, pend_target) as i32, index),
+        Stmt::Store(Expr::Slot(entry), core::mem::offset_of!(DynEntry, pend_value) as i32,
+                    Expr::Load(Box::new(address.clone()), 0)),
+        Stmt::Store(address, 0, value),
+    ]
+}
+
+pub fn unbind_special(entry: String) -> Stmt {
+    use crate::kir::{BinOp, ShiftOp};
+    use kiln_rt::context::{Context, DynEntry};
+    let field = |offset: usize| Expr::Load(Box::new(Expr::Slot(entry.clone())), offset as i32);
+    let tls = Expr::Load(Box::new(Expr::Var("ctx".into())), core::mem::offset_of!(Context, tls) as i32);
+    let index = Expr::Shift(ShiftOp::Shl, Box::new(field(core::mem::offset_of!(DynEntry, pend_target))), 2);
+    Stmt::Store(Expr::Bin(BinOp::Add, Box::new(tls), Box::new(index)), 0, field(core::mem::offset_of!(DynEntry, pend_value)))
+}
+
+pub fn progv_bindings(result: String, entry: String) -> Stmt {
+    Stmt::Set(result, Expr::Load(Box::new(Expr::Slot(entry)), core::mem::offset_of!(kiln_rt::context::DynEntry, tag) as i32))
+}
+
+pub fn relink_dynamic_entry(entry: String) -> Stmt {
+    Stmt::Store(Expr::Var("ctx".into()), core::mem::offset_of!(kiln_rt::context::Context, dynenv) as i32, Expr::Slot(entry))
+}
+
 pub fn closure_ref(object: Expr, index: i64) -> Result<Expr, String> {
     Ok(Expr::Load(Box::new(object), closure_offset(index)?))
 }
