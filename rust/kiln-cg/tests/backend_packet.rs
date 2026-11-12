@@ -40,6 +40,9 @@ fn lisp_and_rust_encode_identical_indexed_requests() {
         bytes,
         packet::encode(&program, packet::schema::KIR_PAYLOAD).unwrap()
     );
+    let dump = Command::new(env!("CARGO_BIN_EXE_kiln-cg")).arg("dump").arg(&path).output().unwrap();
+    assert!(dump.status.success());
+    assert_eq!(sexp::parse_one(std::str::from_utf8(&dump.stdout).unwrap()).unwrap(), program);
 }
 
 #[test]

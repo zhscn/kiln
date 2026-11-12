@@ -142,7 +142,14 @@ impl fmt::Display for Sexp {
         match self {
             Sexp::Int(n) => write!(f, "{n}"),
             Sexp::Sym(s) => write!(f, "{s}"),
-            Sexp::Str(s) => write!(f, "{s:?}"),
+            Sexp::Str(s) => {
+                write!(f, "\"")?;
+                for c in s.chars() {
+                    if c == '\\' || c == '"' { write!(f, "\\")?; }
+                    write!(f, "{c}")?;
+                }
+                write!(f, "\"")
+            }
             Sexp::List(items) => {
                 write!(f, "(")?;
                 for (i, it) in items.iter().enumerate() {
@@ -160,6 +167,12 @@ impl fmt::Display for Sexp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn diagnostic_strings_roundtrip_control_characters() {
+        let value = Sexp::List(vec![Sexp::Str("line\n\r\t\0\\\"λ".into())]);
+        assert_eq!(parse_one(&value.to_string()).unwrap(), value);
+    }
 
     #[test]
     fn parses_nested() {

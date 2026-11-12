@@ -569,6 +569,7 @@ dependencies = [
  "cranelift-native",
  "cranelift-object",
  "kiln-rt",
+ "libc",
 ]
 
 [[package]]

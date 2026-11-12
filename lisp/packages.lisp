@@ -79,7 +79,7 @@
 
 (defpackage #:kiln
   (:use #:cl)
-  (:export #:compile-file-to-kir #:compile-kernel #:compile-clos #:compile-frontend
+  (:export #:compile-file-to-lir #:compile-file-to-kir #:compile-kernel #:compile-clos #:compile-frontend
            #:compile-compiler
            #:compile-eval #:bootstrap-stage0 #:write-manifest))
 

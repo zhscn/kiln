@@ -11,3 +11,21 @@
        (function (compile nil `(lambda () ',literal))))
   (kiln.sys:%gc)
   (show (eq (funcall function) literal)))
+
+;;; File output takes the native path and maintains the stream position.
+(let* ((program '(:module "packet-file" (:init "init")
+                  (:data "init" (:words 2 (:func "f")))
+                  (:func "f" (:vars) (:slots) (:block :entry (:return 0 1)))))
+       (expected (kiln.kir::portable-backend-packet program))
+       (path "build/test/backend-packet-output.lir"))
+  (unwind-protect
+       (progn
+         (with-open-file (out path :direction :output :if-exists :supersede
+                                  :element-type '(unsigned-byte 8))
+           (show (and (kiln.sys::%write-backend-packet program out)
+                      (= (file-position out) (length expected)))))
+         (with-open-file (in path :element-type '(unsigned-byte 8))
+           (let ((actual (make-array (file-length in))))
+             (read-sequence actual in)
+             (show (equalp expected actual)))))
+    (when (probe-file path) (delete-file path))))

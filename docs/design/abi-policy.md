@@ -19,7 +19,7 @@ kiln 的 ABI 是**同一构建内部的契约**，不是对外承诺。开发期
 ## 决定
 
 - **不承诺跨版本的二进制兼容**，至少在 1.0 之前不承诺。ABI（值的 tag、对象头、context 布局、调用约定）可以随时修改，当前修改时先改设计文档，再同步 `rust/kiln-rt/src/{object,context}.rs` 和 `lisp/abi.lisp` 两处常量。LIR 接入后由 Rust 生成 Lisp 所需的目标能力描述，不再复制 tag 和偏移。
-- **ABI 指纹**（还没有实现）：由 ABI 常量表算出一个哈希，写进每个 KIR 模块和目标文件。kiln-cg 和 kiln-rt 加载模块时校验，不一致就拒绝加载并报告，不让版本不匹配表现为静默崩溃。Rust 宿主模块也用它核对（[rust-interop.md](rust-interop.md)）。现在只有堆快照有自己的指纹（[heap-image.md](heap-image.md)）。
+- **ABI 指纹**：结构化编译协议已校验 runtime 对象、context、共享 schema 与目标的构建指纹，见 [compiler-protocol.md](compiler-protocol.md)。目标文件独立加载和 Rust 宿主服务表的指纹校验仍待接入；堆快照另有绑定可执行文件的指纹（[heap-image.md](heap-image.md)）。
 - **冻结得越晚越好**：Swift 在 ABI 稳定之前改过多次布局和调用约定，许多性能改进都依赖这种自由。kiln 在 1.0 之前同样保持 ABI 可以自由修改；ABI 指纹保证这种自由不会变成难以诊断的崩溃。
 - **内联函数和宏是编译期依赖**：一个模块内联了另一个模块的函数，或者展开了它的宏，前者就依赖后者的定义，而不只是它的名字。在 image 里求值的定义已经记录这些依赖，重定义时自动更新（[dependencies.md](dependencies.md)）；AOT 编出的模块还没有记录。
 - **seal 相当于整体冻结**：函数经 fdefinition 间接调用、类可以重定义（实例靠 stamp 和实例更新协议迁移）、槽位按名字查位置，这些都是开发期的“可演进”。seal（[positioning.md](positioning.md)）把整个世界一次冻结：之后可以直接调用、固定槽偏移、内联、裁掉用不到的元对象。待定：seal 之前是否也允许局部冻结（sealed class、sealed generic function），在开发期就拿到一部分 seal 之后的性能。

@@ -372,6 +372,14 @@ in SESSION see its macros and definitions."
 kernel module first: kiln-cg jit kernel.kir OUTPUT."
   (write-module (compile-files (list input) session (pathname-name input)) output))
 
+(defun compile-file-to-lir (input output &key (session (kiln.compiler:make-session)))
+  "Compiles INPUT to a canonical binary backend request."
+  (with-open-file (out output :direction :output :if-exists :supersede
+                             :element-type '(unsigned-byte 8))
+    (kiln.kir::write-module-packet
+     (compile-files (list input) session (pathname-name input)) out))
+  output)
+
 (defun compile-clos (output &key (session (kiln.compiler:make-session)))
   "Compiles CLOS (Clostrophilia and kiln's bootstrap) to the KIR module
 OUTPUT, to be loaded after the kernel. SESSION must have compiled the
@@ -532,9 +540,9 @@ namestrings for pathnames."
                   (namestring file)))
             files)))
 
-(defun bootstrap-stage0 (directory)
+(defun bootstrap-stage0 (directory &key (output-format :lir))
   "Stage 0 of the bootstrap: compiles the five modules and the
-build program (lisp/target/build.lisp) to NAME.kir in DIRECTORY, in one
+build program (lisp/target/build.lisp) to binary NAME.lir in DIRECTORY, in one
 session, and writes the build program's manifest there, modules.lisp-expr:
 for each module, its name and source files. kiln0, linked from these
 modules, runs the build program, which compiles the same modules and
@@ -542,7 +550,8 @@ itself as here."
   (let* ((dir (uiop:ensure-directory-pathname directory))
          (session (kiln.compiler:make-session))
          (build (asdf:system-relative-pathname "kiln" "lisp/target/build.lisp")))
-    (flet ((out (name) (merge-pathnames (format nil "~A.kir" name) dir)))
+    (flet ((out (name) (merge-pathnames (format nil "~A.~A" name
+                                                  (ecase output-format (:lir "lir") (:kir "kir"))) dir)))
       (compile-kernel (out "kernel") :session session)
       (compile-clos (out "clos") :session session)
       (compile-frontend (out "frontend") :session session)
@@ -557,7 +566,7 @@ itself as here."
 the five modules and their source files, then each of the source files
 PROGRAMS as a module named after the file, as compile-file-to-kir names
 it. Run in OUTPUT's directory, the build program compiles them in that
-order, in one session, to NAME.kir."
+order, in one session, to binary NAME.lir (or NAME.kir for diagnostics)."
   (with-open-file (out output :direction :output :if-exists :supersede)
     (with-standard-io-syntax
       (let ((*print-readably* nil))

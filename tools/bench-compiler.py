@@ -36,7 +36,7 @@ def main():
     for index in range(args.warmup + args.runs):
         run = output / f'run-{index}'
         run.mkdir(exist_ok=True)
-        for old in run.glob('*.kir'):
+        for old in [*run.glob('*.kir'), *run.glob('*.lir')]:
             old.unlink()
         shutil.copyfile(manifest, run / 'modules.lisp-expr')
         start = time.perf_counter()
@@ -54,11 +54,11 @@ def main():
         if not phases:
             raise RuntimeError('executable lacks build timing; rebuild it from current sources')
         hashes = {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
-                  for p in sorted(run.glob('*.kir'))}
+                  for p in sorted([*run.glob('*.kir'), *run.glob('*.lir')])}
         if not hashes or {p[:-4] for p in hashes} != set(phases):
-            raise RuntimeError('KIR outputs and timed modules differ')
+            raise RuntimeError('Backend outputs and timed modules differ')
         if expected is not None and hashes != expected:
-            raise RuntimeError('KIR output changed between runs')
+            raise RuntimeError('Backend output changed between runs')
         expected = hashes
         record = dict(seconds=elapsed, peak_rss_kib=int((run / 'rss.txt').read_text()),
                       phases=phases)

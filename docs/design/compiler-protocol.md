@@ -11,17 +11,17 @@
 | 偏移 | 宽度 | 内容 |
 |---|---|---|
 | 0 | 8 | magic：`KILNLIR` 和零字节 |
-| 8、12 | 各 4 | major、minor，当前为 1、0 |
+| 8、12 | 各 4 | major、minor，当前为 1、1 |
 | 16、20 | 各 4 | payload 种类、标志（当前为零） |
 | 24、32 | 各 8 | 目标指纹、总字节数 |
 | 40、44、48、52 | 各 4 | 记录数、子记录引用数、UTF-8 字节数、根记录 ID |
 | 56 | 8 | 保留，必须为零 |
 
-随后依次为 16 字节记录、4 字节子记录 ID、UTF-8 池。记录为 `(tag:u32, offset:u32, payload:u64)`：整数保存有符号 64 位位模式；symbol/string 引用字节池；list 引用子 ID 区间。后序编号只能引用更早记录，每个非根记录恰被引用一次，避免 DAG 展开导致内存放大。块、变量和操作由记录组成，程序标识符和字符串不经打印或 reader 解析。当前限制为 256 层、256 MiB。
+随后依次为 16 字节记录、4 字节子记录 ID、UTF-8 池。记录为 `(tag:u32, offset:u32, payload:u64)`：整数保存有符号 64 位位模式；symbol/string 引用字节池；list 引用子 ID 区间。后序编号只能引用更早记录。整数、标识符、字符串和空列表按内容去重，非空列表只能有一个 owner，防止集合 DAG 的递归展开。解码前校验原子重复引用造成的展开量，不能因一个长字符串被大量引用而绕过资源限制。块、变量和操作由记录组成，程序标识符和字符串不经打印或 reader 解析。当前限制为 256 层、256 MiB 编码，并按 32 字节记录单位和字符串复制量估算展开成本，上限 1 GiB；这是逻辑展开预算，不是进程 RSS 上限。元数据原子共享不合并 Lisp literal 或其对象图。
 
-宿主使用可移植 Lisp 编码器，image 使用批量 native 编码器，两者输出同一 schema。native 编码先在无 safepoint 的遍历中复制程序为 Rust 自有数据，结束所有对象借用后才分配结果向量；分配通过带帧指针的 safepoint trampoline，调用者的其他对象保持为精确 roots。ASCII 标识符统一转小写，UTF-8 字符串保留原内容；非 ASCII 标识符不做大小写转换。运行期载体为 simple-vector octets，编译入口批量复制为 native bytes 后解码。当前入口以 NIL 和 stderr 报告编译失败，结构化诊断与独立产物 handle 尚未接入；Rust panic 仍遵守工作区的 abort 配置。此载体每个 octet 占一个 Lisp 槽，不能把它称为紧凑的原生字节数组；后续可优化载体而保持 wire schema。纯编译入口没有 Lisp 分配或 safepoint，单 mutator 下由调用帧保持 literal 向量存活，安装后转为静态 roots；尚不支持并发 mutator 的 native 状态切换。
+宿主使用可移植 Lisp 编码器，image 使用批量 native 编码器，两者输出同一 schema。native 编码在无 safepoint 的窗口直接构造 Rust 自有记录，对原子使用临时对象身份缓存；记录和字节完成、缓存释放后才分配结果向量；分配通过带帧指针的 safepoint trampoline，调用者的其他对象保持为精确 roots。ASCII 标识符统一转小写，UTF-8 字符串保留原内容；非 ASCII 标识符不做大小写转换。需要保留字节时使用 simple-vector octets，编译入口批量复制为 native bytes 后解码。当前入口以 NIL 和 stderr 报告编译失败，结构化诊断与独立产物 handle 尚未接入；Rust panic 仍遵守工作区的 abort 配置。此载体每个 octet 占一个 Lisp 槽，不能把它称为紧凑的原生字节数组；后续可优化载体而保持 wire schema。纯编译入口没有 Lisp 分配或 safepoint，单 mutator 下由调用帧保持 literal 向量存活，安装后转为静态 roots；尚不支持并发 mutator 的 native 状态切换。
 
-`.lir` 输出选择二进制封套，旧 `.kir` 文件及 `kiln_rt_jit` 文本入口保留用于迁移对照。原生 `compile` 使用 `:compile-program`，一次性程序不物化字节向量；`eval` 的缓存载荷和 FASL 加载使用 `:compile-packet`。缓存和定义指纹采用规范化记录字节。FASL 格式版本为 2，记录标签 6 保存 packet octets；旧版本会拒绝加载。
+生产构建、自举、REPL 和基准的 `.lir` 输出使用二进制封套，旧 `.kir` 文件及 `kiln_rt_jit` 文本入口保留用于迁移对照。原生 `compile` 使用 `:compile-program`，一次性程序不物化字节向量；`eval` 的缓存载荷和 FASL 加载使用 `:compile-packet`。缓存和定义指纹采用规范化记录字节。FASL 格式版本为 2，记录标签 6 保存 packet octets；旧版本会拒绝加载。
 
 ## 已接入的字段操作
 
@@ -44,7 +44,7 @@
 以下是解码后的示意记录，不是可直接提交的文本格式或已实现的 opcode 编号：
 
 ```text
-header { schema: 1.0, target: ABI, module: "example" }
+header { schema: 1.1, target: ABI, module: "example" }
 variables [ {id: 0, repr: obj}, {id: 1, repr: word} ]
 operations [
   { op: arg-count, dst: 1 },

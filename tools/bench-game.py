@@ -53,10 +53,10 @@ def build_case(root, directory, env):
     forms = [
         '(ql:quickload "kiln" :silent t)',
         '(defvar *session* (kiln.compiler:make-session))',
-        f'(kiln:compile-kernel {lisp_string(directory / "kernel.kir")} :session *session*)',
-        f'(kiln:compile-clos {lisp_string(directory / "clos.kir")} :session *session*)',
-        f'(kiln:compile-file-to-kir {lisp_string(source)} '
-        f'{lisp_string(directory / "program.kir")} :session *session*)',
+        f'(kiln:compile-kernel {lisp_string(directory / "kernel.lir")} :session *session*)',
+        f'(kiln:compile-clos {lisp_string(directory / "clos.lir")} :session *session*)',
+        f'(kiln:compile-file-to-lir {lisp_string(source)} '
+        f'{lisp_string(directory / "program.lir")} :session *session*)',
     ]
     command = ['sbcl', '--dynamic-space-size', '4GB', '--noinform',
                '--non-interactive', '--load', str(root / 'tools/env.lisp')]
@@ -64,7 +64,7 @@ def build_case(root, directory, env):
         command += ['--eval', form]
     checked(command, directory / 'kiln-compile.log', root, env)
     checked([str(root / 'target/release/kiln-cg'), 'obj',
-             *[str(directory / f'{name}.kir') for name in ('kernel', 'clos', 'program')],
+             *[str(directory / f'{name}.lir') for name in ('kernel', 'clos', 'program')],
              '-o', str(directory / 'program.o')], directory / 'codegen.log', root, env)
     checked(['cc', str(directory / 'program.o'),
              str(root / 'target/release/libkiln_launcher.a'),

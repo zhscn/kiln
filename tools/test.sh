@@ -109,7 +109,7 @@ if [ -n "${KILN_COMPILER:-}" ]; then
     rm -f "$image" "$image.key"
     run=(env KILN_SAVE_IMAGE="$image")
   fi
-  (cd "$build" && "${run[@]}" MMTK_GC_TRIGGER=FixedHeapSize:${KILN_COMPILER_HEAP:-8589934592} "$compiler") \
+  (cd "$build" && KILN_OUTPUT_FORMAT=kir "${run[@]}" MMTK_GC_TRIGGER=FixedHeapSize:${KILN_COMPILER_HEAP:-8589934592} "$compiler") \
     >>"$build/compile.log" 2>&1 || { cat "$build/compile.log"; exit 1; }
   if [ -f "$image" ] && [ ! -f "$image.key" ]; then echo "$key" >"$image.key"; fi
 else

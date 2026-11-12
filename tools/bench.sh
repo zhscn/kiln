@@ -52,14 +52,14 @@ if [ $run_kiln = 1 ] && [ $build_exe = 1 ]; then
     --load "$root/tools/env.lisp" \
     --eval '(ql:quickload "kiln" :silent t)' \
     --eval "(defvar *session* (kiln.compiler:make-session))" \
-    --eval "(kiln:compile-kernel \"$build/kernel.kir\" :session *session*)" \
-    --eval "(kiln:compile-clos \"$build/clos.kir\" :session *session*)" \
-    --eval "(kiln:compile-frontend \"$build/frontend.kir\" :session *session*)" \
-    --eval "(kiln:compile-eval \"$build/eval.kir\" :session *session*)" \
-    --eval "(kiln:compile-compiler \"$build/compiler.kir\" :session *session*)" \
-    --eval "(kiln:compile-file-to-kir \"$src\" \"$build/co-cl-bench.kir\" :session *session*)" \
+    --eval "(kiln:compile-kernel \"$build/kernel.lir\" :session *session*)" \
+    --eval "(kiln:compile-clos \"$build/clos.lir\" :session *session*)" \
+    --eval "(kiln:compile-frontend \"$build/frontend.lir\" :session *session*)" \
+    --eval "(kiln:compile-eval \"$build/eval.lir\" :session *session*)" \
+    --eval "(kiln:compile-compiler \"$build/compiler.lir\" :session *session*)" \
+    --eval "(kiln:compile-file-to-lir \"$src\" \"$build/co-cl-bench.lir\" :session *session*)" \
     >"$build/compile.log" 2>&1 || { tail -40 "$build/compile.log"; exit 1; }
-  target/release/kiln-cg obj "$build"/{kernel,clos,frontend,eval,compiler,co-cl-bench}.kir \
+  target/release/kiln-cg obj "$build"/{kernel,clos,frontend,eval,compiler,co-cl-bench}.lir \
     -o "$build/co-cl-bench.o"
   cc "$build/co-cl-bench.o" target/release/libkiln_launcher.a -o "$build/co-cl-bench" \
     -lpthread -ldl -lm

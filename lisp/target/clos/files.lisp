@@ -93,6 +93,19 @@
           (note-written stream result)))
       t)))
 
+(defun kiln.sys::%write-backend-packet (program stream)
+  (loop while (typep stream 'synonym-stream)
+        do (setf stream (symbol-value (cl:synonym-stream-symbol stream))))
+  (when (and (typep stream 'kiln-file-stream)
+             (equal (cl:stream-element-type stream) '(unsigned-byte 8)))
+    (when (< (in-start stream) (in-end stream)) (discard-file-input stream))
+    (flush-file-buffer stream)
+    (let ((result (kiln.sys:%primop :write-packet program (descriptor stream))))
+      (when (eql result -1000) (error "Invalid backend program."))
+      (check-sys stream result)
+      (note-written stream result))
+    t))
+
 (defun discard-file-input (stream)
   "Moves the file position back over the input read ahead."
   (let ((ahead (- (in-end stream) (in-start stream))))

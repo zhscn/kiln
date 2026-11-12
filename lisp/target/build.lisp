@@ -6,7 +6,7 @@
 ;;;; Run in a directory holding modules.lisp-expr, which stage 0 writes: a
 ;;;; list of (NAME FILE...), the modules in order with their source files,
 ;;;; as KILN.COMPILER:FRONT-END takes them. Each module is written to
-;;;; NAME.kir in that directory. Programs (tests, the build program itself)
+;;;; NAME.lir in that directory (KILN_OUTPUT_FORMAT=kir selects text). Programs (tests, the build program itself)
 ;;;; are modules too, after the five (kiln:write-manifest).
 ;;;;
 ;;;; With the environment variable KILN_SAVE_IMAGE naming a file, the
@@ -55,9 +55,12 @@
                                                         :defined-packages packages
                                                         :extra-symbols extra-symbols)
                   (setf lower-end (get-internal-real-time)))))))
-      (with-open-file (out (concatenate 'string name ".kir")
-                           :direction :output :if-exists :supersede)
-        (kiln.kir:print-module module out)))
+      (let ((text (equal (getenv "KILN_OUTPUT_FORMAT") "kir")))
+        (with-open-file (out (concatenate 'string name (if text ".kir" ".lir"))
+                             :direction :output :if-exists :supersede
+                             :element-type (if text 'character '(unsigned-byte 8)))
+          (if text (kiln.kir:print-module module out)
+              (kiln.kir::write-module-packet module out)))))
     (when (getenv "KILN_BUILD_TIMING")
       (format t "build-timing ~A ~D ~D ~D ~D~%" name
               (- front-end-end phase-start)

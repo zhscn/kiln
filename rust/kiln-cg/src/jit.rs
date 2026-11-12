@@ -142,6 +142,7 @@ pub fn load(kir: &kir::Module, opts: &Options, memory: Memory) -> Result<Loaded,
     builder.symbol("kiln_rt_compile_packet", kiln_rt_compile_packet as *const u8);
     builder.symbol("kiln_rt_compile_program", kiln_rt_compile_program as *const u8);
     builder.symbol("kiln_rt_encode_packet", crate::packet_heap::kiln_rt_encode_packet as *const u8);
+    builder.symbol("kiln_rt_write_packet", crate::packet_heap::kiln_rt_write_packet as *const u8);
     builder.symbol_lookup_fn(Box::new(|name| kiln_rt::exported(name).map(|a| a as *const u8)));
     let mut module = JITModule::new(builder);
     let out = codegen::compile(&mut module, kir, opts)?;

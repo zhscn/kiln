@@ -12,21 +12,21 @@ cd "$root"
 cargo build -q
 main=$build/main.lisp
 echo '(kiln.sys:repl)' >"$main"
-stamp=$build/main.kir
+stamp=$build/main.lir
 if [ ! -e "$stamp" ] || [ -n "$(find lisp vendor kiln.asd -newer "$stamp" -name '*.lisp' -print -quit)" ]; then
   echo "; building the image (a few minutes)" >&2
   sbcl --noinform --non-interactive \
     --load "$root/tools/env.lisp" \
     --eval '(ql:quickload "kiln" :silent t)' \
     --eval "(defvar *session* (kiln.compiler:make-session))" \
-    --eval "(kiln:compile-kernel \"$build/kernel.kir\" :session *session*)" \
-    --eval "(kiln:compile-clos \"$build/clos.kir\" :session *session*)" \
-    --eval "(kiln:compile-frontend \"$build/frontend.kir\" :session *session*)" \
-    --eval "(kiln:compile-eval \"$build/eval.kir\" :session *session*)" \
-    --eval "(kiln:compile-file-to-kir \"$main\" \"$build/main.kir\" :session *session*)" \
+    --eval "(kiln:compile-kernel \"$build/kernel.lir\" :session *session*)" \
+    --eval "(kiln:compile-clos \"$build/clos.lir\" :session *session*)" \
+    --eval "(kiln:compile-frontend \"$build/frontend.lir\" :session *session*)" \
+    --eval "(kiln:compile-eval \"$build/eval.lir\" :session *session*)" \
+    --eval "(kiln:compile-file-to-lir \"$main\" \"$build/main.lir\" :session *session*)" \
     >"$build/compile.log" 2>&1 || { tail -40 "$build/compile.log"; exit 1; }
 fi
-modules=("$build/kernel.kir" "$build/clos.kir" "$build/frontend.kir" "$build/eval.kir" "$build/main.kir")
+modules=("$build/kernel.lir" "$build/clos.lir" "$build/frontend.lir" "$build/eval.lir" "$build/main.lir")
 if [ "${1:-}" = --jit ]; then
   exec "$root/target/debug/kiln-cg" jit "${modules[@]}"
 fi

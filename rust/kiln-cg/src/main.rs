@@ -1,7 +1,7 @@
-//! kiln-cg: compiles KIR produced by the Lisp compiler.
+//! kiln-cg: lowers backend requests produced by the Lisp compiler.
 //!
-//!   kiln-cg jit FILE.kir [--dump-clif]          compile in memory and run
-//!   kiln-cg obj FILE.kir -o FILE.o [--dump-clif] write an object file
+//!   kiln-cg jit FILE.lir [--dump-clif]          compile in memory and run
+//!   kiln-cg obj FILE.lir -o FILE.o [--dump-clif] write an object file
 //!
 //! Object files are linked with libkiln_launcher.a to make an executable.
 
@@ -22,7 +22,26 @@ fn load(path: &str) -> Result<kir::Module, String> {
     kir::parse_module(&s).map_err(|e| format!("{path}: {e}"))
 }
 
-/// Loads KIR files and merges them into one module; their init functions
+/// Human-readable diagnostics; this text is not a compilation intermediate.
+fn dump_program(path: &str) -> Result<i32, String> {
+    use std::io::Write;
+    let bytes = std::fs::read(path).map_err(|e| format!("{path}: {e}"))?;
+    let program = if bytes.starts_with(kiln_cg::packet::MAGIC) {
+        kiln_cg::packet::decode(&bytes)?.program
+    } else {
+        kiln_cg::sexp::parse_one(std::str::from_utf8(&bytes).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?
+    };
+    let mut out = std::io::BufWriter::new(std::io::stdout().lock());
+    if let kiln_cg::sexp::Sexp::List(parts) = &program && parts.len() >= 2 {
+        writeln!(out, "({} {}", parts[0], parts[1]).map_err(|e| e.to_string())?;
+        for part in &parts[2..] { writeln!(out, "  {part}").map_err(|e| e.to_string())?; }
+        writeln!(out, ")").map_err(|e| e.to_string())?;
+    } else { writeln!(out, "{program}").map_err(|e| e.to_string())?; }
+    out.flush().map_err(|e| e.to_string())?;
+    Ok(0)
+}
+
+/// Loads backend files and merges them into one module; their init functions
 /// run in the order given.
 fn load_all(files: &[&String]) -> Result<kir::Module, String> {
     let modules = files.iter().map(|f| load(f)).collect::<Result<Vec<_>, _>>()?;
@@ -87,6 +106,7 @@ fn main() -> ExitCode {
     let pos: Vec<&String> = args.iter().filter(|a| !a.starts_with("--")).collect();
     // kiln-cg jit A.kir B.kir ...  |  kiln-cg obj A.kir B.kir ... -o OUT.o
     let result = match pos.split_first() {
+        Some((cmd, rest)) if cmd.as_str() == "dump" && rest.len() == 1 => dump_program(rest[0]),
         Some((cmd, rest)) if cmd.as_str() == "jit" && !rest.is_empty() => {
             {
                 let t = std::time::Instant::now();
@@ -101,7 +121,7 @@ fn main() -> ExitCode {
             let (files, out) = rest.split_at(rest.len() - 2);
             load_all(files).and_then(|m| write_obj(&m, &opts, out[1]).map(|_| 0))
         }
-        _ => Err("usage: kiln-cg jit FILE.kir... | kiln-cg obj FILE.kir... -o FILE.o [--dump-clif]".into()),
+        _ => Err("usage: kiln-cg jit FILE.lir... | kiln-cg obj FILE.lir... -o FILE.o [--dump-clif] | kiln-cg dump FILE.lir".into()),
     };
     match result {
         Ok(code) => ExitCode::from(code as u8),

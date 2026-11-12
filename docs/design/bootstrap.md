@@ -10,7 +10,7 @@
 
 ## 目标协议与自举范围
 
-共享 Lisp 编码器已支持 `.lir` 二进制封套，当前载荷为 KIR；现有自举脚本仍输出 `.kir`，尚未切换默认文件格式。目标阶段由同一编码器写出布局无关的 LIR。SBCL 写 stage0 文件后调用 kiln-cg 子进程，不通过 FFI 载入 Rust 库；kiln 的后续阶段也写相同格式。运行期原生编译使用同一 schema 的内存入口，见 [compiler-protocol.md](compiler-protocol.md)。
+自举默认写出 `.lir` 二进制封套，当前载荷是迁移中的兼容程序。SBCL 使用可移植编码器，kiln 使用 native 记录构造器，两者按同一规则分配编号并去重原子。布局无关的 LIR 操作继续在此协议上迁移。SBCL 写 stage0 文件后调用 kiln-cg 子进程，不通过 FFI 载入 Rust 库；kiln 的后续阶段也写相同格式。运行期原生编译使用同一 schema 的内存入口，见 [compiler-protocol.md](compiler-protocol.md)。
 
 Rust 后端由 Cargo 构建并在各阶段共用。LIR 逐字节闭合验证 Lisp 编译器、表示选择与导出的确定性，最终二进制闭合同时检查固定后端处理相同输入的确定性；这不证明 Rust 后端自身经过 Lisp 自举。后端另以独立样本、旧 KIR 对照和执行验证覆盖。
 
@@ -21,7 +21,7 @@ SBCL 宿主
  ├─ 载入 kiln 系统（kiln.asd）：Eclector、CST、Trucler、Clostrum、Common-macros、
  │   Khazern、Anatomicl，加上 lisp/*.lisp
  ├─ cross-client：Clostrum 编译期环境，编译期求值用 HIR 求值器
- └─ stage0：五个模块和构建程序的 KIR，加上清单 modules.lisp-expr
+ └─ stage0：五个模块和构建程序的二进制 LIR 封套，加上清单 modules.lisp-expr
         ↓ kiln-cg obj，和 launcher 链接
 kiln0 ──运行构建程序──▶ stage1 ──kiln-cg──▶ kiln1 ──▶ stage2
 ```
@@ -30,10 +30,10 @@ kiln0 ──运行构建程序──▶ stage1 ──kiln-cg──▶ kiln1 ─�
 
 | 阶段 | 做什么 | 要求 |
 |---|---|---|
-| stage0 | SBCL 在一个会话里编五个模块和构建程序（`kiln:bootstrap-stage0`），写出 `NAME.kir` 和清单 | |
-| kiln0 | stage0 的 KIR 用 `kiln-cg obj` 编成一个目标文件，和 launcher 链接成 AOT 可执行文件 | |
-| stage1 | 在一个目录里运行 kiln0：读清单，依次编五个模块和构建程序自己 | 每个 KIR 和 stage0 逐字节相同 |
-| kiln1 | stage1 的 KIR 链接成可执行文件 | 和 kiln0 逐字节相同 |
+| stage0 | SBCL 在一个会话里编五个模块和构建程序（`kiln:bootstrap-stage0`），写出 `NAME.lir` 和清单 | |
+| kiln0 | stage0 的 LIR 用 `kiln-cg obj` 编成一个目标文件，和 launcher 链接成 AOT 可执行文件 | |
+| stage1 | 在一个目录里运行 kiln0：读清单，依次编五个模块和构建程序自己 | 每个 LIR 文件和 stage0 逐字节相同 |
+| kiln1 | stage1 的 LIR 链接成可执行文件 | 和 kiln0 逐字节相同 |
 | stage2 | 运行 kiln1 | 和 stage1 逐字节相同 |
 
 `tools/stage0-kiln.sh [DIR]` 只做 stage0 和 kiln0，用来试编译器或 CLOS 的改动；配合只含部分模块的清单单独计时。
@@ -43,13 +43,13 @@ kiln0 ──运行构建程序──▶ stage1 ──kiln-cg──▶ kiln1 ─�
 构建程序 `lisp/target/build.lisp` 是一个普通的程序模块（名字是 `build`），在 compiler 模块之后，由 SBCL 在 stage0 里用同一个会话编译，所以 kiln1 完全由 kiln 编出。它在 kiln 上做的事和 SBCL 一样：一个 `cross-client` 会话，kernel 带上 CL 的全部外部符号，编 eval 和 compiler 模块之前调用 `prepare-compiler-session`（宿主宏、`defrule` 和 `define-syntax` 只在加载时定义、`host-inline-functions`，`lisp/cross.lisp`），按 `muffle-warning` 处理警告。它不依赖 SBCL 才有的东西：
 
 - **文件列表**放在清单 `modules.lisp-expr` 里，由 stage0 写出：每个模块的名字和源文件，格式就是 `front-end` 接受的格式（路径是 namestring，`:renames`、`:compile-time-too` 原样保留），作用类似 SBCL 的 `build-order.lisp-expr`。SBCL 会话里的 `kiln.compiler::module-files` 是展开时用 ASDF 的宿主宏；构建程序在编 eval 和 compiler 模块之前也注册同名的宿主宏，展开成清单里的文件列表。
-- **输出**写到当前目录的 `NAME.kir`。
+- **输出**默认写到当前目录的 `NAME.lir`。`KILN_OUTPUT_FORMAT=kir` 选择文本诊断格式；宿主 `bootstrap-stage0` 可用 `:output-format :kir` 选择相同的兼容路径。
 - 设了 `KILN_SERVE` 时，构建程序不做构建，改为在标准输入输出上运行后端协议（[backend-protocol.md](backend-protocol.md)）。
 - 设了 `KILN_SAVE_IMAGE` 时，编完五个模块就保存堆快照，然后照常编后面的程序。快照的 toplevel 重新读入清单，只编五个模块之后的条目。
 
 ## 确定性
 
-两代产物逐字节相同的前提是 KIR 输出**确定**：不依赖哈希表的遍历顺序、gensym 计数器在编译之外的状态、宿主里碰巧共享的结构、宿主的包名。前端和降级为此做的事见 [front-end.md](front-end.md) 的“确定性”，kiln-cg 的见 [codegen.md](codegen.md)。逐字节比较也作为编译器的回归检查保留。目标设计（[compiler.md](compiler.md)）里各阶段写出的是 LIR，比较对象随之换成 LIR 文件；LIR 降级在 kiln-cg 里，各阶段共用，kiln0 和 kiln1 逐字节相同的要求不变。
+两代产物逐字节相同的前提是程序记录及其编码**确定**：不依赖哈希表的遍历顺序、gensym 计数器在编译之外的状态、宿主里碰巧共享的结构、宿主的包名。前端和降级为此做的事见 [front-end.md](front-end.md) 的“确定性”，kiln-cg 的见 [codegen.md](codegen.md)。逐字节比较也作为编译器的回归检查保留。各阶段比较 LIR 文件；Rust 的布局和 ABI 降级在各阶段共用，kiln0 和 kiln1 也须逐字节相同。
 
 ## 测试
 
@@ -61,7 +61,7 @@ kiln0 ──运行构建程序──▶ stage1 ──kiln-cg──▶ kiln1 ─�
 - `NAME.image`、`NAME.image2`：堆快照测试（[heap-image.md](heap-image.md)）。
 - 测试源文件以绝对路径交给 SBCL，因为文件名写进了 KIR 的调试信息；比较 KIR 的测试在 kiln 上也用同样的名字。
 
-**由 kiln 编译测试**：`KILN_COMPILER=build/boot/kiln1 tools/test.sh` 让 SBCL 只写清单（`kiln:write-manifest`：五个模块，测试文件作为程序模块排在后面），kiln 运行构建程序，在一个会话里编完五个模块再编各个测试，之后照常走三遍。第一次先编五个模块并存快照 `build/test/kiln-compiler.img`，旁边的 `.key` 是 kiln 可执行文件和五个模块全部源文件的哈希；键相同时直接从快照启动。
+**由 kiln 编译测试**：测试脚本显式设置 `KILN_OUTPUT_FORMAT=kir`，供 `.same-kir` 比较；生产构建仍使用二进制。`KILN_COMPILER=build/boot/kiln1 tools/test.sh` 让 SBCL 只写清单（`kiln:write-manifest`：五个模块，测试文件作为程序模块排在后面），kiln 运行构建程序，在一个会话里编完五个模块再编各个测试，之后照常走三遍。第一次先编五个模块并存快照 `build/test/kiln-compiler.img`，旁边的 `.key` 是 kiln 可执行文件和五个模块全部源文件的哈希；键相同时直接从快照启动。
 
 ## 仓库结构
 

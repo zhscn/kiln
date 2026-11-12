@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Bootstraps kiln.
 #   stage0: SBCL compiles the five modules and the build program
-#           (lisp/target/build.lisp) to KIR.
-#   kiln0:  the stage0 KIR, linked into an AOT executable; run, it writes
+#           (lisp/target/build.lisp) to binary LIR requests.
+#   kiln0:  the stage0 LIR requests, linked into an AOT executable; run, it writes
 #           stage1, the same modules and build program compiled by kiln.
-#   kiln1:  the stage1 KIR, linked; run, it writes stage2.
+#   kiln1:  the stage1 LIR requests, linked; run, it writes stage2.
 # stage1 must be stage0 and stage2 stage1, file for file, and kiln1 kiln0,
-# byte for byte (kiln-cg's output depends only on the KIR).
+# byte for byte (kiln-cg's output depends only on the program records).
 # Usage: tools/bootstrap.sh [--from-stage1]  (--from-stage1 reuses stage0,
 # stage1 and kiln0 and only builds kiln1 and stage2.)
 set -euo pipefail
@@ -22,8 +22,9 @@ heap=${KILN_BOOT_HEAP:-8589934592}
 modules=(kernel clos frontend eval compiler build)
 
 link() { # link STAGE-DIR EXECUTABLE
-  local kirs=()
-  for m in "${modules[@]}"; do kirs+=("$1/$m.kir"); done
+  local kirs=() ext=lir
+  [ -f "$1/kernel.lir" ] || ext=kir
+  for m in "${modules[@]}"; do kirs+=("$1/$m.$ext"); done
   "$cg" obj "${kirs[@]}" -o "$2.o"
   cc "$2.o" "$launcher" -o "$2" -lpthread -ldl -lm
   rm "$2.o"
@@ -33,17 +34,20 @@ run() { # run EXECUTABLE STAGE-DIR (with the manifest of stage0)
   rm -rf "$2"
   mkdir -p "$2"
   cp "$boot/stage0/modules.lisp-expr" "$2/"
-  (cd "$2" && MMTK_GC_TRIGGER=FixedHeapSize:$heap /usr/bin/time -f "%e s, %M KiB" "$1") \
+  local ext=lir
+  [ -f "$boot/stage0/kernel.lir" ] || ext=kir
+  (cd "$2" && KILN_OUTPUT_FORMAT=$ext MMTK_GC_TRIGGER=FixedHeapSize:$heap /usr/bin/time -f "%e s, %M KiB" "$1") \
     2>&1 | tee "$2/build.log"
 }
 
 compare() { # compare STAGE-DIR STAGE-DIR
-  local ok=0
+  local ok=0 ext=lir
+  [ -f "$1/kernel.lir" ] || ext=kir
   for m in "${modules[@]}"; do
-    if cmp -s "$1/$m.kir" "$2/$m.kir"; then
-      echo "same $m.kir"
+    if cmp -s "$1/$m.$ext" "$2/$m.$ext"; then
+      echo "same $m.$ext"
     else
-      echo "DIFFERENT $m.kir ($(basename "$1") and $(basename "$2"))"; ok=1
+      echo "DIFFERENT $m.$ext ($(basename "$1") and $(basename "$2"))"; ok=1
     fi
   done
   return $ok

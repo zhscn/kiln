@@ -1135,6 +1135,11 @@ and slots), zero-filled."
   (let ((r (new-var)))
     (emit `(:call-rt ,(rt-jit) (,r) (:ctx ,text ,literals) :nil))
     r))
+;;; Write owned packet bytes directly, avoiding a Lisp octet carrier.
+(define-primop :write-packet (program fd)
+  (let ((r (new-var)))
+    (emit `(:call-rt ,(rt-write-packet) (,r) (:ctx ,program ,fd) :nil))
+    r))
 ;;; Snapshot compiler records before the result allocation can move objects.
 (define-primop :encode-packet (program language)
   (let ((r (new-var)))

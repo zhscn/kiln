@@ -14,7 +14,7 @@ sbcl --dynamic-space-size 4GB --noinform --non-interactive \
   --eval "(kiln:bootstrap-stage0 \"$dir/stage0/\")" \
   >"$dir/stage0.log" 2>&1 || { cat "$dir/stage0.log"; exit 1; }
 kirs=()
-for m in kernel clos frontend eval compiler build; do kirs+=("$dir/stage0/$m.kir"); done
+for m in kernel clos frontend eval compiler build; do kirs+=("$dir/stage0/$m.lir"); done
 "$root/target/debug/kiln-cg" obj "${kirs[@]}" -o "$dir/kiln0.o"
 cc "$dir/kiln0.o" "$root/target/debug/libkiln_launcher.a" -o "$dir/kiln0" -lpthread -ldl -lm
 rm "$dir/kiln0.o"

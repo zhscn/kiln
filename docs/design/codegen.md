@@ -24,7 +24,7 @@ kiln-launcher               staticlib，提供 C main，链接 kiln-rt 和 kiln-
 
 ## 当前 KIR 与目标后端接口
 
-当前 Lisp 编译器以 KIR 文本交接，目标以二进制 LIR 请求交接。KIR 保留为 Rust 内部表示，原因如下：
+当前生产文件以二进制兼容程序交接，image 使用结构化记录或序列化载荷；文本输入保留用于诊断和迁移对照。KIR 保留为 Rust 内部表示，原因如下：
 
 - **cranelift-frontend 只能通过 API 使用。** 它负责从可变变量构建 SSA（`Variable`、`def_var`/`use_var`），以及在 safepoint 处为 GC 引用插入溢出和重载（user stack maps，C5）。直接写 CLIF 文本就绕过了它，Lisp 侧得自己构建 SSA、自己做溢出。
 - **布局与机器后端分层。** 内部 KIR 已确定 tag、偏移和调用序列。固定字段与普通函数对象调用已经由 Rust 展开，其他发射仍在 Lisp 中，随 LIR 迁移。kiln-cg 继续负责 Cranelift 调用、异常表、栈图、trampoline 和调试表。
