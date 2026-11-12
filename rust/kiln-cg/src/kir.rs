@@ -701,7 +701,7 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                         lowered.extend(crate::lir::initialize_stack_object(slot.to_string(), class, count)?);
                         continue;
                     }
-                    if head_name == "alloc-structure" {
+                    if head_name == "alloc-structure" || head_name == "alloc-rack" {
                         arity(head_name, operands, 5)?;
                         let result = sym(&operands[0])?.to_string();
                         let layout = parse_expr(&operands[1])?;
@@ -713,7 +713,11 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                                 _ => return Err("alloc-structure requires stable operands distinct from the result".into()),
                             }
                         }
-                        let (bytes, header) = crate::lir::structure_allocation_layout(&count)?;
+                        let (bytes, header) = if head_name == "alloc-rack" {
+                            crate::lir::rack_allocation_layout(&count)?
+                        } else {
+                            crate::lir::structure_allocation_layout(&count)?
+                        };
                         let name = format!("{prefix}{alloc_number}");
                         alloc_number += 1;
                         let raw = format!("{name}_object");
@@ -1124,6 +1128,10 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
         "invalid-vector-length" => {
             arity(h, r, 1)?;
             crate::lir::invalid_vector_length(parse_expr(&r[0])?)
+        }
+        "invalid-rack-length" => {
+            arity(h, r, 1)?;
+            crate::lir::invalid_rack_length(parse_expr(&r[0])?)
         }
         "character-untag" => {
             arity(h, r, 1)?;

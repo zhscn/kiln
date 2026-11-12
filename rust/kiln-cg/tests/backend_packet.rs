@@ -120,6 +120,28 @@ fn immediate_class_tests_preserve_kir_and_reject_unknown_classes() {
 }
 
 #[test]
+fn rack_allocation_accounts_for_class_and_zeroed_slots() {
+    let module = |body| format!("(module \"rack\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj) (n raw) (class obj)) (slots) (block b {body} (return v 1)) (block caught (return exn1 1))))");
+    let program = module("(alloc-rack v class 2 \"kiln_rt_alloc\" caught)");
+    let result = kiln_cg::kir::parse_module(&sexp::parse_one(&program).unwrap()).unwrap();
+    let blocks = &result.funcs[0].blocks;
+    let fast = format!("{:?}", blocks[1]);
+    assert!(fast.contains("Int(779)"));
+    assert!(fast.contains("16, Int(0)"));
+    assert!(fast.contains("24, Int(0)"));
+    assert!(format!("{:?}", blocks[3]).contains("8, Var(\"class\")"));
+    let dynamic = module("(alloc-rack v class n \"kiln_rt_alloc\" nil)");
+    let dynamic = kiln_cg::kir::parse_module(&sexp::parse_one(&dynamic).unwrap()).unwrap();
+    assert!(format!("{:?}", dynamic.funcs[0]).contains("Var(\"n\"), Int(1)"));
+    for body in ["(alloc-rack v class -1 \"kiln_rt_alloc\" nil)", "(alloc-rack v class 4294967295 \"kiln_rt_alloc\" nil)"] {
+        assert!(kiln_cg::kir::parse_module(&sexp::parse_one(&module(body)).unwrap()).is_err());
+    }
+    let limit = module("(set n (invalid-rack-length a0))");
+    let limit = kiln_cg::kir::parse_module(&sexp::parse_one(&limit).unwrap()).unwrap();
+    assert!(format!("{:?}", limit.funcs[0]).contains("Int(8589934588)"));
+}
+
+#[test]
 fn structure_allocation_uses_slot_count_and_roots_layout() {
     let module = |body| format!("(module \"structure\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj) (n raw) (layout obj)) (slots) (block b {body} (return v 1)) (block caught (return exn1 1))))");
     let program = module("(alloc-structure v layout 2 \"kiln_rt_alloc\" caught)");
@@ -474,6 +496,8 @@ fn fixed_allocations_validate_class_and_initialize_fields() {
         (CLASS_CONS, "x a0", 3, vec![7, 15]),
         (CLASS_DOUBLE, "x", 8, vec![3]),
         (CLASS_COMPLEX, "x a0", 12, vec![3, 11]),
+        (CLASS_INSTANCE, "x", 9, vec![3]),
+        (CLASS_FUNCALLABLE_INSTANCE, "x a0 a1", 522, vec![3, 11, 19]),
     ] {
         let program = module(format!("(alloc-fixed v {class} ({fields}) \"kiln_rt_alloc\" nil)"));
         let result = kiln_cg::kir::parse_module(&sexp::parse_one(&program).unwrap()).unwrap();

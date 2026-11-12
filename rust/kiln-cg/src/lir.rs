@@ -173,13 +173,21 @@ pub fn vector_length(object: Expr) -> Expr {
 }
 
 pub fn invalid_vector_length(value: Expr) -> Expr {
+    invalid_length(value, kiln_rt::object::LENGTH_MASK)
+}
+
+pub fn invalid_rack_length(value: Expr) -> Expr {
+    invalid_length(value, kiln_rt::object::LENGTH_MASK - 1)
+}
+
+fn invalid_length(value: Expr, max: u64) -> Expr {
     use crate::kir::{BinOp, CmpOp};
-    use kiln_rt::object::{FIXNUM_MASK, LENGTH_MASK};
+    use kiln_rt::object::FIXNUM_MASK;
     Expr::Bin(BinOp::Or,
         Box::new(Expr::Bin(BinOp::And, Box::new(value.clone()), Box::new(Expr::Int(FIXNUM_MASK as i64)))),
         Box::new(Expr::Bin(BinOp::Or,
             Box::new(Expr::Cmp(CmpOp::Lt, Box::new(value.clone()), Box::new(Expr::Int(0)))),
-            Box::new(Expr::Cmp(CmpOp::Gt, Box::new(value), Box::new(Expr::Int((LENGTH_MASK << 1) as i64)))))))
+            Box::new(Expr::Cmp(CmpOp::Gt, Box::new(value), Box::new(Expr::Int((max << 1) as i64)))))))
 }
 
 fn vector_element_address(object: Expr, index: Expr) -> Expr {
@@ -268,6 +276,21 @@ pub fn structure_allocation_layout(count: &Expr) -> Result<(Expr, Expr), String>
                   Box::new(Expr::Shift(ShiftOp::Shl, Box::new(count.clone()), 3))),
         Expr::Bin(BinOp::Or, Box::new(Expr::Int(KIND_STRUCTURE_INSTANCE as i64)),
                   Box::new(Expr::Shift(ShiftOp::Shl, Box::new(count.clone()), LENGTH_SHIFT as i64)))))
+}
+
+pub fn rack_allocation_layout(count: &Expr) -> Result<(Expr, Expr), String> {
+    use crate::kir::{BinOp, ShiftOp};
+    use kiln_rt::object::{KIND_RACK, LENGTH_MASK, LENGTH_SHIFT};
+    if let Expr::Int(n) = count {
+        if *n < 0 || *n as u64 >= LENGTH_MASK { return Err("rack slot count out of range".into()); }
+        return Ok((Expr::Int(2 * size_of::<u64>() as i64 + n * size_of::<u64>() as i64),
+                   Expr::Int(((((*n as u64) + 1) << LENGTH_SHIFT) | KIND_RACK) as i64)));
+    }
+    let length = Expr::Bin(BinOp::Add, Box::new(count.clone()), Box::new(Expr::Int(1)));
+    Ok((Expr::Bin(BinOp::Add, Box::new(Expr::Int(size_of::<u64>() as i64)),
+                  Box::new(Expr::Shift(ShiftOp::Shl, Box::new(length.clone()), 3))),
+        Expr::Bin(BinOp::Or, Box::new(Expr::Shift(ShiftOp::Shl, Box::new(length), LENGTH_SHIFT as i64)),
+                  Box::new(Expr::Int(KIND_RACK as i64)))))
 }
 
 pub fn initialize_structure(result: String, address: String, layout: Expr) -> Vec<Stmt> {
@@ -506,6 +529,8 @@ pub fn fixed_layout(class: u32) -> Result<(i64, i64, i64, usize), String> {
         CLASS_CONS => Ok((CONS_BYTES as i64, KIND_CONS as i64, TAG_CONS as i64, 2)),
         CLASS_COMPLEX => Ok((3 * size_of::<u64>() as i64, KIND_COMPLEX as i64, TAG_GENERAL as i64, 2)),
         CLASS_DOUBLE => Ok((2 * size_of::<u64>() as i64, KIND_DOUBLE as i64, TAG_GENERAL as i64, 1)),
+        CLASS_INSTANCE => Ok((2 * size_of::<u64>() as i64, KIND_INSTANCE as i64, TAG_GENERAL as i64, 1)),
+        CLASS_FUNCALLABLE_INSTANCE => Ok((4 * size_of::<u64>() as i64, (KIND_FUNCALLABLE_INSTANCE | (2 << LENGTH_SHIFT)) as i64, TAG_GENERAL as i64, 3)),
         _ => Err(format!("unsupported fixed allocation class {class}")),
     }
 }

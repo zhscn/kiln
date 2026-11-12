@@ -4,7 +4,7 @@
 
 兼容载荷中的堆对象测试分为一般对象 tag 测试和受该测试保护的 header 类测试；生成方必须确保只有一般对象到达后者。完整 LIR 的类型测试将把安全检查与表示类测试作为同一操作处理。
 
-兼容载荷的 `alloc-fixed` 接收对象种类和已求值的字段，Rust 据此分配和初始化堆 cons、double-float 和 complex；对象字段变量跨分配慢路径保持 GC root。尚未迁移的分配使用 `alloc-raw`，由生成方提供大小和 header；Rust 展开定长小对象的 bump 分配、清零与慢路径，其他大小调用 runtime 分配器。`alloc-raw` 的结果是未加 tag 的地址，生成方须在下一个 safepoint 前完成初始化并转换为对象引用。完整 LIR 的分配操作将改用对象种类、存储方式和字段。
+兼容载荷的 `alloc-fixed` 接收对象种类和已求值的字段，Rust 据此分配和初始化堆 cons、double-float、complex 和 CLOS 实例；对象字段变量跨分配慢路径保持 GC root。尚未迁移的分配使用 `alloc-raw`，由生成方提供大小和 header；Rust 展开定长小对象的 bump 分配、清零与慢路径，其他大小调用 runtime 分配器。`alloc-raw` 的结果是未加 tag 的地址，生成方须在下一个 safepoint 前完成初始化并转换为对象引用。完整 LIR 的分配操作将改用对象种类、存储方式和字段。
 
 `alloc-closure` 按入口和捕获项数量分配堆函数对象，初始化入口并把捕获项清零；生成方随后以 `closure-set` 填充捕获项。这允许递归组先建立所有函数对象，再互相引用，即使填充之前发生 GC 也可安全扫描。
 
@@ -25,6 +25,8 @@ double-float 的未装箱位模式和 complex 的实部、虚部通过字段操�
 实例的 rack、class 和按位置访问的槽，funcallable instance 的函数，以及原生结构的 layout 和槽由后端按对象种类展开。槽位置传入机器字；生成方负责类型和位置的有效性。
 
 `alloc-structure` 接收已求值的 layout 和未装箱槽数，由 Rust 计算结构对象大小和 header、清零槽并写入 layout；动态槽数由生成方保证在可表示范围内。
+
+`alloc-rack` 接收 class 和槽数，后端分配并初始化 rack；普通实例和 funcallable instance 使用 `alloc-fixed`。分配 rack 后再次分配实例时，rack 保持为精确 GC 根。rack 的长度检查预留 class 字段所需的空间。
 
 `invalid-vector-length` 检查带 tag 的候选长度是否为非负 fixnum 且不超过运行时 header 可表示的最大长度；生成方负责错误路径。常量长度在后端展开时也检查同一上限。
 
