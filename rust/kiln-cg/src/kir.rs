@@ -442,6 +442,17 @@ fn parse_word(s: &Sexp) -> R<Word> {
                     arity(h, rest, 2)?;
                     Ok(Word::DataAddr(string(&rest[0])?.to_string(), crate::lir::static_object_tag(sym(&rest[1])?)?))
                 }
+                "character" => {
+                    arity(h, rest, 1)?;
+                    let code = int(&rest[0])?;
+                    if !(0..0x110000).contains(&code) { return Err("character code out of range".into()); }
+                    Ok(Word::Int((code << kiln_rt::object::CHARACTER_SHIFT) | kiln_rt::object::CHARACTER_TAG as i64))
+                }
+                "single-float" => {
+                    arity(h, rest, 1)?;
+                    let bits = u32::try_from(int(&rest[0])?).map_err(|_| "single-float bits out of range")?;
+                    Ok(Word::Int((((bits as u64) << 32) | kiln_rt::number::SINGLE_TAG) as i64))
+                }
                 "func" => {
                     arity(h, rest, 1)?;
                     Ok(Word::FuncAddr(string(&rest[0])?.to_string()))
@@ -1286,6 +1297,14 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
             arity(h, r, 1)?;
             crate::lir::character_tag(parse_expr(&r[0])?)
         }
+        "single-float-tag" => {
+            arity(h, r, 1)?;
+            crate::lir::single_float_tag(parse_expr(&r[0])?)
+        }
+        "single-float-bits" => {
+            arity(h, r, 1)?;
+            crate::lir::single_float_bits(parse_expr(&r[0])?)
+        }
         "string-ref" => {
             arity(h, r, 2)?;
             crate::lir::string_ref(parse_expr(&r[0])?, parse_expr(&r[1])?)
@@ -1382,6 +1401,24 @@ mod tests {
     fn stmt(text: &str) -> R<Stmt> {
         let form = crate::sexp::parse_one(text).map_err(|e| e.to_string())?;
         parse_stmt(&form)
+    }
+
+    #[test]
+    fn immediate_data_words_validate_and_preserve_bits() {
+        let word = |s: &str| parse_word(&crate::sexp::parse_one(s).unwrap());
+        for (input, expected) in [
+            ("(character 0)", 0x0b_i64),
+            ("(character 128512)", (128512_i64 << 8) | 0x0b),
+            ("(single-float 0)", 0x1b),
+            ("(single-float 2147483648)", i64::MIN | 0x1b),
+            ("(single-float 4294967295)", 0xffff_ffff_0000_001b_u64 as i64),
+        ] {
+            assert!(matches!(word(input).unwrap(), Word::Int(n) if n == expected), "{input}");
+        }
+        for input in ["(character -1)", "(character 1114112)",
+                      "(single-float -1)", "(single-float 4294967296)"] {
+            assert!(word(input).is_err(), "{input}");
+        }
     }
 
     #[test]

@@ -143,6 +143,8 @@ to their indices in the literal words; else NIL.")
   (cond ((integerp word) word)
         ((eq (first word) :literal)
          `(:load (:addr ,+literals-label+) ,(* 8 (second word))))
+        ((eq (first word) :character) `(:character-tag ,(second word)))
+        ((eq (first word) :single-float) `(:single-float-tag ,(second word)))
         ((eq (first word) :object-data)
          `(:object-address ,@(rest word)))
         (t `(:addr ,@(rest word)))))
@@ -300,8 +302,7 @@ name of its package as a string."
                (setf (gethash x *constants*) `(:object-data ,label :general))))))
     (symbol (symbol-word x))
     (single-float
-     (signed-word (logior (ash (single-float-bits x) 32)
-                          +single-float-tag+)))
+     `(:single-float ,(single-float-bits x)))
     (double-float
      (or (gethash x *constants*)
          (let ((label (fresh-label "kiln_double_")))
@@ -322,7 +323,7 @@ name of its package as a string."
                                        ,(constant-word (imagpart x))))
            (setf (gethash x *constants*) `(:object-data ,label :general)))))
     (character
-     (logior (ash (char-code x) +character-shift+) +character-tag+))
+     `(:character ,(char-code x)))
     (string
      (or (gethash x *constants*)
          (setf (gethash x *constants*)

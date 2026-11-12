@@ -1,6 +1,6 @@
 # LIR：Lisp 编译器与 Rust 后端的输入契约
 
-状态：**操作层正在接入**。[结构化封套](compiler-protocol.md)已支持文件与运行期交接，当前承载 KIR，兼容载荷已支持 fixnum、cons 和 character 的表示类测试、`field-load`/`field-store`、闭包环境读写、传递区读写和根计数设置，以及普通函数对象 `invoke`，Rust 在构造 KIR 时展开布局和调用约定。动态传递区下标和根计数的范围由生成方保证。其余操作尚未迁移，不能视作完成 LIR。现在 Lisp 主要生成 KIR（[codegen.md](codegen.md)）。分层和迁移见 [compiler.md](compiler.md)。
+状态：**操作层正在接入**。[结构化封套](compiler-protocol.md)已支持文件与运行期交接，当前承载 KIR，兼容载荷已支持 fixnum、cons、character 和 single-float 的表示类测试、`field-load`/`field-store`、闭包环境读写、传递区读写和根计数设置，以及普通函数对象 `invoke`，字符和 single-float 常量以码点和 IEEE 位模式传入，Rust 在构造 KIR 时展开立即数表示、布局和调用约定。动态传递区下标和根计数的范围由生成方保证。其余操作尚未迁移，不能视作完成 LIR。现在 Lisp 主要生成 KIR（[codegen.md](codegen.md)）。分层和迁移见 [compiler.md](compiler.md)。
 
 兼容载荷中的堆对象测试分为一般对象 tag 测试和受该测试保护的 header 类测试；生成方必须确保只有一般对象到达后者。完整 LIR 的类型测试将把安全检查与表示类测试作为同一操作处理。
 

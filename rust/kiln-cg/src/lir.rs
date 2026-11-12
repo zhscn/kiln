@@ -26,6 +26,7 @@ pub fn test_class(class: u32, object: Expr) -> Result<Expr, String> {
         CLASS_FIXNUM => (FIXNUM_MASK, 0),
         CLASS_CONS => (TAG_MASK, TAG_CONS),
         CLASS_CHARACTER => (IMMEDIATE_MASK, CHARACTER_TAG),
+        CLASS_SINGLE_FLOAT => (IMMEDIATE_MASK, kiln_rt::number::SINGLE_TAG),
         CLASS_GENERAL => (TAG_MASK, TAG_GENERAL),
         _ => return Err(format!("unknown representation class {class}")),
     };
@@ -284,6 +285,16 @@ pub fn character_tag(code: Expr) -> Expr {
     Expr::Bin(BinOp::Or,
         Box::new(Expr::Shift(ShiftOp::Shl, Box::new(code), kiln_rt::object::CHARACTER_SHIFT as i64)),
         Box::new(Expr::Int(kiln_rt::object::CHARACTER_TAG as i64)))
+}
+
+pub fn single_float_tag(bits: Expr) -> Expr {
+    use crate::kir::{BinOp, ShiftOp};
+    Expr::Bin(BinOp::Or, Box::new(Expr::Shift(ShiftOp::Shl, Box::new(bits), 32)),
+        Box::new(Expr::Int(kiln_rt::number::SINGLE_TAG as i64)))
+}
+
+pub fn single_float_bits(value: Expr) -> Expr {
+    Expr::Shift(crate::kir::ShiftOp::Shr, Box::new(value), 32)
 }
 
 fn string_element_address(object: Expr, index: Expr) -> Expr {

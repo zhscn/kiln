@@ -40,5 +40,6 @@
 (defconstant +packet-class-funcallable-instance+ 213)
 (defconstant +packet-class-complex+ 214)
 (defconstant +packet-class-structure-instance+ 215)
+(defconstant +packet-class-single-float+ 216)
 (defconstant +packet-max-expanded-bytes+ 1073741824)
 (defconstant +packet-expansion-record-bytes+ 32)

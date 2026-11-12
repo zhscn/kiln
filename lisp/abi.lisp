@@ -5,13 +5,6 @@
 ;;; Fixnum encoding.
 (defconstant +fixnum-shift+ 1)
 
-;;; Immediates: low 3 bits #b011, bits 3-7 the immediate kind, payload from
-;;; bit 8.
-(defconstant +immediate-mask+ #xff)
-(defconstant +character-tag+ #x0b)
-(defconstant +character-shift+ 8)
-;;; Single-floats are immediates: low byte #x1b, IEEE bits in bits 32-63.
-(defconstant +single-float-tag+ #x1b)
 (defconstant +char-code-limit+ #x110000)
 
 ;;; Transfer area: arguments beyond the register arguments, and (later)

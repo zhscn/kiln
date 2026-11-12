@@ -817,7 +817,7 @@ unsupported call. Arguments retain their evaluation order and effects."
                (eq (hir-node-type (svref args 0)) 'character))
       (let ((value (copy-to-var (hir-lower (svref args 0)))))
         (return-from hir-lower-typed-call
-          (values (copy-to-var `(:shl (:shr ,value ,+character-shift+) ,+fixnum-shift+)) t))))
+          (values (copy-to-var `(:fixnum-tag (:character-untag ,value))) t))))
     (when (and (= count 1) (member name '(1+ 1-))
                (hir-fixnum-type-p (hir-node-type (svref args 0))))
       (let ((value (copy-to-var (hir-lower (svref args 0)))))
