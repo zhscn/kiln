@@ -588,6 +588,10 @@ fn fixnum_integer_operations_preserve_kir() {
         ("(or a0 a1)", "(fixnum-logior a0 a1)"),
         ("(xor a0 a1)", "(fixnum-logxor a0 a1)"),
         ("(le a0 a1)", "(fixnum-le a0 a1)"),
+        ("(lt a0 a1)", "(fixnum-lt a0 a1)"),
+        ("(gt a0 a1)", "(fixnum-gt a0 a1)"),
+        ("(ge a0 a1)", "(fixnum-ge a0 a1)"),
+        ("(eq a0 a1)", "(fixnum-eq a0 a1)"),
         ("(shlv a0 (sar a1 1))", "(fixnum-shift-left a0 a1)"),
         ("(and (sarv a0 (sar a1 1)) -2)", "(fixnum-shift-right a0 a1)"),
     ] {

@@ -137,7 +137,7 @@
   (let ((r (new-var :raw)) (fast (new-block)) (slow (new-block)) (done (new-block)))
     (br `(:or (:eq (:test-class ,kiln.kir::+packet-class-fixnum+ ,a) 0) (:eq (:test-class ,kiln.kir::+packet-class-fixnum+ ,b) 0)) slow fast)
     (start-block fast)
-    (emit `(:set ,r (,op ,a ,b)))
+    (emit `(:set ,r (,(ecase op (:lt :fixnum-lt) (:gt :fixnum-gt) (:le :fixnum-le) (:ge :fixnum-ge) (:eq :fixnum-eq)) ,a ,b)))
     (jump done)
     (start-block slow)
     (emit `(:set ,r (:ne ,(emit-slow-call (ecase op
