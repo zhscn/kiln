@@ -1076,3 +1076,23 @@ fn published_values_preserve_order_and_check_capacity() {
     assert!(publish_values(vec![Expr::Int(0); 1 + kiln_rt::context::VALUES_MAX]).is_ok());
     assert!(publish_values(vec![Expr::Int(0); 2 + kiln_rt::context::VALUES_MAX]).is_err());
 }
+
+/// Tail-call a function object after publishing its stack arguments.
+pub fn tail_invoke(callee: String, args: Vec<Expr>) -> Result<Vec<Stmt>, String> {
+    let mut statements = invoke(String::new(), String::new(), callee, args, None, None)?;
+    let Some(Stmt::CallLisp { entry, args, .. }) = statements.pop() else {
+        return Err("missing invocation terminator".into());
+    };
+    statements.push(Stmt::TailCallLisp { entry, args });
+    Ok(statements)
+}
+
+#[cfg(test)]
+#[test]
+fn tail_invocation_preserves_transfer_order_and_checks_capacity() {
+    let statements = tail_invoke("f".into(), (0..5).map(Expr::Int).collect()).unwrap();
+    assert_eq!(format!("{:?}", statements[0]), format!("{:?}", transfer_set(0, Expr::Int(3)).unwrap()));
+    assert_eq!(format!("{:?}", statements[1]), format!("{:?}", transfer_set(1, Expr::Int(4)).unwrap()));
+    assert!(matches!(&statements[2], Stmt::TailCallLisp { args, .. } if args.len() == 6));
+    assert!(tail_invoke("f".into(), vec![Expr::Int(0); 1025]).is_err());
+}

@@ -1059,6 +1059,11 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
 
 fn parse_statements(s: &Sexp) -> R<Vec<Stmt>> {
     let (h, r) = head(list(s)?)?;
+    if h == "tail-invoke" {
+        arity(h, r, 2)?;
+        return crate::lir::tail_invoke(sym(&r[0])?.to_string(),
+            list(&r[1])?.iter().map(parse_expr).collect::<R<_>>()?);
+    }
     if h == "invoke-known" {
         let location = loc(h, r, 6)?;
         let mut statements = crate::lir::invoke(sym(&r[0])?.to_string(), sym(&r[1])?.to_string(),

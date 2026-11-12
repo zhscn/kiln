@@ -164,7 +164,7 @@ dropped (they are unreachable)."
     (unless (kblock-terminated b)
       (push stmt (kblock-stmts b))
       (case (first stmt)
-        ((:jump :br :switch :return :tail-call-lisp :trap)
+        ((:jump :br :switch :return :tail-call-lisp :tail-invoke :trap)
          (setf (kblock-terminated b) t)))))
   (values))
 

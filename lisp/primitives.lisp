@@ -943,13 +943,11 @@ current function's. Nothing after it in the block is reached."
   (when (> (length vals) (+ kiln.kir::+backend-reg-args+ kiln.kir::+backend-values-max+))
     (fail "calls with more than ~D arguments are not supported"
           (+ kiln.kir::+backend-reg-args+ kiln.kir::+backend-values-max+)))
-  (let ((entry (copy-to-var `(:field-load ,kiln.kir::+packet-field-function-entry+ ,fobj) :raw)))
-    (loop for v in (nthcdr kiln.kir::+backend-reg-args+ vals)
-          for i from 0
-          do (emit `(:transfer-set ,i ,v)))
-    (emit `(:tail-call-lisp ,entry
-                            (:ctx ,fobj ,(length vals)
-                                  ,@(subseq vals 0 (min (length vals) kiln.kir::+backend-reg-args+)))))
+  (let ((callee (if (kiln.kir::kvar-p fobj) fobj (copy-to-var fobj)))
+        (arguments (mapcar (lambda (v)
+                             (if (or (integerp v) (kiln.kir::kvar-p v)) v (copy-to-var v)))
+                           vals)))
+    (emit `(:tail-invoke ,callee ,arguments))
     (nil-value)))
 
 ;;; (%PRIMOP :TAIL-FUNCALL F ARG...): calls the function F, leaving no
