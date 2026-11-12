@@ -60,6 +60,8 @@ fn field_offset(field: u32) -> Result<i32, String> {
             (core::mem::offset_of!(SymbolObj, setf_function), TAG_GENERAL)
         }
         FIELD_FUNCTION_ENTRY => (core::mem::offset_of!(FunctionObj, entry), TAG_GENERAL),
+        FIELD_DOUBLE_BITS | FIELD_COMPLEX_REAL => (size_of::<u64>(), TAG_GENERAL),
+        FIELD_COMPLEX_IMAG => (2 * size_of::<u64>(), TAG_GENERAL),
         _ => return Err(format!("unknown object field {field}")),
     };
     Ok(offset as i32 - tag as i32)
@@ -70,8 +72,8 @@ pub fn field_load(field: u32, object: Expr) -> Result<Expr, String> {
 }
 
 pub fn field_store(field: u32, object: Expr, value: Expr) -> Result<Stmt, String> {
-    if field == FIELD_FUNCTION_ENTRY {
-        return Err("function entry is not an object reference field".into());
+    if matches!(field, FIELD_FUNCTION_ENTRY | FIELD_DOUBLE_BITS) {
+        return Err("field is not an object reference field".into());
     }
     Ok(Stmt::Store(object, field_offset(field)?, value))
 }
@@ -618,5 +620,6 @@ mod tests {
         }
         assert!(field_load(999, Expr::Int(0)).is_err());
         assert!(field_store(FIELD_FUNCTION_ENTRY, Expr::Int(0), Expr::Int(0)).is_err());
+        assert!(field_store(FIELD_DOUBLE_BITS, Expr::Int(0), Expr::Int(0)).is_err());
     }
 }

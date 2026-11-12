@@ -7,7 +7,6 @@
            #:+kind-ratio+ #:+kind-double+ #:+kind-complex+ #:+single-float-tag+
            #:+kind-structure-instance+ #:+kind-instance+ #:+kind-funcallable-instance+ #:+kind-rack+
            #:+immediate-mask+ #:+character-tag+ #:+character-shift+ #:+char-code-limit+
-               #:+vector-data+
               #:+unbound+
            #:+length-shift+
            #:+cons-bytes+

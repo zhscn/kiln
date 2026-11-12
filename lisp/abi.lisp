@@ -58,8 +58,6 @@
 
 ;;; Dynamic-environment entries (stack-allocated in the establishing frame).
 
-;;; Offset of the first element of a simple vector or string.
-(defconstant +vector-data+ (- 8 +tag-general+))
 
 ;;; Error codes for kiln_rt_error.
 (defconstant +err-not-fixnum+ 1)

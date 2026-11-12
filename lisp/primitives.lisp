@@ -885,8 +885,8 @@ cells (both by default)."
 (define-primop :make-complex (r i)
   (let ((r (copy-to-var r)) (i (copy-to-var i)))
     (emit-fixed-object kiln.kir::+packet-class-complex+ (list r i))))
-(define-primop :realpart (x) (copy-to-var `(:load ,x ,+vector-data+)))
-(define-primop :imagpart (x) (copy-to-var `(:load ,x ,(+ +vector-data+ 8))))
+(define-primop :realpart (x) (copy-to-var `(:field-load ,kiln.kir::+packet-field-complex-real+ ,x)))
+(define-primop :imagpart (x) (copy-to-var `(:field-load ,kiln.kir::+packet-field-complex-imag+ ,x)))
 ;;; The bits of a float, as unsigned fixnums (lower.lisp writes float
 ;;; constants with them when it runs on kiln).
 (define-primop :single-float-bits (x) (copy-to-var `(:shl (:shr ,x 32) ,+fixnum-shift+)))
@@ -895,9 +895,9 @@ cells (both by default)."
                                 (:shr ,low ,+fixnum-shift+)) :raw)))
     (emit-fixed-object kiln.kir::+packet-class-double+ (list bits))))
 (define-primop :double-float-high-bits (x)
-  (copy-to-var `(:shl (:shr (:load ,x ,+vector-data+) 32) ,+fixnum-shift+)))
+  (copy-to-var `(:fixnum-tag (:shr (:field-load ,kiln.kir::+packet-field-double-bits+ ,x) 32))))
 (define-primop :double-float-low-bits (x)
-  (copy-to-var `(:shl (:and (:load ,x ,+vector-data+) #xffffffff) ,+fixnum-shift+)))
+  (copy-to-var `(:fixnum-tag (:and (:field-load ,kiln.kir::+packet-field-double-bits+ ,x) #xffffffff))))
 (define-primop :single-float-p (x)
   (boolean-value `(:eq (:and ,x ,+immediate-mask+) ,+single-float-tag+)))
 (define-primop :type-error-number (x) (emit-error +err-not-number+ x) (nil-value))

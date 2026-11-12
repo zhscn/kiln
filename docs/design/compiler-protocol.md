@@ -25,7 +25,7 @@
 
 ## 已接入的字段操作
 
-`field-load(field-id, object)` 和 `field-store(field-id, object, value)` 使用共享 schema 的字段编号。Rust 负责 cons 的 car/cdr、symbol 的槽及函数入口偏移；函数入口只允许读取，其他已接入字段保存对象引用。类型检查和错误路径仍由 Lisp 生成。迁移期 KIR 文本读取器也接受这些操作，构造的内部 KIR 只含普通 load/store，便于保持旧后端和差分验证。
+`field-load(field-id, object)` 和 `field-store(field-id, object, value)` 使用共享 schema 的字段编号。Rust 负责 cons、symbol、函数入口、double-float 位模式和 complex 分量的偏移；函数入口和 double 位模式只允许通过字段操作读取，其余已接入字段保存对象引用。类型检查和错误路径仍由 Lisp 生成。迁移期 KIR 文本读取器也接受这些操作，构造的内部 KIR 只含普通 load/store，便于保持旧后端和差分验证。
 
 ## 已接入的动态调用
 

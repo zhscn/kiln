@@ -778,7 +778,7 @@ predicate inside it is branched on, not made into T or NIL and compared."
                  (copy-to-var `(,(if (eq name '1+) :f64-add :f64-sub)
                                ,left #x3ff0000000000000) :f64)))))
         (let ((object (hir-lower node)))
-          (copy-to-var `(:load ,object ,(- 8 +tag-general+)) :f64)))))
+          (copy-to-var `(:field-load ,kiln.kir::+packet-field-double-bits+ ,object) :f64)))))
 
 (defun hir-lower-typed-call (node)
   "Return a primary value and a success flag without partially lowering an

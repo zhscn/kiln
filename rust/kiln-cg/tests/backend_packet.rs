@@ -73,6 +73,9 @@ fn named_fields_preserve_the_legacy_kir_program() {
         (FIELD_SYMBOL_PLIST, 43, true),
         (FIELD_SYMBOL_SETF_FUNCTION, 51, true),
         (FIELD_FUNCTION_ENTRY, 3, false),
+        (FIELD_DOUBLE_BITS, 3, false),
+        (FIELD_COMPLEX_REAL, 3, true),
+        (FIELD_COMPLEX_IMAG, 11, true),
     ] {
         let legacy_store = if writable {
             format!("(store a0 {offset} a1)")
