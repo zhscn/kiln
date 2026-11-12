@@ -25,7 +25,8 @@ running image, in the null lexical environment."
           (compile-module (front-end-forms `((setq *compiled-function* (function ,definition)))
                                            session)
                           name :session session :image t))
-      (let ((init (kiln.sys:%primop :compile-packet (kiln.kir::module-packet module) literals)))
+      (let ((init (kiln.sys:%primop :compile-program (kiln.kir::module-form module) literals
+                                        kiln.kir::+backend-target-fingerprint+)))
         (unless init
           (error "kiln-cg could not compile ~S." definition))
         (let ((*compiled-function* nil))

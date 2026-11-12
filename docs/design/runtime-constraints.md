@@ -154,4 +154,4 @@ ANSI 没有定义线程，但 kiln 要支持多线程：并行编译和 M:N 调�
 
 ## 编译器专用 Rust 边界
 
-目标 LIR 编译入口是单向、同步的批量调用，不回调 Lisp。请求字节在调用前复制到 native 内存，literal 向量由 runtime root 持有，Rust 只处理 ID。无须先实现通用对象借用、外部类型或回调退出 token。代码物化与安装期间仍须正确保护对象、登记栈图并处理失败，不能把纯 native 降级与安装阶段混为一谈。具体流程见 [compiler-protocol.md](compiler-protocol.md)。
+目标 LIR 编译入口是单向、同步的批量调用，不回调 Lisp。字节请求复制到 native 内存，一次性结构化请求直接快照为 Rust 自有记录，literal 向量由 runtime root 持有，Rust 只处理 ID。无须先实现通用对象借用、外部类型或回调退出 token。代码物化与安装期间仍须正确保护对象、登记栈图并处理失败，不能把纯 native 降级与安装阶段混为一谈。具体流程见 [compiler-protocol.md](compiler-protocol.md)。

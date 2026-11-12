@@ -35,7 +35,14 @@
                     (push (logior #x80 (logand n 63)) bytes))))
     (nreverse bytes)))
 
-(defun encode-backend-packet (program &optional (language +packet-kir-payload+))
+(defun packet-symbol-name (symbol)
+  "Backend identifiers use ASCII case normalization, independent of locale."
+  (map 'string (lambda (c)
+                 (let ((n (char-code c)))
+                   (if (<= 65 n 90) (code-char (+ n 32)) c)))
+       (symbol-name symbol)))
+
+(defun portable-backend-packet (program &optional (language +packet-kir-payload+))
   "A simple vector of octets, using the backend packet's fixed-width schema."
   (let ((records nil) (record-count 0) (edges nil) (edge-count 0)
         (strings nil) (string-count 0))
@@ -55,8 +62,8 @@
                               (unless (<= (- (ash 1 63)) form (1- (ash 1 63)))
                                 (error "Backend integer is outside signed 64-bit range."))
                               (list +packet-integer+ 0 form))
-                             ((keywordp form)
-                              (text (string-downcase (symbol-name form)) +packet-symbol+))
+                             ((symbolp form)
+                              (text (packet-symbol-name form) +packet-symbol+))
                              ((stringp form) (text form +packet-string+))
                              ((simple-vector-p form)
                               (text (kir-name (string (svref form 0)) (svref form 1))
@@ -93,6 +100,13 @@
           (dolist (edge (nreverse edges)) (uint edge 4))
           (dolist (byte (nreverse strings)) (uint byte 1)))
         out))))
+
+(defun encode-backend-packet (program &optional (language +packet-kir-payload+))
+  #+kiln
+  (let ((bytes (kiln.sys:%primop :encode-packet program language)))
+    (unless bytes (error "Cannot encode backend program."))
+    (return-from encode-backend-packet bytes))
+  #-kiln (portable-backend-packet program language))
 
 (defun module-packet (module)
   (encode-backend-packet (module-form module)))

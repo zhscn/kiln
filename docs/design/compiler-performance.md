@@ -56,7 +56,7 @@ HIR 的表示与分析见 [hir.md](hir.md)，降级见 [lowering.md](lowering.md
 reader 与文件流见 [io.md](io.md)。性能测量记录见
 [performance.md](../research/performance.md)。
 
-当前结构化编码使用 Lisp simple-vector octets，并按记录构建临时列表；记录空间与编码成本须单独测量，不能将传输实现等同于预算达标。运行期缓存和 FASL 不再依赖 KIR 文本。
+宿主的可移植编码器按记录构建临时列表，image 的批量 native 编码器从程序快照生成同一字节格式；一次性 `compile` 直接交接 Rust 自有记录，省去字节向量及编码、解码往返。结果仍使用 Lisp simple-vector octets，记录空间与编码成本须单独测量，不能将传输实现等同于预算达标。运行期缓存和 FASL 不再依赖 KIR 文本。
 
 ## 小函数与切换预算
 
@@ -67,3 +67,7 @@ reader 与文件流见 [io.md](io.md)。性能测量记录见
 初始工程预算为：预热后不超过 100 个 LIR 操作的小函数，编码、复制、解码和结构验证合计中位数不超过 100 微秒，且不超过总原生编译中位数的 10%。这些是待验证目标，不是现有测量结果；未达到时先定位固定成本，再决定调整预算或实现。
 
 生产切换以同机、同配置的旧路径为基线：小函数编译和完整自编译中位数回退不超过 5%，运行期基准几何平均回退不超过 2%，单项稳定回退超过 5% 必须解释并处理后再决定切换。重复测量确认噪声，基准范围包括 cl-bench、Benchmarks Game 与实际 CLOS 编译。实验路径允许回退，默认路径不得以未来优化承诺替代测量。
+
+## 小函数基准入口
+
+`tools/bench-native-compile.py --modules build/boot/stage0 --output build/native-baseline` 使用指定目录的五个模块，测量预热后独立小函数的原生 `compile` CPU 时间。`bench/native-compile-small.lisp` 每次生成新函数并校验调用结果，绕开顶层产物缓存；每个进程先预热，重复进程报告中位数。比较不同模块目录时保持同一后端、堆配置和机器负载，运行期间不进行构建或其他基准。原始输出保存在指定的忽略目录。它覆盖完整小函数编译开销，不代替协议阶段的独立计时。

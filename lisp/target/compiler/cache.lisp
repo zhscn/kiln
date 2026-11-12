@@ -57,7 +57,6 @@ Native code already registered with the runtime follows the runtime's lifetime."
     (setf *toplevel-compilation-cache*
           (subseq *toplevel-compilation-cache* 0 (max 0 kiln.sys:*compilation-cache-limit*))))
   (let* ((program (kiln.kir::module-form module))
-         (packet (kiln.kir::encode-backend-packet program))
          (canonical (kiln.kir::encode-backend-packet (canonical-backend-form program name)))
          (entry (when (and replayable-p (plusp kiln.sys:*compilation-cache-limit*))
                   (find-if (lambda (entry)
@@ -75,7 +74,8 @@ Native code already registered with the runtime follows the runtime's lifetime."
                 (cons entry (delete entry *toplevel-compilation-cache* :test #'eq)))
           (note-compiled-code (svref entry 5) (svref entry 6) (svref entry 3))
           (svref entry 7))
-        (let ((init (kiln.sys:%primop :compile-packet packet literals)))
+        (let* ((packet (kiln.kir::encode-backend-packet program))
+               (init (kiln.sys:%primop :compile-packet packet literals)))
           (incf *compilation-cache-misses*)
           (when init
             (note-compiled-code name canonical literals)

@@ -1,6 +1,6 @@
 # 编译器架构
 
-状态：**分层目标正在接入**。结构化封套、文件与内存入口已实现，当前载荷仍是 KIR，固定对象字段操作已开始迁往 Rust，其余 LIR 操作和 Lisp MIR 待实现。现在的编译器是 Lisp 一路生成 KIR（`CST → HIR → KIR`，见 [hir.md](hir.md)、[lowering.md](lowering.md)），kiln-cg 把 KIR 交给 Cranelift。本文规定迁移后的分层；迁移期间现有路径是行为参照。
+状态：**分层目标正在接入**。结构化封套、文件与内存入口已实现，当前载荷仍是 KIR，固定对象字段和普通函数对象调用的 ABI 展开已迁往 Rust，其余 LIR 操作和 Lisp MIR 待实现。现在的编译器是 Lisp 一路生成 KIR（`CST → HIR → KIR`，见 [hir.md](hir.md)、[lowering.md](lowering.md)），kiln-cg 把 KIR 交给 Cranelift。本文规定迁移后的分层；迁移期间现有路径是行为参照。
 
 ## 分层
 
@@ -50,7 +50,7 @@
 Lisp 部分照旧在两处运行：SBCL 上交叉编译（写 stage0），kiln 上编译（自举的后续阶段、运行期 `compile`/`eval`/`load`）。LIR 从第一版起采用结构化批量协议，不经过打印与文本解析：
 
 - 文件：SBCL 写规范化的 `.lir` 二进制请求，由构建程序调用 kiln-cg 子进程生成目标文件；SBCL 不需要载入 Rust 动态库。自举逐个比较确定性编码的 LIR 文件。
-- 运行期：专用编译入口接收相同 schema 的连续内存缓冲区和受 roots 保护的 literal 向量，批量调用 Rust。Rust 导入后直接构造内部 KIR，不生成或重新解析 KIR 文本。现有 `kiln_rt_jit` 文本入口只是迁移期旧路径。
+- 运行期：一次性编译批量快照结构化程序为 Rust 自有记录；FASL 和缓存载荷走字节入口。两种适配器共享程序 schema、操作校验和降级，不要求进程内请求先编码再解码。literal 向量受调用者 roots 保护，Rust 直接构造内部 KIR。现有 `kiln_rt_jit` 文本入口只是迁移期旧路径。
 
 KIR 变成 kiln-cg 内部的数据结构；文本形式保留给诊断（`--dump-kir`）和迁移期间的旧输入。
 

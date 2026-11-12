@@ -140,6 +140,8 @@ pub fn load(kir: &kir::Module, opts: &Options, memory: Memory) -> Result<Loaded,
     }
     builder.symbol("kiln_rt_jit", kiln_rt_jit as *const u8);
     builder.symbol("kiln_rt_compile_packet", kiln_rt_compile_packet as *const u8);
+    builder.symbol("kiln_rt_compile_program", kiln_rt_compile_program as *const u8);
+    builder.symbol("kiln_rt_encode_packet", crate::packet_heap::kiln_rt_encode_packet as *const u8);
     builder.symbol_lookup_fn(Box::new(|name| kiln_rt::exported(name).map(|a| a as *const u8)));
     let mut module = JITModule::new(builder);
     let out = codegen::compile(&mut module, kir, opts)?;
@@ -250,7 +252,7 @@ unsafe fn jit_text(text: u64, literals: u64) -> Result<u64, String> {
     let src = unsafe { kiln_rt::object::string_value(text) };
     let s = crate::sexp::parse_one(&src).map_err(|e| e.to_string())?;
     let kir = kir::parse_module(&s)?;
-    unsafe { install_module(&kir, literals, src.len(), t) }
+    unsafe { install_module(&kir, literals, Some(src.len()), t) }
 }
 
 /// Compile an indexed packet from a simple vector of octets. This entry
@@ -290,10 +292,40 @@ unsafe fn compile_packet(packet: u64, literals: u64) -> Result<u64, String> {
         u8::try_from(fixnum_value(word)).map_err(|_| "request contains a non-octet".to_string())
     }).collect::<Result<Vec<_>, _>>()?;
     let kir = crate::packet::load(&bytes)?;
-    unsafe { install_module(&kir, literals, bytes.len(), t) }
+    unsafe { install_module(&kir, literals, Some(bytes.len()), t) }
 }
 
-unsafe fn install_module(kir: &kir::Module, literals: u64, input_size: usize, t: std::time::Instant) -> Result<u64, String> {
+/// Direct image adapter for the same backend program schema used in packets.
+/// It snapshots records once rather than round-tripping through a Lisp byte vector.
+///
+/// # Safety
+/// Arguments must be valid Lisp values. Like the packet compiler, this
+/// entry assumes one mutator and performs no Lisp safepoint or callback.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kiln_rt_compile_program(_ctx: *mut Context, program: u64, literals: u64, target: u64) -> u64 {
+    use kiln_rt::object::*;
+    let result = (|| {
+        let t = std::time::Instant::now();
+        let target = if is_fixnum(target) {
+            u64::try_from(fixnum_value(target)).map_err(|_| "invalid target fingerprint")?
+        } else if is_general(target) && unsafe { header(target) } & KIND_MASK == KIND_BIGNUM {
+            u64::try_from(unsafe { kiln_rt::bignum::to_bigint(target) }).map_err(|_| "invalid target fingerprint")?
+        } else { return Err("invalid target fingerprint".to_string()); };
+        if target != crate::packet::target_fingerprint() { return Err("target ABI fingerprint mismatch".into()); }
+        if !is_general(literals) || unsafe { header(literals) } & KIND_MASK != KIND_SIMPLE_VECTOR {
+            return Err("literals must be a simple vector".into());
+        }
+        let program = unsafe { crate::packet_heap::snapshot_program(program) }?;
+        let kir = kir::parse_module(&program)?;
+        unsafe { install_module(&kir, literals, None, t) }
+    })();
+    match result {
+        Ok(init) => init,
+        Err(error) => { eprintln!("kiln_rt_compile_program: {error}"); nil() }
+    }
+}
+
+unsafe fn install_module(kir: &kir::Module, literals: u64, input_size: Option<usize>, t: std::time::Instant) -> Result<u64, String> {
     use kiln_rt::object::{header, header_length, untag};
     let n = header_length(unsafe { header(literals) });
     if kir.inits.len() != 1 { return Err("image compilation requires exactly one init function".into()); }
@@ -327,7 +359,8 @@ unsafe fn install_module(kir: &kir::Module, literals: u64, input_size: usize, t:
     }
     let inits = loaded.inits();
     if std::env::var("KILN_TIME").is_ok() {
-        eprintln!("kiln_rt_jit: {} bytes of backend input in {:?}", input_size, t.elapsed());
+        let source = input_size.map_or_else(|| "structured program".to_string(), |n| format!("{n} bytes"));
+        eprintln!("kiln compiler: {source} in {:?}", t.elapsed());
     }
     if std::env::var("KILN_PERF_MAP").is_ok() {
         append_perf_map(&loaded.module);

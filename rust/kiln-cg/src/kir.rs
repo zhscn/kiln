@@ -487,9 +487,13 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
             }
             "block" => {
                 let (bname, stmts) = items.split_first().ok_or("block: missing name")?;
+                let mut lowered = Vec::new();
+                for stmt in stmts {
+                    lowered.extend(parse_statements(stmt)?);
+                }
                 f.blocks.push(Block {
                     name: sym(bname)?.to_string(),
-                    stmts: stmts.iter().map(parse_stmt).collect::<R<_>>()?,
+                    stmts: lowered,
                 });
             }
             _ => return Err(format!("func {}: unknown part {h}", f.name)),
@@ -499,6 +503,18 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
         return Err(format!("func {} has no blocks", f.name));
     }
     Ok(f)
+}
+
+fn parse_statements(s: &Sexp) -> R<Vec<Stmt>> {
+    let (h, r) = head(list(s)?)?;
+    if h != "invoke" {
+        return Ok(vec![parse_stmt(s)?]);
+    }
+    let location = loc(h, r, 5)?;
+    crate::lir::invoke(
+        sym(&r[0])?.to_string(), sym(&r[1])?.to_string(), sym(&r[2])?.to_string(),
+        list(&r[3])?.iter().map(parse_expr).collect::<R<_>>()?, handler(&r[4])?, location,
+    )
 }
 
 fn parse_stmt(s: &Sexp) -> R<Stmt> {

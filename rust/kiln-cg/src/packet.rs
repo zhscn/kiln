@@ -11,6 +11,11 @@ pub const MAGIC: &[u8; 8] = b"KILNLIR\0";
 /// Identifies the target runtime build, including its value and context
 /// definitions. This is deliberately stricter than layout compatibility.
 pub fn target_fingerprint() -> u64 {
+    static VALUE: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *VALUE.get_or_init(compute_target_fingerprint)
+}
+
+fn compute_target_fingerprint() -> u64 {
     let mut hash = 0xcbf29ce484222325u64;
     for bytes in [
         include_bytes!("../../kiln-rt/src/object.rs").as_slice(),

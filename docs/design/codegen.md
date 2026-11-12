@@ -2,15 +2,17 @@
 
 ## 组成
 
-```
-Lisp 编译器（lisp/*.lisp，SBCL 上或 kiln 上）   源码 → KIR（s-expression 文本）
-        ↓ .kir（或运行期的字符串）
-kiln-cg（rust/kiln-cg）      KIR → Cranelift
-        ├─ jit：cranelift-jit，在进程内运行（链接 kiln-rt）
-        ├─ obj：cranelift-object 产出 .o
-        │       cc x.o libkiln_launcher.a → 可执行文件
-        └─ 库：kiln_rt_jit，运行期 compile/eval 用（eval-compile.md）
-kiln-rt（rust/kiln-rt）      runtime：context、GC、unwinder、栈、运行时函数
+```text
+Lisp 编译器（SBCL 或 kiln） → 兼容程序记录（迁移中的 LIR 操作与低级操作）
+        ├─ .kir：保留的文本文件输入
+        ├─ .lir：规范化二进制封套
+        └─ image：compile-program（一次性记录）/ compile-packet（序列化载荷）
+                              ↓ 统一操作校验和布局、ABI 展开
+kiln-cg（rust/kiln-cg）      内存 KIR → Cranelift
+        ├─ jit：cranelift-jit，在进程内运行
+        └─ obj：cranelift-object 产出 .o
+                cc x.o libkiln_launcher.a → 可执行文件
+kiln-rt（rust/kiln-rt）      context、GC、unwinder、栈和运行时函数
 kiln-launcher               staticlib，提供 C main，链接 kiln-rt 和 kiln-cg
 ```
 
@@ -25,7 +27,7 @@ kiln-launcher               staticlib，提供 C main，链接 kiln-rt 和 kiln-
 当前 Lisp 编译器以 KIR 文本交接，目标以二进制 LIR 请求交接。KIR 保留为 Rust 内部表示，原因如下：
 
 - **cranelift-frontend 只能通过 API 使用。** 它负责从可变变量构建 SSA（`Variable`、`def_var`/`use_var`），以及在 safepoint 处为 GC 引用插入溢出和重载（user stack maps，C5）。直接写 CLIF 文本就绕过了它，Lisp 侧得自己构建 SSA、自己做溢出。
-- **对象布局的知识留在 Lisp 侧。** KIR 是接近 Cranelift 的低级 IR：tag、偏移、kind 编号都由 Lisp 编译器决定。kiln-cg 只负责调用约定、`try_call` 和异常表、栈图、trampoline、调试信息的表。编译器自举进 kiln 之后，kiln-cg 作为 runtime 里的代码生成库继续使用，不用改。（目标设计把布局知识移到 kiln-cg：Lisp 输出 LIR，kiln-cg 降级成 KIR，见 [compiler.md](compiler.md) 的“为什么这样分”。保留 KIR 作为 kiln-cg 内部一层的理由不变。）
+- **布局与机器后端分层。** 内部 KIR 已确定 tag、偏移和调用序列。固定字段与普通函数对象调用已经由 Rust 展开，其他发射仍在 Lisp 中，随 LIR 迁移。kiln-cg 继续负责 Cranelift 调用、异常表、栈图、trampoline 和调试表。
 
 ## KIR 语法
 
@@ -122,7 +124,7 @@ kiln-cg 的输出只取决于 KIR：函数里 landing block（`try_call` 的异�
 
 ## 运行期编译
 
-当前原生编译使用 `kiln_rt_compile_packet`：接收 simple-vector octets 和 literal 向量，复制、校验并解码后直接构造内存 KIR。下述 `kiln_rt_jit` 是保留的文本兼容入口。封套版本与所有权见 [compiler-protocol.md](compiler-protocol.md)。
+当前一次性原生编译使用 `kiln_rt_compile_program`：复制结构化记录并核验目标，直接构造内存 KIR。序列化载荷使用 `kiln_rt_compile_packet`，接收 simple-vector octets 和 literal 向量，复制、校验并解码后进入同一操作路径。下述 `kiln_rt_jit` 是保留的文本兼容入口。封套版本与所有权见 [compiler-protocol.md](compiler-protocol.md)。
 
 kiln-cg 作为库链进 `libkiln_launcher.a`，运行期的入口是 `kiln_rt_jit`（`rust/kiln-cg/src/jit.rs`）：解析 KIR，编进内存，登记调用点、栈图、static root 和调试记录，把字面量向量的元素写进模块的字面量字，返回 init 函数对象（还没调用）。KIR 编不过时打印原因并返回 NIL。只有引用了它的程序（含 compiler 模块的程序）链接时才带进 Cranelift。
 

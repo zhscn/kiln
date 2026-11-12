@@ -801,6 +801,8 @@ known to hold one), and true; else NIL and NIL."
 (defun rt-sys () (module-import-func "kiln_rt_sys" 5 1))
 (defun rt-write-kir () (module-import-func "kiln_rt_write_kir" 3 1))
 (defun rt-jit () (module-import-func "kiln_rt_jit" 3 1))
+(defun rt-encode-packet () (module-import-func "kiln_rt_encode_packet" 3 1 :unwinds))
+(defun rt-compile-program () (module-import-func "kiln_rt_compile_program" 4 1))
 (defun rt-compile-packet () (module-import-func "kiln_rt_compile_packet" 3 1))
 (defun rt-save-image () (module-import-func "kiln_rt_save_image" 4 1))
 (defun rt-frame () (module-import-func "kiln_rt_frame" 4 1))
@@ -1100,22 +1102,16 @@ it is a function, the global function of F if it is a symbol."
     (start-block ok)))
 
 (defun emit-lisp-call (fobj vals)
-  "Calls FOBJ with the argument operands VALS. Arguments beyond the
-register arguments go into the context's transfer area, stored after all
-arguments have been evaluated; the callee reads them before its first
-safepoint."
+  "Calls FOBJ after evaluating all operands; the backend arranges the ABI."
   (when (> (length vals) (+ +reg-args+ +values-max+))
     (fail "calls with more than ~D arguments are not supported"
           (+ +reg-args+ +values-max+)))
-  (let ((v0 (new-var)) (nv (new-var :raw))
-        (entry (copy-to-var `(:field-load ,kiln.kir::+packet-field-function-entry+ ,fobj) :raw)))
-    (loop for v in (nthcdr +reg-args+ vals)
-          for i from 0
-          do (emit `(:store :ctx ,(+ +ctx-values+ (* 8 i)) ,v)))
-    (emit `(:call-lisp ,v0 ,nv ,entry
-                       (:ctx ,fobj ,(length vals) ,@(subseq vals 0 (min (length vals) +reg-args+)))
-                       ,(handler)
-                       ,@(call-loc)))
+  (let* ((callee (if (kiln.kir::kvar-p fobj) fobj (copy-to-var fobj)))
+         (arguments (mapcar (lambda (v)
+                              (if (or (integerp v) (kiln.kir::kvar-p v)) v (copy-to-var v)))
+                            vals))
+         (v0 (new-var)) (nv (new-var :raw)))
+    (emit `(:invoke ,v0 ,nv ,callee ,arguments ,(handler) ,@(call-loc)))
     (values v0 nv)))
 
 (defun function-cell-value (name)

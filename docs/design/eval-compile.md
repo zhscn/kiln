@@ -6,7 +6,7 @@ compiler 模块安装 HIR → KIR → Cranelift 的原生入口。两种执行�
 
 ## 目标后端交接
 
-目标原生路径为 Lisp 的 HIR/MIR → 表示选择 → LIR 请求 → Rust 布局与 ABI 降级 → 内存 KIR → Cranelift。HIR 求值器继续留在 Lisp。运行期直接提交连续二进制缓冲区和受保护的 literal 向量，不生成 LIR 或 KIR 文本；请求失败与产物发布采用 [compiler-protocol.md](compiler-protocol.md) 的所有权规则。当前原生入口已切换结构化 packet，载荷仍是 KIR；布局和 ABI 降级尚未移交 Rust。FASL 版本 2 保存 packet，加载不解析 KIR 文本。
+目标原生路径为 Lisp 的 HIR/MIR → 表示选择 → LIR 请求 → Rust 布局与 ABI 降级 → 内存 KIR → Cranelift。HIR 求值器继续留在 Lisp。运行期批量提交结构化程序或二进制载荷，以及受保护的 literal 向量，不生成 LIR 或 KIR 文本；请求失败与产物发布采用 [compiler-protocol.md](compiler-protocol.md) 的所有权规则。当前原生入口已切换结构化 packet，载荷仍是 KIR；布局和 ABI 降级尚未移交 Rust。FASL 版本 2 保存 packet，加载不解析 KIR 文本。
 
 ## 模块与自举边界
 
@@ -63,8 +63,8 @@ compiler 模块的 `lisp/target/compiler/native.lisp` 把 `kiln.kernel::*compile
 1. `native-compile` 新建一个 session（`image-client`），然后：
    - 用 `front-end-forms` 处理 `(setq *compiled-function* (function LAMBDA))`（和 `front-end` 一样，只是直接处理形式，不读文件）；
    - 用 `compile-module :image t` 降级；
-   - 用 `module-packet` 编码成带版本和目标指纹的记录字节；
-   - 把 packet 和字面量向量交给 `(%primop :compile-packet packet literals)`，即 kiln-cg 的 `kiln_rt_compile_packet`（[codegen.md](codegen.md)）。它返回 init 函数对象，KIR 编不过时返回 NIL，`native-compile` 据此报错。
+   - 用 `module-form` 得到结构化程序；
+   - 把程序、字面量向量和目标指纹交给 `(%primop :compile-program program literals target)`，即 kiln-cg 的 `kiln_rt_compile_program`（[codegen.md](codegen.md)）。它返回 init 函数对象，KIR 编不过时返回 NIL，`native-compile` 据此报错。
 2. `native-compile` 动态绑定 `*compiled-function*`，调用 init 函数，取出编好的函数。
 
 ### image 模式的 KIR

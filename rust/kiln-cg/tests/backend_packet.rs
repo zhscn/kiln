@@ -94,3 +94,62 @@ fn named_fields_preserve_the_legacy_kir_program() {
         assert_eq!(format!("{old:?}"), format!("{new:?}"));
     }
 }
+
+#[test]
+fn invoke_preserves_argument_transfer_handlers_and_locations() {
+    for count in [0, 1, 3, 4, 7, 1024] {
+        let args = (0..count).map(|i| (i * 2).to_string()).collect::<Vec<_>>();
+        let stores = args
+            .iter()
+            .skip(3)
+            .enumerate()
+            .map(|(i, value)| format!("(store ctx {} {value})", 88 + i * 8))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let old_call = format!(
+            "{stores} (call-lisp v n (load a0 3) (ctx a0 {count} {}) caught (loc 12 34))",
+            args.iter().take(3).cloned().collect::<Vec<_>>().join(" ")
+        );
+        let new_call = format!("(invoke v n a0 ({}) caught (loc 12 34))", args.join(" "));
+        let module = |body| {
+            format!(
+                "(module \"calls\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj) (n raw)) (slots) (block b {body} (return v n)) (block caught (return exn1 1))))"
+            )
+        };
+        let old = kiln_cg::kir::parse_module(&sexp::parse_one(&module(old_call)).unwrap()).unwrap();
+        let new = packet::load(
+            &packet::encode(
+                &sexp::parse_one(&module(new_call)).unwrap(),
+                packet::schema::KIR_PAYLOAD,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(format!("{old:?}"), format!("{new:?}"), "arity {count}");
+    }
+    assert!(
+        kiln_cg::lir::invoke(
+            "v".into(),
+            "n".into(),
+            "f".into(),
+            (0..1025).map(|_| kiln_cg::kir::Expr::Int(0)).collect(),
+            None,
+            None
+        )
+        .is_err()
+    );
+    assert!(
+        kiln_cg::lir::invoke(
+            "v".into(),
+            "n".into(),
+            "f".into(),
+            vec![kiln_cg::kir::Expr::Load(
+                Box::new(kiln_cg::kir::Expr::Var("ctx".into())),
+                88
+            )],
+            None,
+            None
+        )
+        .is_err()
+    );
+}

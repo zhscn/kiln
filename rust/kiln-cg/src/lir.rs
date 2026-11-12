@@ -34,6 +34,53 @@ pub fn field_store(field: u32, object: Expr, value: Expr) -> Result<Stmt, String
     Ok(Stmt::Store(object, field_offset(field)?, value))
 }
 
+/// Materialize the target calling convention after the front end has
+/// evaluated the callee and every argument into stable operands.
+pub fn invoke(
+    v0: String,
+    nv: String,
+    callee: String,
+    args: Vec<Expr>,
+    handler: Option<String>,
+    loc: Option<crate::kir::Loc>,
+) -> Result<Vec<Stmt>, String> {
+    use kiln_rt::context::{Context, VALUES_MAX};
+    if args.len() > crate::kir::REG_ARGS + VALUES_MAX {
+        return Err("invoke: too many arguments".into());
+    }
+    if args
+        .iter()
+        .any(|arg| !matches!(arg, Expr::Int(_) | Expr::Var(_)))
+    {
+        return Err("invoke: arguments must be evaluated into variables or immediates".into());
+    }
+    let count = args.len();
+    let mut statements = Vec::new();
+    let mut registers = vec![
+        Expr::Var("ctx".into()),
+        Expr::Var(callee.clone()),
+        Expr::Int(count as i64),
+    ];
+    for (index, value) in args.into_iter().enumerate() {
+        if index < crate::kir::REG_ARGS {
+            registers.push(value);
+        } else {
+            let offset =
+                core::mem::offset_of!(Context, values) + (index - crate::kir::REG_ARGS) * 8;
+            statements.push(Stmt::Store(Expr::Var("ctx".into()), offset as i32, value));
+        }
+    }
+    statements.push(Stmt::CallLisp {
+        v0,
+        nv,
+        entry: field_load(FIELD_FUNCTION_ENTRY, Expr::Var(callee))?,
+        args: registers,
+        handler,
+        loc,
+    });
+    Ok(statements)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

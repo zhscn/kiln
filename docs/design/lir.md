@@ -1,6 +1,6 @@
 # LIR：Lisp 编译器与 Rust 后端的输入契约
 
-状态：**操作层正在接入**。[结构化封套](compiler-protocol.md)已支持文件与运行期交接，当前承载 KIR，兼容载荷已支持 `field-load`/`field-store`，字段 ID 由共享 schema 定义，Rust 在构造 KIR 时展开偏移。其余操作尚未迁移，不能视作完成 LIR。现在 Lisp 主要生成 KIR（[codegen.md](codegen.md)）。分层和迁移见 [compiler.md](compiler.md)。
+状态：**操作层正在接入**。[结构化封套](compiler-protocol.md)已支持文件与运行期交接，当前承载 KIR，兼容载荷已支持 `field-load`/`field-store` 和普通函数对象 `invoke`，字段 ID 由共享 schema 定义，Rust 在构造 KIR 时展开偏移。其余操作尚未迁移，不能视作完成 LIR。现在 Lisp 主要生成 KIR（[codegen.md](codegen.md)）。分层和迁移见 [compiler.md](compiler.md)。
 
 LIR（low-level IR）是表示选择后的后端输入语言，也是编译协议的程序载荷。它不设独立的优化管线。初期由 HIR 降级产生，后续由 MIR 产生；两者使用同一 schema。它已经确定了“做什么”：每个值的表示、每个对象的存储、闭包的内容、控制流和动态范围；还没有确定“怎么做”：tag、对象和 context 的偏移、调用序列、展开 payload 的编码、栈图。后者由 kiln-cg 降级成 KIR 时按 kiln-rt 的布局决定。
 
@@ -95,7 +95,7 @@ Rust 在函数入口生成栈检查（包括“参数全在寄存器里的函数
 
 ## 结构化交接
 
-LIR 请求从第一版起采用下述[编译协议](compiler-protocol.md)。运行期在内存中提交批量二进制记录；文件保存同一规范化字节编码。两者进入同一个 Rust 解码器、验证器和 KIR 构造器。可读的 LIR/KIR dump 只供诊断，不是编译输入的中转步骤。
+LIR 请求从第一版起采用下述[编译协议](compiler-protocol.md)。运行期批量提交结构化记录并由适配器转交 Rust 所有权，文件保存这些记录的规范化二进制编码。解码与快照适配器进入同一个操作验证和 KIR 构造路径，避免进程内的序列化往返。可读的 LIR/KIR dump 只供诊断，不是编译输入的中转步骤。
 
 ## 迁移期间
 

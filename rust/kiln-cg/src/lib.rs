@@ -8,3 +8,4 @@ pub mod kir;
 pub mod sexp;
 pub mod packet;
 pub mod lir;
+mod packet_heap;
