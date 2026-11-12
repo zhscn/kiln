@@ -271,10 +271,10 @@ Return the storage slot and its root region, if any."
     (emit `(:stack-object-init ,slot ,class ,reference-count))
     (values slot
             (when (plusp reference-count)
-              (let ((region (establish-entry :stack-roots)))
-                (emit `(:store (:slot ,(region-slot region)) ,+dyn-pend-target+
-                               (:stack-reference-base ,slot ,class ,reference-count)))
-                (emit `(:store (:slot ,(region-slot region)) ,+dyn-pend-value+ ,reference-count))
+              (let ((region (make-region :kind :stack-roots
+                                         :slot (new-slot '(:stack-roots-entry))
+                                         :handler nil :outer *regions*)))
+                (emit `(:stack-roots-enter ,(region-slot region) ,slot ,class ,reference-count))
                 region)))))
 
 (defun hir-with-stack-storage (fun body)

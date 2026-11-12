@@ -476,6 +476,7 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
     }
     let mut alloc_number = 0usize;
     let mut stack_objects = std::collections::HashMap::new();
+    let mut stack_root_entries = std::collections::HashSet::new();
     for part in body {
         let (h, items) = head(list(part)?)?;
         match h {
@@ -509,6 +510,12 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                         Sexp::Int(n) => u32::try_from(*n).map_err(|_| "invalid slot size")?,
                         descriptor => {
                             let (kind, args) = head(list(descriptor)?)?;
+                            if kind == "stack-roots-entry" {
+                                arity(kind, args, 0)?;
+                                if !stack_root_entries.insert(name.clone()) { return Err("duplicate stack roots entry".into()); }
+                                f.slots.push((name, core::mem::size_of::<kiln_rt::context::DynEntry>() as u32));
+                                continue;
+                            }
                             if kind != "stack-object" { return Err("unknown slot descriptor".into()); }
                             arity(kind, args, 2)?;
                             let class = u32::try_from(int(&args[0])?).map_err(|_| "invalid stack object class")?;
@@ -536,6 +543,25 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                 for stmt in stmts {
                     validate_stack_references(stmt, &stack_objects)?;
                     let (head_name, operands) = head(list(stmt)?)?;
+                    if head_name == "stack-roots-enter" {
+                        arity(head_name, operands, 4)?;
+                        let entry = sym(&operands[0])?;
+                        let slot = sym(&operands[1])?;
+                        let class = u32::try_from(int(&operands[2])?).map_err(|_| "invalid stack object class")?;
+                        let count = int(&operands[3])?;
+                        if !stack_root_entries.contains(entry) || stack_objects.get(slot) != Some(&(class, count)) || count <= 0 {
+                            return Err("stack-roots-enter requires matching entry and object slots".into());
+                        }
+                        lowered.extend(crate::lir::enter_stack_roots(entry.to_string(), slot.to_string(), class, count)?);
+                        continue;
+                    }
+                    if head_name == "stack-roots-leave" {
+                        arity(head_name, operands, 1)?;
+                        let entry = sym(&operands[0])?;
+                        if !stack_root_entries.contains(entry) { return Err("stack-roots-leave requires a roots entry".into()); }
+                        lowered.push(crate::lir::leave_stack_roots(entry.to_string()));
+                        continue;
+                    }
                     if head_name == "stack-closure" {
                         arity(head_name, operands, 3)?;
                         let result = sym(&operands[0])?.to_string();

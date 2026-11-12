@@ -12,7 +12,7 @@
            #:+length-shift+
            #:+cons-bytes+
            #:+ctx-poll-flag+ #:+ctx-dynenv+ #:+values-max+ #:+ctx-stack-limit+ #:+ctx-tls+ #:+no-tls-value+
-           #:+dyn-catch+ #:+dyn-unwind-protect+ #:+dyn-exit-point+ #:+dyn-bind+ #:+dyn-progv+ #:+dyn-stack-roots+ #:+dynentry-size+
+           #:+dyn-catch+ #:+dyn-unwind-protect+ #:+dyn-exit-point+ #:+dyn-bind+ #:+dyn-progv+ #:+dynentry-size+
            #:+dyn-kind+ #:+dyn-prev+ #:+dyn-fp+ #:+dyn-tag+
            #:+dyn-pend-target+ #:+dyn-pend-value+
            #:+err-not-fixnum+ #:+err-overflow+ #:+err-wrong-nargs+

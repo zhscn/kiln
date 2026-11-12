@@ -72,7 +72,6 @@
 (defconstant +dyn-exit-point+ 5)
 (defconstant +dyn-bind+ 6)
 (defconstant +dyn-progv+ 7)
-(defconstant +dyn-stack-roots+ 8)
 (defconstant +dynentry-size+ 48)
 (defconstant +dyn-kind+ 0)
 (defconstant +dyn-prev+ 8)

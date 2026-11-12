@@ -218,6 +218,28 @@ pub fn stack_reference_base(slot: String, class: u32, count: i64) -> Result<Expr
     Ok(Expr::Bin(crate::kir::BinOp::Add, Box::new(Expr::Slot(slot)), Box::new(Expr::Int(offset as i64))))
 }
 
+pub fn enter_stack_roots(entry: String, object: String, class: u32, count: i64) -> Result<Vec<Stmt>, String> {
+    use kiln_rt::context::{Context, DynEntry, DYN_STACK_ROOTS};
+    let field = |offset: usize, value| Stmt::Store(Expr::Slot(entry.clone()), offset as i32, value);
+    let context = || Expr::Var("ctx".into());
+    let dynenv = core::mem::offset_of!(Context, dynenv) as i32;
+    Ok(vec![
+        field(core::mem::offset_of!(DynEntry, kind), Expr::Int(DYN_STACK_ROOTS as i64)),
+        field(core::mem::offset_of!(DynEntry, prev), Expr::Load(Box::new(context()), dynenv)),
+        field(core::mem::offset_of!(DynEntry, fp), Expr::Fp),
+        field(core::mem::offset_of!(DynEntry, tag), Expr::Int(0)),
+        field(core::mem::offset_of!(DynEntry, pend_target), stack_reference_base(object, class, count)?),
+        field(core::mem::offset_of!(DynEntry, pend_value), Expr::Int(count)),
+        Stmt::Store(context(), dynenv, Expr::Slot(entry)),
+    ])
+}
+
+pub fn leave_stack_roots(entry: String) -> Stmt {
+    use kiln_rt::context::{Context, DynEntry};
+    Stmt::Store(Expr::Var("ctx".into()), core::mem::offset_of!(Context, dynenv) as i32,
+        Expr::Load(Box::new(Expr::Slot(entry)), core::mem::offset_of!(DynEntry, prev) as i32))
+}
+
 pub fn closure_ref(object: Expr, index: i64) -> Result<Expr, String> {
     Ok(Expr::Load(Box::new(object), closure_offset(index)?))
 }

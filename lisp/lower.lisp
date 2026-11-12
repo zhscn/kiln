@@ -503,7 +503,9 @@ through POLL-RETRY."
     (start-block cont)))
 
 (defun pop-entry (region)
-  (emit `(:store :ctx ,+ctx-dynenv+ (:load (:slot ,(region-slot region)) ,+dyn-prev+))))
+  (if (eq (region-kind region) :stack-roots)
+      (emit `(:stack-roots-leave ,(region-slot region)))
+      (emit `(:store :ctx ,+ctx-dynenv+ (:load (:slot ,(region-slot region)) ,+dyn-prev+)))))
 
 (defun emit-local-exit (target-regions)
   "Leaves the regions entered since TARGET-REGIONS, running cleanups."
@@ -523,15 +525,14 @@ through POLL-RETRY."
 region; code inside it runs with the region pushed on *REGIONS*."
   (let* ((slot (new-slot +dynentry-size+))
          (region (make-region :kind kind :slot slot
-                              :handler (if (member kind '(:bind :progv :stack-roots)) nil (new-block))
+                              :handler (if (member kind '(:bind :progv)) nil (new-block))
                               :outer *regions*)))
     (emit `(:store (:slot ,slot) ,+dyn-kind+ ,(ecase kind
                                                  (:catch +dyn-catch+)
                                                  (:unwind-protect +dyn-unwind-protect+)
                                                  (:exit-point +dyn-exit-point+)
                                                  (:bind +dyn-bind+)
-                                                 (:progv +dyn-progv+)
-                                                 (:stack-roots +dyn-stack-roots+))))
+                                                 (:progv +dyn-progv+))))
     (emit `(:store (:slot ,slot) ,+dyn-prev+ (:load :ctx ,+ctx-dynenv+)))
     (emit `(:store (:slot ,slot) ,+dyn-fp+ (:fp)))
     ;; Initialize object fields and range descriptors before linking the entry.

@@ -117,6 +117,26 @@ fn immediate_class_tests_preserve_kir_and_reject_unknown_classes() {
 }
 
 #[test]
+fn stack_root_regions_initialize_before_linking_and_validate_slots() {
+    use packet::schema::*;
+    let module = |slots, body| format!("(module \"roots\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars) (slots {slots}) (block b {body} (return a0 1))))");
+    let old = module("(object 24) (entry 48)".to_string(), "(store (slot entry) 0 8) (store (slot entry) 8 (load ctx 8)) (store (slot entry) 16 (fp)) (store (slot entry) 24 0) (store (slot entry) 32 (add (slot object) 8)) (store (slot entry) 40 2) (store ctx 8 (slot entry)) (store ctx 8 (load (slot entry) 8))".to_string());
+    let new = module(format!("(object (stack-object {CLASS_CONS} 2)) (entry (stack-roots-entry))"), format!("(stack-roots-enter entry object {CLASS_CONS} 2) (stack-roots-leave entry)"));
+    let old = kiln_cg::kir::parse_module(&sexp::parse_one(&old).unwrap()).unwrap();
+    let new = sexp::parse_one(&new).unwrap();
+    let new = packet::load(&packet::encode(&new, KIR_PAYLOAD).unwrap()).unwrap();
+    assert_eq!(format!("{old:?}"), format!("{new:?}"));
+    for (slots, body) in [
+        (format!("(object (stack-object {CLASS_CONS} 2)) (entry 48)"), format!("(stack-roots-enter entry object {CLASS_CONS} 2)")),
+        (format!("(object (stack-object {CLASS_CONS} 2)) (entry (stack-roots-entry))"), format!("(stack-roots-enter entry object {CLASS_FUNCTION} 2)")),
+        (format!("(object (stack-object {CLASS_FUNCTION} 0)) (entry (stack-roots-entry))"), format!("(stack-roots-enter entry object {CLASS_FUNCTION} 0)")),
+        ("(entry 48)".to_string(), "(stack-roots-leave entry)".to_string()),
+    ] {
+        assert!(kiln_cg::kir::parse_module(&sexp::parse_one(&module(slots, body)).unwrap()).is_err());
+    }
+}
+
+#[test]
 fn stack_object_construction_preserves_field_order_and_aliases() {
     use packet::schema::*;
     let module = |slots, body| format!("(module \"stack\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj) (p raw)) (slots {slots}) (block b {body} (return v 1))))");
