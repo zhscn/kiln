@@ -117,6 +117,17 @@ fn immediate_class_tests_preserve_kir_and_reject_unknown_classes() {
 }
 
 #[test]
+fn tls_address_and_empty_slot_test_preserve_existing_kir() {
+    let module = |body| format!("(module \"tls\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (p raw) (v raw)) (slots) (block b {body} (return a0 1))))");
+    let old = module("(set p (add (load ctx 48) (shl a0 2))) (set v (eq (load p 0) 35))");
+    let new = module("(set p (tls-address a0)) (set v (no-tls-p (load p 0)))");
+    let old = kiln_cg::kir::parse_module(&sexp::parse_one(&old).unwrap()).unwrap();
+    let new = sexp::parse_one(&new).unwrap();
+    let new = packet::load(&packet::encode(&new, packet::schema::KIR_PAYLOAD).unwrap()).unwrap();
+    assert_eq!(format!("{old:?}"), format!("{new:?}"));
+}
+
+#[test]
 fn dynamic_entry_payload_operations_preserve_layout_and_check_kinds() {
     use packet::schema::KIR_PAYLOAD;
     let module = |slots, body| format!("(module \"dynamic\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (p raw) (i raw) (v obj)) (slots {slots}) (block b {body} (return v 1))))");

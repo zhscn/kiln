@@ -80,6 +80,16 @@ pub fn fixnum_untag(value: Expr) -> Expr {
     Expr::Shift(crate::kir::ShiftOp::Sar, Box::new(value), 1)
 }
 
+pub fn tls_address(index: Expr) -> Expr {
+    use crate::kir::{BinOp, ShiftOp};
+    let table = Expr::Load(Box::new(Expr::Var("ctx".into())), core::mem::offset_of!(kiln_rt::context::Context, tls) as i32);
+    Expr::Bin(BinOp::Add, Box::new(table), Box::new(Expr::Shift(ShiftOp::Shl, Box::new(index), 2)))
+}
+
+pub fn no_tls_value(value: Expr) -> Expr {
+    Expr::Cmp(crate::kir::CmpOp::Eq, Box::new(value), Box::new(Expr::Int(kiln_rt::special::NO_TLS_VALUE as i64)))
+}
+
 pub fn fixnum_tag(value: Expr) -> Expr {
     Expr::Shift(crate::kir::ShiftOp::Shl, Box::new(value), 1)
 }
@@ -279,12 +289,10 @@ pub fn bind_special(entry: String, index: Expr, address: Expr, value: Expr) -> V
 }
 
 pub fn unbind_special(entry: String) -> Stmt {
-    use crate::kir::{BinOp, ShiftOp};
-    use kiln_rt::context::{Context, DynEntry};
+    use kiln_rt::context::DynEntry;
     let field = |offset: usize| Expr::Load(Box::new(Expr::Slot(entry.clone())), offset as i32);
-    let tls = Expr::Load(Box::new(Expr::Var("ctx".into())), core::mem::offset_of!(Context, tls) as i32);
-    let index = Expr::Shift(ShiftOp::Shl, Box::new(field(core::mem::offset_of!(DynEntry, pend_target))), 2);
-    Stmt::Store(Expr::Bin(BinOp::Add, Box::new(tls), Box::new(index)), 0, field(core::mem::offset_of!(DynEntry, pend_value)))
+    let index = field(core::mem::offset_of!(DynEntry, pend_target));
+    Stmt::Store(tls_address(index), 0, field(core::mem::offset_of!(DynEntry, pend_value)))
 }
 
 pub fn progv_bindings(result: String, entry: String) -> Stmt {

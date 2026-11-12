@@ -211,7 +211,7 @@
 
 (defun hir-with-binding (name value body)
   (let* ((sym (constant-object name)) (index (emit-tls-index sym))
-         (addr (copy-to-var `(:add (:load :ctx ,+ctx-tls+) (:shl ,index 2)) :raw))
+         (addr (copy-to-var `(:tls-address ,index) :raw))
          (region (establish-entry :bind sym))
          (r (new-var)) (n (new-var :raw)))
     (emit `(:special-bind ,(region-slot region) ,index ,addr ,value))
@@ -1174,7 +1174,7 @@ unsupported call. Arguments retain their evaluation order and effects."
       (start-block body)
       (let* ((sym (copy-to-var `(:field-load ,kiln.kir::+packet-field-cons-car+ ,cur)))
              (index (progn (emit-check-symbol sym) (emit-tls-index sym)))
-             (old (copy-to-var `(:load (:add (:load :ctx ,+ctx-tls+) (:shl ,index 2)) 0))))
+             (old (copy-to-var `(:load (:tls-address ,index) 0))))
         (emit `(:set ,saved ,(emit-cons (emit-cons sym old) saved))))
       (emit `(:set ,cur (:field-load ,kiln.kir::+packet-field-cons-cdr+ ,cur)))
       (jump head)
@@ -1189,8 +1189,7 @@ unsupported call. Arguments retain their evaluation order and effects."
       (start-block body)
       ;; Symbols without a value become unbound.
       (let ((v (copy-to-var `(:select (:eq ,vcur ,(nil-value)) ,+unbound+ (:field-load ,kiln.kir::+packet-field-cons-car+ ,vcur)))))
-        (emit `(:store (:add (:load :ctx ,+ctx-tls+)
-                             (:shl (:field-load ,kiln.kir::+packet-field-symbol-tls-index+ (:field-load ,kiln.kir::+packet-field-cons-car+ ,cur)) 2))
+        (emit `(:store (:tls-address (:field-load ,kiln.kir::+packet-field-symbol-tls-index+ (:field-load ,kiln.kir::+packet-field-cons-car+ ,cur)))
                        0 ,v)))
       (emit `(:set ,cur (:field-load ,kiln.kir::+packet-field-cons-cdr+ ,cur)))
       (emit `(:set ,vcur (:select (:eq ,vcur ,(nil-value)) ,vcur (:field-load ,kiln.kir::+packet-field-cons-cdr+ ,vcur))))

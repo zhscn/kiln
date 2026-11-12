@@ -11,7 +11,7 @@
               #:+unbound+
            #:+length-shift+
            #:+cons-bytes+
-           #:+ctx-poll-flag+ #:+values-max+ #:+ctx-stack-limit+ #:+ctx-tls+ #:+no-tls-value+
+           #:+ctx-poll-flag+ #:+values-max+ #:+ctx-stack-limit+
            #:+err-not-fixnum+ #:+err-overflow+ #:+err-wrong-nargs+
            #:+err-not-list+ #:+err-not-function+
            #:+err-undefined-function+ #:+err-unbound-variable+ #:+err-not-symbol+

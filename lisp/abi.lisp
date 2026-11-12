@@ -59,10 +59,6 @@
 ;;; Function entries call the poll slow path when their frame pointer is
 ;;; below this (stack exhaustion, rust/kiln-rt/src/stack.rs).
 (defconstant +ctx-stack-limit+ 80)
-;;; Pointer to the context's TLS table of special variable values.
-(defconstant +ctx-tls+ 48)
-;;; Empty TLS slot: the symbol is not bound in this context.
-(defconstant +no-tls-value+ #x23)
 (defconstant +values-max+ 1021)
 
 ;;; Dynamic-environment entries (stack-allocated in the establishing frame).

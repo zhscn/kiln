@@ -800,7 +800,7 @@ known to hold one), and true; else NIL and NIL."
 (defun emit-tls-slot (sym)
   "Raw address of the TLS slot of the symbol operand SYM (index 0 if it
 has never been bound). The table does not move."
-  (copy-to-var `(:add (:load :ctx ,+ctx-tls+) (:shl (:field-load ,kiln.kir::+packet-field-symbol-tls-index+ ,sym) 2)) :raw))
+  (copy-to-var `(:tls-address (:field-load ,kiln.kir::+packet-field-symbol-tls-index+ ,sym)) :raw))
 
 (defun emit-symbol-value (sym)
   "Current value of the symbol operand SYM, possibly UNBOUND."
@@ -808,7 +808,7 @@ has never been bound). The table does not move."
         (v (new-var))
         (global (new-block)) (join (new-block)))
     (emit `(:set ,v (:load ,addr 0)))
-    (br `(:eq ,v ,+no-tls-value+) global join)
+    (br `(:no-tls-p ,v) global join)
     (start-block global)
     (emit `(:set ,v (:field-load ,kiln.kir::+packet-field-symbol-value+ ,sym)))
     (jump join)
@@ -818,7 +818,7 @@ has never been bound). The table does not move."
 (defun emit-set-symbol-value (sym value)
   (let ((addr (emit-tls-slot sym))
         (global (new-block)) (local (new-block)) (join (new-block)))
-    (br `(:eq (:load ,addr 0) ,+no-tls-value+) global local)
+    (br `(:no-tls-p (:load ,addr 0)) global local)
     (start-block global)
     (emit `(:field-store ,kiln.kir::+packet-field-symbol-value+ ,sym ,value))
     (jump join)
@@ -863,8 +863,7 @@ if needed (not a safepoint)."
     (br `(:eq ,l ,(nil-value)) done body)
     (start-block body)
     (let ((pair (copy-to-var `(:field-load ,kiln.kir::+packet-field-cons-car+ ,l))))
-      (emit `(:store (:add (:load :ctx ,+ctx-tls+)
-                           (:shl (:field-load ,kiln.kir::+packet-field-symbol-tls-index+ (:field-load ,kiln.kir::+packet-field-cons-car+ ,pair)) 2))
+      (emit `(:store (:tls-address (:field-load ,kiln.kir::+packet-field-symbol-tls-index+ (:field-load ,kiln.kir::+packet-field-cons-car+ ,pair)))
                      0 (:field-load ,kiln.kir::+packet-field-cons-cdr+ ,pair))))
     (emit `(:set ,l (:field-load ,kiln.kir::+packet-field-cons-cdr+ ,l)))
     (jump head)

@@ -1004,6 +1004,14 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
             arity(h, r, 1)?;
             crate::lir::fixnum_untag(parse_expr(&r[0])?)
         }
+        "tls-address" => {
+            arity(h, r, 1)?;
+            crate::lir::tls_address(parse_expr(&r[0])?)
+        }
+        "no-tls-p" => {
+            arity(h, r, 1)?;
+            crate::lir::no_tls_value(parse_expr(&r[0])?)
+        }
         "fixnum-tag" => {
             arity(h, r, 1)?;
             crate::lir::fixnum_tag(parse_expr(&r[0])?)
