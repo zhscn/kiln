@@ -160,11 +160,13 @@ proper list LIST as arguments. Returns the primary value and the count."
       (values v0 nv))))
 
 
-(defun emit-rest-list (args start)
+(defun emit-rest-list (args start &optional stack-slots)
   "In a function entry, before any safepoint: returns a list of the
 arguments from index START to nargs - 1. ARGS are obj variables holding
 the register arguments. Arguments beyond them are still in the transfer
-area, which stays a GC root while the list is consed."
+area, which stays a GC root while the list is consed. STACK-SLOTS, when
+provided, are initialized cons slots with registered reference fields;
+use them only when the entire list fits, otherwise allocate on the heap."
   (let ((list (copy-to-var (nil-value))) (i (new-var :raw))
         (head (new-block)) (body (new-block)) (done (new-block)))
     (emit `(:store :ctx ,+ctx-values-live+
@@ -188,7 +190,25 @@ area, which stays a GC root while the list is consed."
       (emit `(:set ,x (:load (:add :ctx (:shl ,i 3)) ,(- +ctx-values+ (* 8 +reg-args+)))))
       (jump join)
       (start-block join)
-      (emit `(:set ,list ,(emit-cons x list))))
+      (if stack-slots
+          (let ((stack (new-block)) (heap (new-block)) (next (new-block)))
+            (br `(:le :nargs ,(+ start (length stack-slots))) stack heap)
+            (start-block stack)
+            (let ((address
+                    (loop for slot in stack-slots for index from start
+                          for address = `(:slot ,slot) then
+                            `(:select (:eq ,i ,index) (:slot ,slot) ,address)
+                          finally (return address))))
+              (let ((p (copy-to-var address :raw)))
+                (emit `(:store ,p 8 ,x))
+                (emit `(:store ,p 16 ,list))
+                (emit `(:set ,list (:add ,p ,+tag-cons+)))))
+            (jump next)
+            (start-block heap)
+            (emit `(:set ,list ,(emit-cons x list)))
+            (jump next)
+            (start-block next))
+          (emit `(:set ,list ,(emit-cons x list)))))
     (jump head)
     (start-block done)
     (emit `(:store :ctx ,+ctx-values-live+ 0))

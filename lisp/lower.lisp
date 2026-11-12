@@ -1016,7 +1016,7 @@ allowed) a keyword not in KEYWORDS."
     (jump head)
     (start-block done)))
 
-(defun emit-entry (ll)
+(defun emit-entry (ll &key rest-slots)
   "Binds the parameters of the parsed lambda list LL on function entry."
   (let* ((args (loop for reg in '(:a0 :a1 :a2) collect (copy-to-var reg)))
          (nreq (length (ll-required ll)))
@@ -1036,7 +1036,7 @@ allowed) a keyword not in KEYWORDS."
              (bind-var supplied `(:select (:gt :nargs ,i) ,(t-value) ,(nil-value))))
     (emit-nargs-check nreq (if rest-p nil npos))
     (when rest-p
-      (let ((list (emit-rest-list args npos)))
+      (let ((list (emit-rest-list args npos rest-slots)))
         (when (ll-rest ll)
           (bind-var (ll-rest ll) list))
         (when (ll-key-p ll)

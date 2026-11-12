@@ -37,8 +37,10 @@
         (concatenate 'simple-vector parameters keys supplied (when rest (list rest)))
         parameters)))
 
-(defun ir-cons-extent-proof (fun body variables var budget borrows &optional binding result-mode)
-  "Return success and primary aliasing; RESULT-MODE :ONLY skips escape checks."
+(defun ir-cons-extent-proof (fun body variables var budget borrows &optional binding result-mode (object-type 'cons))
+  "Return success and primary aliasing; RESULT-MODE :ONLY skips escape checks.
+OBJECT-TYPE selects declaration checks and identity uses: functions can be
+invoked, and lists retain their identity through tail projections."
   (let ((eligible (make-hash-table :test #'eq)) (aliases (make-hash-table :test #'eq))
         (returns (make-hash-table :test #'eq)) (sources nil) (blocks nil) (visible nil) (returned nil))
     (loop for v across variables do (setf (gethash v eligible) t))
@@ -79,6 +81,8 @@
                         (cond ((and primitive (member name '(rplaca rplacd values)))
                                (and (plusp (length args)) (tainted (svref args 0))))
                               ;; Field projections rely on rejecting stores of this identity below.
+                              ((and primitive (eq object-type 'list) (member name '(cdr rest)))
+                               (and (plusp (length args)) (tainted (svref args 0))))
                               ((and primitive (member name '(car cdr first rest consp listp atom null not eq eql cons list vector))) nil)
                               ((ir-cons-borrow-call-p name local (length args))
                                (loop for arg across args for state across local
@@ -101,7 +105,7 @@
                    (1 (when (and visible (or (ir-node-c node)
                                              (eq (ir-node-type node) 'double-float))) (fail))
                       (when (and (gethash (ir-node-a node) aliases) (ir-node-b node)
-                                 (not (ir-declaration-proven-p 'cons (ir-node-b node)))) (fail)))
+                                 (not (ir-declaration-proven-p object-type (ir-node-b node)))) (fail)))
                    (2 (when (and visible
                                  (or (eq (ir-node-type (ir-node-b node)) 'double-float)
                                      (eq (ir-declaration-type (ir-var-type (ir-node-a node))) 'double-float))) (fail))
@@ -114,9 +118,13 @@
                    (7
                     (let* ((name (ir-node-a node)) (args (ir-node-b node)) (count (length args))
                            (primitive (not (eq (ir-node-d node) :notinline)))
-                           (borrow (and primitive (or (and (= count 1) (member name '(car cdr first rest consp listp atom null not)))
+                           (borrow (and primitive (or (and (= count 1)
+                                                          (member name (if (eq object-type 'function)
+                                                                           '(consp listp atom null not)
+                                                                           '(car cdr first rest consp listp atom null not))))
                                        (and (= count 2) (member name '(eq eql))))))
-                           (mutate (and primitive (= count 2) (member name '(rplaca rplacd))))
+                           (mutate (and primitive (not (eq object-type 'function))
+                                        (= count 2) (member name '(rplaca rplacd))))
                            (local-borrows (and borrows (ir-fun-p name) (gethash name borrows))))
                       (when (and primitive (eq name 'values))
                         ;; Other value counts may be saved in a heap list.
@@ -135,7 +143,7 @@
                                           (and (or borrow mutate)
                                                (known-cons (svref args 0))))))
                         (fail))
-                      (when (ir-node-p name) (check-use name :escape))
+                      (when (ir-node-p name) (check-use name (if (eq object-type 'function) :borrow :escape)))
                       (loop for arg across args for i from 0
                             do (check-use arg (if (or borrow (and mutate (zerop i))
                                                   (and (ir-cons-borrow-call-p name local-borrows count)
@@ -167,7 +175,7 @@
                        (loop for arg across (ir-node-b node) do (check-use arg :escape)))
                    (22 (check-use (ir-node-a node) usage) (check-use (ir-node-b node) :effect))
                    (23 (when (and (tainted (ir-node-b node))
-                                  (not (ir-declaration-proven-p 'cons (ir-node-a node)))) (fail))
+                                  (not (ir-declaration-proven-p object-type (ir-node-a node)))) (fail))
                        (when (and visible (not (eq (ir-node-a node) t))
                                   (not (ir-declaration-proven-p (ir-node-type (ir-node-b node)) (ir-node-a node)))) (fail))
                        (check-use (ir-node-b node) usage))
@@ -194,7 +202,7 @@
                    (when (source-variable-name alias) (setf visible t))
                    (when (or (logtest 2 (ir-var-flags alias))
                              (not (or (eq (ir-var-type alias) t)
-                                      (ir-declaration-proven-p 'cons (ir-var-type alias)))))
+                                      (ir-declaration-proven-p object-type (ir-var-type alias)))))
                      (fail))) aliases)
         (when (and (null binding) visible)
           ;; Rest and keyword entries build a heap list after positional bindings.
@@ -622,3 +630,72 @@
                          do (escape (logior (svref fields (* 2 (1- index)))
                                             (svref fields (1+ (* 2 (1- index)))))))))
         (loop for node in objects for index from 1 unless (logbitp index escaped) collect node)))))
+
+(defun ir-lexical-closure-initializer (node)
+  (case (ir-node-kind node)
+    (6 (ir-node-a node))
+    (13 (let ((functions (ir-node-a node)) (value (ir-node-b node)))
+          (when (and (= (length functions) 1) (= (ir-node-kind value) 6)
+                     (eq (svref functions 0) (ir-node-a value)))
+            (ir-node-a value))))))
+
+(defun ir-stack-closure-candidates (fun)
+  "Select lexical closure allocations whose identities stay in their binding."
+  (let ((candidates nil) (budget (list 8192)) (tail-call nil))
+    (labels ((walk (node)
+               (when (and (= (ir-node-kind node) 8)
+                          (member (ir-node-b node) '(:tail-funcall :tail-funcall-function)))
+                 (setf tail-call t))
+               (when (and (= (ir-node-kind node) 11) (not (ir-node-d node)))
+                 (loop for var across (ir-node-a node) for init across (ir-node-b node)
+                       for closure = (ir-lexical-closure-initializer init)
+                       when (and (plusp (car budget)) (< (length candidates) 16)
+                                 closure
+                                 (or (null (ir-fun-binding closure))
+                                     (not (logtest 2 (ir-var-flags (ir-fun-binding closure)))))
+                                 (plusp (length (ir-native-environment closure)))
+                                 (not (ir-lifted-environment closure))
+                                 (ir-cons-extent-proof fun (ir-node-c node) (ir-node-a node)
+                                                       var budget nil node nil 'function))
+                         do (push closure candidates)))
+               (ir-map-escape-children #'walk node)))
+      (ir-map-function #'walk fun))
+    (unless tail-call (nreverse candidates))))
+
+(defun ir-prepare-function-storage (root select)
+  (let ((plans (make-hash-table :test #'eq)) (seen (make-hash-table :test #'eq)))
+    (labels ((visit-function (fun)
+               (unless (gethash fun seen)
+                 (setf (gethash fun seen) t
+                       (gethash fun plans) (funcall select fun))
+                 (ir-map-function #'walk fun)))
+             (walk (node)
+               (case (ir-node-kind node)
+                 ((6 7) (let ((child (ir-own-function node))) (when child (visit-function child))))
+                 (13 (loop for child across (ir-node-a node) do (visit-function child)))
+                 (24 (visit-function (ir-node-a node))))
+               (ir-map-escape-children #'walk node)))
+      (visit-function root))
+    plans))
+
+(defun ir-prepare-stack-closures (root)
+  (ir-prepare-function-storage root #'ir-stack-closure-candidates))
+
+(defun ir-stack-rest-p (fun)
+  "Prove that every cons of the entry rest list stays in this invocation."
+  (let* ((ll (ir-fun-lambda-list fun)) (rest (and ll (ir-lambda-list-rest ll)))
+         (tail-call nil))
+    (when (and rest (not (ir-lambda-list-key-p ll))
+               (null (ir-fun-parameter-specials fun)))
+      (labels ((walk (node)
+                 (when (and (= (ir-node-kind node) 8)
+                            (member (ir-node-b node) '(:tail-funcall :tail-funcall-function)))
+                   (setf tail-call t))
+                 (ir-map-escape-children #'walk node)))
+        (ir-map-function #'walk fun))
+      (and (not tail-call)
+           (ir-cons-extent-proof fun (ir-fun-body fun) (ir-cons-borrow-variables fun)
+                                 rest (list 8192) nil nil nil 'list)))))
+
+(defun ir-prepare-stack-rests (root)
+  (ir-prepare-function-storage root #'ir-stack-rest-p))
