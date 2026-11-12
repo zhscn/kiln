@@ -135,14 +135,26 @@ pub fn transfer_roots(count: Expr) -> Stmt {
     )
 }
 
-pub fn initialize_cons(result: String, address: String, car: Expr, cdr: Expr) -> Result<Vec<Stmt>, String> {
+pub fn fixed_layout(class: u32) -> Result<(i64, i64, i64, usize), String> {
+    use kiln_rt::object::*;
+    match class {
+        CLASS_CONS => Ok((CONS_BYTES as i64, KIND_CONS as i64, TAG_CONS as i64, 2)),
+        CLASS_COMPLEX => Ok((3 * size_of::<u64>() as i64, KIND_COMPLEX as i64, TAG_GENERAL as i64, 2)),
+        CLASS_DOUBLE => Ok((2 * size_of::<u64>() as i64, KIND_DOUBLE as i64, TAG_GENERAL as i64, 1)),
+        _ => Err(format!("unsupported fixed allocation class {class}")),
+    }
+}
+
+pub fn initialize_fixed(result: String, address: String, class: u32, fields: Vec<Expr>) -> Result<Vec<Stmt>, String> {
     use crate::kir::BinOp;
-    let object = || Expr::Var(result.clone());
-    Ok(vec![
-        Stmt::Set(result.clone(), Expr::Bin(BinOp::Add, Box::new(Expr::Var(address)), Box::new(Expr::Int(TAG_CONS as i64)))),
-        field_store(FIELD_CONS_CAR, object(), car)?,
-        field_store(FIELD_CONS_CDR, object(), cdr)?,
-    ])
+    let (_, _, tag, count) = fixed_layout(class)?;
+    if fields.len() != count { return Err("fixed allocation: wrong field count".into()); }
+    let mut stmts = vec![Stmt::Set(result.clone(), Expr::Bin(BinOp::Add, Box::new(Expr::Var(address)), Box::new(Expr::Int(tag))))];
+    for (index, value) in fields.into_iter().enumerate() {
+        let offset = ((index + 1) * size_of::<u64>()) as i32 - tag as i32;
+        stmts.push(Stmt::Store(Expr::Var(result.clone()), offset, value));
+    }
+    Ok(stmts)
 }
 
 /// Expand allocation after operand evaluation; only the slow path can safepoint.

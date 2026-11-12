@@ -117,6 +117,31 @@ fn immediate_class_tests_preserve_kir_and_reject_unknown_classes() {
 }
 
 #[test]
+fn fixed_allocations_validate_class_and_initialize_fields() {
+    use packet::schema::*;
+    let module = |body| format!("(module \"fixed\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj) (x obj)) (slots) (block b {body} (return v 1))))");
+    for (class, fields, kind, stores) in [
+        (CLASS_CONS, "x a0", 3, vec![7, 15]),
+        (CLASS_DOUBLE, "x", 8, vec![3]),
+        (CLASS_COMPLEX, "x a0", 12, vec![3, 11]),
+    ] {
+        let program = module(format!("(alloc-fixed v {class} ({fields}) \"kiln_rt_alloc\" nil)"));
+        let result = kiln_cg::kir::parse_module(&sexp::parse_one(&program).unwrap()).unwrap();
+        let fast = format!("{:?}", result.funcs[0].blocks[1]);
+        assert!(fast.contains(&format!("Int({kind})")));
+        let done = format!("{:?}", result.funcs[0].blocks[3]);
+        for offset in stores { assert!(done.contains(&format!("Store(Var(\"v\"), {offset},"))); }
+    }
+    for body in [
+        format!("(alloc-fixed v {CLASS_DOUBLE} (x a0) \"kiln_rt_alloc\" nil)"),
+        format!("(alloc-fixed v {CLASS_FUNCTION} (x) \"kiln_rt_alloc\" nil)"),
+        format!("(alloc-fixed v {CLASS_COMPLEX} (v x) \"kiln_rt_alloc\" nil)"),
+    ] {
+        assert!(kiln_cg::kir::parse_module(&sexp::parse_one(&module(body)).unwrap()).is_err());
+    }
+}
+
+#[test]
 fn cons_allocation_initializes_after_the_allocation_paths() {
     let module = |body| format!("(module \"cons\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj) (x obj)) (slots) (block b {body} (return v 1)) (block caught (return exn1 1))))");
     let program = sexp::parse_one(&module("(alloc-cons v x a0 \"kiln_rt_alloc\" caught)")).unwrap();

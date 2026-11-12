@@ -503,27 +503,32 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                 let mut lowered = Vec::new();
                 for stmt in stmts {
                     let (head_name, operands) = head(list(stmt)?)?;
-                    if head_name == "alloc-raw" || head_name == "alloc-cons" {
+                    if head_name == "alloc-raw" || head_name == "alloc-cons" || head_name == "alloc-fixed" {
                         arity(head_name, operands, if head_name == "alloc-raw" { 6 } else { 5 })?;
                         let result = sym(&operands[0])?.to_string();
                         let name = format!("{prefix}{alloc_number}");
                         alloc_number += 1;
                         let (raw_result, bytes, header, zero, runtime, handler, fields) =
-                            if head_name == "alloc-cons" {
-                                let car = parse_expr(&operands[1])?;
-                                let cdr = parse_expr(&operands[2])?;
-                                for value in [&car, &cdr] {
+                            if head_name != "alloc-raw" {
+                                let (class, values) = if head_name == "alloc-cons" {
+                                    (crate::packet::schema::CLASS_CONS, vec![parse_expr(&operands[1])?, parse_expr(&operands[2])?])
+                                } else {
+                                    let class = u32::try_from(int(&operands[1])?).map_err(|_| "invalid allocation class")?;
+                                    (class, list(&operands[2])?.iter().map(parse_expr).collect::<R<Vec<_>>>()?)
+                                };
+                                let (bytes, header, _, count) = crate::lir::fixed_layout(class)?;
+                                if values.len() != count { return Err("fixed allocation: wrong field count".into()); }
+                                for value in &values {
                                     match value {
                                         Expr::Int(_) => (),
                                         Expr::Var(name) if name != &result => (),
-                                        _ => return Err("alloc-cons: fields must be stable operands distinct from the result".into()),
+                                        _ => return Err("fixed allocation: fields must be stable operands distinct from the result".into()),
                                     }
                                 }
                                 let raw = format!("{name}_object");
                                 f.vars.push((raw.clone(), VarKind::Raw));
-                                (raw, Expr::Int(kiln_rt::object::CONS_BYTES as i64),
-                                 Expr::Int(kiln_rt::object::KIND_CONS as i64), false,
-                                 string(&operands[3])?.to_string(), handler(&operands[4])?, Some((car, cdr)))
+                                (raw, Expr::Int(bytes), Expr::Int(header), false,
+                                 string(&operands[3])?.to_string(), handler(&operands[4])?, Some((class, values)))
                             } else {
                                 let zero = match int(&operands[3])? {
                                     0 => false, 1 => true,
@@ -539,8 +544,8 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                         f.blocks.extend(blocks);
                         block_name = next_name;
                         lowered = next_stmts;
-                        if let Some((car, cdr)) = fields {
-                            lowered.extend(crate::lir::initialize_cons(result, raw_result, car, cdr)?);
+                        if let Some((class, values)) = fields {
+                            lowered.extend(crate::lir::initialize_fixed(result, raw_result, class, values)?);
                         }
                     } else {
                         lowered.extend(parse_statements(stmt)?);

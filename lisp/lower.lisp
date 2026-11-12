@@ -893,14 +893,18 @@ before the address is tagged and stored in an obj variable."
     (emit `(:alloc-raw ,p ,bytes ,header ,(if zero-p 1 0) ,(rt-alloc) ,(handler)))
     p))
 
+(defun emit-fixed-object (class fields)
+  "Allocate an object with already evaluated, stable field operands."
+  (let ((result (new-var)))
+    (emit `(:alloc-fixed ,result ,class ,fields ,(rt-alloc) ,(handler)))
+    result))
+
 (defun emit-cons (a b)
   ;; A and B are live across the allocation; as variables they are spilled
   ;; and reloaded around it (stack maps).
-  (let* ((a (if (integerp a) a (copy-to-var a)))
-         (b (if (integerp b) b (copy-to-var b)))
-         (result (new-var)))
-    (emit `(:alloc-cons ,result ,a ,b ,(rt-alloc) ,(handler)))
-    result))
+  (let ((a (if (integerp a) a (copy-to-var a)))
+        (b (if (integerp b) b (copy-to-var b))))
+    (emit-fixed-object kiln.kir::+packet-class-cons+ (list a b))))
 
 ;;; Cells (assignment conversion): a cell is a cons whose car is the value.
 

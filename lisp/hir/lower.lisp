@@ -9,9 +9,8 @@
     (and (consp value) (eq (car value) :double-bits))))
 
 (defun hir-box-double-bits (bits)
-  (let* ((bits (copy-to-var bits :raw)) (object (emit-alloc 16 +kind-double+)))
-    (emit `(:store ,object 8 ,bits))
-    (copy-to-var `(:add ,object ,+tag-general+))))
+  (let ((bits (copy-to-var bits :raw)))
+    (emit-fixed-object kiln.kir::+packet-class-double+ (list bits))))
 
 (defun hir-static-function-binding-p (var)
   (let ((value (hir-var-lowering var)))
@@ -839,11 +838,9 @@ unsupported call. Arguments retain their evaluation order and effects."
           (values (boolean-value `(,(case name (< :lt) (> :gt) (<= :le) (>= :ge) (= :eq) (/= :ne))
                                   ,comparison 0)) t))))
     (when (hir-double-arithmetic-p node)
-      (let* ((bits (hir-lower-double-bits node))
-             (object (emit-alloc 16 +kind-double+)))
-        (emit `(:store ,object 8 ,bits))
+      (let ((bits (hir-lower-double-bits node)))
         (return-from hir-lower-typed-call
-          (values (copy-to-var `(:add ,object ,+tag-general+)) t))))
+          (values (emit-fixed-object kiln.kir::+packet-class-double+ (list bits)) t))))
     (when (and (= count 2)
                (hir-fixnum-type-p (hir-node-type (svref args 0)))
                (hir-fixnum-type-p (hir-node-type (svref args 1)))
