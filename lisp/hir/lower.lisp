@@ -914,12 +914,11 @@ unsupported call. Arguments retain their evaluation order and effects."
              (if (hir-node-p callee)
                  (emit-lisp-call (emit-function-designator object) values)
                  (let ((r (new-var)) (n (new-var :raw)))
-                   (loop for value in (nthcdr kiln.kir::+backend-reg-args+ values) for i from 0
-                         do (emit `(:transfer-set ,i ,value)))
-                   (emit `(:call-lisp ,r ,n (:addr ,(hir-function-label callee))
-                                      (:ctx ,object ,(length values)
-                                            ,@(subseq values 0 (min (length values) kiln.kir::+backend-reg-args+)))
-                                      ,(handler) ,@(call-loc)))
+                   (let ((operands (mapcar (lambda (v)
+                                            (if (or (integerp v) (kiln.kir::kvar-p v)) v (copy-to-var v)))
+                                          values)))
+                     (emit `(:invoke-known ,r ,n ,(hir-function-label callee) ,object
+                                            ,operands ,(handler) ,@(call-loc))))
                    (values r n))))))))
 
 (defun hir-check-declaration (value type &optional (actual t))

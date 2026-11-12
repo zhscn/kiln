@@ -1059,6 +1059,16 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
 
 fn parse_statements(s: &Sexp) -> R<Vec<Stmt>> {
     let (h, r) = head(list(s)?)?;
+    if h == "invoke-known" {
+        let location = loc(h, r, 6)?;
+        let mut statements = crate::lir::invoke(sym(&r[0])?.to_string(), sym(&r[1])?.to_string(),
+            sym(&r[3])?.to_string(), list(&r[4])?.iter().map(parse_expr).collect::<R<_>>()?,
+            handler(&r[5])?, location)?;
+        if let Some(Stmt::CallLisp { entry, .. }) = statements.last_mut() {
+            *entry = Expr::Addr(string(&r[2])?.to_string(), 0);
+        }
+        return Ok(statements);
+    }
     if h == "publish-values" {
         arity(h, r, 1)?;
         return crate::lir::publish_values(list(&r[0])?.iter().map(parse_expr).collect::<R<_>>()?);
