@@ -655,6 +655,18 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                 for stmt in stmts {
                     validate_stack_references(stmt, &stack_objects)?;
                     let (head_name, operands) = head(list(stmt)?)?;
+                    if head_name == "arg-write" {
+                        arity(head_name, operands, 3)?;
+                        let name = format!("{prefix}{alloc_number}_argwrite");
+                        alloc_number += 1;
+                        let registers = list(&operands[2])?.iter().map(|r| sym(r).map(str::to_string)).collect::<R<Vec<_>>>()?;
+                        let (blocks, next) = crate::lir::argument_write(&name, block_name, lowered,
+                            sym(&operands[0])?.to_string(), parse_expr(&operands[1])?, registers)?;
+                        f.blocks.extend(blocks);
+                        block_name = next;
+                        lowered = Vec::new();
+                        continue;
+                    }
                     if head_name == "arg-read" {
                         arity(head_name, operands, 3)?;
                         let name = format!("{prefix}{alloc_number}_arg");

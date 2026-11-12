@@ -136,16 +136,7 @@ proper list LIST as arguments. Returns the primary value and the count."
       (start-block bad)
       (emit-error +err-wrong-nargs+ `(:fixnum-tag ,i))
       (start-block stack)
-      ;; Registers for the first arguments, the transfer area for the rest.
-      (loop for a in args
-            for k from 0
-            do (let ((this (new-block)) (other (new-block)))
-                 (br `(:eq ,i ,k) this other)
-                 (start-block this)
-                 (emit `(:set ,a ,x))
-                 (jump next)
-                 (start-block other)))
-      (emit `(:transfer-set-dynamic (:sub ,i ,kiln.kir::+backend-reg-args+) ,x))
+      (emit `(:arg-write ,i ,x ,args))
       (jump next)
       (start-block next))
     (emit `(:set ,cur (:field-load ,kiln.kir::+packet-field-cons-cdr+ ,cur)))

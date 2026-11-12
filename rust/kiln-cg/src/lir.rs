@@ -923,3 +923,30 @@ pub fn argument_read(prefix: &str, start: String, mut before: Vec<Stmt>, result:
     blocks.push(Block { name: current, stmts: before });
     Ok((blocks, done))
 }
+
+/// Assign an argument to saved registers or the transfer area. The caller checks capacity.
+pub fn argument_write(prefix: &str, start: String, mut before: Vec<Stmt>, index: String,
+                      value: Expr, registers: Vec<String>) -> Result<(Vec<crate::kir::Block>, String), String> {
+    use crate::kir::{Block, CmpOp, BinOp};
+    if registers.len() != crate::kir::REG_ARGS || registers.iter().any(|r| r == &index) {
+        return Err("arg-write requires saved registers distinct from the index".into());
+    }
+    let done = format!("{prefix}_done");
+    let mut blocks = Vec::new();
+    let mut current = start;
+    for (i, register) in registers.into_iter().enumerate() {
+        let yes = format!("{prefix}_reg{i}");
+        let next = format!("{prefix}_next{i}");
+        before.push(Stmt::Br(Expr::Cmp(CmpOp::Eq, Box::new(Expr::Var(index.clone())),
+            Box::new(Expr::Int(i as i64))), yes.clone(), next.clone()));
+        blocks.push(Block { name: current, stmts: before });
+        blocks.push(Block { name: yes, stmts: vec![Stmt::Set(register, value.clone()), Stmt::Jump(done.clone())] });
+        current = next;
+        before = Vec::new();
+    }
+    before.push(transfer_set_dynamic(Expr::Bin(BinOp::Sub, Box::new(Expr::Var(index)),
+        Box::new(Expr::Int(crate::kir::REG_ARGS as i64))), value));
+    before.push(Stmt::Jump(done.clone()));
+    blocks.push(Block { name: current, stmts: before });
+    Ok((blocks, done))
+}
