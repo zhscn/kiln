@@ -1,4 +1,4 @@
-;;;; Native file compilation with Maclina's object graph container.
+;;;; Native file compilation and indexed object graph records.
 
 (in-package #:kiln.compiler)
 
@@ -19,18 +19,20 @@
                             (lambda (form)
                               (let ((*print-circle* t) (*print-length* 3) (*print-level* 3))
                                 (format t "~&;   ~S~%" form)))))
-         (maclina.compile-file::*coalescence*
-           (make-instance 'maclina.compile-file::coalescence))
-         (maclina.compile-file::*environment* nil))
+         (kiln.kernel::*fasl-ids* (make-hash-table :test 'eq))
+         (kiln.kernel::*fasl-ready* (make-hash-table))
+         (kiln.kernel::*fasl-creating* (make-hash-table :test 'eq))
+         (kiln.kernel::*fasl-count* 0)
+         (kiln.kernel::*fasl-records* nil)
+         (kiln.kernel::*fasl-pending* nil))
     ;; Initializers precede the literals of the next top-level form, so a
     ;; package created by one form exists when later symbols are interned.
     (dolist (form (front-end (list input) session))
       (let ((name (kiln.kir::kir-name "file-" (incf *native-compile-count*))))
         (multiple-value-bind (module literals)
             (compile-module (list form) name :session session :image t)
-          (maclina.compile-file::add-initializer-form
-           `(load-native-file ,(kiln.kir::module-string module) ',literals)))))
-    (maclina.compile-file::finish-fasl-unit)))
+          (kiln.kernel::fasl-add-module (kiln.kir::module-string module) literals))))
+    (list kiln.kernel::*fasl-count* (nreverse kiln.kernel::*fasl-records*))))
 
 (defun cl:compile-file (input-file &key (output-file nil output-file-p)
                                       (verbose *compile-verbose*) (print *compile-print*)
@@ -53,7 +55,7 @@
                                            (setf failure-p t)))))
                   (with-compilation-unit ()
                     (handler-case (native-file-unit input external-format print)
-                      (maclina.compile-file::circular-dependency (condition)
+                      (kiln.kernel::fasl-creation-cycle (condition)
                         (error condition))
                       (error (condition)
                         (format *error-output* "~&; Compilation aborted: ~A~%" condition)
@@ -62,5 +64,5 @@
       (unless unit (return-from cl:compile-file (values nil t t)))
       (with-open-file (stream output :direction :output :if-exists :supersede
                                      :element-type '(unsigned-byte 8))
-        (maclina.compile-file::write-bytecode unit stream))
+        (kiln.kernel::write-native-fasl unit stream))
       (values (truename output) warnings-p failure-p))))

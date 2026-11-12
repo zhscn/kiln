@@ -26,7 +26,7 @@
    - `define-compiler-macro` 登记展开函数后，返回定义的函数名作为唯一值，包括 `(setf name)`；编译器是否使用展开函数遵循其编译策略。
    - `define-setf-expander` 和 `defsetf` 在载入时生效，展开函数记在符号的 plist 上。运行期的 `get-setf-expansion` 依次查展开函数、宏，最后用 setf 函数。
 3. Trucler（base，以及 trucler-native 的 client 类）。
-4. Maclina：base、compile、vm-shared、vm-native，以及对象图的 FASL 编码器和加载器。文件读取沿用 kiln 的 CST reader，序列化器通过 `fasl-protocol.lisp` 获取包名和可选的源码信息。
+4. Maclina：base、compile、vm-shared 和 vm-native。文件读取沿用 kiln 的 CST reader；原生 FASL 的对象图编码和加载由 kiln 自己实现。
 5. `lisp/target/eval/evaluator.lisp`：
    - kiln 的 Trucler client 继承 `trucler-native:client`（Maclina 的 native VM 就是为这类 client 写的）。它描述的全局环境是运行中的 image：special 变量来自运行期的 `proclaim`（`defvar` 的展开在载入时调用它，把变量记在 plist 上），常量来自 `defconstant`，函数和宏查符号本身。
    - `macro-function` 和 `macroexpand` 收到 Maclina 的词法环境时，经 Trucler 查局部宏。
@@ -100,15 +100,22 @@ compiler 模块提供 `compile-file`。文件沿用原生前端处理顶层形�
 编译期间绑定 `*compile-file-pathname*` 和 `*compile-file-truename*`，并保存调用者的
 package 和 readtable 绑定。编译期 HIR 求值使用运行期宏 client，词法环境与原生前端共用。
 
-每个处理后的顶层形式生成一个 image 模式的 KIR 模块。FASL 使用 Maclina 的二进制
-对象图容器保存 KIR 字符串、字面量和加载调用，加载时通过 Cranelift 生成机器码并
-执行模块入口。后续形式的字面量在前一个模块入口执行后重建，因此文件里的
-`defpackage` 可以先建立后续符号所需的 package。编译器的字面量保持对象共享关系，
-cons 和数组可以自引用；用户对象经 `make-load-form` 重建。对象初始化形式先在
-子记录中展开，共享已经登记的 creator，只记录新增的指令和常量。若初始化引用
-外层尚未创建完成的对象，就丢弃这次子记录，并在该对象的 creator 登记后重试。
-完整展开才合并记录，避免重试时复用未完成的 cons、数组或字面量表。
-初始化形式尽早执行，真正的循环创建依赖报告 `program-error`。
+每个处理后的顶层形式生成一个 image 模式的 KIR 模块。FASL 保存 KIR 字符串、
+字面量对象图和顺序执行记录，加载时通过 Cranelift 生成机器码并执行模块入口。
+后续形式的符号和字面量在前一个模块入口执行后重建，因此文件里的 `defpackage`
+可以先建立后续符号所需的 package。
+
+对象图编码由 `lisp/target/eval/fasl.lisp` 提供。对象按身份编号，容器的分配与
+内容初始化分开记录，保留共享、循环、特化数组、位移和 fill pointer。用户对象
+通过 `make-load-form` 提供创建与初始化形式；创建形式依赖的对象必须先创建，
+初始化形式可等待仍在创建的对象。就绪记录按依赖发射，初始化尽早执行；真正的
+循环创建依赖报告 `program-error`。整个文件共用身份表，顶层入口之间保持对象
+共享关系。
+
+二进制头为 `KFAS`，后接格式版本 1；整数使用七位分组的变长编码，字符使用
+Unicode code point。记录数据只包含整数、字符、字符串、符号和列表，任意字面量
+通过有索引的对象记录表示。浮点保存有限值的整数尾数、指数、符号与精度，包含
+负零。格式版本不匹配时加载器报错。文件格式是实现内部协议。
 
 `compile-file` 返回产物的 truename、是否有告警、是否有非 style 告警。`:verbose`
 和 `:print` 动态绑定对应变量，并控制标准输出上的编译信息。读取或编译失败时，

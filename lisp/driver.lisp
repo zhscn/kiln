@@ -471,13 +471,7 @@ SESSION must have compiled the kernel and CLOS."
                  "compile/parse-macro" "compile/unknown-reference-conditions"
                  "compile/compilation-unit" "compile/environment" "compile/compile"
                  "vm-shared" "vm-native"))
-       (mapcar (lambda (name)
-                 (merge-pathnames (format nil "~A.lisp" name) (maclina-directory)))
-               '("compile-file/package" "compile-file/preliminaries"))
-       (list (eval-file "fasl-protocol"))
-       (mapcar (lambda (name)
-                 (merge-pathnames (format nil "~A.lisp" name) (maclina-directory)))
-               '("compile-file/cmpltv" "compile-file/encode" "loadltv"))
+       (list (eval-file "fasl"))
        (list (eval-file "evaluator")
              (eval-file "disassemble")
              (eval-file "files")
