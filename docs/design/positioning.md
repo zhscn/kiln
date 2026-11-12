@@ -1,6 +1,6 @@
 # 定位和 seal
 
-编译器采用 [Lisp 语义前端、Rust MIR 和 Cranelift 后端](compiler.md) 的目标分工。活 image 保留宏、编译环境和 HIR 求值能力；Rust 中端作为固定编译核心，通过版本化协议接入。
+编译器目标分工为 Lisp 负责语言语义、MIR 优化和表示选择，Rust 负责布局、ABI、GC 元数据与机器后端，两侧以[结构化 LIR 协议](compiler-protocol.md)交接。架构与理由见 [compiler.md](compiler.md)。
 
 ## 一句话
 

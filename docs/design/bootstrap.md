@@ -1,7 +1,5 @@
 # 自举和构建
 
-目标管线保留 SBCL 和 kiln 两个 Lisp 前端适配器，两者导出相同版本的 HIR 请求，交给同一 Rust MIR 和代码生成核心。SBCL 使用可移植常量对象图，不向 kiln 传递宿主堆指针；image 适配器用 roots 持有 literal。Rust 核心由 Cargo 构建，Lisp 语义前端及库继续参与自举。当前脚本仍运行 Lisp → KIR 路径，下述命令和阶段描述这一实现。接入 MIR 后继续比较规范化产物及最终可执行文件的确定性，见 [compiler-protocol.md](compiler-protocol.md)。
-
 ## 决定
 
 - SBCL 只做宿主：在 SBCL 里运行 kiln 编译器，交叉编译出第一个 kiln（kiln0），之后 kiln 编译自己。
@@ -10,7 +8,13 @@
 - **初始堆由启动时的 init 函数构建**：符号、包、初始 metaobject 都按顶层形式的顺序，在启动时创建，类似按顺序执行 fasl。这和 MMTk 配合最简单。想跳过初始化时用堆快照（[heap-image.md](heap-image.md)）。
 - **CLOS 在目标端 bootstrap**，不在宿主里做（[clos.md](clos.md)）。
 
-## 路线
+## 目标协议与自举范围
+
+目标阶段由同一 Lisp 编码器写出规范化二进制 LIR。SBCL 写 stage0 文件后调用 kiln-cg 子进程，不通过 FFI 载入 Rust 库；kiln 的后续阶段也写相同格式。运行期原生编译使用同一 schema 的内存入口，见 [compiler-protocol.md](compiler-protocol.md)。
+
+Rust 后端由 Cargo 构建并在各阶段共用。LIR 逐字节闭合验证 Lisp 编译器、表示选择与导出的确定性，最终二进制闭合同时检查固定后端处理相同输入的确定性；这不证明 Rust 后端自身经过 Lisp 自举。后端另以独立样本、旧 KIR 对照和执行验证覆盖。
+
+## 当前路线
 
 ```
 SBCL 宿主
@@ -45,7 +49,7 @@ kiln0 ──运行构建程序──▶ stage1 ──kiln-cg──▶ kiln1 ─�
 
 ## 确定性
 
-两代产物逐字节相同的前提是 KIR 输出**确定**：不依赖哈希表的遍历顺序、gensym 计数器在编译之外的状态、宿主里碰巧共享的结构、宿主的包名。前端和降级为此做的事见 [front-end.md](front-end.md) 的“确定性”，kiln-cg 的见 [codegen.md](codegen.md)。逐字节比较也作为编译器的回归检查保留。
+两代产物逐字节相同的前提是 KIR 输出**确定**：不依赖哈希表的遍历顺序、gensym 计数器在编译之外的状态、宿主里碰巧共享的结构、宿主的包名。前端和降级为此做的事见 [front-end.md](front-end.md) 的“确定性”，kiln-cg 的见 [codegen.md](codegen.md)。逐字节比较也作为编译器的回归检查保留。目标设计（[compiler.md](compiler.md)）里各阶段写出的是 LIR，比较对象随之换成 LIR 文件；LIR 降级在 kiln-cg 里，各阶段共用，kiln0 和 kiln1 逐字节相同的要求不变。
 
 ## 测试
 

@@ -1,0 +1,102 @@
+# LIR：Lisp 编译器与 Rust 后端的输入契约
+
+状态：**目标设计，尚未实现**。现在 Lisp 直接输出 KIR（[codegen.md](codegen.md)）。分层和迁移见 [compiler.md](compiler.md)。
+
+LIR（low-level IR）是表示选择后的后端输入语言，也是编译协议的程序载荷。它不设独立的优化管线。初期由 HIR 降级产生，后续由 MIR 产生；两者使用同一 schema。它已经确定了“做什么”：每个值的表示、每个对象的存储、闭包的内容、控制流和动态范围；还没有确定“怎么做”：tag、对象和 context 的偏移、调用序列、展开 payload 的编码、栈图。后者由 kiln-cg 降级成 KIR 时按 kiln-rt 的布局决定。
+
+## 原则
+
+- **布局无关**：LIR 里不出现 tag、偏移、kind 编号、context 字段和 `ctx.values` 下标。对象种类和字段用名字，名字集合来自目标描述。
+- **决定已经做完**：LIR 不留需要类型推导或 Lisp 环境才能做的决定。Rust 不进行类型、别名、逃逸等语言语义推导，不重新选择表示；它可以进行验证和低层展开所需的控制流分析，生成快慢路径、handler 分派和 ABI 适配块。机器层的优化由 Cranelift 做。
+- **Lisp 证明，Rust 信任**：栈存储的安全、`fixnum-tag` 的范围、已知函数的参数个数等性质由 MIR 证明。Rust 不重复证明语言性质，但必须验证结构、变量初始化、区域和临时多值的合法使用，并保证自身生成的栈槽、roots、清理和布局正确。
+- **确定**：同一输入产生规范化的 LIR 二进制记录；kiln-cg 的输出由 LIR、目标描述和后端配置共同决定。自举逐个比较 LIR 文件，kiln0 和 kiln1 逐字节相同的要求不变。
+
+## 变量和表示
+
+LIR 和 KIR 一样使用可赋值的变量，不是 SSA：MIR 退出 SSA 时将块参数转换为边上的并行复制，必要时拆分临界边，并用临时变量消除复制环，kiln-cg 再用 cranelift-frontend 构造 SSA，并由它在 safepoint 处为对象引用插入溢出和重载（C5）。Rust 无须构造另一套用于语义优化的 SSA；允许使用 CFG 状态传播验证变量、动态区域和多值的使用。
+
+| 类别 | 含义 | GC |
+|---|---|---|
+| `obj` | Lisp 值（立即数或对象引用） | 跨 safepoint 存活时登记为根 |
+| `word` | 64 位整数：未加 tag 的整数、条件的 0/1、计数 | 不登记 |
+| `f64` | binary64 | 不登记，用浮点寄存器 |
+| `mv` | 一组多值（见下文“多值”） | 由 Rust 安排 |
+
+变量可以带源码变量的调试描述（名字、cell 或机器值表示），Rust 据此写帧的调试记录（[debugging.md](debugging.md)）。
+
+## 操作
+
+下面按类列出操作的种类，具体的名字和签名在实现时写进操作表，编号、参数类别、结果和效果纳入同一 schema。下列 s-expression 只是可读记法，不是传输编码。
+
+- **常量**：常量表里的项、fixnum、字符、`nil`、`t`、未绑定标记。
+- **类型测试**：`(test x CLASS)` 得到 `word` 0/1。`CLASS` 是目标描述里列出的表示类：fixnum、cons、symbol、function、funcallable-instance、simple-vector、string、bignum、ratio、double-float、single-float、complex、character、standard-instance、structure-instance 等，以及若干组合类（如“堆上的数”）。`list`、整数区间、`member` 这类组合由 MIR 用分支表达。
+- **fixnum**：带溢出标志的加、减、乘，比较，按位运算，移位，除法和余数；`fixnum-untag`（`obj` → `word`）和 `fixnum-tag`（`word` → `obj`，范围由 MIR 保证）。tag 的位置和“带 tag 直接相加”这类技巧只在 Rust 里。
+- **浮点**：`f64` 的算术和比较；`box-double`、`unbox-double`；single-float 的位模式。
+- **字段**：按对象种类和字段名读写，例如 cons 的 car/cdr、symbol 的各个 cell、函数对象的环境第 i 项、simple-vector 和字符串的第 i 个元素（下标是 `word`）、rack 的槽、结构对象的槽、对象的长度。写入对象引用时由 Rust 插入需要的写屏障。
+- **分配**：`(alloc KIND STORAGE 字段...)` 和变长的 `(alloc-vector KIND 长度 初值 STORAGE)`。`STORAGE` 是 `heap` 或 `stack`。`stack` 表示 MIR 已经证明身份不越过本帧、同一分配点不会同时有两个活的对象；Rust 为每个分配点安排固定栈槽，把引用字段登记为精确根。堆分配由 Rust 生成 bump pointer 快路径和慢路径。
+- **函数和闭包**：`(static-function F)` 是没有自由变量的函数对象；`(make-closure F STORAGE 捕获值...)`；`(closure-ref i)` 读本函数的第 i 个捕获值；`(make-cell v)`、`(cell-ref c)`、`(cell-set c v)`。函数对象和 cell 的布局由 Rust 决定。
+- **全局**：special 变量的读、写、`boundp`（TLS 和全局值的查找在 Rust）；symbol 的函数 cell 和 `(setf f)` cell；`load-time-value` cell 和调用点缓存的读写。
+- **错误**：`(error CODE v)` 是终结操作。错误码来自目标描述；Rust 展开成调用 `kiln.kernel::%runtime-error`、未定义时结束程序。
+
+## 函数和调用
+
+函数头声明外部或内部入口、参数接收上限与捕获项前缀。Lisp 生成完整的参数绑定程序，包括参数数量检查、`&optional`/`&key` 的默认式与 supplied-p、rest 身份、声明检查及初始化顺序；这些都是可优化的普通控制流。LIR 提供 `arg-count`、`arg-ref`、`arg-rest` 等低层操作，Rust 实现寄存器与传递区读取、列表分配和入口参数保护。可选参数缺失时不执行 `arg-ref`，默认式仍由 Lisp 程序执行；Rust 不维护另一套 lambda-list 语义。
+
+调用：`(call 结果 CALLEE (实参...) 选项)`。
+
+- `CALLEE`：`(global sym)`、`(global-setf sym)` 读函数 cell；`(known F 捕获...)` 是已知的局部函数，直接调用入口；`(value f)` 调用一个函数对象；`(runtime 名字)` 调用 runtime 函数。
+- 结果：`primary`（只要主值）、`(fixed n)`（前 n 个值，不足补 NIL）、`mv`（全部值）。
+- `(spread list)`：最后一个实参是列表，按 `apply` 展开。
+- `(region R)`：调用可能展开时所在的最内层带 handler 的区域；`(loc 起始 结束)` 是调用形式的源码范围。
+- `tail-call` 是终结操作，只能在没有活动区域的地方使用。
+
+寄存器参数、传递区、`nargs`、返回值的个数和 `ctx.values` 的使用都由 Rust 按 [abi.md](abi.md) 安排。
+
+## 多值
+
+`mv` 变量由调用、`(values ...)`、`(landing ...)` 或 `mv-restore` 产生。它是短期借用的返回值视图，在任何可能覆盖多值区的操作或 safepoint 之前必须被消费：取第 i 个值、取个数、作为返回值、作为 `mv` 结果的实参展开，或用 `(mv-save m)` 存成 `obj`（以后用 `(mv-restore o)` 取回）。`mv-save` 自身可能分配，Rust 必须先保护主值、计数和其余值，不能先触发 GC 再读取旧视图。验证器按 CFG 检查视图有效性；需要跨块或跨 cleanup 保存时优先显式保存。值的个数固定的地方，MIR 应当直接用 `(fixed n)` 拆成普通变量。Rust 负责把主值、个数和 `ctx.values` 映射到 `mv` 上。
+
+## 动态范围和退出
+
+函数头声明这个函数里的区域：`(region R KIND 外层区域 [landing 块])`，`KIND` 是 `catch`、`unwind-protect`、`exit-point`、`bind`、`progv`。代码里用 `(enter R 参数...)` 和 `(leave R)` 建立和撤销；`enter` 的参数是 catch 的 tag、退出点的令牌、special 绑定的符号和值。条目的布局、链入 context、特殊变量的保存和恢复都在 Rust。
+
+- **本地退出**：MIR 生成 `leave`、内联的 cleanup 代码和跳转，Rust 不重新安排。
+- **非局部退出**：`(throw tag mv)`、`(exit-to token mv)` 是终结操作。退出令牌是堆对象（C5：堆对象不能指向栈帧），由 MIR 用普通分配生成。
+- **落地**：带 handler 的区域有 landing 块，以 `(landing R)` 开始，得到传来的值（`mv`）；`exit-point` 的 landing 还得到 `go` 的目标下标。不是本区域的展开，由 Rust 生成的分派转给外层区域的 landing。`unwind-protect` 的 landing 执行 cleanup 后用 `(continue-unwind R)` 继续展开。payload 怎么编码多值由 Rust 决定。
+
+区域嵌套和 `region` 选项由 Lisp 给出，Rust 的验证器检查每条路径上 `enter`/`leave` 成对、调用标注的区域是当时最内层的带 handler 区域。
+
+## poll 点
+
+Rust 在函数入口生成栈检查（包括“参数全在寄存器里的函数经共享慢路径重试”的做法），并保证所有可能无限执行的循环路径经过 safepoint。根据 CFG 的循环结构安排 poll，覆盖不可约循环，不以块编号倒序代替循环分析；见 [abi.md](abi.md) 的“Poll 点”。LIR 也可以写显式的 `(poll)`。
+
+## 常量和模块
+
+模块头记录 schema 版本、目标指纹、后端配置和模块名，指纹不符时 kiln-cg 拒绝。模块包含 init 函数、函数、常量表、静态 cell 和 root。
+
+常量表用可移植的描述，不含地址：
+
+- `(symbol "包" "名字")`、`(uninterned "名字" 编号)`；
+- `(string "...")`、`(cons C C)`、`(vector C...)`、`(bignum 位...)`、`(ratio C C)`、`(double 位模式)`、`(complex C C)` 等，`C` 是常量表下标或立即数；
+- `(literal i)`：运行中 image 的对象，取自和 LIR 一起交给 `kiln_rt_jit` 的 literal 向量，保持对象身份；
+- 可变的静态数据单独列出：`load-time-value` cell、调用点缓存（[specialization.md](specialization.md)）。它们不参与合并。
+
+静态数据的布局、symbol 的共享定义（[codegen.md](codegen.md) 的“多模块”）、静态字符串和 cons 按内容合并的规则在 Rust 里实现；SBCL 上的交叉编译因此不需要知道任何对象布局。
+
+## 目标描述
+
+布局和 context 常量只在 kiln-rt 里定义。kiln-cg 生成一份目标描述（s-expression），供 Lisp 编译器在编译期读入，内容只有语义上需要的部分：
+
+- fixnum 的范围、`char-code-limit`、`call-arguments-limit`、`multiple-values-limit`、数组大小上限；
+- 表示类、对象种类、字段名和错误码的列表（用于检查 `%primop` 和 MIR 的降级）；
+- ABI 指纹和 LIR 版本。
+
+`lisp/abi.lisp` 换成读入这份描述；测试检查仓库里的副本和 kiln-cg 生成的一致。
+
+## 结构化交接
+
+LIR 请求从第一版起采用下述[编译协议](compiler-protocol.md)。运行期在内存中提交批量二进制记录；文件保存同一规范化字节编码。两者进入同一个 Rust 解码器、验证器和 KIR 构造器。可读的 LIR/KIR dump 只供诊断，不是编译输入的中转步骤。
+
+## 迁移期间
+
+先由现有 HIR 降级产生 LIR。kiln-cg 暂时同时接受旧 KIR 和新 LIR 输入，以便对照输出；新生产入口不依赖旧文本入口。MIR 接入后直接以相同 LIR 契约为目标。切换和删除门槛见 [compiler.md](compiler.md#切换门槛和验证范围)。

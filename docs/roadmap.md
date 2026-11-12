@@ -1,6 +1,6 @@
 # 路线图
 
-计划、进度和还没做的事都在这里。系统设计与实现边界见 `design/`，各设计文档末尾的“待定问题”是尚未决定的设计问题，这里不重复。
+计划、进度和还没做的事都在这里。设计与实现边界见 `design/`，各设计文档末尾的“待定问题”是尚未决定的设计问题，这里不重复。
 
 ## 里程碑
 
@@ -17,17 +17,15 @@
 | — | 性能：降低编译延迟，优化数值、数组、流和字符串等运行期热点；见下文“性能” | 阶段一完成 |
 | — | seal、WPO 和 AOT 交付（[positioning.md](design/positioning.md)） | 未开始 |
 | — | 异步（[async.md](design/async.md)） | 未开始，ANSI 自举完成之前不做 |
-| — | 编译器基础互操作与 Rust MIR（[compiler.md](design/compiler.md)） | 目标架构已确定，尚未实现 |
-| — | Rust 宿主模块扩展与编辑器（[editor.md](design/editor.md)） | 设计草案；复用编译器先行建立的 interop |
+| — | 编译器分层：Lisp MIR（CFG 加 SSA）承担语义分析和表示选择，kiln-cg 承担 LIR 到 KIR 的布局和 ABI 降级（[compiler.md](design/compiler.md)） | 目标设计，尚未实现 |
+| — | Rust 宿主模块（[rust-interop.md](design/rust-interop.md)）、编辑器（[editor.md](design/editor.md)） | 设计草案 |
 
 ## 当前优先级
 
-1. **编译器 interop 和协议**。先实现版本化服务表、roots、缓冲区所有权和回调退出边界，再提供 HIR 请求 schema、验证器及 SBCL/image 适配器。它们支持 Lisp 前端与 Rust 中端独立开发，先于 GUI。
-2. **Rust MIR 接入与优化迁移**。先做 CFG/SSA 构造、验证和保守 KIR 降级，再迁移类型传播、调用摘要、内联、身份与逃逸、表示选择；每项迁移后移除对应 Lisp 实现，保持现有 ABI 和语义基线。
-3. **ANSI 兼容性与库支持**。标准行为以 SBCL 为参照，用 `ansi-test` 和实际库运行定位语义差异。重点是支持 ASDF/UIOP 与第三方库，并维护 reader、编译期环境、对象系统和文件接口的一致语义。
-4. **中端优化与库快路径**（见“性能”一节）：剩余性能差距集中在Rust MIR 的 Lisp 语义优化（局部类型推导与浮点拆箱、不逃逸局部函数的 lambda lifting、高阶函数调用点展开与编译器宏、`dynamic-extent` 栈上分配）以及标准库协议层快路径（流/FORMAT/打印、bignum、多维数组、运行期 CLOS 编译化）。
-5. **M6 的剩余部分**：定义表和跳转到定义、who-calls，AOT 模块的依赖记录，打断正在运行的任务。它们是编辑器 IDE 阶段的前提。
-6. **构建期初始化和 seal**：决定 seal 的语义和目标文件格式。
+1. **ANSI 兼容性与库支持**。标准行为以 SBCL 为参照，用 `ansi-test` 和实际库运行定位语义差异。重点是支持 ASDF/UIOP 与第三方库，并维护 reader、编译期环境、对象系统和文件接口的一致语义。
+2. **编译器分层与深度优化、库快路径**（见“性能”一节）：先按 [compiler.md](design/compiler.md) 的“迁移”实现结构化 LIR 协议（内存入口、二进制文件、literal roots 和产物所有权），再引入 Lisp MIR，再在 MIR 上推进 Lisp 语义层优化（局部类型推导与浮点拆箱、不逃逸局部函数的 lambda lifting、高阶函数调用点展开与类型驱动的改写、`dynamic-extent` 栈上分配）；标准库协议层快路径（流/FORMAT/打印、bignum、多维数组、运行期 CLOS 编译化）照常进行。
+3. **M6 的剩余部分**：定义表和跳转到定义、who-calls，AOT 模块的依赖记录，打断正在运行的任务。它们是编辑器 IDE 阶段的前提。
+4. **构建期初始化和 seal**：决定 seal 的语义和目标文件格式。
 
 [modern-practices.md](research/modern-practices.md) 里各项的时机：
 
@@ -38,7 +36,7 @@
 | 内存模型 | 写多线程的 Lisp 代码之前 | 影响 runtime 和库的接口 |
 | 5 并行编译和缓存 | 顶层原生产物缓存已接入；并行编译待做 | 前端和降级仍重放编译期效果，原生产物按 KIR、literal 和依赖版本匹配 |
 | 3 内联缓存 | 常量槽名、常量类名构造器的调用点已接入 | 原生编译器载入后，热点构造器可晋升为机器码；泛函按 PCL 的路线优化判别函数本身；见 [specialization.md](design/specialization.md) |
-| 3 PGO、4 逃逸分析和拆箱 | 在 Rust MIR 中推进，seal 后扩展 WPO | 活 image 使用保守证明、守卫与失效 |
+| 3 PGO、4 逃逸分析和拆箱 | 逃逸和拆箱随 MIR 推进；PGO 在 seal 和 WPO 实现时 | 中端是 Lisp 的 MIR（[mir.md](design/mir.md)） |
 | 6 诊断、LSP、DWARF | ANSI 覆盖基本完成后 | 面向用户 |
 | 7 测试方法 | 随时，按需加 | 差分测试的基础设施已经有了 |
 | 8 内建的性能分析器 | 已做 | |
@@ -56,9 +54,7 @@
 再减少临时分配与查询，按热点推进紧凑容器、KIR 内存交接、interning 和增量分析。
 编译延迟的基准入口是 `tools/bench-compiler.py`，运行期基准入口是 `tools/bench.sh`。
 
-目标优化职责集中到 Rust MIR；以下已有能力目前仍在 Lisp 实现，是迁移的行为参照。分析与降级逐项迁移，避免长期维护两套优化器。
-
-中端以 Lisp 语义优化为重点：以保守类型传播和整数区间为基础，利用用户
+当前重点是前端的通用优化能力：以保守类型传播和整数区间为基础，利用用户
 类型别名的展开与失效，推进跨控制结构的循环分析、函数摘要、数组与序列访问特化，
 再做机器值表示选择和逃逸分析。其后推进 CLOS 类与布局事实传播、泛函去虚化
 和有效方法内联：活 image 使用守卫与失效，seal 后利用冻结契约消除检查。分析成本与生成代码的收益分别测量，覆盖整数、
@@ -72,9 +68,9 @@
 词法声明按绑定身份保留作用域。绑定自身的受支持声明在初始化和写入处检查，
 闭包可写绑定也可复用该保证；局部收窄声明在作用域内检查读取。
 
-MIR 的 CFG/SSA 承载 Lisp 语义分析与表示选择；Cranelift 继续负责机器层通用优化。以下能力按收益推进，编译器侧实现归 Rust MIR，库快路径仍按所属模块维护。
+按收益排。SBCL 快在 Lisp 语义层的变换和类型推导，不在通用中端，所以这里没有“加一层通用 SSA 优化”。
 
-1. **语义前端与中端分层**：Lisp HIR 负责绑定、环境和编译期求值，Rust MIR 接手 CFG/SSA、分析优化及 KIR 降级。边界、生命周期与迁移顺序见 [compiler.md](design/compiler.md)。
+1. **kiln 自己的 HIR**（[hir.md](design/hir.md)）：原生结构对象（单个对象、O(1) 的类型检查、内联构造）和 KIR 的 `:switch` 已接入。CST → HIR → KIR 是唯一的前端，cross-client 的编译期求值用 HIR 求值器；旧的 Iconoclast 前端、Common-boot 的 HIR 求值器及其依赖（Common-boot、Iconoclast、s-expression-syntax、parser.packrat、builder 协议）已删除。剩下在内存里交接 KIR。
 2. **调用点上的变换**：`member`/`assoc` 带常量 `:test`（`eq`/`eql`）、`append` 简化、复合 `typep`（fixnum 范围、`eql`、`member`、`not`/`or`/`and`）的内联展开、`multiple-value-bind`/`multiple-value-list` 的直接降级，以及带 `&optional`/`&key` 函数的 `inline`（调用点编译期解析关键字）已接入。剩下 `find`、`position` 等序列函数在参数和类型已知时展开成循环；用户和库的编译器宏已接入调用点转换及重定义依赖追踪。
 3. **CLOS 运行时编译化**：用原生 `compile` 把判别函数、有效方法、`make-instance` 的构造器编成机器码，替代解释执行的闭包。泛函调用本身在 cl-bench 上已和 SBCL 持平；`make-instance`（快路径之外）、`call-next-method`、定义类和方法（运行期编译）仍慢 9–40 倍，靠这一项。解释执行的路径保留。
 4. **库的快速路径**：打印 fixnum 和字符串、`format` 的常见指令（编译期编译控制串，`formatter` 也随之正确）、字符串流的批量写入，绕开逐字符的泛函调用；`intern` 绕开 Parcl 的协议层；Salmagundi 剩下的协议开销。
@@ -115,7 +111,7 @@ MIR 的 CFG/SSA 承载 Lisp 语义分析与表示选择；Cranelift 继续负责
 - **逃逸分析与 `dynamic-extent`**：短 `list`／`list*` 局部初始化可展开为显式 cons 链，保留全部实参先求值的顺序，再进入通常的标量及栈存储证明。已有词法 cons 的可能别名与逃逸证明，覆盖初始化、赋值、分支和局部 block 结果；保留身份的不逃逸 cons 可使用固定栈槽，car/cdr 单独登记为移动 GC 的精确根。声明使用同一证明，未知用途退回堆分配。局部函数的必需及可选参数已有借用摘要，递归调用组先传播主值参数别名，再撤回不安全的保留假设；原对象可作为单值返回，由调用方继续追踪身份。调用方和被调方均检查调试器的观察边界。带 `&rest` 的局部函数可借用不可观察的位置参数，额外实参逐个检查逃逸。单次执行的分配点可按对象图追踪字段、共享及环，逃逸沿字段边传播，保持堆对象不指向栈对象；已知局部调用与递归组联合求形参、字段和主值集合，辅助函数的新对象仍按堆边界处理，其循环中的字段读写参与同一固定点；拥有者在循环外建立的图可跨回边存活，循环内的新对象继续按堆边界检查。可选与关键字默认值的别名及保留用途参与摘要，supplied-p 变量也检查写入和捕获；关键字入口可借用位置参数，关键字尾部仍按堆列表检查。跨迭代对象图、更广的多值身份流、关键字实参自身的借用仍需扩展。单调用点局部 rest 函数的短参数列表可在内联后进入调用方的栈存储证明；词法绑定的闭包可沿绑定内的身份流选择栈存储，环境字段单独登记为精确根；普通 `&rest` 入口在列表及所有尾部不逃逸时可使用至多八个 cons 的栈存储，超出容量整条列表退回堆。带关键字的 rest 列表、跨函数退出令牌、`handler-case` / `handler-bind` 的 handler 闭包和条目仍在堆上分配；带 `&key` 的全局函数尚未生成固定位置参数的内部入口。
 - `defclass` 定义的访问函数在文件末尾被报成未定义函数。
 - 字面数据里未 intern 的符号，名字里带宿主的 gensym 计数时，两边的 KIR 可能不同。
-- 语义与环境处理集中在 Lisp HIR，优化与表示选择迁往 Rust MIR；KIR 固化布局与 ABI，Cranelift 完成机器后端优化。MIR 的 pass 明确分析失效规则，见 [mir.md](design/mir.md)。
+- 语义分析与优化现在集中在 HIR 树上；目标是迁到 Lisp 的 MIR（CFG 加 SSA，pass 声明分析失效规则，[mir.md](design/mir.md)），对象布局和 ABI 移到 kiln-cg 的 LIR 降级（[lir.md](design/lir.md)），`lisp/abi.lisp` 与 kiln-rt 的重复随之消失。
 
 ### 运行期的 `eval`/`compile`
 
@@ -205,7 +201,7 @@ MIR 的 CFG/SSA 承载 Lisp 语义分析与表示选择；Cranelift 继续负责
    - **兼容 `.asd`**：常见的 `defsystem` 写法（components、`:depends-on`、`:serial`）直接当数据读；少数要执行代码的，退回到在单独的构建 image 里运行 ASDF。
    - **构建缓存**以 KIR 的内容哈希为键，键里带上它依赖的宏、内联函数的哈希，比时间戳准确，也能跨机器共享。
    - 构建期执行的代码（宏、构建脚本）以后放进能力沙箱。
-   - **Rust 宿主 crate**：清单里声明，开发时编成动态库载入活 image，交付时和 launcher 一起生成一个 staticlib 静态链接（[rust-interop.md](design/rust-interop.md) 的模块与链接约束）。
+   - **Rust 宿主 crate**：清单里声明，开发时编成动态库载入活 image，交付时和 launcher 一起生成一个 staticlib 静态链接（[rust-interop.md](design/rust-interop.md) 的“静态链接的构建”）。
 
 **包管理：**
 
@@ -228,7 +224,7 @@ MIR 的 CFG/SSA 承载 Lisp 语义分析与表示选择；Cranelift 继续负责
 | 3 | 异步任务（提供者超时转异步、语言服务器、子进程）、渲染分离；GUI 前端（Rust 的平台层、文字服务和渲染器，声明式动画） | fiber、内存模型、Rust 宿主模块 |
 | 4 | 发行版：部分 seal、扩展点声明、HIR 求值执行扩展、体积优化 | seal、tree shaking |
 
-Rust interop 基础设施由编译器先行使用；编辑器复用其 roots、所有权和回调协议，再扩展平台服务。通用 C FFI 与 fiber 分别推进。
+Rust 宿主模块不依赖通用的 C FFI，也不依赖 fiber，可以先做；通用的 C FFI 排在后面，建在它上面。
 
 ## 不再计划的
 

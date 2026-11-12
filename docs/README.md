@@ -2,7 +2,7 @@
 
 kiln 是一个现代 Common Lisp 实现：开发时是完整的活 image，交付时是经过整体优化和裁剪的静态原生二进制。
 
-- `design/`：系统设计与理由。目标设计明确标注实现边界，改代码时同步更新。
+- `design/`：系统设计、理由与明确标注的实现边界。改代码时同步更新。
 - `research/`：调研和测量，每篇注明日期，不随代码更新。
 - [roadmap.md](roadmap.md)：里程碑、优先级、性能计划、项目工具和包管理的计划、还没做的事。
 
@@ -16,15 +16,16 @@ kiln 是一个现代 Common Lisp 实现：开发时是完整的活 image，交�
 | [objects.md](design/objects.md) | 值的 tag、立即数、堆对象的 kind 和布局、静态对象、身份哈希 |
 | [abi.md](design/abi.md) | 调用约定、context 布局、动态环境条目、非局部退出和 unwinder、特殊变量、多值、poll 点 |
 | [abi-policy.md](design/abi-policy.md) | ABI 不承诺跨版本兼容、ABI 指纹、编译期依赖 |
-| [compiler.md](design/compiler.md) | 编译器目标架构：Lisp 语义前端、Rust MIR、Cranelift 后端与实施顺序 |
-| [mir.md](design/mir.md) | Rust CFG/SSA 中端、分析、身份与存储证明、验证与表示选择（目标设计） |
-| [compiler-protocol.md](design/compiler-protocol.md) | Lisp/Rust 编译请求、literal 生命周期、依赖验证与确定性交接（目标设计） |
+| [compiler.md](design/compiler.md) | 编译器分层（目标设计）：Lisp 的 HIR 和 MIR、LIR 边界、kiln-cg 的布局和 ABI 降级、被否决的方案、迁移步骤 |
+| [mir.md](design/mir.md) | Lisp 的 MIR（目标设计）：CFG 加 SSA、分析、类型驱动的改写、身份与存储证明、表示选择 |
+| [compiler-protocol.md](design/compiler-protocol.md) | 结构化 LIR 编译协议：二进制 schema、内存和文件入口、所有权、literal roots、持久化与兼容 |
+| [lir.md](design/lir.md) | LIR 后端输入语言（目标设计）：布局无关的低层操作、函数和调用、多值、动态范围、常量表、目标描述 |
 | [codegen.md](design/codegen.md) | KIR 语法、kiln-cg（JIT、目标文件、多模块、模块信息、运行期编译） |
 | [gc.md](design/gc.md) | MMTk binding、root、栈图、编译器的 GC 规则、内联分配、栈和栈段 |
 | [compiler-performance.md](design/compiler-performance.md) | 编译延迟、可重复基准、数据布局与增量计算的实施顺序 |
 | [front-end.md](design/front-end.md) | Eclector 到自有 HIR、顶层形式处理、编译期环境（cross-client、image-client）、inline、确定性 |
-| [lowering.md](design/lowering.md) | HIR → MIR → KIR 的职责、语义保持和 ABI 降级 |
-| [hir.md](design/hir.md) | Lisp 语义树、绑定与声明、编译期求值和导出约束 |
+| [lowering.md](design/lowering.md) | HIR 到 KIR：闭包、退出点、多值、原语和 `%primop`、降级时的改写 |
+| [hir.md](design/hir.md) | kiln 自己的 HIR：CST → HIR → KIR 前端、HIR 求值器、原生结构对象、按种类分派 |
 | [kernel.md](design/kernel.md) | kernel 模块：钩子、数、字符串、类型、序列、运行期的宏环境和错误 |
 | [clos.md](design/clos.md) | CLOS：vendor Clostrophilia、目标端引导、分派和缓存、类的重定义、实例初始化和 `make-instance` 的快路径、类名 `typep` |
 | [stdlib.md](design/stdlib.md) | condition、哈希表、包、ctype、数组、结构、LOOP |
@@ -37,7 +38,7 @@ kiln 是一个现代 Common Lisp 实现：开发时是完整的活 image，交�
 | [dependencies.md](design/dependencies.md) | image 里定义的依赖追踪：依赖的种类、失效、提前截断 |
 | [specialization.md](design/specialization.md) | 推测、守卫和失效：假设和版本格、现有的各种缓存经过它、生成代码代替手写闭包（计划）、编译结果的缓存（计划）、seal 时折叠（计划） |
 | [async.md](design/async.md) | 异步模型（未实现）：一次性续延和 condition 系统的统一、被否决的方案 |
-| [rust-interop.md](design/rust-interop.md) | 编译器优先的双向互操作：roots、所有权、回调退出与宿主模块（目标设计） |
+| [rust-interop.md](design/rust-interop.md) | Rust 宿主模块和双向互操作（草案）；交付时生成唯一的 staticlib 静态链接 |
 | [editor.md](design/editor.md) | 编辑器和 IDE KilnWorks（草案）：架构、显示管线、对运行时的需求、扩展模型 |
 
 ## research/

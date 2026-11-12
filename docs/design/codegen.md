@@ -3,8 +3,7 @@
 ## 组成
 
 ```
-目标：Lisp 语义前端 → HIR 请求 → Rust MIR → KIR
-当前：Lisp 编译器（SBCL 上或 kiln 上）   源码 → KIR（s-expression 文本）
+Lisp 编译器（lisp/*.lisp，SBCL 上或 kiln 上）   源码 → KIR（s-expression 文本）
         ↓ .kir（或运行期的字符串）
 kiln-cg（rust/kiln-cg）      KIR → Cranelift
         ├─ jit：cranelift-jit，在进程内运行（链接 kiln-rt）
@@ -15,16 +14,18 @@ kiln-rt（rust/kiln-rt）      runtime：context、GC、unwinder、栈、运行�
 kiln-launcher               staticlib，提供 C main，链接 kiln-rt 和 kiln-cg
 ```
 
+目标设计（[compiler.md](compiler.md)）：Lisp 编译器改为输出布局无关的 LIR（[lir.md](lir.md)），LIR 通过[结构化编译协议](compiler-protocol.md)交接，kiln-cg 先按 kiln-rt 的布局把 LIR 降级成内存 KIR，再走下面的路径。KIR 届时是 kiln-cg 内部的数据结构，文本只用于诊断；本文其余部分描述现在的 KIR 接口。
+
 `target/debug/kiln-cg jit kernel.kir prog.kir` 运行程序，加 `--dump-clif` 查看生成的 CLIF；`kiln-cg obj ... -o prog.o` 生成目标文件。
 
 编译器中的模块对象还记录 `replayable-p`，供顶层原生产物缓存判断初始化函数是否可重复执行。引入 `load-time-value` 单元的降级会清除此标志，保持不同编译结果的静态 cell 独立；该元数据不写入 KIR 文本。
 
-## 决定：交换格式用 KIR，不用 CLIF 文本
+## 当前 KIR 与目标后端接口
 
-KIR 是布局和 ABI 已确定的低级表示。目标架构中由 Rust MIR 降级产生，当前由 Lisp 直接产生；职责见 [compiler.md](compiler.md)。保留 KIR 的原因：
+当前 Lisp 编译器以 KIR 文本交接，目标以二进制 LIR 请求交接。KIR 保留为 Rust 内部表示，原因如下：
 
 - **cranelift-frontend 只能通过 API 使用。** 它负责从可变变量构建 SSA（`Variable`、`def_var`/`use_var`），以及在 safepoint 处为 GC 引用插入溢出和重载（user stack maps，C5）。直接写 CLIF 文本就绕过了它，Lisp 侧得自己构建 SSA、自己做溢出。
-- **布局与机器后端分层。** KIR 固化 tag、偏移和 kind。目标架构由 Rust MIR 的表示降级根据 runtime 目标描述生成这些信息；当前仍由 Lisp 降级决定。kiln-cg 负责调用约定、`try_call` 和异常表、栈图、trampoline 与调试表，不处理宏或词法环境。
+- **对象布局的知识留在 Lisp 侧。** KIR 是接近 Cranelift 的低级 IR：tag、偏移、kind 编号都由 Lisp 编译器决定。kiln-cg 只负责调用约定、`try_call` 和异常表、栈图、trampoline、调试信息的表。编译器自举进 kiln 之后，kiln-cg 作为 runtime 里的代码生成库继续使用，不用改。（目标设计把布局知识移到 kiln-cg：Lisp 输出 LIR，kiln-cg 降级成 KIR，见 [compiler.md](compiler.md) 的“为什么这样分”。保留 KIR 作为 kiln-cg 内部一层的理由不变。）
 
 ## KIR 语法
 
