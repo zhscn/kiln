@@ -117,6 +117,26 @@ fn immediate_class_tests_preserve_kir_and_reject_unknown_classes() {
 }
 
 #[test]
+fn cons_allocation_initializes_after_the_allocation_paths() {
+    let module = |body| format!("(module \"cons\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (v obj) (x obj)) (slots) (block b {body} (return v 1)) (block caught (return exn1 1))))");
+    let program = sexp::parse_one(&module("(alloc-cons v x a0 \"kiln_rt_alloc\" caught)")).unwrap();
+    let result = packet::load(&packet::encode(&program, packet::schema::KIR_PAYLOAD).unwrap()).unwrap();
+    let blocks = &result.funcs[0].blocks;
+    assert_eq!(blocks.len(), 5);
+    let fast = format!("{:?}", blocks[1]);
+    assert!(fast.contains("Int(3)"));
+    let slow = format!("{:?}", blocks[2]);
+    assert!(slow.contains("handler: Some(\"caught\")"));
+    let done = format!("{:?}", blocks[3]);
+    assert!(done.contains("Int(1)"));
+    assert!(done.contains("Store(Var(\"v\"), 7, Var(\"x\"))"));
+    assert!(done.contains("Store(Var(\"v\"), 15, Var(\"a0\"))"));
+    for body in ["(alloc-cons v v a0 \"kiln_rt_alloc\" nil)", "(alloc-cons v (load x 0) a0 \"kiln_rt_alloc\" nil)"] {
+        assert!(kiln_cg::kir::parse_module(&sexp::parse_one(&module(body)).unwrap()).is_err());
+    }
+}
+
+#[test]
 fn allocation_expands_fast_and_slow_paths_with_distinct_names() {
     let input = r#"(module "alloc" (init "init")
       (data "init" (words 2 (func "body")))

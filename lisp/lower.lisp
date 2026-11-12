@@ -898,10 +898,9 @@ before the address is tagged and stored in an obj variable."
   ;; and reloaded around it (stack maps).
   (let* ((a (if (integerp a) a (copy-to-var a)))
          (b (if (integerp b) b (copy-to-var b)))
-         (p (emit-alloc +cons-bytes+ +kind-cons+ nil)))
-    (emit `(:store ,p 8 ,a))
-    (emit `(:store ,p 16 ,b))
-    (copy-to-var `(:add ,p ,+tag-cons+))))
+         (result (new-var)))
+    (emit `(:alloc-cons ,result ,a ,b ,(rt-alloc) ,(handler)))
+    result))
 
 ;;; Cells (assignment conversion): a cell is a cons whose car is the value.
 

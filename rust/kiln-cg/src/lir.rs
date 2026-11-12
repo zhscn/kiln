@@ -135,6 +135,16 @@ pub fn transfer_roots(count: Expr) -> Stmt {
     )
 }
 
+pub fn initialize_cons(result: String, address: String, car: Expr, cdr: Expr) -> Result<Vec<Stmt>, String> {
+    use crate::kir::BinOp;
+    let object = || Expr::Var(result.clone());
+    Ok(vec![
+        Stmt::Set(result.clone(), Expr::Bin(BinOp::Add, Box::new(Expr::Var(address)), Box::new(Expr::Int(TAG_CONS as i64)))),
+        field_store(FIELD_CONS_CAR, object(), car)?,
+        field_store(FIELD_CONS_CDR, object(), cdr)?,
+    ])
+}
+
 /// Expand allocation after operand evaluation; only the slow path can safepoint.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn allocate_raw(
