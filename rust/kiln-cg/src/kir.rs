@@ -421,6 +421,7 @@ fn parse_word(s: &Sexp) -> R<Word> {
             let (h, rest) = head(list(s)?)?;
             match h {
                 "data" => {
+                    if rest.len() != 1 && rest.len() != 2 { return Err("data word: expected name and optional addend".into()); }
                     let addend = if rest.len() > 1 { int(&rest[1])? } else { 0 };
                     Ok(Word::DataAddr(string(&rest[0])?.to_string(), addend))
                 }
@@ -664,6 +665,7 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
             Expr::Load32(e(0)?, int(&r[1])? as i32)
         }
         "addr" => {
+            if r.len() != 1 && r.len() != 2 { return Err("addr: expected name and optional addend".into()); }
             let addend = if r.len() > 1 { int(&r[1])? } else { 0 };
             Expr::Addr(string(&r[0])?.to_string(), addend)
         }

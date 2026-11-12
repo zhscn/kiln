@@ -10,7 +10,7 @@
 
 ## 目标协议与自举范围
 
-目标阶段由同一 Lisp 编码器写出规范化二进制 LIR。SBCL 写 stage0 文件后调用 kiln-cg 子进程，不通过 FFI 载入 Rust 库；kiln 的后续阶段也写相同格式。运行期原生编译使用同一 schema 的内存入口，见 [compiler-protocol.md](compiler-protocol.md)。
+共享 Lisp 编码器已支持 `.lir` 二进制封套，当前载荷为 KIR；现有自举脚本仍输出 `.kir`，尚未切换默认文件格式。目标阶段由同一编码器写出布局无关的 LIR。SBCL 写 stage0 文件后调用 kiln-cg 子进程，不通过 FFI 载入 Rust 库；kiln 的后续阶段也写相同格式。运行期原生编译使用同一 schema 的内存入口，见 [compiler-protocol.md](compiler-protocol.md)。
 
 Rust 后端由 Cargo 构建并在各阶段共用。LIR 逐字节闭合验证 Lisp 编译器、表示选择与导出的确定性，最终二进制闭合同时检查固定后端处理相同输入的确定性；这不证明 Rust 后端自身经过 Lisp 自举。后端另以独立样本、旧 KIR 对照和执行验证覆盖。
 

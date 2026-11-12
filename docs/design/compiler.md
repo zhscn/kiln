@@ -1,6 +1,6 @@
 # 编译器架构
 
-状态：**目标设计，尚未实现**。现在的编译器是 Lisp 一路生成 KIR（`CST → HIR → KIR`，见 [hir.md](hir.md)、[lowering.md](lowering.md)），kiln-cg 把 KIR 交给 Cranelift。本文规定迁移后的分层；迁移期间现有路径是行为参照。
+状态：**分层目标正在接入**。结构化封套、文件与内存入口已实现，当前载荷仍是 KIR，LIR 操作和 Lisp MIR 尚未实现。现在的编译器是 Lisp 一路生成 KIR（`CST → HIR → KIR`，见 [hir.md](hir.md)、[lowering.md](lowering.md)），kiln-cg 把 KIR 交给 Cranelift。本文规定迁移后的分层；迁移期间现有路径是行为参照。
 
 ## 分层
 

@@ -139,6 +139,7 @@ pub fn load(kir: &kir::Module, opts: &Options, memory: Memory) -> Result<Loaded,
         builder.symbol(name, ptr);
     }
     builder.symbol("kiln_rt_jit", kiln_rt_jit as *const u8);
+    builder.symbol("kiln_rt_compile_packet", kiln_rt_compile_packet as *const u8);
     builder.symbol_lookup_fn(Box::new(|name| kiln_rt::exported(name).map(|a| a as *const u8)));
     let mut module = JITModule::new(builder);
     let out = codegen::compile(&mut module, kir, opts)?;
@@ -245,12 +246,69 @@ pub unsafe extern "C" fn kiln_rt_jit(_ctx: *mut Context, text: u64, literals: u6
 }
 
 unsafe fn jit_text(text: u64, literals: u64) -> Result<u64, String> {
-    use kiln_rt::object::{header, header_length, untag};
     let t = std::time::Instant::now();
     let src = unsafe { kiln_rt::object::string_value(text) };
     let s = crate::sexp::parse_one(&src).map_err(|e| e.to_string())?;
     let kir = kir::parse_module(&s)?;
-    let loaded = load(&kir, &Options { dump_clif: false }, Memory::Shared)?;
+    unsafe { install_module(&kir, literals, src.len(), t) }
+}
+
+/// Compile an indexed packet from a simple vector of octets. This entry
+/// copies the request before decoding and never calls a Lisp safepoint.
+/// The caller's Lisp frame roots the literal vector until its elements
+/// have been installed into registered static root slots.
+///
+/// # Safety
+/// `packet` and `literals` must be valid Lisp objects. The current runtime
+/// has one mutator; no Lisp GC or callback may run during this call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kiln_rt_compile_packet(_ctx: *mut Context, packet: u64, literals: u64) -> u64 {
+    let result = unsafe { compile_packet(packet, literals) };
+    match result {
+        Ok(init) => init,
+        Err(error) => {
+            eprintln!("kiln_rt_compile_packet: {error}");
+            kiln_rt::object::nil()
+        }
+    }
+}
+
+unsafe fn compile_packet(packet: u64, literals: u64) -> Result<u64, String> {
+    use kiln_rt::object::{header, header_length, untag, is_general, is_fixnum, fixnum_value, KIND_MASK, KIND_SIMPLE_VECTOR};
+    let t = std::time::Instant::now();
+    if !is_general(packet) || unsafe { header(packet) } & KIND_MASK != KIND_SIMPLE_VECTOR {
+        return Err("request must be a simple vector of octets".into());
+    }
+    if !is_general(literals) || unsafe { header(literals) } & KIND_MASK != KIND_SIMPLE_VECTOR {
+        return Err("literals must be a simple vector".into());
+    }
+    let n = header_length(unsafe { header(packet) });
+    if n > crate::packet::schema::MAX_BYTES as usize { return Err("request too large".into()); }
+    let words = unsafe { std::slice::from_raw_parts((untag(packet) + 8) as *const u64, n) };
+    let bytes = words.iter().map(|&word| {
+        if !is_fixnum(word) { return Err("request contains a non-octet".to_string()); }
+        u8::try_from(fixnum_value(word)).map_err(|_| "request contains a non-octet".to_string())
+    }).collect::<Result<Vec<_>, _>>()?;
+    let kir = crate::packet::load(&bytes)?;
+    unsafe { install_module(&kir, literals, bytes.len(), t) }
+}
+
+unsafe fn install_module(kir: &kir::Module, literals: u64, input_size: usize, t: std::time::Instant) -> Result<u64, String> {
+    use kiln_rt::object::{header, header_length, untag};
+    let n = header_length(unsafe { header(literals) });
+    if kir.inits.len() != 1 { return Err("image compilation requires exactly one init function".into()); }
+    // Validate the literal table before code or roots are registered.
+    if let Some(data) = kir.data.iter().find(|d| d.name == LITERALS_NAME) {
+        if !matches!(&data.contents, kir::DataContents::Words(words) if words.len() == n) {
+            return Err("literal vector does not match the module's literal words".into());
+        }
+        let roots: std::collections::HashSet<_> = kir.roots.iter()
+            .filter(|(name, _)| name == LITERALS_NAME).map(|(_, index)| *index as usize).collect();
+        if (0..n).any(|index| !roots.contains(&index)) { return Err("literal word has no static root".into()); }
+    } else if n != 0 {
+        return Err("missing literal words".into());
+    }
+    let loaded = load(kir, &Options { dump_clif: false }, Memory::Shared)?;
     let n = header_length(unsafe { header(literals) });
     if n > 0 {
         let id = loaded
@@ -269,7 +327,7 @@ unsafe fn jit_text(text: u64, literals: u64) -> Result<u64, String> {
     }
     let inits = loaded.inits();
     if std::env::var("KILN_TIME").is_ok() {
-        eprintln!("kiln_rt_jit: {} bytes of KIR in {:?}", src.len(), t.elapsed());
+        eprintln!("kiln_rt_jit: {} bytes of backend input in {:?}", input_size, t.elapsed());
     }
     if std::env::var("KILN_PERF_MAP").is_ok() {
         append_perf_map(&loaded.module);

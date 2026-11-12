@@ -6,7 +6,7 @@ compiler 模块安装 HIR → KIR → Cranelift 的原生入口。两种执行�
 
 ## 目标后端交接
 
-目标原生路径为 Lisp 的 HIR/MIR → 表示选择 → LIR 请求 → Rust 布局与 ABI 降级 → 内存 KIR → Cranelift。HIR 求值器继续留在 Lisp。运行期直接提交连续二进制缓冲区和受保护的 literal 向量，不生成 LIR 或 KIR 文本；请求失败与产物发布采用 [compiler-protocol.md](compiler-protocol.md) 的所有权规则。当前原生入口和下文的 KIR FASL 格式尚未迁移，迁移时显式提升格式版本。
+目标原生路径为 Lisp 的 HIR/MIR → 表示选择 → LIR 请求 → Rust 布局与 ABI 降级 → 内存 KIR → Cranelift。HIR 求值器继续留在 Lisp。运行期直接提交连续二进制缓冲区和受保护的 literal 向量，不生成 LIR 或 KIR 文本；请求失败与产物发布采用 [compiler-protocol.md](compiler-protocol.md) 的所有权规则。当前原生入口已切换结构化 packet，载荷仍是 KIR；布局和 ABI 降级尚未移交 Rust。FASL 版本 2 保存 packet，加载不解析 KIR 文本。
 
 ## 模块与自举边界
 
@@ -63,8 +63,8 @@ compiler 模块的 `lisp/target/compiler/native.lisp` 把 `kiln.kernel::*compile
 1. `native-compile` 新建一个 session（`image-client`），然后：
    - 用 `front-end-forms` 处理 `(setq *compiled-function* (function LAMBDA))`（和 `front-end` 一样，只是直接处理形式，不读文件）；
    - 用 `compile-module :image t` 降级；
-   - 用 `module-string` 把整个模块写进一个字符串；
-   - 把字符串和字面量向量交给 `(%primop :jit text literals)`，即 kiln-cg 的 `kiln_rt_jit`（[codegen.md](codegen.md)）。它返回 init 函数对象，KIR 编不过时返回 NIL，`native-compile` 据此报错。
+   - 用 `module-packet` 编码成带版本和目标指纹的记录字节；
+   - 把 packet 和字面量向量交给 `(%primop :compile-packet packet literals)`，即 kiln-cg 的 `kiln_rt_compile_packet`（[codegen.md](codegen.md)）。它返回 init 函数对象，KIR 编不过时返回 NIL，`native-compile` 据此报错。
 2. `native-compile` 动态绑定 `*compiled-function*`，调用 init 函数，取出编好的函数。
 
 ### image 模式的 KIR
@@ -112,9 +112,9 @@ package 和 readtable 绑定。编译期 HIR 求值使用运行期宏 client，�
 循环创建依赖报告 `program-error`。整个文件共用身份表，顶层入口之间保持对象
 共享关系。
 
-二进制头为 `89 4B 46 41 53`（带非文本前缀的 KFAS），后接格式版本 1；
+二进制头为 `89 4B 46 41 53`（带非文本前缀的 KFAS），后接格式版本 2；
 非文本前缀使源文件以 `KFAS` 符号开头时仍按 Lisp 源码加载。整数使用七位分组的变长编码，字符使用
-Unicode code point。记录数据只包含整数、字符、字符串、符号和列表，任意字面量
+Unicode code point。记录数据包含整数、字符、字符串、符号、列表及 packet octets，任意字面量
 通过有索引的对象记录表示。浮点保存有限值的整数尾数、指数、符号与精度，包含
 负零。格式版本不匹配时加载器报错。文件格式是实现内部协议。
 

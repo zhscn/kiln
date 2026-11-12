@@ -801,6 +801,7 @@ known to hold one), and true; else NIL and NIL."
 (defun rt-sys () (module-import-func "kiln_rt_sys" 5 1))
 (defun rt-write-kir () (module-import-func "kiln_rt_write_kir" 3 1))
 (defun rt-jit () (module-import-func "kiln_rt_jit" 3 1))
+(defun rt-compile-packet () (module-import-func "kiln_rt_compile_packet" 3 1))
 (defun rt-save-image () (module-import-func "kiln_rt_save_image" 4 1))
 (defun rt-frame () (module-import-func "kiln_rt_frame" 4 1))
 

@@ -1135,6 +1135,11 @@ and slots), zero-filled."
   (let ((r (new-var)))
     (emit `(:call-rt ,(rt-jit) (,r) (:ctx ,text ,literals) :nil))
     r))
+;;; Indexed backend request; PACKET and LITERALS remain caller roots.
+(define-primop :compile-packet (packet literals)
+  (let ((r (new-var)))
+    (emit `(:call-rt ,(rt-compile-packet) (,r) (:ctx ,packet ,literals) :nil))
+    r))
 ;;; Writes a heap image (kiln_rt_save_image): PATH is a simple
 ;;; vector of octets, TOPLEVEL the function an executable started from
 ;;; the image calls, EXECUTABLE true to write a copy of the executable

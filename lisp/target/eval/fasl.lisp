@@ -172,6 +172,11 @@
         ((consp object)
          (write-byte 4 stream) (fasl-write-data (car object) stream) (fasl-write-data (cdr object) stream))
         ((characterp object) (write-byte 5 stream) (fasl-write-uint (char-code object) stream))
+        ((simple-vector-p object)
+         (write-byte 6 stream) (fasl-write-uint (length object) stream)
+         (loop for octet across object
+               do (unless (typep octet '(unsigned-byte 8)) (error "Invalid packet octet."))
+                  (write-byte octet stream)))
         (t (error "Unsupported FASL record datum ~S." object))))
 
 (defun fasl-intern-symbol (name package)
@@ -191,10 +196,12 @@
          (fasl-intern-symbol name (fasl-read-data stream))))
     (4 (let ((head (fasl-read-data stream))) (cons head (fasl-read-data stream))))
     (5 (code-char (fasl-read-uint stream)))
+    (6 (let ((bytes (make-array (fasl-read-uint stream))))
+         (dotimes (i (length bytes) bytes) (setf (svref bytes i) (read-byte stream)))))
     (t (error "Invalid FASL record encoding."))))
 
 (defun write-native-fasl (unit stream)
-  (dolist (byte '(137 75 70 65 83 1)) (write-byte byte stream))
+  (dolist (byte '(137 75 70 65 83 2)) (write-byte byte stream))
   (fasl-write-uint (first unit) stream)
   (fasl-write-uint (length (second unit)) stream)
   (dolist (record (second unit)) (fasl-write-data record stream)))
@@ -237,7 +244,7 @@
 
 (defun load-native-fasl (stream &key verbose)
   (declare (ignore verbose))
-  (dolist (byte '(137 75 70 65 83 1))
+  (dolist (byte '(137 75 70 65 83 2))
     (unless (= (read-byte stream) byte) (error "Unsupported native FASL header or version.")))
   (let ((*fasl-load-objects* (make-array (fasl-read-uint stream))))
     (dotimes (i (fasl-read-uint stream))

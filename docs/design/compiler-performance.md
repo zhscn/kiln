@@ -56,6 +56,8 @@ HIR 的表示与分析见 [hir.md](hir.md)，降级见 [lowering.md](lowering.md
 reader 与文件流见 [io.md](io.md)。性能测量记录见
 [performance.md](../research/performance.md)。
 
+当前结构化编码使用 Lisp simple-vector octets，并按记录构建临时列表；记录空间与编码成本须单独测量，不能将传输实现等同于预算达标。运行期缓存和 FASL 不再依赖 KIR 文本。
+
 ## 小函数与切换预算
 
 运行期 CLOS 判别函数、有效方法和构造器是独立的编译延迟场景，不能仅以整模块吞吐判断协议成本。测量预热后的单函数编译，分别报告中位数、尾延迟、协议字节数、复制量、Rust 分配和总编译时间；将 GC 压力、缓存命中与未命中分开。

@@ -342,8 +342,12 @@
   "Sources of the CLOS module, in load order.")
 
 (defun write-module (module output)
-  (with-open-file (out output :direction :output :if-exists :supersede)
-    (kiln.kir:print-module module out))
+  (if (equal (pathname-type output) "lir")
+      (with-open-file (out output :direction :output :if-exists :supersede
+                                 :element-type '(unsigned-byte 8))
+        (kiln.kir::write-module-packet module out))
+      (with-open-file (out output :direction :output :if-exists :supersede)
+        (kiln.kir:print-module module out)))
   output)
 
 (defun compile-files (files session module-name &key extra-symbols)
@@ -482,7 +486,7 @@ those whose names are in EXCLUDE."
      (system-files "anatomicl")
      ;; kiln's compiler (M5.3): its packages are the host's.
      (mapcar (lambda (name) (asdf:system-relative-pathname "kiln" (format nil "lisp/~A.lisp" name)))
-             '("abi" "kir" "hir/data" "lower" "values" "primitives" "structures" "front" "cross"
+             '("abi" "kir" "lir-schema" "backend-target" "backend-packet" "hir/data" "lower" "values" "primitives" "structures" "front" "cross"
                "hir/environment" "hir/convert" "hir/analyze" "hir/types" "hir/escape" "hir/eval" "hir/lower"
                "target/compiler/client" "target/eval/interpreter"))))
 

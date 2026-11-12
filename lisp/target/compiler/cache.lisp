@@ -44,19 +44,26 @@ Native code already registered with the runtime follows the runtime's lifetime."
                         (similar-literal-p x y 100)
                         (eql x y)))))
 
-;;; Entry: package, readtable, canonical KIR, literal objects, dependency versions,
-;;; original module name and KIR, executable init function.
-(defun cached-toplevel-init (name kir literals debug-literals replayable-p)
+;;; Entry: package, readtable, canonical packet, literal objects, dependency versions,
+;;; original module name and packet, executable init function.
+(defun canonical-backend-form (form name)
+  (cond ((stringp form) (replace-all (replace-all form (mangle name) "") name ""))
+        ((consp form) (mapcar (lambda (x) (canonical-backend-form x name)) form))
+        (t form)))
+
+(defun cached-toplevel-init (name module literals debug-literals replayable-p)
   (when (> (length *toplevel-compilation-cache*)
            (max 0 kiln.sys:*compilation-cache-limit*))
     (setf *toplevel-compilation-cache*
           (subseq *toplevel-compilation-cache* 0 (max 0 kiln.sys:*compilation-cache-limit*))))
-  (let* ((canonical (replace-all (replace-all kir (mangle name) "") name ""))
+  (let* ((program (kiln.kir::module-form module))
+         (packet (kiln.kir::encode-backend-packet program))
+         (canonical (kiln.kir::encode-backend-packet (canonical-backend-form program name)))
          (entry (when (and replayable-p (plusp kiln.sys:*compilation-cache-limit*))
                   (find-if (lambda (entry)
                              (and (eq (svref entry 0) *package*)
                                   (eq (svref entry 1) *readtable*)
-                                  (string= (svref entry 2) canonical)
+                                  (equalp (svref entry 2) canonical)
                                   (compilation-literals-match-p
                                    (svref entry 3) literals debug-literals)
                                   (compilation-versions-valid-p (svref entry 4))))
@@ -68,13 +75,13 @@ Native code already registered with the runtime follows the runtime's lifetime."
                 (cons entry (delete entry *toplevel-compilation-cache* :test #'eq)))
           (note-compiled-code (svref entry 5) (svref entry 6) (svref entry 3))
           (svref entry 7))
-        (let ((init (kiln.sys:%primop :jit kir literals)))
+        (let ((init (kiln.sys:%primop :compile-packet packet literals)))
           (incf *compilation-cache-misses*)
           (when init
-            (note-compiled-code name kir literals)
+            (note-compiled-code name canonical literals)
             (when (and replayable-p (plusp kiln.sys:*compilation-cache-limit*))
               (push (vector *package* *readtable* canonical literals
-                            (compilation-dependency-versions) name kir init)
+                            (compilation-dependency-versions) name canonical init)
                     *toplevel-compilation-cache*)))
           (when (> (length *toplevel-compilation-cache*)
                    (max 0 kiln.sys:*compilation-cache-limit*))

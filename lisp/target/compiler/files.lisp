@@ -2,8 +2,8 @@
 
 (in-package #:kiln.compiler)
 
-(defun load-native-file (kir literals)
-  (let ((init (kiln.sys:%primop :jit kir literals)))
+(defun load-native-file (packet literals)
+  (let ((init (kiln.sys:%primop :compile-packet packet literals)))
     (unless init (error "Cannot generate native code for compiled file."))
     (funcall init)
     (when *load-print* (format t "~&;; ~S loaded~%" init)))
@@ -31,7 +31,7 @@
       (let ((name (kiln.kir::kir-name "file-" (incf *native-compile-count*))))
         (multiple-value-bind (module literals)
             (compile-module (list form) name :session session :image t)
-          (kiln.kernel::fasl-add-module (kiln.kir::module-string module) literals))))
+          (kiln.kernel::fasl-add-module (kiln.kir::module-packet module) literals))))
     (list kiln.kernel::*fasl-count* (nreverse kiln.kernel::*fasl-records*))))
 
 (defun cl:compile-file (input-file &key (output-file nil output-file-p)

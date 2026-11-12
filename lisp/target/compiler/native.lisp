@@ -25,7 +25,7 @@ running image, in the null lexical environment."
           (compile-module (front-end-forms `((setq *compiled-function* (function ,definition)))
                                            session)
                           name :session session :image t))
-      (let ((init (kiln.sys:%primop :jit (kiln.kir::module-string module) literals)))
+      (let ((init (kiln.sys:%primop :compile-packet (kiln.kir::module-packet module) literals)))
         (unless init
           (error "kiln-cg could not compile ~S." definition))
         (let ((*compiled-function* nil))
@@ -101,9 +101,8 @@ returns its values."
           (compile-module (front-end-forms `((setq *eval-values* (multiple-value-list ,form)))
                                            session)
                           name :session session :image t))
-      (let* ((kir (kiln.kir::module-string module))
-             (init (cached-toplevel-init name kir literals (compilation-debug-literals module)
-                                        (kiln.kir::kmodule-replayable-p module))))
+      (let ((init (cached-toplevel-init name module literals (compilation-debug-literals module)
+                                       (kiln.kir::kmodule-replayable-p module))))
         (unless init
           (error "kiln-cg could not compile ~S." form))
         (let ((*eval-values* nil))

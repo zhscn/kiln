@@ -113,16 +113,11 @@ been evaluated again.")
           do (write-string new out)
              (setf start (+ position (length old))))))
 
-(defun note-compiled-code (module-name kir literals)
-  "NATIVE-EVAL-TOPLEVEL compiled KIR, a module named MODULE-NAME with the
-LITERALS (a vector), for the definition being evaluated."
-  (let ((cell *unit-fingerprint*))
-    (when cell
-      ;; Module names are numbered; the code is the same without them.
-      (push (cons (replace-all (replace-all kir (mangle module-name) "")
-                               module-name "")
-                  literals)
-            (cdr cell)))))
+(defun note-compiled-code (module-name packet literals)
+  "Records canonical backend bytes and literal identities for this definition."
+  (declare (ignore module-name))
+  (when *unit-fingerprint*
+    (push (cons packet literals) (cdr *unit-fingerprint*))))
 
 (defun similar-literal-p (a b depth)
   "Are the literals A and B the same as far as code goes: EQL, or equal
@@ -146,7 +141,7 @@ gensyms of a macro expansion)?"
 (defun same-fingerprint-p (a b)
   (and (= (length a) (length b))
        (every (lambda (x y)
-                (and (string= (car x) (car y))
+                (and (equalp (car x) (car y))
                      (= (length (cdr x)) (length (cdr y)))
                      (every (lambda (p q) (similar-literal-p p q 100)) (cdr x) (cdr y))))
               a b)))
