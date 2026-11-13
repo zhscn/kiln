@@ -1105,6 +1105,7 @@
          (*toplevel* (first forms)) (root (toplevel-form-ast *toplevel*)))
     (assert (= (if call 0 1) (length (gethash root (hir-prepare-stack-conses root)))))))
 
+;; Entry polling precedes visible bindings even when captures are lifted.
 (dolist (captured '(nil t))
   (let* ((pair (gensym "PAIR"))
          (form `(let ((left 1) (middle 2) (right 3))
@@ -1118,7 +1119,7 @@
          (*toplevel* (first forms)) (root (toplevel-form-ast *toplevel*))
          (*hir-native-environments* nil) (*hir-lifted-environments* nil))
     (hir-prepare-native-environments root)
-    (assert (= (if captured 0 1) (length (gethash root (hir-prepare-stack-conses root)))))))
+    (assert (= 1 (length (gethash root (hir-prepare-stack-conses root)))))))
 
 (dolist (entry '(((flet ((same (item) item))
                     (declare (notinline same))
