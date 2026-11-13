@@ -17,7 +17,7 @@
 | — | 性能：降低编译延迟，优化数值、数组、流和字符串等运行期热点；见下文“性能” | 阶段一完成 |
 | — | seal、WPO 和 AOT 交付（[positioning.md](design/positioning.md)） | 未开始 |
 | — | 异步（[async.md](design/async.md)） | 未开始，ANSI 自举完成之前不做 |
-| — | 编译器分层：Lisp MIR（CFG 加 SSA）承担语义分析和表示选择，kiln-cg 承担 LIR 到 KIR 的布局和 ABI 降级（[compiler.md](design/compiler.md)） | 结构化交接和独立 LIR 核心（类型化表示、CFG 验证、普通调用与列表实参展开、多值保存、动态区域与非局部退出、special 绑定与 progv、堆闭包、栈 cons 与栈闭包、定长与动态容器分配、结构与实例构造及 poll、静态常量图与 cell、源码和变量调试描述、具名数值操作、错误终结操作及入口 rest 的堆／栈构造及具名 runtime 服务）已接入；剩余底层操作、生产发射向独立载荷迁移和 Lisp MIR 待实现 |
+| — | 编译器分层：Lisp MIR（CFG 加 SSA）承担语义分析和表示选择，kiln-cg 承担 LIR 到 KIR 的布局和 ABI 降级（[compiler.md](design/compiler.md)） | 结构化交接和独立 LIR 核心（类型化表示、CFG 验证、普通调用与列表实参展开、多值保存、动态区域与非局部退出、special 绑定与 progv、堆闭包、栈 cons 与栈闭包、定长与动态容器分配、结构与实例构造及 poll、静态常量图与 cell、源码和变量调试描述、具名数值操作、错误终结操作及入口 rest 的堆／栈构造及具名 runtime 服务）已接入；生产发射已使用独立载荷；Lisp MIR 待实现 |
 | — | Rust 宿主模块（[rust-interop.md](design/rust-interop.md)）、编辑器（[editor.md](design/editor.md)） | 设计草案 |
 
 ## 当前优先级
@@ -111,7 +111,7 @@
 - **逃逸分析与 `dynamic-extent`**：短 `list`／`list*` 局部初始化可展开为显式 cons 链，保留全部实参先求值的顺序，再进入通常的标量及栈存储证明。已有词法 cons 的可能别名与逃逸证明，覆盖初始化、赋值、分支和局部 block 结果；保留身份的不逃逸 cons 可使用固定栈槽，car/cdr 单独登记为移动 GC 的精确根。声明使用同一证明，未知用途退回堆分配。局部函数的必需及可选参数已有借用摘要，递归调用组先传播主值参数别名，再撤回不安全的保留假设；原对象可作为单值返回，由调用方继续追踪身份。调用方和被调方均检查调试器的观察边界。带 `&rest` 的局部函数可借用不可观察的位置参数，额外实参逐个检查逃逸。单次执行的分配点可按对象图追踪字段、共享及环，逃逸沿字段边传播，保持堆对象不指向栈对象；已知局部调用与递归组联合求形参、字段和主值集合，辅助函数的新对象仍按堆边界处理，其循环中的字段读写参与同一固定点；拥有者在循环外建立的图可跨回边存活，循环内的新对象继续按堆边界检查。可选与关键字默认值的别名及保留用途参与摘要，supplied-p 变量也检查写入和捕获；关键字入口可借用位置参数，关键字尾部仍按堆列表检查。跨迭代对象图、更广的多值身份流、关键字实参自身的借用仍需扩展。单调用点局部 rest 函数的短参数列表可在内联后进入调用方的栈存储证明；词法绑定的闭包可沿绑定内的身份流选择栈存储，环境字段单独登记为精确根；普通 `&rest` 入口在列表及所有尾部不逃逸时可使用至多八个 cons 的栈存储，超出容量整条列表退回堆。带关键字的 rest 列表、跨函数退出令牌、`handler-case` / `handler-bind` 的 handler 闭包和条目仍在堆上分配；带 `&key` 的全局函数尚未生成固定位置参数的内部入口。
 - `defclass` 定义的访问函数在文件末尾被报成未定义函数。
 - 字面数据里未 intern 的符号，名字里带宿主的 gensym 计数时，两边的 KIR 可能不同。
-- 语义分析与优化现在集中在 HIR 树上；目标是迁到 Lisp 的 MIR（CFG 加 SSA，pass 声明分析失效规则，[mir.md](design/mir.md)），对象布局和 ABI 移到 kiln-cg 的 LIR 降级（[lir.md](design/lir.md)），`lisp/abi.lisp` 与 kiln-rt 的重复随之消失。
+- 语义分析与优化现在集中在 HIR 树上；目标是迁到 Lisp 的 MIR（CFG 加 SSA，pass 声明分析失效规则，[mir.md](design/mir.md)）。对象布局和 ABI 已由 kiln-cg 的 LIR 降级处理（[lir.md](design/lir.md)），`lisp/abi.lisp` 和目标描述由 Rust 生成。
 
 ### 运行期的 `eval`/`compile`
 

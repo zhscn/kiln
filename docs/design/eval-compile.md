@@ -1,12 +1,12 @@
 # 运行期求值、编译和文件加载
 
 运行期与编译期共用 HIR 前端。eval 模块提供词法环境、宏展开、HIR 分析与求值，
-compiler 模块安装 HIR → KIR → Cranelift 的原生入口。两种执行方式构造的函数
+compiler 模块安装 HIR → LIR → Rust 降级 → KIR → Cranelift 的原生入口。两种执行方式构造的函数
 都可与 AOT 函数互相调用；全局函数、特殊变量及宏定义属于同一个运行中 image。
 
 ## 目标后端交接
 
-目标原生路径为 Lisp 的 HIR/MIR → 表示选择 → LIR 请求 → Rust 布局与 ABI 降级 → 内存 KIR → Cranelift。HIR 求值器继续留在 Lisp。运行期批量提交结构化程序或二进制载荷，以及受保护的 literal 向量，不生成 LIR 或 KIR 文本；请求失败与产物发布采用 [compiler-protocol.md](compiler-protocol.md) 的所有权规则。当前原生入口已切换结构化 packet，载荷仍是 KIR；布局和 ABI 降级尚未移交 Rust。FASL 版本 2 保存 packet，加载不解析 KIR 文本。
+原生路径为 Lisp 的 HIR → 表示选择 → LIR 请求 → Rust 布局与 ABI 降级 → 内存 KIR → Cranelift。HIR 求值器继续留在 Lisp。运行期批量提交结构化程序或二进制载荷，以及受保护的 literal 向量，不生成 LIR 或 KIR 文本；请求失败与产物发布采用 [compiler-protocol.md](compiler-protocol.md) 的所有权规则。独立 LIR 负责类型化交接，Rust 负责布局和 ABI 降级。FASL 版本 2 保存 packet，加载不解析 KIR 文本。
 
 ## 模块与自举边界
 
@@ -21,7 +21,7 @@ compiler 模块安装 HIR → KIR → Cranelift 的原生入口。两种执行�
 1. frontend 提供 Eclector CST reader。
 2. eval 提供 Ecclesia、运行期 Common-macros、Trucler 查询协议和 image 全局环境。
 3. eval 中的共享前端包含 Trucler reference 环境、Clostrum、Anatomicl、HIR、
-   KIR 降级及 image-client。求值路径不调用降级和机器码生成。
+   LIR 生成及 image-client。求值路径不调用降级和机器码生成。
 4. eval 提供 HIR 执行入口、编译单元、FASL 对象图、文件和模块加载、REPL 及后端协议。
 5. compiler 提供内联元数据、依赖追踪、顶层原生缓存、原生 `compile` / `eval` 和
    `compile-file`。安装入口后，完整开发 image 默认生成原生代码。
@@ -63,17 +63,17 @@ compiler 模块的 `lisp/target/compiler/native.lisp` 把 `kiln.kernel::*compile
 1. `native-compile` 新建一个 session（`image-client`），然后：
    - 用 `front-end-forms` 处理 `(setq *compiled-function* (function LAMBDA))`（和 `front-end` 一样，只是直接处理形式，不读文件）；
    - 用 `compile-module :image t` 降级；
-   - 用 `module-form` 得到结构化程序；
-   - 把程序、字面量向量和目标指纹交给 `(%primop :compile-program program literals target)`，即 kiln-cg 的 `kiln_rt_compile_program`（[codegen.md](codegen.md)）。它返回 init 函数对象，KIR 编不过时返回 NIL，`native-compile` 据此报错。
+   - 用 `normalize-lir-module` 得到独立 LIR 和完整的 literal 绑定；
+   - 把程序、字面量向量和目标指纹交给 `(%primop :compile-program program literals target)`，即 kiln-cg 的 `kiln_rt_compile_program`（[codegen.md](codegen.md)）。它返回 init 函数对象，程序编译失败时返回 NIL，`native-compile` 据此报错。
 2. `native-compile` 动态绑定 `*compiled-function*`，调用 init 函数，取出编好的函数。
 
-### image 模式的 KIR
+### image 模式的对象引用
 
 编进运行中 image 的代码，引用的是 image 里已有的对象。和编译文件相比有三点不同：
 
-- **字面量**：除立即数（fixnum、字符、单精度浮点、NIL、T）以外，字面量一律占用模块数据 `kiln_literals` 的一个字。每个字都是 static root，数据字写成 `(:literal i)`，操作数是 `(load (addr "kiln_literals") 8i)`。`compile` 不复制字面量（CLHS 3.2.4），未 intern 的符号、列表都还是原来那个对象。符号也走这条路：运行期 intern 的符号在堆里，GC 会移动它们，不能把地址编进代码。代价是全局函数调用和特殊变量的访问各多一次 load。
+- **字面量**：除立即数（fixnum、字符、单精度浮点、NIL、T）以外，字面量一律占用模块数据 `kiln_literals` 的一个字。每个字都是 static root；LIR 通过 `(literal i)` 引用，由 Rust 构造表和读取操作。`compile` 不复制字面量（CLHS 3.2.4），未 intern 的符号、列表都还是原来那个对象。符号也走这条路：运行期 intern 的符号在堆里，GC 会移动它们，不能把地址编进代码。代价是全局函数调用和特殊变量的访问各多一次 load。
 - **没有符号表**：符号都已经在 image 里，init 函数不调用 `%register-module-symbols`。
-- **共享的定义用 image 的**：未定义函数的入口和 funcallable instance 的跳板要和函数槽里的值比较（`fboundp`、报错代码），所以必须是 image 里的那一份，写成 `import-data`，由 kiln-cg 按导出的名字解析。
+- **共享的定义用 image 的**：未定义函数的入口和 funcallable instance 的跳板要和函数槽里的值比较（`fboundp`、报错代码），所以必须是 image 里的那一份。LIR 以 image 作用域声明这些 builtin 角色，由 kiln-cg 按导出的名字解析。
 
 ### 内存
 
@@ -100,7 +100,7 @@ compiler 模块提供 `compile-file`。文件沿用原生前端处理顶层形�
 编译期间绑定 `*compile-file-pathname*` 和 `*compile-file-truename*`，并保存调用者的
 package 和 readtable 绑定。编译期 HIR 求值使用运行期宏 client，词法环境与原生前端共用。
 
-每个处理后的顶层形式生成一个 image 模式的 KIR 模块。FASL 保存 KIR 字符串、
+每个处理后的顶层形式生成一个 image 模式的独立 LIR 模块。FASL 保存二进制 packet、
 字面量对象图和顺序执行记录，加载时通过 Cranelift 生成机器码并执行模块入口。
 后续形式的符号和字面量在前一个模块入口执行后重建，因此文件里的 `defpackage`
 可以先建立后续符号所需的 package。
@@ -124,12 +124,12 @@ Unicode code point。记录数据包含整数、字符、字符串、符号、�
 对象图后才打开写入。
 `load` 检查文件头来区分 FASL 和源文件，也接受显式的二进制 FASL 输入流。
 FASL 的 `:print` 信息报告已加载的原生顶层入口；源文件则打印求值结果。原生
-FASL 加载需要 compiler 模块及 Cranelift；保存的是 KIR，机器码在加载时生成。
+FASL 加载需要 compiler 模块及 Cranelift；保存的是 LIR，机器码在加载时生成。
 源文件加载仍按形式求值，按调用者指定的 external format 解码。
 
 ## 顶层编译缓存
 
-原生 `eval` 和 `load` 保留最近使用的顶层原生产物。每次重放宏展开、前端和降级，只在 KIR、literal 身份及依赖版本相同时复用机器码；命中后仍执行该顶层形式。缓存默认至多 64 项，可通过 `kiln.sys:*compilation-cache-limit*`、`clear-compilation-cache` 和 `compilation-cache-statistics` 管理。调试元数据按结构比较，程序 literal 保持身份。详细协议见 [specialization.md](specialization.md)。
+原生 `eval` 和 `load` 保留最近使用的顶层原生产物。每次重放宏展开、前端和降级，只在规范化 LIR、literal 身份及依赖版本相同时复用机器码；命中后仍执行该顶层形式。缓存默认至多 64 项，可通过 `kiln.sys:*compilation-cache-limit*`、`clear-compilation-cache` 和 `compilation-cache-statistics` 管理。调试元数据按结构比较，程序 literal 保持身份。详细协议见 [specialization.md](specialization.md)。
 
 ## 已知限制
 

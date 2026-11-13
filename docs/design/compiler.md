@@ -33,7 +33,7 @@
 - 活 image 里可以重定义、调试编译器（kiln-server、`*trace-toplevel*`），库可以扩展优化。
 - Rust 边界只传表示已确定的程序和常量描述，不传类型环境或宏；宿主和 image 共享编码器，literal 的生命周期由 image 适配器管理。
 
-**布局和 ABI 下沉到 Rust。** 对象布局和 context 布局的定义本来就在 kiln-rt（`object.rs`、`context.rs`），现在 `lisp/abi.lisp` 抄一份、手工同步。表示选择之后不再进行语言语义推导，但仍需完成控制流验证、safepoint 安排和低层展开：按布局展开操作，按调用约定排参数，按 GC 规则登记根。这部分放进 kiln-cg 以后：
+**布局和 ABI 下沉到 Rust。** 如果 Lisp 发射器复制 kiln-rt 的对象和 context 布局，每次布局变化都需要同步两份定义，否则生成的代码会读写错误位置。布局定义因此集中在 kiln-rt（`object.rs`、`context.rs`），Lisp 只读取生成的语义目标描述。表示选择之后不再进行语言语义推导，但仍需完成控制流验证、safepoint 安排和低层展开：按布局展开操作，按调用约定排参数，按 GC 规则登记根。kiln-cg 承担这部分工作：
 
 - 布局常量只有一份，ABI 指纹由同一来源计算。
 - Lisp 编译器（包括 SBCL 上的交叉编译）不再知道 tag 和偏移，常量用可移植的描述输出。

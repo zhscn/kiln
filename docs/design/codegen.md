@@ -3,11 +3,11 @@
 ## 组成
 
 ```text
-Lisp 编译器（SBCL 或 kiln） → 兼容程序记录（迁移中的 LIR 操作与低级操作）
-        ├─ .kir：保留的文本文件输入
+Lisp 编译器（SBCL 或 kiln） → 独立 LIR（类型化语义操作与 CFG）
+        ├─ .kir：诊断文本输入
         ├─ .lir：规范化二进制封套
         └─ image：compile-program（一次性记录）/ compile-packet（序列化载荷）
-                              ↓ 统一操作校验和布局、ABI 展开
+                              ↓ 类型与 CFG 验证、布局及 ABI 展开
 kiln-cg（rust/kiln-cg）      内存 KIR → Cranelift
         ├─ jit：cranelift-jit，在进程内运行
         └─ obj：cranelift-object 产出 .o
@@ -16,7 +16,7 @@ kiln-rt（rust/kiln-rt）      context、GC、unwinder、栈和运行时函数
 kiln-launcher               staticlib，提供 C main，链接 kiln-rt 和 kiln-cg
 ```
 
-目标设计（[compiler.md](compiler.md)）：Lisp 编译器改为输出布局无关的 LIR（[lir.md](lir.md)），LIR 通过[结构化编译协议](compiler-protocol.md)交接，kiln-cg 先按 kiln-rt 的布局把 LIR 降级成内存 KIR，再走下面的路径。KIR 届时是 kiln-cg 内部的数据结构，文本只用于诊断；本文其余部分描述现在的 KIR 接口。
+Lisp 编译器输出布局无关的 LIR（[lir.md](lir.md)），通过[结构化编译协议](compiler-protocol.md)交接。kiln-cg 按 kiln-rt 的布局把 LIR 降级成内部 KIR，再调用 Cranelift。本文描述内部 KIR 及其诊断文本接口，分层理由见 [compiler.md](compiler.md)。
 
 `target/debug/kiln-cg jit kernel.kir prog.kir` 运行程序，加 `--dump-clif` 查看生成的 CLIF；`kiln-cg obj ... -o prog.o` 生成目标文件。
 
@@ -24,10 +24,10 @@ kiln-launcher               staticlib，提供 C main，链接 kiln-rt 和 kiln-
 
 ## 当前 KIR 与目标后端接口
 
-当前生产文件以二进制兼容程序交接，image 使用结构化记录或序列化载荷；文本输入保留用于诊断和迁移对照。KIR 保留为 Rust 内部表示，原因如下：
+生产文件以独立 LIR 的二进制 packet 交接，image 使用结构化记录或序列化载荷；文本输入保留用于诊断和迁移对照。KIR 保留为 Rust 内部表示，原因如下：
 
 - **cranelift-frontend 只能通过 API 使用。** 它负责从可变变量构建 SSA（`Variable`、`def_var`/`use_var`），以及在 safepoint 处为 GC 引用插入溢出和重载（user stack maps，C5）。直接写 CLIF 文本就绕过了它，Lisp 侧得自己构建 SSA、自己做溢出。
-- **布局与机器后端分层。** 内部 KIR 已确定 tag、偏移和调用序列。固定字段与普通函数对象调用已经由 Rust 展开，其他发射仍在 Lisp 中，随 LIR 迁移。kiln-cg 继续负责 Cranelift 调用、异常表、栈图、trampoline 和调试表。
+- **布局与机器后端分层。** 内部 KIR 已确定 tag、偏移和调用序列。对象布局、参数和返回值传递、动态条目及 roots 均由 Rust 展开。kiln-cg 继续负责 Cranelift 调用、异常表、栈图、trampoline 和调试表。
 
 ## KIR 语法
 
