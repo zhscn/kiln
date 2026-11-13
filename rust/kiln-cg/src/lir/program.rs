@@ -615,6 +615,9 @@ macro_rules! stores {
         impl StoreOperation {
             fn parse(name:&str) -> Option<Self> { match name { $( $name => Some(Self::$variant), )* _=>None } }
             fn signature(self) -> &'static [Type] {match self { $(Self::$variant => &[$(Type::$ty),*],)*}}
+            pub fn descriptors() -> &'static [(&'static str, &'static [Type])] {
+                &[$(($name, &[$(Type::$ty),*]),)*]
+            }
         }
     }
 }

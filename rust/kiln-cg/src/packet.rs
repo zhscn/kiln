@@ -489,6 +489,18 @@ pub fn target_description() -> String {
         write!(text, ") :{})", format!("{output:?}").to_lowercase()).unwrap();
     }
     text.push_str("))\n");
+    text.push_str("(defparameter +backend-lir-stores+\n  '(");
+    for (name, inputs) in crate::lir::program::StoreOperation::descriptors() {
+        write!(text, "\n    (:{name} (").unwrap();
+        for (i, input) in inputs.iter().enumerate() {
+            if i != 0 {
+                text.push(' ');
+            }
+            write!(text, ":{}", format!("{input:?}").to_lowercase()).unwrap();
+        }
+        text.push_str("))");
+    }
+    text.push_str("))\n");
     text
 }
 

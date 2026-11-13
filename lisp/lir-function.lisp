@@ -9,6 +9,11 @@
     (dolist (operation +backend-lir-operations+ table)
       (setf (gethash (first operation) table) (rest operation)))))
 
+(defparameter *lir-store-signatures*
+  (let ((table (make-hash-table :test 'eq)))
+    (dolist (operation +backend-lir-stores+ table)
+      (setf (gethash (first operation) table) (second operation)))))
+
 (defvar *lir-view-hint* nil)
 
 (defstruct lir-function
@@ -201,6 +206,12 @@
 
 (defun lir-statement (state statement)
   (let ((op (first statement)) (args (rest statement)))
+    (let ((types (gethash op *lir-store-signatures*)))
+      (when types
+        (unless (= (length args) (length types))
+          (lir-function-error state "wrong operand count for ~S" op))
+        (lir-emit state `(,op ,@(mapcar (lambda (argument type) (lir-operand state argument type)) args types)))
+        (return-from lir-statement)))
     (case op
       ((:invoke :invoke-known :invoke-list :numeric-op) (lir-call-statement state statement))
       ((:move-values :publish-values :save-values :values-list :push-values :list-values :restore-values)
@@ -214,6 +225,25 @@
        (lir-emit state `(:tail-call ,(lir-operand state (first args) :obj)
                                    ,(mapcar (lambda (argument) (lir-operand state argument :obj)) (second args)))))
       ((:alloc-closure :closure-set) (lir-closure-statement state statement))
+      (:alloc-vector
+       (lir-no-handler state (fifth args))
+       (let* ((kind (lir-class-name (second args)))
+              (initial (fourth args)))
+         (unless (member kind '(:simple-vector :string))
+           (lir-function-error state "unsupported sequence allocation class ~S" (second args)))
+         (lir-emit state `(:alloc-sequence ,(first args) ,kind
+                           ,(lir-operand state (third args) :word)
+                           ,(lir-operand state (if (eq kind :string) `(:character-tag ,initial) initial) :obj)))))
+      (:alloc-vector-elements
+       (lir-no-handler state (third args))
+       (lir-emit state `(:vector ,(first args)
+                         ,(mapcar (lambda (value) (lir-operand state value :obj)) (second args)))))
+      (:alloc-structure
+       (lir-no-handler state (fourth args))
+       (lir-emit state `(:alloc-structure ,(first args)
+                         ,(lir-operand state (second args) :obj)
+                         ,(lir-operand state (third args) :word)
+                         ,(lir-operand state '(:fixnum 0) :obj))))
       (:alloc-fixed
        (lir-no-handler state (fourth args))
        (multiple-value-bind (kind types)
