@@ -22,3 +22,8 @@
       (funcall evaluator '(let ((x 1)) (declare (application-note x) (fixnum x)) x))
       (funcall evaluator '(let ((x 1)) (declare (misspelled-declaration x)) x)))
     (print unknown)))
+
+(proclaim '((integer 0 9) short-range-value))
+(print (funcall (compile nil '(lambda (short-range-value) short-range-value)) 5))
+(proclaim '(ftype function declared-function))
+(print (trucler:type (trucler:describe-function kiln.eval::*global-client* nil 'declared-function)))
