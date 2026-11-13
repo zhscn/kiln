@@ -56,36 +56,42 @@ Native code already registered with the runtime follows the runtime's lifetime."
            (max 0 kiln.sys:*compilation-cache-limit*))
     (setf *toplevel-compilation-cache*
           (subseq *toplevel-compilation-cache* 0 (max 0 kiln.sys:*compilation-cache-limit*))))
-  (let* ((program (kiln.kir::module-form module))
-         (canonical (kiln.kir::encode-backend-packet (canonical-backend-form program name)))
-         (entry (when (and replayable-p (plusp kiln.sys:*compilation-cache-limit*))
-                  (find-if (lambda (entry)
-                             (and (eq (svref entry 0) *package*)
-                                  (eq (svref entry 1) *readtable*)
-                                  (equalp (svref entry 2) canonical)
-                                  (compilation-literals-match-p
-                                   (svref entry 3) literals debug-literals)
-                                  (compilation-versions-valid-p (svref entry 4))))
-                           *toplevel-compilation-cache*))))
-    (if entry
-        (progn
-          (incf *compilation-cache-hits*)
-          (setf *toplevel-compilation-cache*
-                (cons entry (delete entry *toplevel-compilation-cache* :test #'eq)))
-          (note-compiled-code (svref entry 5) (svref entry 6) (svref entry 3))
-          (svref entry 7))
-        (let* ((packet (kiln.kir::encode-backend-packet program))
-               (init (kiln.sys:%primop :compile-packet packet literals)))
-          (incf *compilation-cache-misses*)
-          (when init
-            (note-compiled-code name canonical literals)
-            (when (and replayable-p (plusp kiln.sys:*compilation-cache-limit*))
-              (push (vector *package* *readtable* canonical literals
-                            (compilation-dependency-versions) name canonical init)
-                    *toplevel-compilation-cache*)))
-          (when (> (length *toplevel-compilation-cache*)
-                   (max 0 kiln.sys:*compilation-cache-limit*))
+  (multiple-value-bind (program bindings) (kiln.kir::normalize-lir-module module literals)
+    ;; Appended objects describe debug metadata; program literals retain identity checks.
+    (setf debug-literals (append debug-literals
+                                 (loop for index from (length literals) below (length bindings)
+                                       collect index))
+          literals bindings)
+    (let* ((canonical (kiln.kir::encode-backend-packet (canonical-backend-form program name)
+                                                    kiln.kir::+packet-lir-payload+))
+           (entry (when (and replayable-p (plusp kiln.sys:*compilation-cache-limit*))
+                    (find-if (lambda (entry)
+                               (and (eq (svref entry 0) *package*)
+                                    (eq (svref entry 1) *readtable*)
+                                    (equalp (svref entry 2) canonical)
+                                    (compilation-literals-match-p
+                                     (svref entry 3) literals debug-literals)
+                                    (compilation-versions-valid-p (svref entry 4))))
+                             *toplevel-compilation-cache*))))
+      (if entry
+          (progn
+            (incf *compilation-cache-hits*)
             (setf *toplevel-compilation-cache*
-                  (subseq *toplevel-compilation-cache* 0
-                          (max 0 kiln.sys:*compilation-cache-limit*))))
-          init))))
+                  (cons entry (delete entry *toplevel-compilation-cache* :test #'eq)))
+            (note-compiled-code (svref entry 5) (svref entry 6) (svref entry 3))
+            (svref entry 7))
+          (let* ((packet (kiln.kir::encode-backend-packet program kiln.kir::+packet-lir-payload+))
+                 (init (kiln.sys:%primop :compile-packet packet literals)))
+            (incf *compilation-cache-misses*)
+            (when init
+              (note-compiled-code name canonical literals)
+              (when (and replayable-p (plusp kiln.sys:*compilation-cache-limit*))
+                (push (vector *package* *readtable* canonical literals
+                              (compilation-dependency-versions) name canonical init)
+                      *toplevel-compilation-cache*)))
+            (when (> (length *toplevel-compilation-cache*)
+                     (max 0 kiln.sys:*compilation-cache-limit*))
+              (setf *toplevel-compilation-cache*
+                    (subseq *toplevel-compilation-cache* 0
+                            (max 0 kiln.sys:*compilation-cache-limit*))))
+            init)))))

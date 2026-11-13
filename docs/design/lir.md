@@ -1,6 +1,6 @@
 # LIR：Lisp 编译器与 Rust 后端的输入契约
 
-状态：**独立核心已接入，生产发射正在迁移**。独立的 `lir-module` 载荷经类型化解析、CFG 验证后由 Rust 构造 KIR，支持范围见下文“已实现的独立核心”。[结构化封套](compiler-protocol.md)支持文件与运行期交接。文件模块的二进制输出使用独立 LIR；运行期编译和 FASL 仍使用兼容 KIR 载荷。兼容载荷已支持 fixnum、cons、character 和 single-float 的表示类测试、`field-load`/`field-store`、闭包环境读写、传递区读写和根计数设置，以及普通函数对象 `invoke` 及展开列表实参的 `invoke-list`，fixnum、字符和 single-float 常量以数值、码点和 IEEE 位模式传入，Rust 在构造 KIR 时展开立即数表示、布局和调用约定。动态传递区下标和根计数的范围由生成方保证。其余操作尚未迁移，不能视作完成 LIR。现在 Lisp 主要生成 KIR（[codegen.md](codegen.md)）。分层和迁移见 [compiler.md](compiler.md)。
+文件模块、运行期 `compile`/`eval`、编译缓存和 FASL 均使用独立的 `lir-module` 载荷，经类型化解析、CFG 验证后由 Rust 构造 KIR。Lisp 构建器先生成语义操作和控制流，再由规范化器建立带类型的变量、区域和多值视图；Rust 决定对象布局、分配和调用序列。[结构化封套](compiler-protocol.md)支持文件与运行期交接。可读 KIR 和兼容载荷保留为诊断及兼容输入，下面先说明这些输入的契约，再说明独立 LIR。分层见 [compiler.md](compiler.md)。
 
 兼容载荷的 `guarded-class-test` 由后端生成一般对象检查和 header 类测试，对任意 Lisp 值安全。兼容输入仍接受单独的 header 类测试，生成方必须确保只有一般对象到达该操作。完整 LIR 的类型测试将把安全检查与表示类测试作为同一操作处理。
 

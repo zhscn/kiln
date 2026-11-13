@@ -1,9 +1,6 @@
-;;;; COMPILE to native code (M5.5): the lambda expression is
-;;;; compiled by the image's front end and lower.lisp into a KIR module
-;;;; whose literals are the image's objects, which kiln-cg, linked into the
-;;;; runtime, compiles indexed records into memory (kiln_rt_compile_packet). The compiler module's
-;;;; native entry points: from here on the kernel's COMPILE and EVAL (so LOAD) use
-;;;; the native execution path.
+;;;; Native COMPILE and EVAL normalize compiler modules to independent LIR.
+;;;; The backend compiles the program with its image literal bindings,
+;;;; including metadata objects appended during normalization.
 
 (in-package #:kiln.compiler)
 
@@ -25,13 +22,14 @@ running image, in the null lexical environment."
           (compile-module (front-end-forms `((setq *compiled-function* (function ,definition)))
                                            session)
                           name :session session :image t))
-      (let ((init (kiln.sys:%primop :compile-program (kiln.kir::module-form module) literals
-                                        kiln.kir::+backend-target-fingerprint+)))
-        (unless init
-          (error "kiln-cg could not compile ~S." definition))
-        (let ((*compiled-function* nil))
-          (funcall init)
-          *compiled-function*)))))
+      (multiple-value-bind (program bindings) (kiln.kir::normalize-lir-module module literals)
+        (let ((init (kiln.sys:%primop :compile-program program bindings
+                                            kiln.kir::+backend-target-fingerprint+)))
+          (unless init
+            (error "kiln-cg could not compile ~S." definition))
+          (let ((*compiled-function* nil))
+            (funcall init)
+            *compiled-function*))))))
 
 ;;; EVAL, as SBCL's: forms whose evaluation needs no code
 ;;; are evaluated directly, the subforms of PROGN and EVAL-WHEN in turn

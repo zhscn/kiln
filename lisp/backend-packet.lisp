@@ -137,8 +137,10 @@
     (return-from encode-backend-packet bytes))
   #-kiln (portable-backend-packet program language))
 
-(defun module-packet (module)
-  (encode-backend-packet (module-form module)))
+(defun module-packet (module &optional literals)
+  "Returns the independent program packet and its complete literal bindings."
+  (multiple-value-bind (program bindings) (normalize-lir-module module literals)
+    (values (encode-backend-packet program +packet-lir-payload+) bindings)))
 
 (defun write-module-packet (module stream)
   "Writes the program's canonical binary encoding to STREAM."
