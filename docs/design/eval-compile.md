@@ -60,12 +60,16 @@ compiler 模块安装 HIR → LIR → Rust 降级 → KIR → Cranelift 的原�
 
 compiler 模块的 `lisp/target/compiler/native.lisp` 把 `kiln.kernel::*compile-function*` 设成 `native-compile`，此后的 `compile` 都编成机器码。这个变量为 NIL 时构造 HIR 求值闭包。compiler 模块初始化期间的 `compile` 使用已经就绪的 HIR 求值器。
 
-1. `native-compile` 新建一个 session（`image-client`），然后：
+1. `native-compile` 独占借用一个 session（`image-client`），然后：
    - 用 `front-end-forms` 处理 `(setq *compiled-function* (function LAMBDA))`（和 `front-end` 一样，只是直接处理形式，不读文件）；
    - 用 `compile-module :image t` 降级；
    - 用 `normalize-lir-module` 得到独立 LIR 和完整的 literal 绑定；
    - 把程序、字面量向量和目标指纹交给 `(%primop :compile-program program literals target)`，即 kiln-cg 的 `kiln_rt_compile_program`（[codegen.md](codegen.md)）。它返回 init 函数对象，程序编译失败时返回 NIL，`native-compile` 据此报错。
 2. `native-compile` 动态绑定 `*compiled-function*`，调用 init 函数，取出编好的函数。
+
+会话在成功或非局部退出后归还，清空本次定义记录、全局查询缓存和源码文件表；
+image 内联表和结构元数据继续共用。宏展开中递归调用 `compile` 时另取一个会话，
+避免覆盖外层仍在使用的前端状态。
 
 ### image 模式的对象引用
 
@@ -131,11 +135,24 @@ FASL 加载需要 compiler 模块及 Cranelift；保存的是 LIR，机器码在
 
 原生 `eval` 和 `load` 保留最近使用的顶层原生产物。每次重放宏展开、前端和降级，只在规范化 LIR、literal 身份及依赖版本相同时复用机器码；命中后仍执行该顶层形式。缓存默认至多 64 项，可通过 `kiln.sys:*compilation-cache-limit*`、`clear-compilation-cache` 和 `compilation-cache-statistics` 管理。调试元数据按结构比较，程序 literal 保持身份。详细协议见 [specialization.md](specialization.md)。
 
+## 并行文件编译
+
+`tools/compile-files.py -j 4 --output-directory build/fasl FILE...` 将相互独立的源文件
+分发给隔离的 kiln 进程，每个进程使用完整 image 的原生 `compile-file`。默认可执行
+文件是 `build/boot/kiln1`，可用 `--executable` 指定。重复的 `--load FILE` 按参数顺序
+在每个进程中加载共同前置定义。未指定输出目录时，FASL 写在源文件旁；输出路径
+冲突会在启动进程前报错。结果按输入顺序报告，任一文件失败时最终退出码为非零，
+其余文件继续处理。
+
+文件之间不共享编译期副作用。有顺序依赖的文件应顺序编译，或先把公共定义加载为
+各进程的前置依赖。单个文件内仍按源码顺序处理，保证宏定义和 `eval-when` 的语义。
+Rust 后端也可按函数并行生成机器码，`KILN_CG_THREADS` 控制线程数；文件并行工具
+在未显式设置该变量时将它设为 1，避免两层并行争用 CPU。
+
 ## 已知限制
 
 - FASL 的通用浮点编码器只处理有限浮点数。
 - 代码回收：函数对象不再被引用后，代码和它的表也不会释放。
-- `compile` 的前端开销：每次都新建 session。
 - `compile` 编出的函数名是 `(lambda)`；`load` 逐个读取形式再求值，没有文件和位置。
 - typed-vector `defstruct` 的位置构造器布局展开（[stdlib.md](stdlib.md)）。
 

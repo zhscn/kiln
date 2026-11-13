@@ -8,11 +8,28 @@
 
 (defvar *compiled-function*)
 
+(defvar *available-image-sessions* nil)
+
+(defun call-with-image-session (function)
+  "Lease a session exclusively, including across recursive compilation."
+  (let ((session (or (pop *available-image-sessions*) (make-session))))
+    (unwind-protect
+         (progn
+           (initialize-session (session-client session) session)
+           (funcall function session))
+      (clrhash (session-defined-functions session))
+      (forget-global-descriptions (session-environment session))
+      (setf (session-hir-source-files session) (make-hir-buffer))
+      (push session *available-image-sessions*))))
+
 (defun native-compile (definition)
   "The function of the lambda expression DEFINITION, compiled into the
 running image, in the null lexical environment."
-  (let* ((session (make-session))
-         (name (kiln.kir::kir-name "compile-" (incf *native-compile-count*))))
+  (call-with-image-session
+   (lambda (session) (native-compile-in-session definition session))))
+
+(defun native-compile-in-session (definition session)
+  (let ((name (kiln.kir::kir-name "compile-" (incf *native-compile-count*))))
     (multiple-value-bind (module literals)
         (handler-bind ((undefined-function-warning
                          (lambda (condition)
@@ -89,8 +106,11 @@ running image, in the null lexical environment."
   "Compiles FORM as a top-level form (so that the function a definition
 defines is not inside another, for its name) and runs it;
 returns its values."
-  (let* ((session (make-session))
-         (name (kiln.kir::kir-name "eval-" (incf *native-compile-count*))))
+  (call-with-image-session
+   (lambda (session) (native-eval-in-session form session))))
+
+(defun native-eval-in-session (form session)
+  (let ((name (kiln.kir::kir-name "eval-" (incf *native-compile-count*))))
     (multiple-value-bind (module literals)
         (handler-bind ((undefined-function-warning
                          (lambda (condition)

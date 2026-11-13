@@ -792,8 +792,11 @@ redefined by a later module, a function that becomes a macro); it is
 cleared before each top-level form. At top level the environment holds
 nothing else."
   (when (or (trucler-reference::function-description environment)
-            (trucler-reference::variable-description environment))
-    (reinitialize-instance environment :function-description '() :variable-description '())))
+            (trucler-reference::variable-description environment)
+            (trucler-reference::optimize-description environment)
+            (trucler-reference::declarations-description environment))
+    (reinitialize-instance environment :function-description '() :variable-description '()
+                           :optimize-description nil :declarations-description nil)))
 
 (defvar *trace-toplevel* nil
   "True: FRONT-END prints each file and the head of each top-level form
