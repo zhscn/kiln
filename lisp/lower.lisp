@@ -795,9 +795,9 @@ allowed) a keyword not in KEYWORDS."
          (rest-p (or (ll-rest ll) (ll-key-p ll)))
          (count (new-var :raw))
          (args (loop repeat npos collect (new-var))))
-    (when (> npos (+ kiln.kir::+backend-reg-args+ kiln.kir::+backend-values-max+))
+    (when (> npos kiln.kir::+backend-argument-limit+)
       (fail "functions with more than ~D positional parameters are not supported"
-            (+ kiln.kir::+backend-reg-args+ kiln.kir::+backend-values-max+)))
+            kiln.kir::+backend-argument-limit+))
     (emit `(:receive-prefix ,args ,count))
     (loop for p in (ll-required ll)
           for i from 0
@@ -862,9 +862,9 @@ it is a function, the global function of F if it is a symbol."
 
 (defun emit-lisp-call (fobj vals)
   "Calls FOBJ after evaluating all operands; the backend arranges the ABI."
-  (when (> (length vals) (+ kiln.kir::+backend-reg-args+ kiln.kir::+backend-values-max+))
+  (when (> (length vals) kiln.kir::+backend-argument-limit+)
     (fail "calls with more than ~D arguments are not supported"
-          (+ kiln.kir::+backend-reg-args+ kiln.kir::+backend-values-max+)))
+          kiln.kir::+backend-argument-limit+))
   (let* ((callee (if (kiln.kir::kvar-p fobj) fobj (copy-to-var fobj)))
          (arguments (mapcar (lambda (v)
                               (if (or (integerp v) (kiln.kir::kvar-p v)) v (copy-to-var v)))
@@ -1203,7 +1203,7 @@ after a LIST call."
             (t (setf arg-asts asts)))))
   (when (and (eq name 'make-instance) (call-site-specialization-p)
              (oddp (length arg-asts))
-             (<= (length arg-asts) (+ kiln.kir::+backend-reg-args+ kiln.kir::+backend-values-max+)))
+             (<= (length arg-asts) kiln.kir::+backend-argument-limit+))
     (multiple-value-bind (class-name constantp) (constant-value (first arg-asts))
       (when (and constantp (symbolp class-name) class-name)
         (let ((keys '()) (valid t))
@@ -1288,15 +1288,15 @@ after a LIST call."
                (jump done)
                (start-block done))
              f))
-          ((and (> (length arg-asts) (+ kiln.kir::+backend-reg-args+ kiln.kir::+backend-values-max+))
+          ((and (> (length arg-asts) kiln.kir::+backend-argument-limit+)
                 (member name '(list list* vector nconc append)))
            ;; Calls are limited to +REG-ARGS+ + +VALUES-MAX+ arguments:
            ;; build long lists in chunks, and vectors from them.
            (lower (long-call-ast name arg-asts)))
           (t
-           (when (> (length arg-asts) (+ kiln.kir::+backend-reg-args+ kiln.kir::+backend-values-max+))
+           (when (> (length arg-asts) kiln.kir::+backend-argument-limit+)
              (fail "the call to ~S has ~D arguments; at most ~D are supported"
-                   name (length arg-asts) (+ kiln.kir::+backend-reg-args+ kiln.kir::+backend-values-max+)))
+                   name (length arg-asts) kiln.kir::+backend-argument-limit+))
            (let ((primitive (and (not (and (eq name 'print)
                                             (or *image-literals* (/= (length arg-asts) 1))))
                                  (gethash name *primitives*)))

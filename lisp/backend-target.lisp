@@ -2,7 +2,8 @@
 (in-package #:kiln.kir)
 (defconstant +backend-target-fingerprint+ 2401613186670815682)
 (defconstant +backend-reg-args+ 3)
-(defconstant +backend-values-max+ 1021)
+(defconstant +backend-argument-limit+ 1024)
+(defconstant +backend-value-limit+ 1022)
 (defconstant +backend-fixnum-min+ -4611686018427387904)
 (defconstant +backend-fixnum-max+ 4611686018427387903)
 (defparameter +backend-lir-operations+

@@ -335,8 +335,8 @@ are compared (no short circuit), which also checks every argument."
 ;;; those that return one value omit it.
 
 (define-nary-primitive values (vals)
-  (when (> (length vals) (1+ kiln.kir::+backend-values-max+))
-    (fail "VALUES with more than ~D arguments" (1+ kiln.kir::+backend-values-max+)))
+  (when (> (length vals) kiln.kir::+backend-value-limit+)
+    (fail "VALUES with more than ~D arguments" kiln.kir::+backend-value-limit+))
   (emit `(:publish-values ,vals))
   (values (if vals (first vals) (nil-value)) (length vals)))
 
@@ -857,9 +857,9 @@ of it, SLOW-FN otherwise; both return an operand. Returns the result."
 (defun emit-tail-call (fobj vals)
   "Tail-calls FOBJ with the argument operands VALS: its values are the
 current function's. Nothing after it in the block is reached."
-  (when (> (length vals) (+ kiln.kir::+backend-reg-args+ kiln.kir::+backend-values-max+))
+  (when (> (length vals) kiln.kir::+backend-argument-limit+)
     (fail "calls with more than ~D arguments are not supported"
-          (+ kiln.kir::+backend-reg-args+ kiln.kir::+backend-values-max+)))
+          kiln.kir::+backend-argument-limit+))
   (let ((callee (if (kiln.kir::kvar-p fobj) fobj (copy-to-var fobj)))
         (arguments (mapcar (lambda (v)
                              (if (or (integerp v) (kiln.kir::kvar-p v)) v (copy-to-var v)))
