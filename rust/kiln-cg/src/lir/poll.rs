@@ -166,6 +166,16 @@ fn retry_function() -> Result<Func, String> {
     })
 }
 
+pub fn provide_retry(module: &mut Module) -> Result<(), String> {
+    if !module.funcs.iter().any(|f| f.name == RETRY)
+        && !module.import_data.iter().any(|n| n == RETRY)
+    {
+        module.shared.insert(RETRY.into());
+        module.funcs.push(retry_function()?);
+    }
+    Ok(())
+}
+
 pub fn register(module: &mut Module) -> Result<(), String> {
     let retry = module
         .funcs
@@ -173,12 +183,8 @@ pub fn register(module: &mut Module) -> Result<(), String> {
         .flat_map(|f| &f.blocks)
         .flat_map(|b| &b.stmts)
         .any(|s| matches!(s,Stmt::TailCallLisp {entry:Expr::Addr(n,0),..} if n==RETRY));
-    if retry
-        && !module.funcs.iter().any(|f| f.name == RETRY)
-        && !module.import_data.iter().any(|n| n == RETRY)
-    {
-        module.shared.insert(RETRY.into());
-        module.funcs.push(retry_function()?);
+    if retry {
+        provide_retry(module)?;
     }
 
     let used = module

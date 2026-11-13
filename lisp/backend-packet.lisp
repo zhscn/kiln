@@ -142,9 +142,11 @@
 
 (defun write-module-packet (module stream)
   "Writes the program's canonical binary encoding to STREAM."
-  (let ((program (module-form module)))
+  (multiple-value-bind (program literals) (normalize-lir-module module)
+    (unless (zerop (length literals))
+      (error "File module requires external literal bindings."))
     #+kiln
     (when (kiln.sys::%write-backend-packet program stream)
       (return-from write-module-packet module))
-    (portable-backend-packet program +packet-kir-payload+ stream))
+    (portable-backend-packet program +packet-lir-payload+ stream))
   module)

@@ -1608,6 +1608,10 @@ pub(super) fn module(verified: &Verified<'_>) -> Result<kir::Module> {
         layout::builtins::install(&mut result, *kind, *image)?;
     }
     layout::builtins::register_error_imports(&mut result)?;
+    // File modules also supply the entry helper used by image compilations.
+    if source.builtins.iter().any(|(_, image)| !image) {
+        layout::poll::provide_retry(&mut result)?;
+    }
     layout::poll::register(&mut result)?;
     layout::register_tls_import(&mut result)?;
     Ok(result)

@@ -224,7 +224,17 @@ pub unsafe extern "C" fn kiln_rt_write_packet(_ctx: *mut Context, program: u64, 
     let Ok(fd) = libc::c_int::try_from(fixnum_value(fd)) else {
         return fixnum(-i64::from(libc::EBADF));
     };
-    let bytes = unsafe { encode_heap(program, packet::schema::KIR_PAYLOAD) };
+    let language = if is_cons(program) {
+        let mut remaining = packet::schema::MAX_EXPANDED_BYTES as usize;
+        match unsafe { snapshot(car(program), 1, &mut remaining) } {
+            Ok(Sexp::Sym(name)) if name == "lir-module" => packet::schema::LIR_PAYLOAD,
+            Ok(Sexp::Sym(name)) if name == "module" => packet::schema::KIR_PAYLOAD,
+            _ => return fixnum(-1000),
+        }
+    } else {
+        return fixnum(-1000);
+    };
+    let bytes = unsafe { encode_heap(program, language) };
     let Ok(bytes) = bytes else {
         return fixnum(-1000);
     };
