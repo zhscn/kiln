@@ -65,6 +65,7 @@
 
 (defmethod trucler:describe-function (client (environment run-time-environment) name)
   (declare (ignore client))
+  (prepare-dependency :macro name)
   (let ((description (trucler:describe-function kiln.eval::*global-client* nil name)))
     (when (or (null description) (typep description 'trucler:global-macro-description))
       (note-dependency :macro name))

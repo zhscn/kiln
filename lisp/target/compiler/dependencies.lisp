@@ -287,6 +287,41 @@ that wait for none; if all wait (a cycle), the first defined."
                *outdated*))
     (or ready any)))
 
+(defvar *updating-definitions* nil)
+
+(defun update-outdated-definition (name)
+  ;; Mark before evaluation so a back edge observes the active definition
+  ;; instead of recursively trying to compile it again.
+  (remhash name *outdated*)
+  (remhash name *potentially-outdated*)
+  (setf (gethash name *done*) t)
+  (let ((unit (gethash name *definition-units*)))
+    (when unit
+      (let ((*updating-definitions* (cons name *updating-definitions*)))
+        (update-definition unit)))))
+
+(defun dependency-reaches-active-p (name &optional seen)
+  (or (member name *updating-definitions* :test #'equal)
+      (unless (member name seen :test #'equal)
+        (let ((unit (gethash name *definition-units*)))
+          (some (lambda (key)
+                  (and (eq (first key) :macro)
+                       (dependency-reaches-active-p (list 'macro-function (second key))
+                                                    (cons name seen))))
+                (and unit (definition-unit-keys unit)))))))
+
+(defun prepare-definition-dependency (key)
+  "Refresh a pending macro before its expander is used in a cycle."
+  (when (and (boundp '*outdated*) (eq (first key) :macro))
+    (let ((name (list 'macro-function (second key))))
+      (when (and (not (gethash name *done*))
+                 (not (dependency-reaches-active-p name))
+                 (or (nth-value 1 (gethash name *outdated*))
+                     (nth-value 1 (gethash name *potentially-outdated*))))
+        (update-outdated-definition name)))))
+
+(setf *dependency-query-hook* #'prepare-definition-dependency)
+
 (defun update-dependents ()
   "Evaluates again the definitions that depend on the pending keys, and
 so on for the definitions those change."
@@ -299,11 +334,7 @@ so on for the definitions those change."
           do (mark-changed (pop *pending-redefinitions*) nil)
              (loop for name = (next-outdated)
                    while name
-                   do (remhash name *outdated*)
-                      (setf (gethash name *done*) t)
-                      (let ((unit (gethash name *definition-units*)))
-                        (when unit
-                          (update-definition unit)))))))
+                   do (update-outdated-definition name)))))
 
 (defun update-definition (unit)
   "Evaluates UNIT again if it is one of the definitions that can be, or

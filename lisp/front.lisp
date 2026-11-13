@@ -93,8 +93,14 @@ time only.")
 ;;; (cross compilation) it is NIL.
 
 (defvar *dependencies* nil)
+(defvar *dependency-query-hook* nil)
+
+(defun prepare-dependency (kind name)
+  (when *dependency-query-hook*
+    (funcall *dependency-query-hook* (list kind name))))
 
 (defun note-dependency (kind name)
+  (prepare-dependency kind name)
   (let ((cell *dependencies*))
     (when (and cell
                (let ((symbol (if (consp name) (second name) name)))

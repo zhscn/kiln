@@ -424,6 +424,9 @@ creates a new cell. Shared type and initialization cells cannot be retired."
 
 (defun note-function-change (name)
   "A function binding changed, including removal of the binding."
+  (when (and (symbolp name) (%get name '%macro-function))
+    (%put name '%macro-function nil)
+    (change-assumption :macro name))
   (when *trace-definition-hook*
     (funcall *trace-definition-hook* name))
   (change-assumption :function name))
