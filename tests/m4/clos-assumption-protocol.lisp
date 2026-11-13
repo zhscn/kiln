@@ -87,6 +87,9 @@
 (show (< *class-version* (version :class *class*)))
 (setq *class-version* (version :class *class*))
 (reinitialize-instance *class* :documentation "Updated")
+(show (= *class-version* (version :class *class*)))
+(reinitialize-instance *class*
+                       :direct-superclasses (clostrophilia:class-direct-superclasses *class*))
 (show (and (< *class-version* (version :class *class*))
            (= (slot-value (make-instance 'protocol-class) 'a) 1)))
 

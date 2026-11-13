@@ -65,7 +65,7 @@
 
 原来的 `*construction-epoch*`、`invalidate-type-caches` 的计数器、`forget-call-caches` 的调用点都不再是各自独立的入口：增删方法、类重新 finalize、`deftype`、`(setf find-class)` 都只调用 `change-assumption`。
 
-类终结和重初始化的通知在协议方法上完成，覆盖直接 MOP 调用。泛函重初始化会清空调用历史、重算特化参数的位置并使判别函数失效；初始化协议泛函的变更同时改变初始化假设；它们使用非标准方法组合时，构造器走通用协议。函数绑定通过 `(setf fdefinition)`、`(setf symbol-function)` 和 `fmakunbound` 通知；编译器直接写函数格的路径也执行通知，启动早期则检查通知函数是否已定义。
+类终结和结构性重初始化的通知在协议方法上完成，覆盖直接 MOP 调用。只更新类名或文档时保留实例布局与类假设版本；指定超类、槽或默认 initarg 等结构选项时则通知依赖者。泛函重初始化会清空调用历史、重算特化参数的位置并使判别函数失效；初始化协议泛函的变更同时改变初始化假设；它们使用非标准方法组合时，构造器走通用协议。函数绑定通过 `(setf fdefinition)`、`(setf symbol-function)` 和 `fmakunbound` 通知；编译器直接写函数格的路径也执行通知，启动早期则检查通知函数是否已定义。
 
 ## 热点代码生成
 
