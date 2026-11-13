@@ -30,6 +30,46 @@
             collect (let ((region (and (eq (first part) :block) (gethash (second part) landings))))
                       (if region `(:block ,(second part) (:lir-landing ,region) ,@(cddr part)) part)))))
 
+;;; Tail branches can leave a join whose result variables have no producer.
+;;; Keep blocks reachable by ordinary edges or a live region's landing;
+;;; dead joins and their unused storage need no value or region declarations.
+(defun lir-reachable-parts (state parts)
+  (let ((blocks (make-hash-table :test 'equalp))
+        (live (make-hash-table :test 'equalp))
+        (slots (make-hash-table :test 'equalp))
+        (used (make-hash-table :test 'equalp))
+        (pending nil))
+    (dolist (part parts)
+      (when (eq (first part) :block) (setf (gethash (second part) blocks) part)))
+    (dolist (slot (rest (assoc :slots parts))) (setf (gethash (first slot) slots) t))
+    (labels ((edge (name)
+               (unless (gethash name blocks) (lir-function-error state "unknown source block ~S" name))
+               (unless (gethash name live) (setf (gethash name live) t) (push name pending)))
+             (mark-slots (value)
+               (if (consp value)
+                   (progn (mark-slots (car value)) (mark-slots (cdr value)))
+                   (when (gethash value slots) (setf (gethash value used) t)))))
+      (let ((entry (find :block parts :key #'first)))
+        (when entry (edge (second entry))))
+      (loop while pending
+            for block = (gethash (pop pending) blocks)
+            do (dolist (statement (cddr block))
+                 (when (plusp (hash-table-count slots)) (mark-slots statement))
+                 (case (first statement)
+                   (:dynamic-enter
+                    (let ((landing (gethash (second statement) (lir-function-region-landings state))))
+                      (when landing (edge landing))))
+                   (:jump (edge (second statement)))
+                   (:br (edge (third statement)) (edge (fourth statement)))
+                   (:switch
+                    (edge (third statement))
+                    (dolist (arm (fourth statement)) (edge (second arm))))))))
+    (loop for part in parts
+          unless (and (eq (first part) :block) (not (gethash (second part) live)))
+            collect (if (eq (first part) :slots)
+                        `(:slots ,@(remove-if-not (lambda (slot) (gethash (first slot) used)) (rest part)))
+                        part))))
+
 (defun lir-prepare-regions (state parts)
   (let ((blocks (make-hash-table :test 'equalp))
         (inputs (make-hash-table :test 'equalp))

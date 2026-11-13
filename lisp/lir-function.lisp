@@ -426,7 +426,7 @@
   "Normalizes source expressions and binding code to the independent function grammar."
   (let* ((source (cddr function)) (declarations (rest (assoc :vars source)))
          (state (make-lir-function :name (second function) :data data))
-         (parts (lir-prepare-landings state source))
+         (parts (lir-reachable-parts state (lir-prepare-landings state source)))
          (storage (progn (lir-prepare-rest state parts)
                          (append (lir-prepare-stack state parts) (lir-prepare-regions state parts)))))
     (setf (lir-function-captures state)
