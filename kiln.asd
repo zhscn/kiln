@@ -34,6 +34,7 @@
                (:file "primitives")
                (:file "structures")
                (:file "macro-client")
+               (:file "source-forms")
                (:file "front")
                (:file "cross")
                (:file "hir/environment")

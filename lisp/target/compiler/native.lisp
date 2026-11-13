@@ -18,6 +18,7 @@
            (initialize-session (session-client session) session)
            (funcall function session))
       (clrhash (session-defined-functions session))
+      (clrhash (session-source-definitions session))
       (forget-global-descriptions (session-environment session))
       (setf (session-hir-source-files session) (make-hir-buffer))
       (push session *available-image-sessions*))))
@@ -25,8 +26,10 @@
 (defun native-compile (definition)
   "The function of the lambda expression DEFINITION, compiled into the
 running image, in the null lexical environment."
-  (call-with-image-session
-   (lambda (session) (native-compile-in-session definition session))))
+  (let ((*dependencies* nil) (*source-definition-calls* nil)
+        (*source-record-observer* nil) (*source-definition-parent* nil))
+    (call-with-image-session
+     (lambda (session) (native-compile-in-session definition session)))))
 
 (defun native-compile-in-session (definition session)
   (let* ((*eval-definition* (and kiln.kernel::*compile-name*

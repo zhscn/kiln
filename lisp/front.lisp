@@ -536,6 +536,8 @@ the second value."
     (let ((op (first form)) (name (second form)))
       (case op
         ((defun defgeneric) (values name t))
+        (defpackage (values (list 'defpackage (string name)) nil))
+        (defstruct (values (list 'defstruct (if (consp name) (first name) name)) nil))
         (defmacro (values `(macro-function ,name) t))
         (define-compiler-macro (values `(compiler-macro ,name) t))
         (defmethod
@@ -548,6 +550,67 @@ the second value."
               (string= "DEF" (symbol-name op) :end2 3)
               (or (symbolp name) (and (consp name) (eq (first name) 'setf)))
               (values (list op name) nil)))))))
+
+(defvar *record-module-definitions* nil)
+(defvar *source-definition-records* nil)
+(defvar *source-definition-parent* nil)
+(defvar *source-definition-calls* nil)
+(defvar *source-definition-index* nil)
+(defvar *source-definition-lookup* nil)
+(defvar *source-record-observer* nil)
+
+(defun lookup-source-definition (dspec)
+  (or (and *source-definition-index* (gethash dspec *source-definition-index*))
+      (and *source-definition-lookup* (boundp '*client*)
+           (compiles-into-image-p *client*)
+           (funcall *source-definition-lookup* dspec))))
+
+(defun note-expander-function-dependencies (kind form)
+  (when (and *dependencies* (consp form) (symbolp (car form))
+             (not (eq (symbol-package (car form)) (find-package '#:common-lisp)))
+             (member kind '(:macro :compiler-macro)))
+    (let ((seen nil))
+      (labels ((walk (dspec)
+                 (unless (member dspec seen :test #'equal)
+                   (push dspec seen)
+                   (let ((record (lookup-source-definition dspec)))
+                     (dolist (callee (getf record :calls))
+                       (let ((symbol (if (consp callee) (second callee) callee)))
+                         (unless (or (keywordp symbol)
+                                     (eq (symbol-package symbol) (find-package '#:common-lisp)))
+                           (note-dependency :function callee)
+                           (walk (list 'defun callee)))))))))
+        (walk (list (if (eq kind :macro) 'defmacro 'define-compiler-macro) (car form)))))))
+
+(defun definition-specifier (form)
+  (when (and (consp form) (eq (first form) 'defstruct) (consp (cdr form)))
+    (return-from definition-specifier
+      (list 'defstruct (if (consp (second form)) (first (second form)) (second form)))))
+  (multiple-value-bind (name function-p) (definition-name form)
+    (declare (ignore function-p))
+    (when name
+      (case (first form)
+        ((defun defgeneric) (list (first form) name))
+        (defmacro (list 'defmacro (second form)))
+        (define-compiler-macro (list 'define-compiler-macro (second form)))
+        (defmethod (cons 'defmethod (cdr name)))
+        (defparameter (list 'defvar (second form)))
+        (defpackage (list 'defpackage (string (second form))))
+        (defstruct (list 'defstruct (if (consp (second form))
+                                       (first (second form)) (second form))))
+        (otherwise (list (first form) (second form)))))))
+
+(defun source-definition-record (form keys calls parent source)
+  (list :dspec (definition-specifier form) :name (definition-name form)
+        :form form :package (target-package-name *package*) :file *source-file*
+        :source source :parent parent :keys keys :calls calls
+        :outputs (case (first form)
+                   (defmacro (list (list :macro (second form))))
+                   (define-compiler-macro (list (list :compiler-macro (second form))))
+                   ((defsetf define-setf-expander) (list (list :setf (second form))))
+                   (deftype (list (list :type (second form))))
+                   (defconstant (list (list :constant (second form))))
+                   ((defun defgeneric) (list (list :function (second form)))))))
 
 (defgeneric evaluate-at-compile-time (client input environment)
   (:documentation "Evaluates INPUT, a CST or a form, at compile time in the
@@ -571,10 +634,12 @@ Trucler ENVIRONMENT, for CLIENT. Cross and image clients use the HIR evaluator."
 (defvar *macroexpansion-depth* 0)
 
 (defun invoke-macro-expander (kind expander form environment)
+  (note-expander-function-dependencies kind form)
   (flet ((expand ()
-           (if (eq kind :compiler-macro)
-               (funcall expander form environment)
-               (funcall *macroexpand-hook* expander form environment))))
+           (let ((*source-definition-calls* nil))
+             (if (eq kind :compiler-macro)
+                 (funcall expander form environment)
+                 (funcall *macroexpand-hook* expander form environment)))))
     (if (null kiln.sys:*macroexpansion-hook*)
         (expand)
         (let* ((id (incf *macroexpansion-sequence*))
@@ -748,6 +813,34 @@ module).")
                  (:accessor (setf (gethash (list 'setf name) *defined-functions*) t)))))))
 
 (defun process-toplevel (cst compile-time-too)
+  (when (consp (hir-raw cst)) (hir-parts cst))
+  (let* ((form (hir-raw cst))
+         (dspec (definition-specifier form)))
+    (if (and *source-definition-records* dspec)
+        (let ((outer-dependencies *dependencies*)
+              (*dependencies* (list :dependencies))
+              (*source-definition-calls* (list :calls))
+              (*source-definition-parent* dspec)
+              (parent *source-definition-parent*)
+              (outer-calls *source-definition-calls*))
+          (note-dependency :macro (first form))
+          (multiple-value-prog1 (process-toplevel-1 cst compile-time-too)
+            (when outer-dependencies
+              (dolist (key (cdr *dependencies*))
+                (pushnew key (cdr outer-dependencies) :test #'equal)))
+            (when outer-calls
+              (dolist (callee (cdr *source-definition-calls*))
+                (pushnew callee (cdr outer-calls) :test #'equal)))
+            (let ((record (source-definition-record form (reverse (cdr *dependencies*))
+                                                   (reverse (cdr *source-definition-calls*)) parent
+                                                   (or (cst-source-range cst) *macro-source*))))
+              (when *source-definition-index*
+                (setf (gethash dspec *source-definition-index*) record))
+              (push record (cdr *source-definition-records*))
+              (when *source-record-observer* (funcall *source-record-observer* record)))))
+        (process-toplevel-1 cst compile-time-too))))
+
+(defun process-toplevel-1 (cst compile-time-too)
   (let* ((form (hir-raw cst))
          (*macro-source* (or (cst-source-range cst) *macro-source*))
          (*definition-name* (multiple-value-bind (name function-p) (definition-name form)
@@ -811,6 +904,7 @@ programs compiled after it."
   client
   environment
   (defined-functions (make-hash-table :test 'equal))
+  (source-definitions (make-hash-table :test 'equal))
   ;; DEFSTRUCT layouts and typed structure descriptions (structures.lisp).
   (structures (make-hash-table :test 'equal))
   ;; Host packages described by the symbol tables of the modules compiled
@@ -875,30 +969,31 @@ to *ERROR-OUTPUT*, for finding the form that an error comes from.")
 as one compilation unit, in SESSION. Returns the TOPLEVEL-FORMs (lower.lisp) of the
 forms to compile, in order, and the host packages that DEFPACKAGE forms
 created."
-  (call-with-front-end
-   session
-   (lambda ()
-     ;; A path (:COMPILE-TIME-TOO path) is processed as if its forms
-     ;; were in (EVAL-WHEN (:COMPILE-TOPLEVEL :LOAD-TOPLEVEL :EXECUTE)):
-     ;; for the functions that macro expanders call.
-     ;; (:RENAMES alist path) reads the file with *PACKAGE-RENAMES*.
-     (dolist (path paths)
-       (let ((compile-time-too (and (consp path) (eq (first path) :compile-time-too)))
-             (*package-renames* (if (and (consp path) (eq (first path) :renames))
-                                    (second path)
-                                    '()))
-             (*file-sets-package* nil)
-             (*source-file* (let ((file (if (consp path) (car (last path)) path)))
-                              (if (stringp file) file (namestring file)))))
-         (when *trace-toplevel*
-           (format *error-output* "~&~A~%" (if (consp path) (car (last path)) path)))
-         (map-file-csts (lambda (cst) (process-toplevel-cst cst compile-time-too))
-                        (if (consp path) (car (last path)) path))
-         (when *file-sets-package*
-           (let ((*macro-source* nil))
-             (compile-toplevel-form
-              `(setq *package* (,(find-package-function) "COMMON-LISP-USER"))
-              nil))))))))
+  (let ((*record-module-definitions* t))
+    (call-with-front-end
+     session
+     (lambda ()
+       ;; A path (:COMPILE-TIME-TOO path) is processed as if its forms
+       ;; were in (EVAL-WHEN (:COMPILE-TOPLEVEL :LOAD-TOPLEVEL :EXECUTE)):
+       ;; for the functions that macro expanders call.
+       ;; (:RENAMES alist path) reads the file with *PACKAGE-RENAMES*.
+       (dolist (path paths)
+         (let ((compile-time-too (and (consp path) (eq (first path) :compile-time-too)))
+               (*package-renames* (if (and (consp path) (eq (first path) :renames))
+                                      (second path)
+                                      '()))
+               (*file-sets-package* nil)
+               (*source-file* (let ((file (if (consp path) (car (last path)) path)))
+                                (if (stringp file) file (namestring file)))))
+           (when *trace-toplevel*
+             (format *error-output* "~&~A~%" (if (consp path) (car (last path)) path)))
+           (map-file-csts (lambda (cst) (process-toplevel-cst cst compile-time-too))
+                          (if (consp path) (car (last path)) path))
+           (when *file-sets-package*
+             (let ((*macro-source* nil))
+               (compile-toplevel-form
+                `(setq *package* (,(find-package-function) "COMMON-LISP-USER"))
+                nil)))))))))
 
 (defun front-end-forms (forms &optional (session (make-session)))
   "As FRONT-END, for the top-level FORMS (for COMPILE)."
@@ -910,7 +1005,20 @@ created."
        (dolist (form forms)
          (process-toplevel-cst form nil))))))
 
+(defun flush-source-definitions ()
+  (when (and *record-module-definitions* (cdr *source-definition-records*))
+    (let ((records (mapcar (lambda (record)
+                             (let ((copy (copy-list record)))
+                               (setf (getf copy :form) (encode-source-form (getf record :form) t))
+                               copy))
+                           (reverse (cdr *source-definition-records*)))))
+      (setf (cdr *source-definition-records*) nil)
+      (compile-toplevel-form
+       `(setq kiln.kernel::*source-definition-batches*
+              (cons ',records kiln.kernel::*source-definition-batches*)) nil))))
+
 (defun process-toplevel-cst (cst compile-time-too)
+  (unless (definition-specifier (hir-raw cst)) (flush-source-definitions))
   (forget-global-descriptions *environment*)
   (when *trace-toplevel*
     (let ((raw (hir-raw cst)))
@@ -939,6 +1047,9 @@ order, and the host packages that DEFPACKAGE forms created."
          (#-kiln cmd:*client* #+kiln kiln.cmd:*client* *client*)
          (*environment* (session-environment session))
          (*toplevel-asts* '())
+         (*source-definition-records* (list :records))
+         (*source-definition-parent* *source-definition-parent*)
+         (*source-definition-index* (session-source-definitions session))
          (*defined-functions* (session-defined-functions session))
          (*referenced-functions* (make-hash-table :test 'equal))
          (*referenced-variables* (make-hash-table :test 'eq))
@@ -951,6 +1062,7 @@ order, and the host packages that DEFPACKAGE forms created."
     ;; Calls to functions defined later in the file are fine: report
     ;; undefined functions at the end (CLHS 3.2.2.3).
     (funcall thunk)
+    (flush-source-definitions)
     (let ((undefined (loop for name being the hash-keys of *referenced-functions*
                            unless (or (gethash name *defined-functions*)
                                       (gethash name *primitives*)

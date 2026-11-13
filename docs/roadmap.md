@@ -24,7 +24,7 @@
 
 1. **ANSI 兼容性与库支持**。标准行为以 SBCL 为参照，用 `ansi-test` 和实际库运行定位语义差异。重点是支持 ASDF/UIOP 与第三方库，并维护 reader、编译期环境、对象系统和文件接口的一致语义。
 2. **编译器分层与深度优化、库快路径**（见“性能”一节）：先按 [compiler.md](design/compiler.md) 的“迁移”实现结构化 LIR 协议（内存入口、二进制文件、literal roots 和产物所有权），再引入 Lisp MIR，再在 MIR 上推进 Lisp 语义层优化（局部类型推导与浮点拆箱、不逃逸局部函数的 lambda lifting、高阶函数调用点展开与类型驱动的改写、`dynamic-extent` 栈上分配）；标准库协议层快路径（流/FORMAT/打印、bignum、多维数组、运行期 CLOS 编译化）照常进行。
-3. **M6 的剩余部分**：定义表和跳转到定义、who-calls，AOT 模块的依赖记录，打断正在运行的任务。它们是编辑器 IDE 阶段的前提。
+3. **M6 的剩余部分**：打断正在运行的任务，以及编辑器对定义查询接口的集成。它们是编辑器 IDE 阶段的前提。
 4. **构建期初始化和 seal**：决定 seal 的语义和目标文件格式。
 
 [modern-practices.md](research/modern-practices.md) 里各项的时机：
@@ -156,7 +156,7 @@
 
 ### 调试和工具
 
-- 定义表（dspec 和位置）、跳转到定义、who-calls、重定义警告（[debugging.md](design/debugging.md) 的定义记录）。
+- 编辑器接入 dspec 定义查询、跳转到定义和 who-calls（[debugging.md](design/debugging.md)）。
 - 为已有编译代码补充单步观察点和断点；从帧返回、重新执行帧。
 - 调试优化级别：`(optimize (debug 2))` 下让变量活过出错路径上的调用。
 - 闭包从静态环境读的变量在帧里显示。
@@ -165,8 +165,7 @@
 
 ### 依赖追踪
 
-- AOT 模块的依赖记录：KIR 里记下每个函数的依赖，模块初始化时装进同一张表，和定义表一起做。
-- 重新载入文件：先读完整个文件，读失败就什么都不改；按定义名对应新旧顶层形式，只求值变了的，只是位置变了的只更新调试信息，消失的定义报告出来。
+- 增量重载的读入预检查：保留包、readtable 与 `#.` 求值的顺序语义，同时避免在后续读取失败时留下部分更新。
 - 内联缓存、编译后的 CLOS 分派等优化的假设作为依赖记录（`(:class c)` 一类）：假设的键和版本格已经实现，`change-assumption` 也把键交给同一个钩子（[specialization.md](design/specialization.md)）；还没有编译期特化去记录它们。
 
 ### 堆快照和 seal

@@ -42,6 +42,8 @@
            #:assumption-version #:assumptions
            #:*compilation-cache-limit* #:clear-compilation-cache #:compilation-cache-statistics
            #:*macroexpansion-hook* #:collect-macroexpansions #:print-macroexpansions
+           #:find-definitions #:definition-form #:definitions-in-file #:who-calls #:*warn-on-cross-file-redefinition*
+           #:reload-source-file
            #:dependents #:dependencies #:*recompile-verbose* #:stale-definition
            #:stack-exhausted #:*inspected* #:*ed-functions*
            #:*stepper-hook* #:step-form-condition #:step-form #:step-args #:step-finished-condition

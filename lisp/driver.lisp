@@ -496,7 +496,7 @@ those whose names are in EXCLUDE."
      (system-files "anatomicl")
      ;; kiln's compiler (M5.3): its packages are the host's.
      (mapcar (lambda (name) (asdf:system-relative-pathname "kiln" (format nil "lisp/~A.lisp" name)))
-             '("abi" "kir" "lir-schema" "backend-target" "backend-packet" "lir" "lir-function" "lir-values" "lir-closures" "lir-stack" "lir-regions" "hir/data" "lower" "values" "primitives" "structures" "front" "cross"
+             '("abi" "kir" "lir-schema" "backend-target" "backend-packet" "lir" "lir-function" "lir-values" "lir-closures" "lir-stack" "lir-regions" "hir/data" "lower" "values" "primitives" "structures" "source-forms" "front" "cross"
                "hir/environment" "hir/convert" "hir/analyze" "hir/types" "hir/escape" "hir/eval" "hir/lower"
                "target/compiler/client" "target/eval/interpreter"))))
 
@@ -509,7 +509,7 @@ those whose names are in EXCLUDE."
 (defparameter *compiler-files*
   (mapcar (lambda (name)
             (asdf:system-relative-pathname "kiln" (format nil "lisp/target/compiler/~A.lisp" name)))
-          '("session" "dependencies" "cache" "native" "files")))
+          '("session" "definitions" "dependencies" "cache" "native" "files")))
 
 (defun compile-compiler (output &key (session (kiln.compiler:make-session)))
   "Compiles the compiler module to OUTPUT, loaded after the front-end and

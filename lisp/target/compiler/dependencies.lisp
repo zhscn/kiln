@@ -26,7 +26,7 @@
   outputs                               ; the keys its evaluation changed
   fingerprint                           ; the code compiled for it
   order                                 ; when it was first defined
-  file source-cst)                       ; source retained for recompilation
+  file source-cst source-range)           ; source retained for recompilation
 
 (defvar *definition-units* (make-hash-table :test 'equal)
   "The definitions with dependencies, by name.")
@@ -168,7 +168,8 @@ are KEYS (replacing those of its previous evaluation)."
                                             (definition-unit-order old)
                                             (incf *definition-order*))
                                         *source-file* *eval-source-cst*)))
-        (setf (gethash name *definition-units*) unit)
+        (setf (definition-unit-source-range unit) (cst-source-range *eval-source-cst*)
+              (gethash name *definition-units*) unit)
         (dolist (key keys)
           (setf (gethash key *dependents*)
                 (merge 'list (list unit) (gethash key *dependents*) #'<
@@ -178,14 +179,26 @@ are KEYS (replacing those of its previous evaluation)."
   "Calls EVALUATE, which evaluates the definition FORM named NAME,
 collecting the dependencies of the code compiled for it; returns its
 values. A definition within FORM's expansion is a unit of its own."
+  (import-source-definitions)
   (let ((*dependencies* (list :dependencies))
+        (*source-definition-calls* (list :calls))
+        (parent *source-definition-parent*)
+        (*source-definition-parent* (definition-specifier form))
+        (records (list :records))
         (*unit-outputs* (list :outputs))
         (*unit-fingerprint* (list :fingerprint)))
     (note-dependency :macro (first form))
-    (multiple-value-prog1 (funcall evaluate)
+    (multiple-value-prog1
+        (let ((*source-record-observer* (lambda (record) (push record (cdr records)))))
+          (funcall evaluate))
+      (dolist (record (reverse (cdr records))) (record-source-definition record))
       (let ((fingerprint (reverse (rest *unit-fingerprint*))))
         (when (and *captured-fingerprint* (equal name (car *captured-fingerprint*)))
           (setf (cdr *captured-fingerprint*) fingerprint))
+        (record-source-definition
+         (source-definition-record form (reverse (cdr *dependencies*))
+                                   (reverse (cdr *source-definition-calls*)) parent
+                                   (cst-source-range *eval-source-cst*)))
         (register-definition-unit name form (reverse (rest *dependencies*))
                                   (reverse (rest *unit-outputs*)) fingerprint)))))
 
@@ -197,6 +210,7 @@ collects the keys that change.")
 
 (defun note-redefinition (key)
   "*REDEFINITION-HOOK*: the definition KEY changed."
+  (import-source-definitions)
   (let ((outputs *unit-outputs*))
     (when (and outputs (not (member key (cdr outputs) :test #'equal)))
       (push key (cdr outputs))))
@@ -343,7 +357,7 @@ so on for the definitions those change."
 reports it; then tells the definitions that depend on what it defines
 whether that changed."
   (let* ((name (definition-unit-name unit))
-         (form (definition-unit-form unit))
+         (form (decode-source-form (definition-unit-form unit)))
          (previous (definition-unit-outputs unit))
          (changed '()))
     (cond ((member (first form) *reevaluated-operators*)
@@ -355,7 +369,9 @@ whether that changed."
              (handler-case
                  (let ((*package* (definition-unit-package unit))
                        (*source-file* (definition-unit-file unit))
-                       (*eval-source-cst* (definition-unit-source-cst unit)))
+                       (*eval-source-cst* (or (definition-unit-source-cst unit)
+                                             (cst:cst-from-expression form
+                                               :source (definition-unit-source-range unit)))))
                    (eval form)
                    ;; A macro or SETF expander whose code is the same is
                    ;; the same; constants and inline expansions are noted
@@ -369,9 +385,13 @@ whether that changed."
                      (when (and same-code kiln.sys:*recompile-verbose*)
                        (format *error-output* "~&; ~S is the same~%" name))))
                (error (e)
+                 (let ((record (gethash (definition-specifier form) *source-definitions*)))
+                   (when record (setf (getf record :stale) t)))
                  (warn 'kiln.sys:stale-definition :name name
                        :key (stale-key unit) :error e)))))
           (t
+           (let ((record (gethash (definition-specifier form) *source-definitions*)))
+             (when record (setf (getf record :stale) t)))
            (warn 'kiln.sys:stale-definition :name name :key (stale-key unit))))
     (dolist (key previous)
       (if (member key changed :test #'equal)

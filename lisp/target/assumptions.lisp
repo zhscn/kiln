@@ -40,6 +40,9 @@
 
 (in-package #:kiln.kernel)
 
+(setq *source-definition-batches* nil)
+
+
 ;;; The symbol plist helpers and PROCLAIM come first: the first DEFVAR
 ;;; below proclaims its variable special at load time, and that calls
 ;;; PROCLAIM. %PUT and %GET use only primitives, for the definitions that
@@ -453,3 +456,5 @@ creates a new cell. Shared type and initialization cells cannot be retired."
   (when *trace-definition-hook*
     (funcall *trace-definition-hook* name))
   (change-assumption :function name))
+
+(defvar *source-definition-batches* nil)

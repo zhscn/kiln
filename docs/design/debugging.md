@@ -211,20 +211,37 @@ key 和 value 的 cons。未绑定槽和无法读取的 NIL 元素类型数组�
 - 出错那一帧的变量往往看不到：错误之后不再用到的变量已经死亡。要有一个调试优化级别：在 `(optimize (debug 2))` 下让所有变量活过出错路径上的调用（SBCL 的做法）。默认级别下不这样做，因为它会改变生成的代码。
 - 源码位置是八位组偏移，行号要打开文件重新数（`source-line`）。
 
-## 定义记录（dspec，格式已定，还没有实现）
+## 定义记录与源码查询
 
-参考 LispWorks 的 dspec 和 Emacs 的 `load-history`。Emacs 的教训是：不记位置、靠正则搜索找回来，宏生成的定义就很难找；kiln 有 CST，可以直接记位置。
+函数名只能说明栈帧正在运行什么，不能回答一个宏生成的访问器来自哪里，
+也不能判断重新载入文件时哪些定义已经改变。前端因此在宏展开前记录定义形式，
+并把展开得到的定义关联到父定义。AOT 模块和原生 FASL 都随初始化代码携带这些记录；
+源码 `load` 与 `eval` 使用相同的记录格式。
 
-- 名字采用 LispWorks 的规范形式 `(类 主名字 . 限定)`，用 `equal` 比较。符号单独出现时表示函数。
-- 第一批类：`defun`、`defmacro`、`defgeneric`、`defmethod`（限定为方法限定符加特化列表）、`defclass`、`defstruct`、`define-condition`、`defvar`（`defparameter` 是别名）、`defconstant`、`deftype`、`defsetf`、`define-setf-expander`、`define-compiler-macro`、`define-method-combination`、`defpackage`。
-- 位置：`(文件 起始偏移 结束偏移)`，取自顶层形式的 CST。子定义多一项父 dspec。文件用编译时的名字，交付期可以去掉。
-- 记录点在顶层形式处理里：
-  - 宏展开之前，按顶层形式的 car 查一张表算出 dspec。这张表相当于 LispWorks 的 form parser，用户可以扩展（名字待定，比如 `kiln:define-dspec-parser`）；表里没有的定义宏，按 `DEF` 前缀的默认规则处理。
-  - 展开之后，结果里的 `defun` 等记为子定义，例如 `defstruct` 展开出的访问函数。
-- KIR 模块加一个顶层条目 `(defs (dspec 位置) ...)`，dspec 是普通数据。模块初始化时，把这些记录装进 image 里的定义表。
-- 同一个 dspec 被另一个文件重新定义时，载入时发出警告。这是重定义屏障（C4）的一部分；对哪些包报错、对哪些包只警告，可以配置。
-- 局部函数复用函数标签的名字提示：`(flet g (defun f))` 写进函数的调试信息。
-- seal 时，tree shaking 用定义表知道每个函数来自哪个定义。依赖追踪、重新载入文件、image 和源码的同步都用这张表。
+每条记录包含 `:dspec`、`:name`、`:form`、`:package`、`:file`、`:source`、
+`:parent`、`:calls`、`:keys` 和 `:outputs`。dspec 采用 `(定义种类 主名字 . 限定)`，
+以 `equal` 比较；方法还包含限定符和特化列表。`defparameter` 与 `defvar` 共用
+`defvar` 种类。源码范围是 CST 给出的 `(起始偏移 . 结束偏移)`；宏新建的定义
+继承外层调用范围。`:calls` 保存前端识别出的全局调用，词法函数不混入全局调用关系。
+依赖键和输出键与依赖追踪共用，避免导航信息和重编译信息各自维护定义身份。
+文件产物把源码形式编码成紧凑的对象图，保留共享、循环、无包符号身份和浮点位模式。
+导入导航索引时不展开这些源码，避免将编译器全部源码变成常驻的 cons 图；
+`kiln.sys:definition-form` 按需恢复某条记录的源码形式。
+
+compiler 模块提供以下接口，返回的记录用 plist 表示：
+
+- `kiln.sys:find-definitions` 接受 dspec，或按符号查询定义；`:file` 与 `:source`
+  可直接用于跳转到定义。
+- `kiln.sys:definitions-in-file` 按源码偏移列出文件的定义。
+- `kiln.sys:who-calls` 返回包含已知全局调用的定义的 dspec，也识别目标明确的
+  `funcall`。通过运行期值选择被调函数的调用不能静态列举。
+- `kiln.sys:*warn-on-cross-file-redefinition*` 控制跨文件替换同一 dspec 时的
+  style warning。首次导入启动 image 的定义时合并构建阶段的记录，此后加载的
+  定义参与警告检查。
+
+记录随 image 保存。源码增量重载使用定义形式与源码范围，而不依赖文本正则搜索；
+其更新和删除行为见 [dependencies.md](dependencies.md)。编辑器可以消费这些查询结果，
+无需自行解析 Lisp 定义宏。
 
 ## 宏展开的追踪
 

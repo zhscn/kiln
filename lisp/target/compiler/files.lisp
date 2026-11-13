@@ -6,6 +6,7 @@
   (let ((init (kiln.sys:%primop :compile-packet packet literals)))
     (unless init (error "Cannot generate native code for compiled file."))
     (funcall init)
+    (import-source-definitions)
     (when *load-print* (format t "~&;; ~S loaded~%" init)))
   (values))
 
