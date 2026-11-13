@@ -1736,6 +1736,7 @@ there: -1, 0 or 1."
 
 ;;; Run-time macro expansion.
 (defvar *macroexpand-hook* 'funcall)
+(defvar *macroexpand-observer* nil)
 ;;; A lexical environment is one of the evaluator's (the eval module sets
 ;;; these to functions of the name and the environment).
 (defvar *environment-macro-function* nil)
@@ -1770,14 +1771,16 @@ there: -1, 0 or 1."
   (cond ((and (consp form) (symbolp (car form)))
          (let ((expander (macro-function (car form) environment)))
            (if expander
-               (values (funcall *macroexpand-hook* expander form environment) t)
+               (values (funcall (or *macroexpand-observer* *macroexpand-hook*)
+                                expander form environment) t)
                (values form nil))))
         ((symbolp form)
          (multiple-value-bind (expansion macrop) (symbol-macro-value form environment)
            (if macrop
-               (values (funcall *macroexpand-hook*
-                                (lambda (f e) (declare (ignore f e)) expansion)
-                                form environment)
+               (values (let ((expander (lambda (f e) (declare (ignore f e)) expansion)))
+                         (if *macroexpand-observer*
+                             (funcall *macroexpand-observer* expander form environment :symbol-macro)
+                             (funcall *macroexpand-hook* expander form environment)))
                        t)
                (values form nil))))
         (t (values form nil))))

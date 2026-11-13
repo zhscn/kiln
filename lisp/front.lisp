@@ -445,7 +445,7 @@ macro. The second value distinguishes a NIL expansion from declining."
            (expander (and name (compiler-macro-expander client environment name))))
       (when expander
         (handler-case
-            (let ((expansion (funcall expander form environment)))
+            (let ((expansion (invoke-macro-expander :compiler-macro expander form environment)))
               (unless (eq expansion form) (values expansion t)))
           (error (condition)
             (warn 'compiler-macro-expansion-warning :form form :cause condition)
@@ -513,6 +513,7 @@ the file. Reading starts in KILN-USER, with the target's features."
 (defvar *toplevel-source* nil)          ; (START . END) of the outermost form, or NIL
 (defvar *definition-name* nil)          ; DEFINITION-NAME of the innermost definition form
 (defvar *eval-definition* nil)          ; the definition EVAL (native.lisp) is evaluating
+(defvar *eval-source-cst* nil)
 (defvar *eval-form* nil)                ; the form EVAL was given, before expansion
 (defvar *toplevel-raw* nil)             ; the outermost top-level form, as written
 
@@ -563,6 +564,65 @@ Trucler ENVIRONMENT, for CLIENT. Cross and image clients use the HIR evaluator."
                             *toplevel-raw*)
         *toplevel-asts*))
 
+(defvar kiln.sys:*macroexpansion-hook* nil
+  "Optional function receiving macro expansion event plists.")
+(defvar *macroexpansion-sequence* 0)
+(defvar *macroexpansion-parent* nil)
+(defvar *macroexpansion-depth* 0)
+
+(defun invoke-macro-expander (kind expander form environment)
+  (flet ((expand ()
+           (if (eq kind :compiler-macro)
+               (funcall expander form environment)
+               (funcall *macroexpand-hook* expander form environment))))
+    (if (null kiln.sys:*macroexpansion-hook*)
+        (expand)
+        (let* ((id (incf *macroexpansion-sequence*))
+               (parent *macroexpansion-parent*)
+               (depth *macroexpansion-depth*)
+               (source (or (and (boundp '*hir-source*) (hir-source-range *hir-source*))
+                           (and (boundp '*macro-source*) *macro-source*))))
+          (labels ((event (phase &rest data)
+                     (funcall kiln.sys:*macroexpansion-hook*
+                              (append (list :phase phase :id id :parent parent :depth depth
+                                            :kind kind :input form :file *source-file*
+                                            :source source) data))))
+            (event :enter)
+            (let ((*macroexpansion-parent* id)
+                  (*macroexpansion-depth* (1+ depth)))
+              (handler-bind ((error (lambda (condition) (event :error :condition condition))))
+                (let ((output (expand)))
+                  (event :exit :output output :declined (eq output form))
+                  output))))))))
+
+(defun kiln.sys:collect-macroexpansions (function)
+  "Return the expansion events and all values produced by FUNCTION."
+  (let ((events nil) (*macroexpansion-sequence* 0)
+        (*macroexpansion-parent* nil) (*macroexpansion-depth* 0))
+    (let* ((kiln.sys:*macroexpansion-hook* (lambda (event) (push event events)))
+           (results (multiple-value-list (funcall function))))
+      (values (nreverse events) results))))
+
+(defun kiln.sys:print-macroexpansions (events &optional (stream *standard-output*))
+  "Display the ordered expansion stream, including nested expansions and errors."
+  (dolist (event events)
+    (let ((*print-circle* t) (*print-level* 6) (*print-length* 12))
+      (format stream "~&~V@T~D ~A ~A ~S"
+              (* 2 (getf event :depth)) (getf event :id)
+              (getf event :kind) (getf event :phase) (getf event :input))
+      (case (getf event :phase)
+        (:exit (format stream " => ~S" (getf event :output)))
+        (:error (format stream " => ~A" (getf event :condition))))
+      (when (getf event :file)
+        (format stream " [~A ~S]" (getf event :file) (getf event :source)))
+      (terpri stream)))
+  (values))
+
+#+kiln
+(setf kiln.kernel::*macroexpand-observer*
+      (lambda (expander form environment &optional (kind :macro))
+        (invoke-macro-expander kind expander form environment)))
+
 (defun macroexpand-toplevel (form)
   "Returns the expansion of FORM and true if FORM is a macro form."
   (let ((op (first form)))
@@ -571,11 +631,11 @@ Trucler ENVIRONMENT, for CLIENT. Cross and image clients use the HIR evaluator."
            (let ((description (trucler:describe-function *client* *environment* op)))
              (cond ((and (typep description 'trucler:macro-description)
                          #-kiln (not (eq op 'defmacro)))
-                    (values (funcall (trucler:expander description) form *environment*) t))
+                    (values (invoke-macro-expander :macro (trucler:expander description) form *environment*) t))
                    #-kiln
                    ((and (not (typep description 'trucler:local-function-description))
                          (cmd:macro-function-exists-p op))
-                    (values (cmd:macroexpand-1 form *environment*) t))
+                    (values (invoke-macro-expander :macro (cmd:macro-function op) form *environment*) t))
                    (t (values nil nil))))))))
 
 (defun compile-time-macroexpand-1 (form env)
@@ -855,12 +915,12 @@ created."
   ;; top-level form. COMPILE-MODULE names those in constants by their
   ;; order in the module (MODULE-SYMBOL-NAME).
   (let ((*gensym-counter* 0)
-        (*toplevel-source* (cst-source-range cst))
-        (*macro-source* (cst-source-range cst))
+        (*toplevel-source* (cst-source-range (or *eval-source-cst* cst)))
+        (*macro-source* (cst-source-range (or *eval-source-cst* cst)))
         (*definition-name* *eval-definition*)
         (*toplevel-raw* (or *eval-form* (hir-raw cst)))
         (*hir-file-id* (hir-source-file-number *source-file*))
-        (*hir-top-cst* (and (typep cst 'cst:cst) cst))
+        (*hir-top-cst* (or *eval-source-cst* (and (typep cst 'cst:cst) cst)))
         (*hir-form-sources* nil))
     (process-toplevel cst compile-time-too)))
 

@@ -18,14 +18,15 @@
 (in-package #:kiln.compiler)
 
 (defstruct (definition-unit (:constructor make-definition-unit
-                                (name form package keys outputs fingerprint order)))
+                                (name form package keys outputs fingerprint order file source-cst)))
   name                                  ; DEFINITION-NAME of FORM
   form                                  ; the definition, as EVAL got it
   package                               ; *PACKAGE* when it was evaluated
   keys                                  ; its dependencies, (KIND NAME)
   outputs                               ; the keys its evaluation changed
   fingerprint                           ; the code compiled for it
-  order)                                ; when it was first defined
+  order                                 ; when it was first defined
+  file source-cst)                       ; source retained for recompilation
 
 (defvar *definition-units* (make-hash-table :test 'equal)
   "The definitions with dependencies, by name.")
@@ -165,7 +166,8 @@ are KEYS (replacing those of its previous evaluation)."
       (let ((unit (make-definition-unit name form *package* keys outputs fingerprint
                                         (if old
                                             (definition-unit-order old)
-                                            (incf *definition-order*)))))
+                                            (incf *definition-order*))
+                                        *source-file* *eval-source-cst*)))
         (setf (gethash name *definition-units*) unit)
         (dolist (key keys)
           (setf (gethash key *dependents*)
@@ -351,7 +353,9 @@ whether that changed."
            (let ((*update-notes* (list :notes))
                  (*captured-fingerprint* (list name)))
              (handler-case
-                 (let ((*package* (definition-unit-package unit)))
+                 (let ((*package* (definition-unit-package unit))
+                       (*source-file* (definition-unit-file unit))
+                       (*eval-source-cst* (definition-unit-source-cst unit)))
                    (eval form)
                    ;; A macro or SETF expander whose code is the same is
                    ;; the same; constants and inline expansions are noted

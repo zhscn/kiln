@@ -67,6 +67,7 @@ compiler 模块的 `lisp/target/compiler/native.lisp` 把 `kiln.kernel::*compile
    - 把程序、字面量向量和目标指纹交给 `(%primop :compile-program program literals target)`，即 kiln-cg 的 `kiln_rt_compile_program`（[codegen.md](codegen.md)）。它返回 init 函数对象，程序编译失败时返回 NIL，`native-compile` 据此报错。
 2. `native-compile` 动态绑定 `*compiled-function*`，调用 init 函数，取出编好的函数。
 
+`compile` 的显式函数名（包括 setf 名字）传入调试元数据。匿名编译保持 lambda 名字。
 会话在成功或非局部退出后归还，清空本次定义记录、全局查询缓存和源码文件表；
 image 内联表和结构元数据继续共用。宏展开中递归调用 `compile` 时另取一个会话，
 避免覆盖外层仍在使用的前端状态。
@@ -129,7 +130,9 @@ Unicode code point。记录数据包含整数、字符、字符串、符号、�
 `load` 检查文件头来区分 FASL 和源文件，也接受显式的二进制 FASL 输入流。
 FASL 的 `:print` 信息报告已加载的原生顶层入口；源文件则打印求值结果。原生
 FASL 加载需要 compiler 模块及 Cranelift；保存的是 LIR，机器码在加载时生成。
-源文件加载仍按形式求值，按调用者指定的 external format 解码。
+源文件加载仍按形式求值，按调用者指定的 external format 解码。读入保留 CST，
+求值时绑定文件名和源码树，原生编译沿用子形式的字节位置。依赖追踪保存定义的
+源码上下文，稍后因宏重定义而重编译时仍能定位到原文件。
 
 ## 顶层编译缓存
 
@@ -149,11 +152,25 @@ FASL 加载需要 compiler 模块及 Cranelift；保存的是 LIR，机器码在
 Rust 后端也可按函数并行生成机器码，`KILN_CG_THREADS` 控制线程数；文件并行工具
 在未显式设置该变量时将它设为 1，避免两层并行争用 CPU。
 
+## 宏展开事件与查看器
+
+`kiln.sys:collect-macroexpansions` 接受无参数函数，返回按发生顺序排列的事件列表和
+主体的全部返回值列表。也可动态绑定 `kiln.sys:*macroexpansion-hook*`，让工具直接
+消费事件流。事件用 plist 表示：`:phase` 为 `:enter`、`:exit` 或 `:error`，`:id` 和
+`:parent` 连接嵌套调用，`:depth` 记录展开器调用的嵌套深度，`:kind` 区分普通宏、
+symbol macro 与编译器宏。`:input` 保存输入，完成时的 `:output` 保存结果，
+`:declined` 标明返回原对象；错误事件携带 `:condition`。文件和字节范围在已知时
+放入 `:file` 和 `:source`。同一次展开的各事件共用 ID。
+
+事件保留形式对象的引用，消费者应将它们视为只读数据。展开失败仍按原有编译错误
+路径处理；事件流可以在错误处理器中读取。`kiln.sys:print-macroexpansions` 接受事件
+列表和可选输出流，以嵌套缩进显示输入、结果、错误与位置。事件入口覆盖 HIR 转换、
+顶层展开以及运行期 `macroexpand-1`，并继续遵守 `*macroexpand-hook*`。
+
 ## 已知限制
 
 - FASL 的通用浮点编码器只处理有限浮点数。
 - 代码回收：函数对象不再被引用后，代码和它的表也不会释放。
-- `compile` 编出的函数名是 `(lambda)`；`load` 逐个读取形式再求值，没有文件和位置。
 - typed-vector `defstruct` 的位置构造器布局展开（[stdlib.md](stdlib.md)）。
 
 ## 语义验证

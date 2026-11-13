@@ -29,7 +29,9 @@ running image, in the null lexical environment."
    (lambda (session) (native-compile-in-session definition session))))
 
 (defun native-compile-in-session (definition session)
-  (let ((name (kiln.kir::kir-name "compile-" (incf *native-compile-count*))))
+  (let* ((*eval-definition* (and kiln.kernel::*compile-name*
+                                (cons kiln.kernel::*compile-name* t)))
+         (name (kiln.kir::kir-name "compile-" (incf *native-compile-count*))))
     (multiple-value-bind (module literals)
         (handler-bind ((undefined-function-warning
                          (lambda (condition)

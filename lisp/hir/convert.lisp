@@ -48,7 +48,9 @@
            (let ((type (hir-declared-variable-type environment binding)))
              (hir-node 1 *hir-source* (hir-note-ref binding) (unless (eq type t) type))))
           ((and found (eq (car binding) :symbol-macro))
-           (hir-convert (second binding) environment))
+           (hir-convert (invoke-macro-expander :symbol-macro
+                           (lambda (form env) (declare (ignore form env)) (second binding))
+                           name environment) environment))
           ((and found (eq (car binding) :special)) (hir-node 3 *hir-source* name))
           (t
            (let ((description (trucler:describe-variable *client* environment name)))
@@ -60,7 +62,10 @@
                     (note-dependency :constant name)
                     (hir-node 0 *hir-source* (trucler:value description)))
                    ((typep description 'trucler:symbol-macro-description)
-                    (hir-convert (trucler:expansion description) environment))
+                    (hir-convert (invoke-macro-expander :symbol-macro
+                                   (lambda (form env) (declare (ignore form env))
+                                     (trucler:expansion description))
+                                   name environment) environment))
                    ((or (null name) (eq name t) (keywordp name)) (hir-node 0 *hir-source* name))
                    (t (hir-node 3 *hir-source* name))))))))
 

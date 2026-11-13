@@ -41,6 +41,7 @@
            ;; lisp/target/compiler/dependencies.lisp).
            #:assumption-version #:assumptions
            #:*compilation-cache-limit* #:clear-compilation-cache #:compilation-cache-statistics
+           #:*macroexpansion-hook* #:collect-macroexpansions #:print-macroexpansions
            #:dependents #:dependencies #:*recompile-verbose* #:stale-definition
            #:stack-exhausted #:*inspected* #:*ed-functions*
            #:*stepper-hook* #:step-form-condition #:step-form #:step-args #:step-finished-condition

@@ -52,8 +52,11 @@
       (funcall *compile-function* definition)
       (interpreted-eval (list 'function definition))))
 
+(defvar *compile-name* nil)
+
 (defun compile (name &optional definition)
-  (let ((function (cond ((functionp definition) definition)
+  (let* ((*compile-name* name)
+         (function (cond ((functionp definition) definition)
                         (definition (compile-lambda definition))
                         (t (let ((f (fdefinition name)))
                              (if (functionp f) f (compile-lambda f)))))))
@@ -62,6 +65,14 @@
           (setf (macro-function name) function)
           (setf (fdefinition name) function)))
     (values (or name function) nil nil)))
+
+(defclass load-source-reader-client (kiln.compiler::source-reader-client) ())
+
+(defmethod eclector.reader:evaluate-expression ((client load-source-reader-client) expression)
+  ;; LOAD evaluates #. in the image, including when called by a macro.
+  (eval expression))
+
+(defvar *load-source-reader-client* (make-instance 'load-source-reader-client))
 
 (defun load (filespec &key (verbose *load-verbose*) (print *load-print*)
                            (if-does-not-exist t) (external-format :default))
@@ -76,9 +87,12 @@
                (if binaryp
                    (load-native-fasl stream :verbose verbose)
                    (loop with eof = (list nil)
-                         for form = (read stream nil eof)
-                         until (eq form eof)
-                         do (let ((values (multiple-value-list (eval form))))
+                         for cst = (let ((eclector.base:*client* *load-source-reader-client*))
+                                     (eclector.concrete-syntax-tree:read stream nil eof))
+                         until (eq cst eof)
+                         do (let* ((kiln.compiler::*eval-source-cst* cst)
+                                   (kiln.compiler::*source-file* (and pathname (namestring pathname)))
+                                   (values (multiple-value-list (eval (cst:raw cst)))))
                               (when print
                                 (format t "~&~{~S~^ ~}~%" values))))))
              t)
