@@ -816,6 +816,8 @@ of it, SLOW-FN otherwise; both return an operand. Returns the result."
 ;;; The bits of a float, as unsigned fixnums (lower.lisp writes float
 ;;; constants with them when it runs on kiln).
 (define-primop :single-float-bits (x) (copy-to-var `(:fixnum-tag (:single-float-bits ,x))))
+(define-primop :make-single-float-bits (bits)
+  (copy-to-var `(:single-float-tag (:fixnum-unsigned-bits ,bits))))
 (define-primop :make-double-float-bits (high low)
   (let* ((bits (copy-to-var `(:or (:shl (:fixnum-unsigned-bits ,high) 32)
                                 (:fixnum-unsigned-bits ,low)) :raw)))
