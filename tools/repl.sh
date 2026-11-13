@@ -15,7 +15,7 @@ echo '(kiln.sys:repl)' >"$main"
 stamp=$build/main.lir
 if [ ! -e "$stamp" ] || [ -n "$(find lisp vendor kiln.asd -newer "$stamp" -name '*.lisp' -print -quit)" ]; then
   echo "; building the image (a few minutes)" >&2
-  sbcl --noinform --non-interactive \
+  sbcl --dynamic-space-size 4GB --noinform --non-interactive \
     --load "$root/tools/env.lisp" \
     --eval '(ql:quickload "kiln" :silent t)' \
     --eval "(defvar *session* (kiln.compiler:make-session))" \
