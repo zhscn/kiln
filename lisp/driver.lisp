@@ -341,11 +341,17 @@
    (list (kiln-clos-file "reader") (kiln-clos-file "finish")))
   "Sources of the CLOS module, in load order.")
 
-(defun write-module (module output)
-  (if (equal (pathname-type output) "lir")
+(defvar *write-diagnostic-kir* nil)
+
+(defun write-module (module output &key (binary (equal (pathname-type output) "lir")))
+  (if binary
       (with-open-file (out output :direction :output :if-exists :supersede
                                  :element-type '(unsigned-byte 8))
-        (kiln.kir::write-module-packet module out))
+        (kiln.kir::write-module-packet module out)
+        (when *write-diagnostic-kir*
+          (with-open-file (text (make-pathname :type "kir" :defaults output)
+                                :direction :output :if-exists :supersede)
+            (kiln.kir:print-module module text))))
       (with-open-file (out output :direction :output :if-exists :supersede)
         (kiln.kir:print-module module out)))
   output)
@@ -374,11 +380,7 @@ kernel module first: kiln-cg jit kernel.kir OUTPUT."
 
 (defun compile-file-to-lir (input output &key (session (kiln.compiler:make-session)))
   "Compiles INPUT to a canonical binary backend request."
-  (with-open-file (out output :direction :output :if-exists :supersede
-                             :element-type '(unsigned-byte 8))
-    (kiln.kir::write-module-packet
-     (compile-files (list input) session (pathname-name input)) out))
-  output)
+  (write-module (compile-files (list input) session (pathname-name input)) output :binary t))
 
 (defun compile-clos (output &key (session (kiln.compiler:make-session)))
   "Compiles CLOS (Clostrophilia and kiln's bootstrap) to the KIR module

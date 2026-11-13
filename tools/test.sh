@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Runs the end-to-end tests: SBCL (or kiln, with KILN_COMPILER set to a
-# kiln executable such as build/boot/kiln1) compiles each tests/*/*.lisp to KIR,
+# kiln executable such as build/boot/kiln1) compiles each tests/*/*.lisp to independent LIR,
 # then kiln-cg runs it with the JIT (normally and under GC stress) and
 # builds/runs an AOT executable.
 # Each output must match the .expected file.
@@ -45,8 +45,9 @@ done
 
 # One SBCL session: the kernel is compiled once, then every test in the
 # same compile-time environment.
-args=(--eval "(defvar *session* (kiln.compiler:make-session))"
-      --eval "(kiln:compile-kernel \"$build/kernel.kir\" :session *session*)")
+args=(--eval "(setf kiln::*write-diagnostic-kir* t)"
+      --eval "(defvar *session* (kiln.compiler:make-session))"
+      --eval "(kiln:compile-kernel \"$build/kernel.lir\" :session *session*)")
 # Tests named clos-*.lisp run with the CLOS module loaded after the kernel,
 # fe-*.lisp also with the front-end module after it, ev-*.lisp with the
 # shared HIR eval module after the front end, co-*.lisp also with compiler
@@ -64,19 +65,19 @@ for src in "${sources[@]}"; do
   esac
 done
 if [ $need_clos = 1 ]; then
-  args+=(--eval "(kiln:compile-clos \"$build/clos.kir\" :session *session*)")
+  args+=(--eval "(kiln:compile-clos \"$build/clos.lir\" :session *session*)")
 fi
 if [ $need_fe = 1 ]; then
-  args+=(--eval "(kiln:compile-frontend \"$build/frontend.kir\" :session *session*)")
+  args+=(--eval "(kiln:compile-frontend \"$build/frontend.lir\" :session *session*)")
 fi
 if [ $need_ev = 1 ]; then
-  args+=(--eval "(kiln:compile-eval \"$build/eval.kir\" :session *session*)")
+  args+=(--eval "(kiln:compile-eval \"$build/eval.lir\" :session *session*)")
 fi
 if [ $need_co = 1 ]; then
-  args+=(--eval "(kiln:compile-compiler \"$build/compiler.kir\" :session *session*)")
+  args+=(--eval "(kiln:compile-compiler \"$build/compiler.lir\" :session *session*)")
 fi
 for src in "${sources[@]}"; do
-  args+=(--eval "(kiln:compile-file-to-kir \"$src\" \"$build/$(basename "${src%.lisp}").kir\" :session *session*)")
+  args+=(--eval "(kiln:compile-file-to-lir \"$src\" \"$build/$(basename "${src%.lisp}").lir\" :session *session*)")
 done
 if [ -n "${KILN_COMPILER:-}" ]; then
   # kiln compiles the tests: KILN_COMPILER is a kiln built
@@ -95,7 +96,8 @@ if [ -n "${KILN_COMPILER:-}" ]; then
   # The five modules compiled are saved as a heap image,
   # reused while the compiler and module sources match.
   image=$build/kiln-compiler.img
-  key=$( { sha256sum "$compiler"
+  key=$( { printf 'independent-lir-with-diagnostic-kir\n'
+           sha256sum "$compiler"
            sbcl --noinform --non-interactive --eval '(require :sb-md5)' --eval "
              (with-open-file (in \"$build/modules.lisp-expr\")
                (dolist (entry (subseq (read in) 0 5))
@@ -109,7 +111,7 @@ if [ -n "${KILN_COMPILER:-}" ]; then
     rm -f "$image" "$image.key"
     run=(env KILN_SAVE_IMAGE="$image")
   fi
-  (cd "$build" && KILN_OUTPUT_FORMAT=kir "${run[@]}" MMTK_GC_TRIGGER=FixedHeapSize:${KILN_COMPILER_HEAP:-8589934592} "$compiler") \
+  (cd "$build" && KILN_OUTPUT_FORMAT=lir KILN_DIAGNOSTIC_KIR=1 "${run[@]}" MMTK_GC_TRIGGER=FixedHeapSize:${KILN_COMPILER_HEAP:-8589934592} "$compiler") \
     >>"$build/compile.log" 2>&1 || { cat "$build/compile.log"; exit 1; }
   if [ -f "$image" ] && [ ! -f "$image.key" ]; then echo "$key" >"$image.key"; fi
 else
@@ -122,20 +124,20 @@ fi
 fail=0
 for src in "${sources[@]}"; do
   name=$(basename "${src%.lisp}")
-  kir=$build/$name.kir
+  kir=$build/$name.lir
   expected=${src%.lisp}.expected
   if [ -f "${src%.lisp}.same-kir" ]; then
     expected=$build/$(cat "${src%.lisp}.same-kir").kir
   fi
-  modules=("$build/kernel.kir")
+  modules=("$build/kernel.lir")
   # GC stress: a small heap forces frequent moving collections; CLOS's
   # live data (metaobjects, satiated call histories) needs more than 1 MiB.
   heap=1048576
   case $name in
-    clos-*) modules+=("$build/clos.kir"); heap=8388608 ;;
-    fe-*) modules+=("$build/clos.kir" "$build/frontend.kir"); heap=16777216 ;;
-    ev-*) modules+=("$build/clos.kir" "$build/frontend.kir" "$build/eval.kir"); heap=67108864 ;;
-    co-*) modules+=("$build/clos.kir" "$build/frontend.kir" "$build/eval.kir" "$build/compiler.kir")
+    clos-*) modules+=("$build/clos.lir"); heap=8388608 ;;
+    fe-*) modules+=("$build/clos.lir" "$build/frontend.lir"); heap=16777216 ;;
+    ev-*) modules+=("$build/clos.lir" "$build/frontend.lir" "$build/eval.lir"); heap=67108864 ;;
+    co-*) modules+=("$build/clos.lir" "$build/frontend.lir" "$build/eval.lir" "$build/compiler.lir")
           heap=67108864 ;;
   esac
   # Compiling a module on kiln keeps the module and the session live.

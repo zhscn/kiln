@@ -60,7 +60,11 @@
                              :direction :output :if-exists :supersede
                              :element-type (if text 'character '(unsigned-byte 8)))
           (if text (kiln.kir:print-module module out)
-              (kiln.kir::write-module-packet module out)))))
+              (kiln.kir::write-module-packet module out)))
+        (when (and (not text) (getenv "KILN_DIAGNOSTIC_KIR"))
+          (with-open-file (out (concatenate 'string name ".kir")
+                               :direction :output :if-exists :supersede)
+            (kiln.kir:print-module module out)))))
     (when (getenv "KILN_BUILD_TIMING")
       (format t "build-timing ~A ~D ~D ~D ~D~%" name
               (- front-end-end phase-start)
