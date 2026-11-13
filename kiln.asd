@@ -25,6 +25,7 @@
                (:file "lir")
                (:file "lir-function")
                (:file "lir-values")
+               (:file "lir-closures")
                (:file "hir/data")
                (:file "lower")
                (:file "values")

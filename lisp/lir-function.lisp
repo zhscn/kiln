@@ -18,6 +18,7 @@
   (views (make-hash-table :test 'equalp))
   (view-primaries (make-hash-table :test 'equalp))
   (value-aliases (make-hash-table :test 'equalp))
+  (closure-entries (make-hash-table :test 'equalp))
   active-view active-count
   (variables '()) (temporaries '()) (statements '()) (blocks '())
   (receive 0) (received-p nil) (captures 0) (counter 0))
@@ -157,9 +158,11 @@
                     (lir-pure-expression state :unbox-double (rest args))
                     `(:field-ref ,(lir-field-name (first args)) ,(lir-operand state (second args) :obj))))
                (:closure-ref
-                (unless (and (eq (first args) :self) (integerp (second args)) (<= 0 (second args)))
+                (unless (and (lir-primary-alias-p state (first args) :self)
+                             (integerp (second args)) (<= 0 (second args)))
                   (lir-function-error state "capture read needs self and a fixed index"))
-                (setf (lir-function-captures state) (max (lir-function-captures state) (1+ (second args))))
+                (unless (< (second args) (lir-function-captures state))
+                  (lir-function-error state "capture index is outside the declared shape"))
                 `(:capture-ref ,(second args)))
                ((:eq :ne :lt :le :gt :ge)
                 (let* ((kind (lir-comparison-kind state (first args) (second args)))
@@ -210,6 +213,7 @@
       (:tail-invoke
        (lir-emit state `(:tail-call ,(lir-operand state (first args) :obj)
                                    ,(mapcar (lambda (argument) (lir-operand state argument :obj)) (second args)))))
+      ((:alloc-closure :closure-set) (lir-closure-statement state statement))
       (:alloc-fixed
        (lir-no-handler state (fourth args))
        (multiple-value-bind (kind types)
@@ -355,6 +359,8 @@
   "Normalizes source expressions and binding code to the independent function grammar."
   (let* ((parts (cddr function)) (declarations (rest (assoc :vars parts)))
          (state (make-lir-function :name (second function) :data data)))
+    (setf (lir-function-captures state)
+          (or (gethash (second function) (lir-data-function-captures data)) 0))
     (dolist (declaration declarations)
       (let ((kind (ecase (second declaration) (:obj :obj) (:raw :word) (:f64 :f64))))
         (setf (gethash (first declaration) (lir-function-types state)) kind)
@@ -364,6 +370,7 @@
       (when (eq (first part) :block)
         (dolist (statement (cddr part))
           (lir-scan-value-statement state statement)
+          (lir-scan-closure-statement state statement)
           (case (first statement)
             (:set (lir-record-word-write state (second statement) (third statement)))
             (:receive-prefix

@@ -10,6 +10,7 @@
   (indices (make-hash-table :test 'equal))
   (cell-indices (make-hash-table :test 'equal))
   (mutable (make-hash-table :test 'equal))
+  (function-captures (make-hash-table :test 'equal))
   (constants '()) (cells '()) (builtins '()) (literals 0)
   literal-source
   (literal-extra '())
@@ -78,6 +79,34 @@
              (mapcar (lambda (word) (lir-data-value data word)) fields)))
       (t (lir-data-error "unsupported static object ~S" object)))))
 
+(defun lir-register-capture-shape (data entry count)
+  (unless (and (stringp entry) (integerp count) (<= 0 count))
+    (lir-data-error "invalid closure shape ~S ~S" entry count))
+  (multiple-value-bind (old found) (gethash entry (lir-data-function-captures data))
+    (when (and found (/= old count))
+      (lir-data-error "conflicting capture counts for ~S" entry)))
+  (setf (gethash entry (lir-data-function-captures data)) count))
+
+(defun lir-collect-capture-shapes (data module)
+  (maphash (lambda (name object)
+             (declare (ignore name))
+             (when (eq (first object) :static-function)
+               (lir-register-capture-shape data (second object) 0)))
+           (lir-data-objects data))
+  (dolist (function (kmodule-funcs module))
+    (let ((slots (rest (assoc :slots (cddr function)))))
+      (dolist (part (cddr function))
+        (when (eq (first part) :block)
+          (dolist (statement (cddr part))
+            (case (first statement)
+              (:alloc-closure
+               (lir-register-capture-shape data (third statement) (fourth statement)))
+              (:stack-closure
+               (let ((shape (second (assoc (third statement) slots :test #'equalp))))
+                 (unless (and (eq (first shape) :stack-object) (eql (second shape) +packet-class-function+))
+                   (lir-data-error "closure storage has no function shape"))
+                 (lir-register-capture-shape data (fourth statement) (third shape)))))))))))
+
 (defun collect-lir-data (module &optional literals)
   "Builds indexed semantic data, retaining cycles and mutable cache identities."
   (when (kmodule-imports module)
@@ -115,6 +144,7 @@
          (setf literal-table t (lir-data-literals data) (second form)))
         (:builtin (push form (lir-data-builtins data)))
         (t (lir-data-error "unsupported module declaration ~S" form))))
+    (lir-collect-capture-shapes data module)
     (when literals
       (unless (and (simple-vector-p literals) (= (length literals) (lir-data-literals data)))
         (lir-data-error "literal bindings disagree with the module declaration"))

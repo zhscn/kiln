@@ -1,0 +1,56 @@
+(defvar *lir-heap-counter* nil)
+(defvar *lir-heap-pair* nil)
+
+(let ((session (kiln.compiler:make-session)))
+  (multiple-value-bind (module original-literals)
+      (kiln.compiler:compile-module
+       (kiln.compiler::front-end-forms
+        '((setq *lir-heap-counter*
+                (let ((counter 10))
+                  (lambda (delta)
+                    (setq counter (+ counter delta))
+                    counter)))
+          (setq *lir-heap-pair*
+                (let ((marker 'done))
+                  (labels ((left-step (items)
+                             (if items (right-step (cdr items)) marker))
+                           (right-step (items)
+                             (if items (left-step (cdr items)) marker)))
+                    (list #'left-step #'right-step)))))
+        session)
+       "heap-closure-producer" :session session :image t)
+    (multiple-value-bind (program literals)
+        (kiln.kir::normalize-lir-module module original-literals)
+      (let* ((direct (kiln.sys:%primop :compile-program program literals kiln.kir::+backend-target-fingerprint+))
+             (packet (kiln.sys:%primop :encode-packet program kiln.kir::+packet-lir-payload+))
+             (decoded (kiln.sys:%primop :compile-packet packet literals)))
+        (dolist (initializer (list direct decoded))
+          (let ((*lir-heap-counter* nil) (*lir-heap-pair* nil))
+            (funcall initializer)
+            (kiln.sys:%gc)
+            (print (list (funcall *lir-heap-counter* 2)
+                         (funcall *lir-heap-counter* 3)
+                         (funcall (first *lir-heap-pair*) '(a b))
+                         (funcall (second *lir-heap-pair*) '(a b c))))))))))
+
+(dolist (case
+          '((:conflicting-shape "conflicting capture counts"
+             (:func "bad" (:vars (:a :obj) (:b :obj))
+               (:block :e (:alloc-closure :a "captured" 1 :nil)
+                 (:alloc-closure :b "captured" 2 :nil) (:return :a 1))))
+            (:capture-bound "capture index is outside"
+             (:func "bad" (:vars (:a :obj) (:saved :obj))
+               (:block :e (:set :saved :self) (:set :a (:closure-ref :saved 0))
+                 (:return :a 1))))
+            (:unknown-entry "capture store has no known closure entry"
+             (:func "bad" (:vars (:a :obj) (:n :raw))
+               (:block :e (:receive-prefix (:a) :n)
+                 (:closure-set :a 0 :a) (:return :a 1))))))
+  (let* ((module (kiln.kir:make-kmodule "rejected-closure"))
+         (kiln.kir::*module* module))
+    (kiln.kir:module-data "entry" '(:static-function "bad"))
+    (kiln.kir:module-init "entry")
+    (push (third case) (kiln.kir::kmodule-funcs module))
+    (handler-case (kiln.kir::normalize-lir-module module)
+      (error (condition)
+        (print (and (search (second case) (princ-to-string condition)) (first case)))))))

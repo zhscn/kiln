@@ -18,7 +18,7 @@
   (multiple-value-bind (old found) (gethash variable (lir-function-value-aliases state))
     (declare (ignore old))
     (setf (gethash variable (lir-function-value-aliases state))
-          (if (and (not found) (gethash value (lir-function-types state))) value :unknown))))
+          (if (and (not found) (or (gethash value (lir-function-types state)) (eq value :self))) value :unknown))))
 
 (defun lir-scan-value-statement (state statement)
   (case (first statement)
