@@ -1488,18 +1488,64 @@ fn parse_func(
                         lowered.push(crate::lir::relink_dynamic_entry(entry.to_string()));
                         continue;
                     }
+                    if head_name == "progv-restore" {
+                        arity(head_name, operands, 1)?;
+                        let entry = sym(&operands[0])?;
+                        if dynamic_entries.get(entry).map(String::as_str) != Some("progv") {
+                            return Err("progv-restore requires a progv entry".into());
+                        }
+                        let name = format!("{prefix}{alloc_number}");
+                        alloc_number += 1;
+                        let (vars, blocks, next, statements) = crate::lir::progv::restore(
+                            &name,
+                            block_name,
+                            lowered,
+                            entry.to_string(),
+                        )?;
+                        f.vars.extend(vars);
+                        f.blocks.extend(blocks);
+                        block_name = next;
+                        lowered = statements;
+                        *needs_nil = true;
+                        continue;
+                    }
                     if head_name == "dynamic-enter" {
-                        arity(head_name, operands, 3)?;
+                        if operands.len() != 3 && operands.len() != 5 {
+                            return Err(
+                                "dynamic-enter needs an entry, kind and binding inputs".into()
+                            );
+                        }
                         let entry = sym(&operands[0])?;
                         let kind = sym(&operands[1])?;
                         if dynamic_entries.get(entry).map(String::as_str) != Some(kind) {
                             return Err("dynamic-enter does not match entry slot".into());
                         }
-                        lowered.extend(crate::lir::enter_dynamic_entry(
-                            entry.to_string(),
-                            kind,
-                            parse_expr(&operands[2])?,
-                        )?);
+                        if kind == "progv" && operands.len() == 5 {
+                            let name = format!("{prefix}{alloc_number}");
+                            alloc_number += 1;
+                            let (vars, blocks, next, statements) = crate::lir::progv::enter(
+                                &name,
+                                block_name,
+                                lowered,
+                                entry.to_string(),
+                                parse_expr(&operands[2])?,
+                                parse_expr(&operands[3])?,
+                                handler(&operands[4])?,
+                            )?;
+                            f.vars.extend(vars);
+                            f.blocks.extend(blocks);
+                            block_name = next;
+                            lowered = statements;
+                            *needs_allocation = true;
+                            *needs_nil = true;
+                        } else {
+                            arity(head_name, operands, 3)?;
+                            lowered.extend(crate::lir::enter_dynamic_entry(
+                                entry.to_string(),
+                                kind,
+                                parse_expr(&operands[2])?,
+                            )?);
+                        }
                         continue;
                     }
                     if head_name == "dynamic-leave" {

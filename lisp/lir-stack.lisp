@@ -88,7 +88,7 @@
           (:stack-roots-entry
            (unless (gethash name entries) (lir-function-error state "stack roots have no entry")))
           (:dynamic-entry
-           (unless (member (second shape) '(:bind :catch :unwind-protect :exit-point))
+           (unless (member (second shape) '(:bind :progv :catch :unwind-protect :exit-point))
              (lir-function-error state "dynamic slots need structured region declarations")))
           (t (lir-function-error state "unknown storage declaration ~S" shape)))))
     (nreverse declarations)))

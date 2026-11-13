@@ -43,7 +43,7 @@
         (setf (gethash (second part) blocks) part)
         (dolist (statement (cddr part))
           (when (eq (first statement) :dynamic-enter)
-            (unless (member (third statement) '(:bind :catch :unwind-protect :exit-point))
+            (unless (member (third statement) '(:bind :progv :catch :unwind-protect :exit-point))
               (lir-function-error state "unsupported dynamic region ~S" (third statement)))
             (multiple-value-bind (old found) (gethash (second statement) (lir-function-region-tags state))
               (when (and found (not (equalp old (fourth statement))))
@@ -72,7 +72,7 @@
                            (kind (third statement))
                            (landing (gethash name (lir-function-region-landings state)))
                            (declaration `(:region ,name ,kind ,(or (first active) :nil) ,@(and landing (list landing)))))
-                      (when (and (not (eq kind :bind)) (null landing))
+                      (when (and (not (member kind '(:bind :progv))) (null landing))
                         (lir-function-error state "region has no source landing"))
                       (when landing
                         (edge landing (if (eq kind :unwind-protect) (cons name active) active)))
@@ -110,9 +110,16 @@
       ((:ensure-tls-index :special-unbind) nil)
       (:dynamic-enter
        (unless (eq (second args) :bind)
+         (when (eq (second args) :progv) (lir-check-handler state (fifth args)))
          (lir-emit state `(:enter ,(first args)
-                           ,(unless (eq (second args) :unwind-protect)
-                              (list (lir-operand state (third args) :obj)))))))
+                           ,(case (second args)
+                              (:unwind-protect nil)
+                              (:progv (list (lir-operand state (third args) :obj)
+                                            (lir-operand state (fourth args) :obj)))
+                              (t (list (lir-operand state (third args) :obj))))))))
+      (:progv-restore
+       (unless (eq (gethash (first args) (lir-function-region-kinds state)) :progv)
+         (lir-function-error state "restoration needs a progv region")))
       (:dynamic-relink
        (unless (eq (gethash (first args) (lir-function-region-kinds state)) :exit-point)
          (lir-function-error state "only an exit point can relink"))

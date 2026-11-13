@@ -241,7 +241,7 @@
        (lir-emit state `(:tail-call ,(lir-operand state (first args) :obj)
                                    ,(mapcar (lambda (argument) (lir-operand state argument :obj)) (second args)))))
       ((:ensure-tls-index :dynamic-enter :special-bind-index :special-unbind :dynamic-leave
-        :lir-landing :landed-values :unwind-values :continue-unwind :dynamic-relink)
+        :lir-landing :landed-values :unwind-values :continue-unwind :dynamic-relink :progv-restore)
        (lir-region-statement state statement))
       ((:alloc-closure :closure-set) (lir-closure-statement state statement))
       ((:stack-object-init :stack-roots-enter :stack-roots-leave :stack-cons :stack-closure :rest-list)

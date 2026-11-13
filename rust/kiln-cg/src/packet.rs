@@ -31,6 +31,8 @@ fn compute_target_fingerprint() -> u64 {
         include_bytes!("lir/builtins.rs").as_slice(),
         include_bytes!("lir/static_objects.rs").as_slice(),
         include_bytes!("lir/values.rs").as_slice(),
+        include_bytes!("lir/expansion.rs").as_slice(),
+        include_bytes!("lir/progv.rs").as_slice(),
         include_bytes!("lir/poll.rs").as_slice(),
         include_bytes!("lir/program/constants.rs").as_slice(),
         include_bytes!("lir/program/debug.rs").as_slice(),

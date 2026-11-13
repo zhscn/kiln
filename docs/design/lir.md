@@ -10,9 +10,9 @@
 
 栈上的 cons 和闭包以对象种类及引用项数量声明栈槽，由 Rust 决定大小、header、清零、引用字段起点和对象初始化。生成方标注栈根区域的进入与退出，Rust 初始化并链接动态根条目；rest 列表按生成方选择的栈槽地址初始化 cons。
 
-catch、unwind-protect、跨函数退出点、special 绑定和 progv 的动态条目也由 Rust 按语义种类建立和撤销。special 绑定的保存与恢复、progv 已保存绑定的读取和退出点重新链接使用对应的后端操作；Lisp 仍编排控制流及绑定、cleanup 的求值，退出目标及多值打包标志由后端从展开 payload 中解码。
+catch、unwind-protect、跨函数退出点、special 绑定和 progv 的动态条目也由 Rust 按语义种类建立和撤销。special 绑定与 progv 的保存、设置和恢复，以及退出点重新链接使用对应的后端操作；Lisp 仍编排控制流及绑定、cleanup 的求值，退出目标及多值打包标志由后端从展开 payload 中解码。
 
-`special-ref` 和 `special-set` 由 Rust 安排动态值与全局值的选择，调用方负责检查未绑定值。绑定和 progv 使用后端操作取得或分配 TLS 下标及读写动态槽；special 绑定按已分配的下标由后端保存旧值并设置新值，绑定顺序仍由调用方编排。下标分配的 runtime 调用不是 safepoint，调用名及签名由 Rust 决定，输入不携带 runtime 入口。
+`special-ref` 和 `special-set` 由 Rust 安排动态值与全局值的选择，调用方负责检查未绑定值。special 绑定使用后端操作取得或分配 TLS 下标，由后端保存旧值并设置新值，多个绑定的求值顺序仍由调用方编排。progv 提交已求值的符号列表与值列表；Lisp 检查 proper list 和元素类型，Rust 保存全部旧值后建立条目并写入新值，退出时恢复。下标分配的 runtime 调用不是 safepoint，调用名及签名由 Rust 决定，输入不携带 runtime 入口。
 
 兼容载荷的 `receive-prefix` 保存所需的位置参数前缀并返回实参数量，缺失位置为 NIL；与独立 LIR 的 `receive` 共用后端实现。rest 操作只提交后缀起点及存储候选，由 Rust 读取入口参数并构造列表。生成方按源码顺序处理默认式、supplied-p 和关键字，不选择参数寄存器或传递区位置。
 
@@ -71,6 +71,8 @@ Lisp 的模块数据转换器在 `lisp/lir.lisp` 中建立独立的常量图和 
 special 绑定可在不同分支中建立，不能按块的排列顺序推断外层区域。规范化器沿源 CFG 传播活动区域栈，在每个合流点检查一致性，据此声明 `bind` 区域及其外层区域。源端的 TLS 下标准备、绑定和恢复序列合并为接收 symbol 与初值的 `enter` 及对应的 `leave`；Rust 统一选择 TLS 槽并保存、恢复动态值。词法栈根区域参与同一嵌套检查，rest 的私有候选根则由后端自行管理。
 
 源 handler 用独立分派块检查展开目标，再将不匹配的目标转交外层。规范化器将这些分派块转换为区域的 landing 声明，并将调用上的 handler 标签映射到区域名。catch 和 exit-point 落地时的活动栈不包含本区域，unwind-protect 清理期间则保留本区域；清理体、落地多值及继续展开分别转为 `landing`、`mv` 和 `continue-unwind`。跨帧 `go` 在读取目标下标前重新进入退出点，允许同一 tagbody 多次接收跳转。Rust 负责目标分派、payload 和实际异常边上的初始化验证。
+
+PROGV 保存旧值时需要分配 cons，若在保存完成前修改动态值，分配中的退出就无法完整恢复。兼容载荷的 PROGV 入口与独立 LIR 的 `enter` 共用 Rust 展开器：先保存输入及全部旧 TLS 值，再链接区域并设置新值；缺少初值的符号设为未绑定。恢复循环没有调用或分配。规范化器将符号列表、值列表和区域直接交接给这一实现，避免 Lisp 解码恢复链或读写 TLS 槽。
 
 image 编译中的调试记录原本作为一个整体放在 literal 向量中，而独立 LIR 需要分别描述名称、文件、范围和变量。规范化器接收原 literal 绑定，检查记录与变量下标后将字段转换为语义描述；名称等对象追加到绑定向量末尾，复用已有对象的索引，原有索引保持稳定。`normalize-lir-module` 返回程序和更新后的绑定向量，调用方须将两者一起交给后端。cell 与未装箱浮点变量保留各自的调试标记，Rust 负责生成最终调试向量及 roots。
 

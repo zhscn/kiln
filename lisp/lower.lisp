@@ -672,19 +672,7 @@ if needed (not a safepoint)."
 
 (defun emit-unbind-progv (region)
   "Restores the bindings saved in the progv entry of REGION. No calls."
-  (let ((l (new-var))
-        (head (new-block)) (body (new-block)) (done (new-block)))
-    (emit `(:progv-bindings ,l ,(region-slot region)))
-    (jump head)
-    (start-block head)
-    (br `(:eq ,l ,(nil-value)) done body)
-    (start-block body)
-    (let ((pair (copy-to-var `(:field-load ,kiln.kir::+packet-field-cons-car+ ,l))))
-      (emit `(:tls-write (:field-load ,kiln.kir::+packet-field-cons-car+ ,pair)
-                         (:field-load ,kiln.kir::+packet-field-cons-cdr+ ,pair))))
-    (emit `(:set ,l (:field-load ,kiln.kir::+packet-field-cons-cdr+ ,l)))
-    (jump head)
-    (start-block done)))
+  (emit `(:progv-restore ,(region-slot region))))
 
 
 ;;; Allocation

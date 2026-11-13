@@ -7,8 +7,10 @@ use kiln_rt::object::{FunctionObj, SymbolObj, TAG_CONS, TAG_GENERAL};
 pub mod arguments;
 pub mod builtins;
 pub mod cells;
+mod expansion;
 pub mod poll;
 pub mod program;
+pub mod progv;
 pub mod static_objects;
 pub mod values;
 

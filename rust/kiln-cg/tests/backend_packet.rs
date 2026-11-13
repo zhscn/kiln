@@ -1370,3 +1370,67 @@ fn runtime_abi_description_is_current() {
         "regenerate with kiln-cg abi-description"
     );
 }
+
+#[test]
+fn progv_expansion_owns_dependencies_and_restoration_cannot_call() {
+    use kiln_cg::kir::Stmt;
+    let source = |kind, body: &str| {
+        format!(
+            "(module \"progv\" (init \"init\") (data \"init\" (words 2 (func \"body\")))
+         (func \"body\" (vars) (slots (entry (dynamic-entry {kind})))
+          (block e {body} (return a0 1))))"
+        )
+    };
+    let parse =
+        |kind, body| kiln_cg::kir::parse_module(&sexp::parse_one(&source(kind, body)).unwrap());
+    let module = parse(
+        "progv",
+        "(dynamic-enter entry progv a0 a1 h) (progv-restore entry) (dynamic-leave entry)",
+    )
+    .unwrap();
+    assert!(module.import_data.iter().any(|name| name == "kiln_nil"));
+    assert!(
+        module
+            .import_funcs
+            .iter()
+            .any(|f| f.name == "kiln_rt_alloc" && f.params == 3 && f.returns == 1 && f.unwinds)
+    );
+    assert!(
+        module
+            .import_funcs
+            .iter()
+            .any(|f| f.name == "kiln_rt_tls_index"
+                && f.params == 2
+                && f.returns == 1
+                && !f.unwinds)
+    );
+    let allocations = module.funcs[0]
+        .blocks
+        .iter()
+        .flat_map(|b| &b.stmts)
+        .filter_map(|stmt| match stmt {
+            Stmt::CallRt { name, handler, .. } if name == "kiln_rt_alloc" => Some(handler),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(!allocations.is_empty());
+    assert!(
+        allocations
+            .iter()
+            .all(|handler| handler.as_deref() == Some("h"))
+    );
+    let restore = parse("progv", "(progv-restore entry) (dynamic-leave entry)").unwrap();
+    assert!(
+        !restore.funcs[0]
+            .blocks
+            .iter()
+            .flat_map(|b| &b.stmts)
+            .any(|stmt| matches!(stmt, Stmt::CallRt { .. }))
+    );
+    assert!(
+        parse("bind", "(progv-restore entry)")
+            .unwrap_err()
+            .contains("progv entry")
+    );
+    assert!(parse("catch", "(dynamic-enter entry catch a0 a1 h)").is_err());
+}

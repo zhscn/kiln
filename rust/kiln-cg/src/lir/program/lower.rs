@@ -443,145 +443,6 @@ impl Lowerer<'_> {
         Ok(())
     }
 
-    fn enter_progv(&mut self, region: usize, symbols: Expr, values: Expr) -> Result<()> {
-        let syms = self.temporary(VarKind::Obj);
-        let vals = self.temporary(VarKind::Obj);
-        let cursor = self.temporary(VarKind::Obj);
-        let saved = self.temporary(VarKind::Obj);
-        let symbol = self.temporary(VarKind::Obj);
-        let pair = self.temporary(VarKind::Obj);
-        let value = self.temporary(VarKind::Obj);
-        let nil = self.nil();
-        self.emit(Stmt::Set(syms.clone(), symbols));
-        self.emit(Stmt::Set(vals.clone(), values));
-        self.emit(Stmt::Set(cursor.clone(), var(&syms)));
-        self.emit(Stmt::Set(saved.clone(), nil.clone()));
-        let head = self.fresh();
-        let body = self.fresh();
-        let bind = self.fresh();
-        self.emit(Stmt::Jump(head.clone()));
-        self.finish(head.clone());
-        self.emit(Stmt::Br(
-            compare(CmpOp::Eq, var(&cursor), nil.clone()),
-            bind.clone(),
-            body.clone(),
-        ));
-        self.finish(body);
-        self.emit(Stmt::Set(
-            symbol.clone(),
-            layout::field_load(Field::Car.id(), var(&cursor))?,
-        ));
-        self.tls_index(symbol.clone())?;
-        self.emit(Stmt::Set(value.clone(), layout::tls_read(var(&symbol))?));
-        self.allocate(
-            pair.clone(),
-            Allocation::Cons,
-            vec![var(&symbol), var(&value)],
-        )?;
-        self.allocate(
-            saved.clone(),
-            Allocation::Cons,
-            vec![var(&pair), var(&saved)],
-        )?;
-        self.emit(Stmt::Set(
-            cursor.clone(),
-            layout::field_load(Field::Cdr.id(), var(&cursor))?,
-        ));
-        self.emit(Stmt::Jump(head));
-        self.finish(bind);
-        // No binding changes until the complete restoration list is rooted by
-        // the entry. The remaining stores cannot allocate or unwind.
-        self.statements.extend(layout::enter_dynamic_entry(
-            self.slots[region].clone(),
-            "progv",
-            var(&saved),
-        )?);
-        self.emit(Stmt::Set(cursor.clone(), var(syms)));
-        let head = self.fresh();
-        let body = self.fresh();
-        let absent = self.fresh();
-        let present = self.fresh();
-        let store = self.fresh();
-        let done = self.fresh();
-        self.emit(Stmt::Jump(head.clone()));
-        self.finish(head.clone());
-        self.emit(Stmt::Br(
-            compare(CmpOp::Eq, var(&cursor), nil.clone()),
-            done.clone(),
-            body.clone(),
-        ));
-        self.finish(body);
-        self.emit(Stmt::Br(
-            compare(CmpOp::Eq, var(&vals), nil),
-            absent.clone(),
-            present.clone(),
-        ));
-        self.finish(absent);
-        self.emit(Stmt::Set(
-            value.clone(),
-            Expr::Int(kiln_rt::object::UNBOUND as i64),
-        ));
-        self.emit(Stmt::Jump(store.clone()));
-        self.finish(present);
-        self.emit(Stmt::Set(
-            value.clone(),
-            layout::field_load(Field::Car.id(), var(&vals))?,
-        ));
-        self.emit(Stmt::Set(
-            vals.clone(),
-            layout::field_load(Field::Cdr.id(), var(&vals))?,
-        ));
-        self.emit(Stmt::Jump(store.clone()));
-        self.finish(store);
-        self.emit(layout::tls_write(
-            layout::field_load(Field::Car.id(), var(&cursor))?,
-            var(value),
-        )?);
-        self.emit(Stmt::Set(
-            cursor.clone(),
-            layout::field_load(Field::Cdr.id(), var(&cursor))?,
-        ));
-        self.emit(Stmt::Jump(head));
-        self.finish(done);
-        Ok(())
-    }
-
-    fn leave_progv(&mut self, region: usize) -> Result<()> {
-        let cursor = self.temporary(VarKind::Obj);
-        let pair = self.temporary(VarKind::Obj);
-        self.emit(layout::progv_bindings(
-            cursor.clone(),
-            self.slots[region].clone(),
-        ));
-        let head = self.fresh();
-        let body = self.fresh();
-        let done = self.fresh();
-        let nil = self.nil();
-        self.emit(Stmt::Jump(head.clone()));
-        self.finish(head.clone());
-        self.emit(Stmt::Br(
-            compare(CmpOp::Eq, var(&cursor), nil),
-            done.clone(),
-            body.clone(),
-        ));
-        self.finish(body);
-        self.emit(Stmt::Set(
-            pair.clone(),
-            layout::field_load(Field::Car.id(), var(&cursor))?,
-        ));
-        self.emit(layout::tls_write(
-            layout::field_load(Field::Car.id(), var(&pair))?,
-            layout::field_load(Field::Cdr.id(), var(&pair))?,
-        )?);
-        self.emit(Stmt::Set(
-            cursor.clone(),
-            layout::field_load(Field::Cdr.id(), var(&cursor))?,
-        ));
-        self.emit(Stmt::Jump(head));
-        self.finish(done);
-        Ok(())
-    }
-
     fn append_expansion(&mut self, expansion: layout::values::Expansion) {
         let (vars, blocks, next, statements) = expansion;
         self.function.vars.extend(vars);
@@ -1280,7 +1141,18 @@ impl Lowerer<'_> {
                         )?);
                     }
                     RegionKind::Progv => {
-                        self.enter_progv(region, self.value(&args[0]), self.value(&args[1]))?
+                        let prefix = self.fresh();
+                        let expansion = layout::progv::enter(
+                            &prefix,
+                            self.block.clone(),
+                            std::mem::take(&mut self.statements),
+                            self.slots[region].clone(),
+                            self.value(&args[0]),
+                            self.value(&args[1]),
+                            self.handler(),
+                        )?;
+                        self.imports.insert("kiln_nil".into());
+                        self.append_expansion(expansion);
                     }
                     RegionKind::Bind => {
                         let index = self.tls_index(self.name(&args[0]))?;
@@ -1320,7 +1192,17 @@ impl Lowerer<'_> {
                     RegionKind::Bind => {
                         self.emit(layout::unbind_special(self.slots[region].clone()))
                     }
-                    RegionKind::Progv => self.leave_progv(region)?,
+                    RegionKind::Progv => {
+                        let prefix = self.fresh();
+                        let expansion = layout::progv::restore(
+                            &prefix,
+                            self.block.clone(),
+                            std::mem::take(&mut self.statements),
+                            self.slots[region].clone(),
+                        )?;
+                        self.imports.insert("kiln_nil".into());
+                        self.append_expansion(expansion);
+                    }
                     _ => (),
                 }
                 self.emit(layout::leave_dynamic_entry(self.slots[region].clone()));
