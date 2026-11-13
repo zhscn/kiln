@@ -25,6 +25,7 @@
   (value-aliases (make-hash-table :test 'equalp))
   (stack-shapes (make-hash-table :test 'equalp))
   (closure-entries (make-hash-table :test 'equalp))
+  rest rest-slots rest-regions
   active-view active-count
   (variables '()) (temporaries '()) (statements '()) (blocks '())
   (receive 0) (received-p nil) (captures 0) (counter 0))
@@ -226,7 +227,7 @@
        (lir-emit state `(:tail-call ,(lir-operand state (first args) :obj)
                                    ,(mapcar (lambda (argument) (lir-operand state argument :obj)) (second args)))))
       ((:alloc-closure :closure-set) (lir-closure-statement state statement))
-      ((:stack-object-init :stack-roots-enter :stack-roots-leave :stack-cons :stack-closure)
+      ((:stack-object-init :stack-roots-enter :stack-roots-leave :stack-cons :stack-closure :rest-list)
        (lir-stack-statement state statement))
       (:alloc-vector
        (lir-no-handler state (fifth args))
@@ -392,7 +393,7 @@
   "Normalizes source expressions and binding code to the independent function grammar."
   (let* ((parts (cddr function)) (declarations (rest (assoc :vars parts)))
          (state (make-lir-function :name (second function) :data data))
-         (storage (lir-prepare-stack state parts)))
+         (storage (progn (lir-prepare-rest state parts) (lir-prepare-stack state parts))))
     (setf (lir-function-captures state)
           (or (gethash (second function) (lir-data-function-captures data)) 0))
     (dolist (declaration declarations)
@@ -426,6 +427,7 @@
     (let ((debug (lir-function-debug state (or (assoc :debug parts) (assoc :debug-literal parts)) declarations)))
       `(:function ,(lir-function-name state) (:receive ,(lir-function-receive state))
         (:captures ,(lir-function-captures state))
+        ,@(and (lir-function-rest state) (list (lir-function-rest state)))
         (:vars ,@(nreverse (lir-function-variables state)) ,@(nreverse (lir-function-temporaries state)))
         ,@storage
         ,@(and debug (list debug))

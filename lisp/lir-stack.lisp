@@ -4,6 +4,25 @@
 ;;;; registered through the lexical body. Describe each object and its
 ;;;; root region together so Rust can initialize and link them atomically.
 
+(defun lir-prepare-rest (state parts)
+  (dolist (part parts)
+    (when (eq (first part) :block)
+      (dolist (statement (cddr part))
+        (when (eq (first statement) :rest-list)
+          (when (lir-function-rest state) (lir-function-error state "duplicate incoming rest list"))
+          (let ((variable (second statement)) (start (third statement)) (slots (fourth statement)))
+            (lir-no-handler state (fifth statement))
+            (unless (and (integerp start) (<= 0 start))
+              (lir-function-error state "rest start needs a nonnegative constant"))
+            (unless (= (length slots) (length (remove-duplicates slots :test #'equalp)))
+              (lir-function-error state "rest storage must be distinct"))
+            (dolist (slot slots)
+              (unless (equalp (second (assoc slot (rest (assoc :slots parts)) :test #'equalp))
+                              `(:stack-object ,+packet-class-cons+ 2))
+                (lir-function-error state "rest storage needs cons slots")))
+            (setf (lir-function-rest-slots state) slots
+                  (lir-function-rest state) `(:rest ,variable ,start ,@(and slots `((:stack ,(length slots))))))))))))
+
 (defun lir-stack-shape (state slot)
   (or (gethash slot (lir-function-stack-shapes state))
       (lir-function-error state "unknown stack storage ~S" slot)))
@@ -14,6 +33,7 @@
          (entries (make-hash-table :test 'equalp))
          (closures (make-hash-table :test 'equalp))
          (initialized (make-hash-table :test 'equalp))
+         (rooted (make-hash-table :test 'equalp))
          (outer :nil) (declarations '()))
     (dolist (slot slots)
       (when (gethash (first slot) (lir-function-stack-shapes state))
@@ -41,11 +61,15 @@
                             (equal (lir-stack-shape state region) '(:stack-roots-entry))
                             (equalp (lir-stack-shape state object) (cons :stack-object (cdddr statement)))
                             (gethash object initialized)
-                            (not (gethash region entries)))
+                            (not (gethash region entries))
+                            (not (gethash object rooted)))
                  (lir-function-error state "stack roots need unique matching entry storage"))
-               (setf (gethash region entries) t)
-               (push `(:region ,region :stack-roots ,outer ,object) declarations)
-               (setf outer region)))))))
+               (setf (gethash region entries) t (gethash object rooted) t)
+               (if (member object (lir-function-rest-slots state) :test #'equalp)
+                   (push region (lir-function-rest-regions state))
+                   (progn
+                     (push `(:region ,region :stack-roots ,outer ,object) declarations)
+                     (setf outer region)))))))))
     (dolist (slot slots)
       (let* ((name (first slot)) (shape (second slot))
              (class (second shape)) (count (third shape)))
@@ -53,12 +77,14 @@
           (:stack-object
            (unless (gethash name initialized)
              (lir-function-error state "stack storage has no initialization"))
-           (push `(:stack-object ,name
-                    ,(cond ((and (eql class +packet-class-cons+) (eql count 2)) :cons)
-                           ((and (eql class +packet-class-function+) (gethash name closures))
-                            `(:closure ,(gethash name closures)))
-                           (t (lir-function-error state "unsupported stack shape ~S" shape))))
-                 declarations))
+           (if (member name (lir-function-rest-slots state) :test #'equalp)
+               (unless (gethash name rooted) (lir-function-error state "rest storage has no root entry"))
+               (push `(:stack-object ,name
+                        ,(cond ((and (eql class +packet-class-cons+) (eql count 2)) :cons)
+                               ((and (eql class +packet-class-function+) (gethash name closures))
+                                `(:closure ,(gethash name closures)))
+                               (t (lir-function-error state "unsupported stack shape ~S" shape))))
+                     declarations)))
           (:stack-roots-entry
            (unless (gethash name entries) (lir-function-error state "stack roots have no entry")))
           (t (lir-function-error state "dynamic slots need structured region declarations")))))
@@ -67,12 +93,18 @@
 (defun lir-stack-statement (state statement)
   (let ((args (rest statement)))
     (ecase (first statement)
-      (:stack-object-init nil)
-      (:stack-roots-enter (lir-emit state `(:enter ,(first args) ())))
-      (:stack-roots-leave (lir-emit state `(:leave ,(first args))))
+      ((:stack-object-init :rest-list) nil)
+      (:stack-roots-enter
+       (unless (member (first args) (lir-function-rest-regions state) :test #'equalp)
+         (lir-emit state `(:enter ,(first args) ()))))
+      (:stack-roots-leave
+       (unless (member (first args) (lir-function-rest-regions state) :test #'equalp)
+         (lir-emit state `(:leave ,(first args)))))
       (:stack-cons
        (unless (and (consp (second args)) (eq (first (second args)) :slot))
          (lir-function-error state "stack cons needs named storage"))
+       (when (member (second (second args)) (lir-function-rest-slots state) :test #'equalp)
+         (lir-function-error state "rest storage cannot be used by another allocation"))
        (lir-emit state `(:alloc ,(first args) :cons (:stack ,(second (second args)))
                          (,(lir-operand state (third args) :obj) ,(lir-operand state (fourth args) :obj)))))
       (:stack-closure
