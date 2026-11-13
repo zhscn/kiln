@@ -32,7 +32,7 @@ double-float 的未装箱位模式和 complex 的实部、虚部通过字段操�
 
 `alloc-rack` 接收 class 和槽数，后端分配并初始化 rack；普通实例和 funcallable instance 使用 `alloc-fixed`。分配 rack 后再次分配实例时，rack 保持为精确 GC 根。rack 的长度检查预留 class 字段所需的空间。
 
-`alloc-symbol` 初始化 symbol 的名称、包、值和函数格，再由生成方建立未定义函数对象并写入函数格；这些分配期间 symbol 保持为精确根。动态分配路径不再由 Lisp 发射原始大小和 header，兼容载荷仍保留 `alloc-raw` 供旧输入使用。
+`alloc-symbol` 只接收名称，由 Rust 选择空包、空 plist、空函数格及未绑定值，再由生成方建立未定义函数对象并写入函数格；这些分配期间 symbol 保持为精确根。动态分配路径不再由 Lisp 发射原始大小和 header，兼容载荷仍保留 `alloc-raw` 供旧输入使用。
 
 静态函数、字符串、cons、simple-vector、bignum、ratio、complex、double-float 和 symbol 使用对象种类及内容描述，由 Rust 构造 header 与对象字。大整数常量提交十进制整数文本，Rust 选择补码 limbs、符号扩展及长度。引用和重定位保留原有的数据标签，字符串传递字符码点，Rust 负责 UTF-32 打包。静态 symbol 的可变字段以字段 ID 声明为根，包括需要随 image 保存的 TLS 下标。
 
@@ -75,6 +75,8 @@ special 绑定可在不同分支中建立，不能按块的排列顺序推断外
 PROGV 保存旧值时需要分配 cons，若在保存完成前修改动态值，分配中的退出就无法完整恢复。兼容载荷的 PROGV 入口与独立 LIR 的 `enter` 共用 Rust 展开器：先保存输入及全部旧 TLS 值，再链接区域并设置新值；缺少初值的符号设为未绑定。恢复循环没有调用或分配。规范化器将符号列表、值列表和区域直接交接给这一实现，避免 Lisp 解码恢复链或读写 TLS 槽。
 
 数值原语和已知 fixnum 的谓词均以 fixnum 描述声明对象零，机器字零只用于未装箱的计数、位模式和布尔结果。`heap-number-p` 接受任意对象并返回机器字布尔值，先检查 general 表示再读取 header，避免对立即数或 cons 解引用。兼容载荷和独立 LIR 共用这一展开。`hash-mix` 接收两个 fixnum 对象，按目标 fixnum 位宽执行回绕的 FNV-1a 步骤；素数和带 tag 的计算方式由 Rust 决定，Lisp 不组合表示位。这两种操作均不分配、不覆盖多值传递区。
+
+动态 symbol 的空字段和未定义函数的捕获布局属于后端对象表示。`alloc-symbol` 接收已求值的名称对象，Rust 初始化未驻留的 symbol，并将值格设为未绑定；`alloc-undefined-function` 接收所属 symbol 及 ordinary/setf 角色，由 Rust 安装相应入口并保存 symbol，供报错时恢复函数名。生成方随后将占位对象写入所需函数格。这些构造器先保存输入，允许结果覆盖输入变量，并在分配后使旧多值视图失效；分配前的异常边不包含结果的初始化。
 
 image 编译中的调试记录原本作为一个整体放在 literal 向量中，而独立 LIR 需要分别描述名称、文件、范围和变量。规范化器接收原 literal 绑定，检查记录与变量下标后将字段转换为语义描述；名称等对象追加到绑定向量末尾，复用已有对象的索引，原有索引保持稳定。`normalize-lir-module` 返回程序和更新后的绑定向量，调用方须将两者一起交给后端。cell 与未装箱浮点变量保留各自的调试标记，Rust 负责生成最终调试向量及 roots。
 

@@ -812,6 +812,45 @@ impl Lowerer<'_> {
                 self.block = next;
                 self.statements = statements;
             }
+            Instruction::AllocateSymbol { result, name } => {
+                let prefix = self.fresh();
+                let expansion = layout::allocate_symbol(
+                    &prefix,
+                    self.block.clone(),
+                    std::mem::take(&mut self.statements),
+                    self.name(result),
+                    self.value(name),
+                    self.handler(),
+                )?;
+                self.imports.insert("kiln_nil".into());
+                self.append_expansion(expansion);
+            }
+            Instruction::AllocateUndefined {
+                result,
+                symbol,
+                setf,
+            } => {
+                let prefix = self.fresh();
+                let expansion = layout::builtins::allocate_undefined(
+                    &prefix,
+                    self.block.clone(),
+                    std::mem::take(&mut self.statements),
+                    self.name(result),
+                    self.value(symbol),
+                    *setf,
+                    self.handler(),
+                )?;
+                self.imports.insert(
+                    if *setf {
+                        layout::builtins::Kind::UndefinedSetfFunction
+                    } else {
+                        layout::builtins::Kind::UndefinedFunction
+                    }
+                    .entry()
+                    .into(),
+                );
+                self.append_expansion(expansion);
+            }
             Instruction::AllocateSequence {
                 result,
                 kind,

@@ -406,6 +406,26 @@ fn block(xs: &[Sexp]) -> Result<Block> {
             continue;
         }
         instructions.push(match name {
+            "alloc-symbol" => {
+                arity(name, args, 2)?;
+                Instruction::AllocateSymbol {
+                    result: symbol(&args[0])?,
+                    name: symbol(&args[1])?,
+                }
+            }
+            "alloc-undefined-function" => {
+                arity(name, args, 3)?;
+                let setf = match symbol(&args[2])?.as_str() {
+                    "ordinary" => false,
+                    "setf" => true,
+                    _ => return Err("LIR: invalid undefined function kind".into()),
+                };
+                Instruction::AllocateUndefined {
+                    result: symbol(&args[0])?,
+                    symbol: symbol(&args[1])?,
+                    setf,
+                }
+            }
             "alloc-sequence" => {
                 arity(name, args, 4)?;
                 let kind = match symbol(&args[1])?.as_str() {

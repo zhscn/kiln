@@ -1891,3 +1891,52 @@ fn numeric_class_and_hash_operations_preserve_views_and_check_representations() 
         "expected Obj",
     );
 }
+
+#[test]
+fn symbol_constructors_check_representations_initialization_and_value_lifetimes() {
+    let text = r#"(lir-module "symbols" (init "body") (constants (string "fresh"))
+      (builtin undefined-function file) (builtin undefined-setf-function file)
+      (function "body" (receive 0) (vars (a obj) (b obj))
+       (block e (set a (constant 0)) (alloc-symbol a a)
+        (alloc-undefined-function b a ordinary) (field-set symbol.function a b)
+        (alloc-undefined-function b a setf) (field-set symbol.setf-function a b) (return (a)))))"#;
+    let ast = sexp::parse_one(text).unwrap();
+    let mut direct = program::compile(&ast).unwrap();
+    let mut decoded =
+        packet::load(&packet::encode(&ast, packet::schema::LIR_PAYLOAD).unwrap()).unwrap();
+    assert_eq!(direct.shared, decoded.shared);
+    direct.shared.clear();
+    decoded.shared.clear();
+    assert_eq!(format!("{direct:?}"), format!("{decoded:?}"));
+    reject(
+        "(block e (alloc-symbol a b) (return (a)))",
+        "not initialized",
+    );
+    reject(
+        "(block e (set x (word 0)) (alloc-symbol a x) (return (a)))",
+        "expected Obj",
+    );
+    reject(
+        "(block e (set a (nil)) (alloc-undefined-function x a ordinary) (return ()))",
+        "expected Obj",
+    );
+    reject(
+        "(block e (set a (nil)) (alloc-undefined-function b a raw-entry) (return (b)))",
+        "invalid undefined function kind",
+    );
+    for operation in [
+        "(alloc-symbol b a)",
+        "(alloc-undefined-function b a ordinary)",
+    ] {
+        reject(
+            &format!("(block e (set a (nil)) (values m (a)) {operation} (return-mv m))"),
+            "expired",
+        );
+        let text = source(&format!(
+            "(region r catch nil land)
+          (block e (set a (nil)) (enter r (a)) {operation} (leave r) (return (b)))
+          (block land (landing r n) (return (b)))"
+        ));
+        assert!(compile(&text).unwrap_err().contains("not initialized"));
+    }
+}

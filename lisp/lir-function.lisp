@@ -246,6 +246,13 @@
       ((:alloc-closure :closure-set) (lir-closure-statement state statement))
       ((:stack-object-init :stack-roots-enter :stack-roots-leave :stack-cons :stack-closure :rest-list)
        (lir-stack-statement state statement))
+      (:alloc-symbol
+       (lir-check-handler state (third args))
+       (lir-emit state `(:alloc-symbol ,(first args) ,(lir-operand state (second args) :obj))))
+      (:alloc-undefined-function
+       (lir-check-handler state (fourth args))
+       (lir-emit state `(:alloc-undefined-function ,(first args)
+                         ,(lir-operand state (second args) :obj) ,(third args))))
       (:alloc-vector
        (lir-check-handler state (fifth args))
        (let* ((kind (lir-class-name (second args)))

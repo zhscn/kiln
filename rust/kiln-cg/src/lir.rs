@@ -951,6 +951,39 @@ pub fn initialize_closure(result: String, address: String, entry: String) -> Vec
     ]
 }
 
+pub fn allocate_symbol(
+    prefix: &str,
+    block: String,
+    mut statements: Vec<Stmt>,
+    result: String,
+    name: Expr,
+    handler: Option<String>,
+) -> Result<values::Expansion, String> {
+    use crate::kir::VarKind;
+    let saved = format!("{prefix}_name");
+    let raw = format!("{prefix}_object");
+    statements.push(Stmt::Set(saved.clone(), name));
+    let (mut vars, blocks, next, mut statements) = allocate_raw(
+        prefix,
+        block,
+        statements,
+        raw.clone(),
+        Expr::Int(kiln_rt::object::SYMBOL_BYTES as i64),
+        Expr::Int(kiln_rt::object::KIND_SYMBOL as i64),
+        true,
+        "kiln_rt_alloc".into(),
+        handler,
+    )?;
+    vars.extend([(saved.clone(), VarKind::Obj), (raw.clone(), VarKind::Raw)]);
+    statements.extend(initialize_symbol(
+        result,
+        raw,
+        Expr::Var(saved),
+        Expr::Addr("kiln_nil".into(), TAG_GENERAL as i64),
+    ));
+    Ok((vars, blocks, next, statements))
+}
+
 pub fn initialize_symbol(result: String, address: String, name: Expr, nil: Expr) -> Vec<Stmt> {
     use crate::kir::BinOp;
     use kiln_rt::object::{SymbolObj, UNBOUND};

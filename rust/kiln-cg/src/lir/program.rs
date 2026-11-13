@@ -366,6 +366,15 @@ pub enum Instruction {
         loc: Option<kir::Loc>,
         region: Option<String>,
     },
+    AllocateSymbol {
+        result: String,
+        name: String,
+    },
+    AllocateUndefined {
+        result: String,
+        symbol: String,
+        setf: bool,
+    },
     AllocateSequence {
         result: String,
         kind: SequenceKind,

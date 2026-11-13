@@ -1632,6 +1632,25 @@ fn parse_func(
                         )?);
                         continue;
                     }
+                    if head_name == "alloc-symbol" && operands.len() == 3 {
+                        let name = format!("{prefix}{alloc_number}_symbol");
+                        alloc_number += 1;
+                        let (vars, blocks, next, statements) = crate::lir::allocate_symbol(
+                            &name,
+                            block_name,
+                            lowered,
+                            sym(&operands[0])?.into(),
+                            parse_expr(&operands[1])?,
+                            handler(&operands[2])?,
+                        )?;
+                        f.vars.extend(vars);
+                        f.blocks.extend(blocks);
+                        block_name = next;
+                        lowered = statements;
+                        *needs_allocation = true;
+                        *needs_nil = true;
+                        continue;
+                    }
                     if head_name == "alloc-symbol" {
                         arity(head_name, operands, 5)?;
                         let result = sym(&operands[0])?.to_string();

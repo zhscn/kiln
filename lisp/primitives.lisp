@@ -709,10 +709,8 @@ of it, SLOW-FN otherwise; both return an operand. Returns the result."
 (define-primop :make-symbol (name)
   ;; An uninterned symbol; both function cells hold an undefined-function
   ;; object for it.
-  (let* ((name (copy-to-var name))
-         (nil-object (copy-to-var (nil-value)))
-         (s (new-var)))
-    (emit `(:alloc-symbol ,s ,name ,nil-object ,(handler)))
+  (let* ((name (copy-to-var name)) (s (new-var)))
+    (emit `(:alloc-symbol ,s ,name ,(handler)))
     (emit-undefined-function-cells s)
     s))
 (defun emit-undefined-function-cells (s &key (function t) (setf-function t))

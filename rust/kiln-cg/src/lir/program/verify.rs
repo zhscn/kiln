@@ -258,6 +258,14 @@ fn instruction(
                 find_region(f, region)?;
             }
         }
+        Instruction::AllocateSymbol { result, name } => {
+            types.expect(result, Type::Obj)?;
+            types.expect(name, Type::Obj)?;
+        }
+        Instruction::AllocateUndefined { result, symbol, .. } => {
+            types.expect(result, Type::Obj)?;
+            types.expect(symbol, Type::Obj)?;
+        }
         Instruction::AllocateSequence {
             result,
             length,
@@ -625,7 +633,9 @@ impl State {
                     self.view = None;
                 }
             }
-            Instruction::AllocateStructure { result: dst, .. }
+            Instruction::AllocateSymbol { result: dst, .. }
+            | Instruction::AllocateUndefined { result: dst, .. }
+            | Instruction::AllocateStructure { result: dst, .. }
             | Instruction::AllocateInstance { result: dst, .. }
             | Instruction::AllocateSequence { result: dst, .. }
             | Instruction::Vector { result: dst, .. } => {
@@ -684,6 +694,8 @@ impl State {
     }
     fn check_instruction(&self, inst: &Instruction) -> Result<()> {
         match inst {
+            Instruction::AllocateSymbol { name, .. } => self.use_var(name)?,
+            Instruction::AllocateUndefined { symbol, .. } => self.use_var(symbol)?,
             Instruction::AllocateSequence {
                 length, initial, ..
             } => {
@@ -865,7 +877,9 @@ fn may_unwind(inst: &Instruction, f: &Function) -> bool {
     matches!(inst,Instruction::Runtime {operation,..} if operation.descriptor().safepoint)
         || matches!(
             inst,
-            Instruction::AllocateStructure { .. }
+            Instruction::AllocateSymbol { .. }
+                | Instruction::AllocateUndefined { .. }
+                | Instruction::AllocateStructure { .. }
                 | Instruction::AllocateInstance { .. }
                 | Instruction::AllocateSequence { .. }
                 | Instruction::Vector { .. }
