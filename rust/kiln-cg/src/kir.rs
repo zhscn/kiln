@@ -20,6 +20,8 @@ pub struct Module {
     /// Static GC roots: (data name, word index).
     pub roots: Vec<(String, u32)>,
     pub funcs: Vec<Func>,
+    /// Image literal bindings applied after static data has been registered.
+    pub literal_patches: Vec<(String, u32, usize)>,
 }
 
 #[derive(Debug, Clone)]
@@ -49,6 +51,8 @@ pub enum Word {
     Int(i64),
     DataAddr(String, i64),
     FuncAddr(String),
+    /// Lisp code entry imported through the image symbol registry.
+    CodeAddr(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,6 +120,7 @@ pub enum BinOp {
     /// Shifts by a count in a value, which must be in 0..64.
     Shlv,
     Sarv,
+    Shrv,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -278,7 +283,11 @@ fn loc(form: &str, rest: &[Sexp], n: usize) -> R<Option<Loc>> {
 
 fn handler(s: &Sexp) -> R<Option<String>> {
     let name = sym(s)?;
-    Ok(if name == "nil" { None } else { Some(name.to_string()) })
+    Ok(if name == "nil" {
+        None
+    } else {
+        Some(name.to_string())
+    })
 }
 
 pub fn parse_module(s: &Sexp) -> R<Module> {
@@ -295,8 +304,14 @@ pub fn parse_module(s: &Sexp) -> R<Module> {
         import_data: vec![],
         data: vec![],
         roots: vec![],
+        literal_patches: vec![],
         funcs: vec![],
     };
+    let mut needs_error_runtime = false;
+    let mut needs_allocation = false;
+    let mut imports_poll_retry = false;
+    let mut needs_nil = false;
+    let mut builtins = Vec::new();
     for d in decls {
         let (h, rest) = head(list(d)?)?;
         match h {
@@ -333,6 +348,34 @@ pub fn parse_module(s: &Sexp) -> R<Module> {
                 arity(h, rest, 1)?;
                 m.import_data.push(string(&rest[0])?.to_string());
             }
+            "builtin" => {
+                arity(h, rest, 2)?;
+                let kind = crate::lir::builtins::Kind::parse(sym(&rest[0])?)?;
+                let image = match sym(&rest[1])? {
+                    "image" => true,
+                    "file" => false,
+                    _ => return Err("invalid builtin scope".into()),
+                };
+                if builtins.iter().any(|(k, _)| *k == kind) {
+                    return Err("duplicate builtin declaration".into());
+                }
+                builtins.push((kind, image));
+            }
+            "literal-table" => {
+                arity(h, rest, 1)?;
+                crate::lir::cells::literals(
+                    &mut m,
+                    usize::try_from(int(&rest[0])?).map_err(|_| "invalid literal count")?,
+                )?;
+            }
+            "object-cell" => {
+                arity(h, rest, 2)?;
+                crate::lir::cells::declare(
+                    &mut m,
+                    string(&rest[0])?.into(),
+                    vec![parse_word(&rest[1])?],
+                )?;
+            }
             "data" => {
                 arity(h, rest, 2)?;
                 let name = string(&rest[0])?.to_string();
@@ -345,31 +388,134 @@ pub fn parse_module(s: &Sexp) -> R<Module> {
                     }
                     _ => DataContents::Words(parse_static_object(kind, items)?),
                 };
+                if kind == "static-mutable-cons" {
+                    m.roots.extend([(name.clone(), 1), (name.clone(), 2)]);
+                }
                 m.data.push(Data { name, contents });
             }
             "root" => {
                 arity(h, rest, 2)?;
-                m.roots.push((string(&rest[0])?.to_string(), int(&rest[1])? as u32));
+                m.roots
+                    .push((string(&rest[0])?.to_string(), int(&rest[1])? as u32));
             }
             "symbol-roots" => {
                 let (name, fields) = rest.split_first().ok_or("symbol-roots: missing name")?;
                 let name = string(name)?.to_string();
                 for field in fields {
-                    let field = u32::try_from(int(field)?).map_err(|_| "invalid symbol root field")?;
-                    m.roots.push((name.clone(), crate::lir::symbol_root_index(field)?));
+                    let field =
+                        u32::try_from(int(field)?).map_err(|_| "invalid symbol root field")?;
+                    m.roots
+                        .push((name.clone(), crate::lir::symbol_root_index(field)?));
                 }
             }
             "field-root" => {
                 arity(h, rest, 2)?;
                 let field = u32::try_from(int(&rest[1])?).map_err(|_| "invalid root field")?;
-                m.roots.push((string(&rest[0])?.to_string(), crate::lir::static_field_root_index(field)?));
+                m.roots.push((
+                    string(&rest[0])?.to_string(),
+                    crate::lir::static_field_root_index(field)?,
+                ));
             }
-            "func" => m.funcs.push(parse_func(rest)?),
+            "func" => m.funcs.push(parse_func(
+                rest,
+                &mut needs_error_runtime,
+                &mut needs_allocation,
+                &mut imports_poll_retry,
+                &mut needs_nil,
+            )?),
             _ => return Err(format!("unknown module declaration {h}")),
         }
     }
     if m.inits.is_empty() {
         return Err("module has no (init ...)".into());
+    }
+    for name in ["kiln_rt_integer_op", "kiln_rt_number_op"] {
+        if m.funcs
+            .iter()
+            .flat_map(|f| &f.blocks)
+            .flat_map(|b| &b.stmts)
+            .any(|s| matches!(s,Stmt::CallRt {name:n,..} if n == name))
+        {
+            if let Some(f) = m.import_funcs.iter().find(|f| f.name == name) {
+                if f.params != 4 || f.returns != 1 || !f.unwinds || f.noreturn {
+                    return Err(
+                        "numeric operation requires the runtime arithmetic signature".into(),
+                    );
+                }
+            } else {
+                m.import_funcs.push(ImportFunc {
+                    name: name.into(),
+                    params: 4,
+                    returns: 1,
+                    unwinds: true,
+                    noreturn: false,
+                });
+            }
+        }
+    }
+    for (kind, image) in builtins {
+        crate::lir::builtins::install(&mut m, kind, image)?;
+    }
+    crate::lir::builtins::register_error_imports(&mut m)?;
+    crate::lir::program::runtime::register_imports(&mut m)?;
+    crate::lir::values::register_imports(&mut m)?;
+    if imports_poll_retry {
+        m.import_data.push(crate::lir::poll::RETRY.into());
+    }
+    crate::lir::poll::register(&mut m)?;
+    crate::lir::register_tls_import(&mut m)?;
+    if needs_nil
+        && !m.import_data.iter().any(|n| n == "kiln_nil")
+        && !m.data.iter().any(|d| d.name == "kiln_nil")
+    {
+        m.import_data.push("kiln_nil".into());
+    }
+    if needs_allocation {
+        if let Some(f) = m.import_funcs.iter().find(|f| f.name == "kiln_rt_alloc") {
+            if f.params != 3 || f.returns != 1 || !f.unwinds || f.noreturn {
+                return Err("allocation requires the runtime allocation signature".into());
+            }
+        } else {
+            m.import_funcs.push(ImportFunc {
+                name: "kiln_rt_alloc".into(),
+                params: 3,
+                returns: 1,
+                unwinds: true,
+                noreturn: false,
+            });
+        }
+        if !m.import_data.iter().any(|n| n == "kiln_nil")
+            && !m.data.iter().any(|d| d.name == "kiln_nil")
+        {
+            m.import_data.push("kiln_nil".into());
+        }
+    }
+    if needs_error_runtime {
+        if let Some(f) = m.import_funcs.iter().find(|f| f.name == "kiln_rt_error") {
+            if f.params != 3 || f.returns != 0 || !f.unwinds || !f.noreturn {
+                return Err("error signaling requires the runtime error signature".into());
+            }
+        } else {
+            m.import_funcs.push(ImportFunc {
+                name: "kiln_rt_error".into(),
+                params: 3,
+                returns: 0,
+                unwinds: true,
+                noreturn: true,
+            });
+        }
+        for name in [
+            "kiln_nil",
+            kiln_rt::RUNTIME_ERROR_SYMBOL,
+            "kiln_undefined_function",
+        ] {
+            if !m.import_data.iter().any(|n| n == name)
+                && !m.data.iter().any(|d| d.name == name)
+                && !m.funcs.iter().any(|f| f.name == name)
+            {
+                m.import_data.push(name.into());
+            }
+        }
     }
     Ok(m)
 }
@@ -379,13 +525,18 @@ pub fn parse_module(s: &Sexp) -> R<Module> {
 /// defined twice is an error.
 pub fn merge(modules: Vec<Module>) -> R<Module> {
     let mut out = Module {
-        name: modules.iter().map(|m| m.name.as_str()).collect::<Vec<_>>().join("+"),
+        name: modules
+            .iter()
+            .map(|m| m.name.as_str())
+            .collect::<Vec<_>>()
+            .join("+"),
         inits: vec![],
         shared: Default::default(),
         import_funcs: vec![],
         import_data: vec![],
         data: vec![],
         roots: vec![],
+        literal_patches: vec![],
         funcs: vec![],
     };
     let mut defined = std::collections::HashSet::new();
@@ -393,6 +544,7 @@ pub fn merge(modules: Vec<Module>) -> R<Module> {
     let mut roots = std::collections::HashSet::new();
     for m in modules {
         out.inits.extend(m.inits);
+        out.literal_patches.extend(m.literal_patches);
         for f in m.import_funcs {
             if imported.insert(f.name.clone()) {
                 out.import_funcs.push(f);
@@ -424,6 +576,9 @@ pub fn merge(modules: Vec<Module>) -> R<Module> {
         }
         out.shared.extend(m.shared);
     }
+    // Address imports may resolve to a Lisp entry defined by another input
+    // module. Declare that name only as its definition's symbol kind.
+    out.import_data.retain(|name| !defined.contains(name));
     Ok(out)
 }
 
@@ -434,18 +589,24 @@ fn parse_word(s: &Sexp) -> R<Word> {
             let (h, rest) = head(list(s)?)?;
             match h {
                 "data" => {
-                    if rest.len() != 1 && rest.len() != 2 { return Err("data word: expected name and optional addend".into()); }
+                    if rest.len() != 1 && rest.len() != 2 {
+                        return Err("data word: expected name and optional addend".into());
+                    }
                     let addend = if rest.len() > 1 { int(&rest[1])? } else { 0 };
                     Ok(Word::DataAddr(string(&rest[0])?.to_string(), addend))
                 }
                 "object-data" => {
                     arity(h, rest, 2)?;
-                    Ok(Word::DataAddr(string(&rest[0])?.to_string(), crate::lir::static_object_tag(sym(&rest[1])?)?))
+                    Ok(Word::DataAddr(
+                        string(&rest[0])?.to_string(),
+                        crate::lir::static_object_tag(sym(&rest[1])?)?,
+                    ))
                 }
                 "fixnum" => {
                     arity(h, rest, 1)?;
                     let value = int(&rest[0])?;
-                    if !(kiln_rt::object::FIXNUM_MIN..=kiln_rt::object::FIXNUM_MAX).contains(&value) {
+                    if !(kiln_rt::object::FIXNUM_MIN..=kiln_rt::object::FIXNUM_MAX).contains(&value)
+                    {
                         return Err("fixnum out of range".into());
                     }
                     Ok(Word::Int(value << 1))
@@ -453,13 +614,21 @@ fn parse_word(s: &Sexp) -> R<Word> {
                 "character" => {
                     arity(h, rest, 1)?;
                     let code = int(&rest[0])?;
-                    if !(0..0x110000).contains(&code) { return Err("character code out of range".into()); }
-                    Ok(Word::Int((code << kiln_rt::object::CHARACTER_SHIFT) | kiln_rt::object::CHARACTER_TAG as i64))
+                    if !(0..0x110000).contains(&code) {
+                        return Err("character code out of range".into());
+                    }
+                    Ok(Word::Int(
+                        (code << kiln_rt::object::CHARACTER_SHIFT)
+                            | kiln_rt::object::CHARACTER_TAG as i64,
+                    ))
                 }
                 "single-float" => {
                     arity(h, rest, 1)?;
-                    let bits = u32::try_from(int(&rest[0])?).map_err(|_| "single-float bits out of range")?;
-                    Ok(Word::Int((((bits as u64) << 32) | kiln_rt::number::SINGLE_TAG) as i64))
+                    let bits = u32::try_from(int(&rest[0])?)
+                        .map_err(|_| "single-float bits out of range")?;
+                    Ok(Word::Int(
+                        (((bits as u64) << 32) | kiln_rt::number::SINGLE_TAG) as i64,
+                    ))
                 }
                 "func" => {
                     arity(h, rest, 1)?;
@@ -479,14 +648,17 @@ fn parse_static_object(kind: &str, items: &[Sexp]) -> R<Vec<Word>> {
     use kiln_rt::object::*;
     let header = |kind: u64, length: usize| -> R<Word> {
         let length = u64::try_from(length).map_err(|_| "static object length out of range")?;
-        if length > LENGTH_MASK { return Err("static object length out of range".into()); }
+        if length > LENGTH_MASK {
+            return Err("static object length out of range".into());
+        }
         Ok(Word::Int((kind | (length << LENGTH_SHIFT)) as i64))
     };
     match kind {
         "static-symbol" => {
             arity(kind, items, 6)?;
             let mut words = vec![Word::Int(0); size_of::<SymbolObj>() / size_of::<u64>()];
-            words[core::mem::offset_of!(SymbolObj, header) / size_of::<u64>()] = Word::Int(KIND_SYMBOL as i64);
+            words[core::mem::offset_of!(SymbolObj, header) / size_of::<u64>()] =
+                Word::Int(KIND_SYMBOL as i64);
             for (offset, value) in [
                 (core::mem::offset_of!(SymbolObj, name), &items[0]),
                 (core::mem::offset_of!(SymbolObj, package), &items[1]),
@@ -500,8 +672,13 @@ fn parse_static_object(kind: &str, items: &[Sexp]) -> R<Vec<Word>> {
             Ok(words)
         }
         "static-function" => {
-            let (entry, captures) = items.split_first().ok_or("static-function: missing entry")?;
-            let mut words = vec![header(KIND_FUNCTION, captures.len())?, Word::FuncAddr(string(entry)?.to_string())];
+            let (entry, captures) = items
+                .split_first()
+                .ok_or("static-function: missing entry")?;
+            let mut words = vec![
+                header(KIND_FUNCTION, captures.len())?,
+                Word::FuncAddr(string(entry)?.to_string()),
+            ];
             words.extend(captures.iter().map(parse_word).collect::<R<Vec<_>>>()?);
             Ok(words)
         }
@@ -509,36 +686,93 @@ fn parse_static_object(kind: &str, items: &[Sexp]) -> R<Vec<Word>> {
             let mut words = vec![header(KIND_STRING, items.len())?];
             for pair in items.chunks(2) {
                 let lo = u32::try_from(int(&pair[0])?).map_err(|_| "invalid string code point")?;
-                let hi = if pair.len() == 2 { u32::try_from(int(&pair[1])?).map_err(|_| "invalid string code point")? } else { 0 };
-                if lo >= 0x110000 || hi >= 0x110000 { return Err("invalid string code point".into()); }
+                let hi = if pair.len() == 2 {
+                    u32::try_from(int(&pair[1])?).map_err(|_| "invalid string code point")?
+                } else {
+                    0
+                };
+                if lo >= 0x110000 || hi >= 0x110000 {
+                    return Err("invalid string code point".into());
+                }
                 words.push(Word::Int((u64::from(lo) | (u64::from(hi) << 32)) as i64));
             }
             Ok(words)
         }
+        "static-builtin" => {
+            let (kind, captures) = items.split_first().ok_or("static builtin needs kind")?;
+            let kind = crate::lir::builtins::Kind::parse(sym(kind)?)?;
+            let count = match kind {
+                crate::lir::builtins::Kind::UndefinedFunction
+                | crate::lir::builtins::Kind::UndefinedSetfFunction => 1,
+                crate::lir::builtins::Kind::FuncallableUnset => 0,
+                _ => return Err("builtin cannot be a static function object".into()),
+            };
+            if captures.len() != count {
+                return Err("wrong builtin capture count".into());
+            }
+            let mut words = vec![
+                header(KIND_FUNCTION, count)?,
+                Word::FuncAddr(kind.entry().into()),
+            ];
+            words.extend(captures.iter().map(parse_word).collect::<R<Vec<_>>>()?);
+            Ok(words)
+        }
+        "static-integer" => {
+            arity(kind, items, 1)?;
+            let value = num_bigint::BigInt::parse_bytes(string(&items[0])?.as_bytes(), 10)
+                .ok_or("invalid static integer")?;
+            Ok(crate::lir::static_objects::integer_words(&value))
+        }
         "static-vector" | "static-bignum" => {
-            let object_kind = if kind == "static-vector" { KIND_SIMPLE_VECTOR } else { KIND_BIGNUM };
+            let object_kind = if kind == "static-vector" {
+                KIND_SIMPLE_VECTOR
+            } else {
+                KIND_BIGNUM
+            };
             let mut words = vec![header(object_kind, items.len())?];
             if kind == "static-bignum" {
-                words.extend(items.iter().map(|word| int(word).map(Word::Int)).collect::<R<Vec<_>>>()?);
+                words.extend(
+                    items
+                        .iter()
+                        .map(|word| int(word).map(Word::Int))
+                        .collect::<R<Vec<_>>>()?,
+                );
             } else {
                 words.extend(items.iter().map(parse_word).collect::<R<Vec<_>>>()?);
             }
             Ok(words)
         }
-        "static-cons" | "static-ratio" | "static-complex" => {
+        "static-cons" | "static-mutable-cons" | "static-ratio" | "static-complex" => {
             arity(kind, items, 2)?;
-            let object_kind = match kind { "static-cons" => KIND_CONS, "static-ratio" => KIND_RATIO, _ => KIND_COMPLEX };
-            Ok(vec![Word::Int(object_kind as i64), parse_word(&items[0])?, parse_word(&items[1])?])
+            let object_kind = match kind {
+                "static-cons" | "static-mutable-cons" => KIND_CONS,
+                "static-ratio" => KIND_RATIO,
+                _ => KIND_COMPLEX,
+            };
+            Ok(vec![
+                Word::Int(object_kind as i64),
+                parse_word(&items[0])?,
+                parse_word(&items[1])?,
+            ])
         }
         "static-double" => {
             arity(kind, items, 1)?;
-            Ok(vec![Word::Int(KIND_DOUBLE as i64), Word::Int(int(&items[0])?)])
+            Ok(vec![
+                Word::Int(KIND_DOUBLE as i64),
+                Word::Int(int(&items[0])?),
+            ])
         }
         _ => Err(format!("data: unknown contents {kind}")),
     }
 }
 
-fn parse_func(rest: &[Sexp]) -> R<Func> {
+fn parse_func(
+    rest: &[Sexp],
+    needs_error_runtime: &mut bool,
+    needs_allocation: &mut bool,
+    imports_poll_retry: &mut bool,
+    needs_nil: &mut bool,
+) -> R<Func> {
     let (name, body) = rest.split_first().ok_or("func: missing name")?;
     let mut f = Func {
         name: string(name)?.to_string(),
@@ -555,21 +789,27 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
             _ => false,
         }
     }
-    fn validate_stack_references(value: &Sexp, objects: &std::collections::HashMap<String, (u32, i64)>) -> R<()> {
+    fn validate_stack_references(
+        value: &Sexp,
+        objects: &std::collections::HashMap<String, (u32, i64)>,
+    ) -> R<()> {
         if let Sexp::List(items) = value {
             if let Some(Sexp::Sym(name)) = items.first() {
                 if name == "stack-reference-base" {
                     let args = &items[1..];
                     arity(name, args, 3)?;
                     let slot = sym(&args[0])?;
-                    let class = u32::try_from(int(&args[1])?).map_err(|_| "invalid stack object class")?;
+                    let class =
+                        u32::try_from(int(&args[1])?).map_err(|_| "invalid stack object class")?;
                     let count = int(&args[2])?;
                     if objects.get(slot) != Some(&(class, count)) {
                         return Err("stack reference base does not match slot".into());
                     }
                 }
             }
-            for item in items { validate_stack_references(item, objects)?; }
+            for item in items {
+                validate_stack_references(item, objects)?;
+            }
         }
         Ok(())
     }
@@ -616,24 +856,42 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                             let (kind, args) = head(list(descriptor)?)?;
                             if kind == "stack-roots-entry" {
                                 arity(kind, args, 0)?;
-                                if !stack_root_entries.insert(name.clone()) { return Err("duplicate stack roots entry".into()); }
-                                f.slots.push((name, core::mem::size_of::<kiln_rt::context::DynEntry>() as u32));
+                                if !stack_root_entries.insert(name.clone()) {
+                                    return Err("duplicate stack roots entry".into());
+                                }
+                                f.slots.push((
+                                    name,
+                                    core::mem::size_of::<kiln_rt::context::DynEntry>() as u32,
+                                ));
                                 continue;
                             }
                             if kind == "dynamic-entry" {
                                 arity(kind, args, 1)?;
                                 let entry_kind = sym(&args[0])?;
                                 crate::lir::dynamic_entry_kind(entry_kind)?;
-                                if dynamic_entries.insert(name.clone(), entry_kind.to_string()).is_some() { return Err("duplicate dynamic entry".into()); }
-                                f.slots.push((name, core::mem::size_of::<kiln_rt::context::DynEntry>() as u32));
+                                if dynamic_entries
+                                    .insert(name.clone(), entry_kind.to_string())
+                                    .is_some()
+                                {
+                                    return Err("duplicate dynamic entry".into());
+                                }
+                                f.slots.push((
+                                    name,
+                                    core::mem::size_of::<kiln_rt::context::DynEntry>() as u32,
+                                ));
                                 continue;
                             }
-                            if kind != "stack-object" { return Err("unknown slot descriptor".into()); }
+                            if kind != "stack-object" {
+                                return Err("unknown slot descriptor".into());
+                            }
                             arity(kind, args, 2)?;
-                            let class = u32::try_from(int(&args[0])?).map_err(|_| "invalid stack object class")?;
+                            let class = u32::try_from(int(&args[0])?)
+                                .map_err(|_| "invalid stack object class")?;
                             let count = int(&args[1])?;
                             let (size, _, _) = crate::lir::stack_object_layout(class, count)?;
-                            if stack_objects.insert(name.clone(), (class, count)).is_some() { return Err("duplicate stack object slot".into()); }
+                            if stack_objects.insert(name.clone(), (class, count)).is_some() {
+                                return Err("duplicate stack object slot".into());
+                            }
                             size
                         }
                     };
@@ -644,9 +902,21 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                 arity(h, items, 1)?;
                 f.debug = Some(DebugRef::Direct(parse_word(&items[0])?));
             }
+            "debug-literal" => {
+                arity(h, items, 1)?;
+                let index =
+                    usize::try_from(int(&items[0])?).map_err(|_| "invalid debug literal index")?;
+                f.debug = Some(DebugRef::Indirect(
+                    crate::lir::cells::LITERALS.into(),
+                    i64::from(crate::lir::cells::offset(index)?),
+                ));
+            }
             "debug-ref" => {
                 arity(h, items, 2)?;
-                f.debug = Some(DebugRef::Indirect(string(&items[0])?.to_string(), int(&items[1])?));
+                f.debug = Some(DebugRef::Indirect(
+                    string(&items[0])?.to_string(),
+                    int(&items[1])?,
+                ));
             }
             "block" => {
                 let (bname, stmts) = items.split_first().ok_or("block: missing name")?;
@@ -655,13 +925,330 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                 for stmt in stmts {
                     validate_stack_references(stmt, &stack_objects)?;
                     let (head_name, operands) = head(list(stmt)?)?;
+                    let allocation_arity = match head_name {
+                        "alloc-vector-elements" => Some(3),
+                        "alloc-symbol" | "alloc-structure" | "alloc-rack" | "alloc-closure"
+                        | "alloc-cons" | "alloc-fixed" => Some(4),
+                        "alloc-vector" | "alloc-raw" => Some(5),
+                        _ => None,
+                    };
+                    let allocation_operands = if allocation_arity == Some(operands.len()) {
+                        let mut fields = operands.to_vec();
+                        fields.insert(fields.len() - 1, Sexp::Str("kiln_rt_alloc".into()));
+                        *needs_allocation = true;
+                        Some(fields)
+                    } else {
+                        None
+                    };
+                    let operands = allocation_operands.as_deref().unwrap_or(operands);
+                    if matches!(
+                        head_name,
+                        "push-values"
+                            | "values-list"
+                            | "save-values"
+                            | "list-values"
+                            | "restore-values"
+                            | "landed-values"
+                            | "unwind-values"
+                            | "continue-unwind"
+                    ) {
+                        let prefix = format!("{prefix}{alloc_number}_values");
+                        alloc_number += 1;
+                        let expansion = match head_name {
+                            "push-values" | "values-list" | "save-values" => {
+                                let push = head_name == "push-values";
+                                arity(head_name, operands, if push { 5 } else { 4 })?;
+                                let mode = if push {
+                                    crate::lir::values::Packing::Reverse(parse_expr(&operands[3])?)
+                                } else if head_name == "save-values" {
+                                    crate::lir::values::Packing::Compact
+                                } else {
+                                    crate::lir::values::Packing::List
+                                };
+                                crate::lir::values::pack(
+                                    &prefix,
+                                    block_name,
+                                    lowered,
+                                    sym(&operands[0])?.into(),
+                                    parse_expr(&operands[1])?,
+                                    parse_expr(&operands[2])?,
+                                    mode,
+                                    handler(&operands[if push { 4 } else { 3 }])?,
+                                )?
+                            }
+                            "list-values" | "restore-values" => {
+                                let compact = head_name == "restore-values";
+                                arity(head_name, operands, if compact { 5 } else { 4 })?;
+                                crate::lir::values::restore(
+                                    &prefix,
+                                    block_name,
+                                    lowered,
+                                    sym(&operands[0])?.into(),
+                                    sym(&operands[1])?.into(),
+                                    parse_expr(&operands[2])?,
+                                    if compact {
+                                        Some(parse_expr(&operands[3])?)
+                                    } else {
+                                        None
+                                    },
+                                    !compact,
+                                    handler(&operands[if compact { 4 } else { 3 }])?,
+                                )?
+                            }
+                            "landed-values" => {
+                                arity(head_name, operands, 2)?;
+                                crate::lir::values::land(
+                                    &prefix,
+                                    block_name,
+                                    lowered,
+                                    sym(&operands[0])?.into(),
+                                    sym(&operands[1])?.into(),
+                                )?
+                            }
+                            "unwind-values" => {
+                                let location = loc(head_name, operands, 5)?;
+                                let exit = match sym(&operands[0])? {
+                                    "throw" => false,
+                                    "exit-to" => true,
+                                    _ => return Err("invalid nonlocal exit kind".into()),
+                                };
+                                crate::lir::values::unwind(
+                                    &prefix,
+                                    block_name,
+                                    lowered,
+                                    parse_expr(&operands[1])?,
+                                    parse_expr(&operands[2])?,
+                                    parse_expr(&operands[3])?,
+                                    exit,
+                                    handler(&operands[4])?,
+                                    location,
+                                )?
+                            }
+                            "continue-unwind" => {
+                                let location = loc(head_name, operands, 2)?;
+                                let entry = sym(&operands[0])?;
+                                if dynamic_entries.get(entry).map(String::as_str)
+                                    != Some("unwind-protect")
+                                {
+                                    return Err(
+                                        "continue-unwind requires an unwind-protect entry".into()
+                                    );
+                                }
+                                lowered.extend(crate::lir::values::continue_unwind(
+                                    entry.into(),
+                                    handler(&operands[1])?,
+                                    location,
+                                ));
+                                (vec![], vec![], block_name, lowered)
+                            }
+                            _ => unreachable!(),
+                        };
+                        let (vars, blocks, next, statements) = expansion;
+                        f.vars.extend(vars);
+                        f.blocks.extend(blocks);
+                        block_name = next;
+                        lowered = statements;
+                        *needs_allocation = true;
+                        *needs_error_runtime = true;
+                        continue;
+                    }
+                    if head_name == "runtime-op" {
+                        let location = loc(head_name, operands, 4)?;
+                        let operation =
+                            crate::lir::program::RuntimeOperation::parse(sym(&operands[1])?)
+                                .ok_or("unknown runtime operation")?;
+                        let prefix = format!("{prefix}{alloc_number}_runtime");
+                        alloc_number += 1;
+                        let (vars, blocks, next, statements) = operation.lower(
+                            &prefix,
+                            block_name,
+                            lowered,
+                            sym(&operands[0])?.into(),
+                            list(&operands[2])?
+                                .iter()
+                                .map(parse_expr)
+                                .collect::<R<_>>()?,
+                            handler(&operands[3])?,
+                            location,
+                        )?;
+                        f.vars.extend(vars);
+                        f.blocks.extend(blocks);
+                        block_name = next;
+                        lowered = statements;
+                        continue;
+                    }
+                    if head_name == "poll" {
+                        arity(head_name, operands, 2)?;
+                        let mode = sym(&operands[0])?;
+                        if !matches!(mode, "entry" | "loop" | "entry-retry" | "entry-retry-image") {
+                            return Err("invalid poll mode".into());
+                        }
+                        *imports_poll_retry |= mode == "entry-retry-image";
+                        let prefix = format!("{prefix}{alloc_number}_poll");
+                        alloc_number += 1;
+                        let (vars, blocks, next, statements) = crate::lir::poll::expand(
+                            &prefix,
+                            block_name,
+                            lowered,
+                            mode != "loop",
+                            mode.starts_with("entry-retry"),
+                            handler(&operands[1])?,
+                        )?;
+                        f.vars.extend(vars);
+                        f.blocks.extend(blocks);
+                        block_name = next;
+                        lowered = statements;
+                        continue;
+                    }
+                    if head_name == "receive-prefix" {
+                        arity(head_name, operands, 2)?;
+                        let names = list(&operands[0])?
+                            .iter()
+                            .map(|x| sym(x).map(str::to_string))
+                            .collect::<R<Vec<_>>>()?;
+                        lowered.extend(crate::lir::arguments::receive_prefix(
+                            &names,
+                            Some(sym(&operands[1])?.into()),
+                        )?);
+                        *needs_nil = true;
+                        continue;
+                    }
+                    if head_name == "rest-list" {
+                        let implicit = operands.len() == 4;
+                        arity(head_name, operands, if implicit { 4 } else { 5 })?;
+                        let first = usize::try_from(int(&operands[1])?)
+                            .map_err(|_| "invalid rest start")?;
+                        let slots = list(&operands[if implicit { 2 } else { 3 }])?
+                            .iter()
+                            .map(|x| sym(x).map(str::to_string))
+                            .collect::<R<Vec<_>>>()?;
+                        if slots.iter().any(|s| {
+                            stack_objects.get(s) != Some(&(crate::packet::schema::CLASS_CONS, 2))
+                        }) {
+                            return Err("rest-list requires cons stack slots".into());
+                        }
+                        let prefix = format!("{prefix}{alloc_number}_rest");
+                        alloc_number += 1;
+                        let (vars, blocks, next, statements) = crate::lir::arguments::rest_list(
+                            &prefix,
+                            block_name,
+                            lowered,
+                            sym(&operands[0])?.into(),
+                            first,
+                            if implicit {
+                                (0..REG_ARGS).map(|i| Expr::Var(format!("a{i}"))).collect()
+                            } else {
+                                list(&operands[2])?
+                                    .iter()
+                                    .map(parse_expr)
+                                    .collect::<R<_>>()?
+                            },
+                            &slots,
+                            handler(&operands[if implicit { 3 } else { 4 }])?,
+                        )?;
+                        f.vars.extend(vars);
+                        f.blocks.extend(blocks);
+                        block_name = next;
+                        lowered = statements;
+                        *needs_allocation = true;
+                        continue;
+                    }
+                    if head_name == "fatal-error" {
+                        let location = loc(head_name, operands, 2)?;
+                        lowered.push(Stmt::CallRt {
+                            name: "kiln_rt_error".into(),
+                            results: vec![],
+                            args: vec![
+                                Expr::Var("ctx".into()),
+                                parse_expr(&operands[0])?,
+                                parse_expr(&operands[1])?,
+                            ],
+                            handler: None,
+                            loc: location,
+                        });
+                        lowered.push(Stmt::Trap);
+                        *needs_error_runtime = true;
+                        continue;
+                    }
+                    if head_name == "signal-error" {
+                        let location = loc(head_name, operands, 3)?;
+                        let prefix = format!("{prefix}{alloc_number}_error");
+                        alloc_number += 1;
+                        let (vars, blocks, next, statements) = crate::lir::runtime_error(
+                            &prefix,
+                            block_name,
+                            lowered,
+                            int(&operands[0])?,
+                            parse_expr(&operands[1])?,
+                            handler(&operands[2])?,
+                            location,
+                        )?;
+                        f.vars.extend(vars);
+                        f.blocks.extend(blocks);
+                        block_name = next;
+                        lowered = statements;
+                        *needs_error_runtime = true;
+                        continue;
+                    }
+                    if head_name == "numeric-op" {
+                        let location = loc(head_name, operands, 5)?;
+                        let operation =
+                            crate::lir::program::NumericOperation::parse(sym(&operands[2])?)
+                                .ok_or("unknown numeric operation")?;
+                        lowered.extend(
+                            operation.lower(
+                                sym(&operands[0])?.into(),
+                                sym(&operands[1])?.into(),
+                                list(&operands[3])?
+                                    .iter()
+                                    .map(parse_expr)
+                                    .collect::<R<_>>()?,
+                                handler(&operands[4])?,
+                                location,
+                            )?,
+                        );
+                        continue;
+                    }
+                    if head_name == "invoke-list" {
+                        let location = loc(head_name, operands, 6)?;
+                        let name = format!("{prefix}{alloc_number}_spread");
+                        alloc_number += 1;
+                        let (vars, blocks, next) = crate::lir::invoke_spread(
+                            &name,
+                            block_name,
+                            lowered,
+                            sym(&operands[0])?.to_string(),
+                            sym(&operands[1])?.to_string(),
+                            sym(&operands[2])?.to_string(),
+                            list(&operands[3])?
+                                .iter()
+                                .map(parse_expr)
+                                .collect::<R<_>>()?,
+                            parse_expr(&operands[4])?,
+                            handler(&operands[5])?,
+                            location,
+                        )?;
+                        f.vars.extend(vars);
+                        f.blocks.extend(blocks);
+                        block_name = next;
+                        lowered = Vec::new();
+                        *needs_error_runtime = true;
+                        continue;
+                    }
                     if head_name == "guarded-class-test" {
                         arity(head_name, operands, 3)?;
                         let name = format!("{prefix}{alloc_number}_class");
                         alloc_number += 1;
-                        let class = u32::try_from(int(&operands[1])?).map_err(|_| "invalid class ID")?;
-                        let (blocks, next) = crate::lir::guarded_class_test(&name, block_name, lowered,
-                            sym(&operands[0])?.to_string(), class, parse_expr(&operands[2])?)?;
+                        let class =
+                            u32::try_from(int(&operands[1])?).map_err(|_| "invalid class ID")?;
+                        let (blocks, next) = crate::lir::guarded_class_test(
+                            &name,
+                            block_name,
+                            lowered,
+                            sym(&operands[0])?.to_string(),
+                            class,
+                            parse_expr(&operands[2])?,
+                        )?;
                         f.blocks.extend(blocks);
                         block_name = next;
                         lowered = Vec::new();
@@ -671,9 +1258,18 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                         arity(head_name, operands, 3)?;
                         let name = format!("{prefix}{alloc_number}_argwrite");
                         alloc_number += 1;
-                        let registers = list(&operands[2])?.iter().map(|r| sym(r).map(str::to_string)).collect::<R<Vec<_>>>()?;
-                        let (blocks, next) = crate::lir::argument_write(&name, block_name, lowered,
-                            sym(&operands[0])?.to_string(), parse_expr(&operands[1])?, registers)?;
+                        let registers = list(&operands[2])?
+                            .iter()
+                            .map(|r| sym(r).map(str::to_string))
+                            .collect::<R<Vec<_>>>()?;
+                        let (blocks, next) = crate::lir::argument_write(
+                            &name,
+                            block_name,
+                            lowered,
+                            sym(&operands[0])?.to_string(),
+                            parse_expr(&operands[1])?,
+                            registers,
+                        )?;
                         f.blocks.extend(blocks);
                         block_name = next;
                         lowered = Vec::new();
@@ -683,9 +1279,18 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                         arity(head_name, operands, 3)?;
                         let name = format!("{prefix}{alloc_number}_arg");
                         alloc_number += 1;
-                        let registers = list(&operands[2])?.iter().map(parse_expr).collect::<R<Vec<_>>>()?;
-                        let (blocks, next) = crate::lir::argument_read(&name, block_name, lowered,
-                            sym(&operands[0])?.to_string(), sym(&operands[1])?.to_string(), registers)?;
+                        let registers = list(&operands[2])?
+                            .iter()
+                            .map(parse_expr)
+                            .collect::<R<Vec<_>>>()?;
+                        let (blocks, next) = crate::lir::argument_read(
+                            &name,
+                            block_name,
+                            lowered,
+                            sym(&operands[0])?.to_string(),
+                            sym(&operands[1])?.to_string(),
+                            registers,
+                        )?;
                         f.blocks.extend(blocks);
                         block_name = next;
                         lowered = Vec::new();
@@ -695,21 +1300,59 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                         arity(head_name, operands, 2)?;
                         let result = sym(&operands[0])?.to_string();
                         let object = sym(&operands[1])?.to_string();
-                        if result == object { return Err("heap-number-p result must differ from object".into()); }
+                        if result == object {
+                            return Err("heap-number-p result must differ from object".into());
+                        }
                         let temp = format!("{prefix}{alloc_number}_kind");
                         alloc_number += 1;
                         f.vars.push((temp.clone(), VarKind::Raw));
-                        lowered.extend(crate::lir::heap_number_test(result, temp, Expr::Var(object)));
+                        let yes = format!("{temp}_general");
+                        let no = format!("{temp}_immediate");
+                        let done = format!("{temp}_done");
+                        lowered.push(Stmt::Br(
+                            crate::lir::test_class(
+                                crate::packet::schema::CLASS_GENERAL,
+                                Expr::Var(object.clone()),
+                            )?,
+                            yes.clone(),
+                            no.clone(),
+                        ));
+                        f.blocks.push(Block {
+                            name: block_name,
+                            stmts: lowered,
+                        });
+                        let mut test =
+                            crate::lir::heap_number_test(result.clone(), temp, Expr::Var(object));
+                        test.push(Stmt::Jump(done.clone()));
+                        f.blocks.push(Block {
+                            name: yes,
+                            stmts: test,
+                        });
+                        f.blocks.push(Block {
+                            name: no,
+                            stmts: vec![Stmt::Set(result, Expr::Int(0)), Stmt::Jump(done.clone())],
+                        });
+                        block_name = done;
+                        lowered = Vec::new();
                         continue;
                     }
                     if head_name == "identity-hash" {
                         arity(head_name, operands, 3)?;
                         let result = sym(&operands[0])?.to_string();
                         let object = sym(&operands[1])?.to_string();
-                        if result == object { return Err("identity-hash result must differ from object".into()); }
+                        if result == object {
+                            return Err("identity-hash result must differ from object".into());
+                        }
                         let name = format!("{prefix}{alloc_number}");
                         alloc_number += 1;
-                        let (vars, blocks, next_name) = crate::lir::identity_hash(&name, block_name, lowered, result, object, string(&operands[2])?.to_string());
+                        let (vars, blocks, next_name) = crate::lir::identity_hash(
+                            &name,
+                            block_name,
+                            lowered,
+                            result,
+                            object,
+                            string(&operands[2])?.to_string(),
+                        );
                         f.vars.extend(vars);
                         f.blocks.extend(blocks);
                         block_name = next_name;
@@ -717,13 +1360,23 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                         continue;
                     }
                     if head_name == "ensure-tls-index" {
-                        arity(head_name, operands, 3)?;
+                        if operands.len() == 3 {
+                            if string(&operands[2])? != "kiln_rt_tls_index" {
+                                return Err("TLS index operation selects its runtime entry".into());
+                            }
+                        } else {
+                            arity(head_name, operands, 2)?;
+                        }
                         let result = sym(&operands[0])?.to_string();
                         let symbol = sym(&operands[1])?.to_string();
-                        if result == symbol { return Err("ensure-tls-index result must differ from symbol".into()); }
+                        if result == symbol {
+                            return Err("ensure-tls-index result must differ from symbol".into());
+                        }
                         let name = format!("{prefix}{alloc_number}");
                         alloc_number += 1;
-                        let (blocks, next_name) = crate::lir::ensure_tls_index(&name, block_name, lowered, result, symbol, string(&operands[2])?.to_string())?;
+                        let (blocks, next_name) = crate::lir::ensure_tls_index(
+                            &name, block_name, lowered, result, symbol,
+                        )?;
                         f.blocks.extend(blocks);
                         block_name = next_name;
                         lowered = Vec::new();
@@ -734,45 +1387,80 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                         let (result, symbol, value) = if head_name == "special-ref" {
                             let result = sym(&operands[0])?.to_string();
                             let symbol = sym(&operands[1])?.to_string();
-                            if result == symbol { return Err("special-ref result must differ from symbol".into()); }
+                            if result == symbol {
+                                return Err("special-ref result must differ from symbol".into());
+                            }
                             (Some(result), symbol, None)
                         } else {
                             let symbol = sym(&operands[0])?.to_string();
                             let value = parse_expr(&operands[1])?;
-                            if !matches!(value, Expr::Var(_) | Expr::Int(_)) { return Err("special-set requires a stable value".into()); }
+                            if !matches!(value, Expr::Var(_) | Expr::Int(_)) {
+                                return Err("special-set requires a stable value".into());
+                            }
                             (None, symbol, Some(value))
                         };
                         let name = format!("{prefix}{alloc_number}");
                         alloc_number += 1;
-                        let (vars, blocks, next_name) = crate::lir::special_access(&name, block_name, lowered, symbol, result, value)?;
+                        let (vars, blocks, next_name) = crate::lir::special_access(
+                            &name, block_name, lowered, symbol, result, value,
+                        )?;
                         f.vars.extend(vars);
                         f.blocks.extend(blocks);
                         block_name = next_name;
                         lowered = Vec::new();
                         continue;
                     }
-                    if head_name == "special-bind" || head_name == "special-bind-index" || head_name == "special-unbind" {
-                        arity(head_name, operands, match head_name { "special-bind" => 4, "special-bind-index" => 3, _ => 1 })?;
+                    if head_name == "special-bind"
+                        || head_name == "special-bind-index"
+                        || head_name == "special-unbind"
+                    {
+                        arity(
+                            head_name,
+                            operands,
+                            match head_name {
+                                "special-bind" => 4,
+                                "special-bind-index" => 3,
+                                _ => 1,
+                            },
+                        )?;
                         let entry = sym(&operands[0])?;
-                        if dynamic_entries.get(entry).map(String::as_str) != Some("bind") { return Err("special binding operation requires a bind entry".into()); }
+                        if dynamic_entries.get(entry).map(String::as_str) != Some("bind") {
+                            return Err("special binding operation requires a bind entry".into());
+                        }
                         if head_name == "special-bind" {
                             let index = parse_expr(&operands[1])?;
                             let address = parse_expr(&operands[2])?;
                             let value = parse_expr(&operands[3])?;
-                            if [&index, &address, &value].iter().any(|operand| !matches!(operand, Expr::Var(_) | Expr::Int(_))) {
+                            if [&index, &address, &value]
+                                .iter()
+                                .any(|operand| !matches!(operand, Expr::Var(_) | Expr::Int(_)))
+                            {
                                 return Err("special-bind requires stable operands".into());
                             }
-                            lowered.extend(crate::lir::bind_special(entry.to_string(), index, address, value));
+                            lowered.extend(crate::lir::bind_special(
+                                entry.to_string(),
+                                index,
+                                address,
+                                value,
+                            ));
                         } else if head_name == "special-bind-index" {
                             let index = parse_expr(&operands[1])?;
                             let value = parse_expr(&operands[2])?;
-                            if [&index, &value].iter().any(|operand| !matches!(operand, Expr::Var(_) | Expr::Int(_))) {
+                            if [&index, &value]
+                                .iter()
+                                .any(|operand| !matches!(operand, Expr::Var(_) | Expr::Int(_)))
+                            {
                                 return Err("special-bind-index requires stable operands".into());
                             }
                             let temporary = format!("{prefix}{alloc_number}_tls");
                             alloc_number += 1;
                             f.vars.push((temporary.clone(), VarKind::Raw));
-                            lowered.extend(crate::lir::bind_special_index(entry.to_string(), temporary, index, value));
+                            lowered.extend(crate::lir::bind_special_index(
+                                entry.to_string(),
+                                temporary,
+                                index,
+                                value,
+                            ));
                         } else {
                             lowered.push(crate::lir::unbind_special(entry.to_string()));
                         }
@@ -782,14 +1470,21 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                         arity(head_name, operands, 2)?;
                         let result = sym(&operands[0])?;
                         let entry = sym(&operands[1])?;
-                        if dynamic_entries.get(entry).map(String::as_str) != Some("progv") { return Err("progv-bindings requires a progv entry".into()); }
-                        lowered.push(crate::lir::progv_bindings(result.to_string(), entry.to_string()));
+                        if dynamic_entries.get(entry).map(String::as_str) != Some("progv") {
+                            return Err("progv-bindings requires a progv entry".into());
+                        }
+                        lowered.push(crate::lir::progv_bindings(
+                            result.to_string(),
+                            entry.to_string(),
+                        ));
                         continue;
                     }
                     if head_name == "dynamic-relink" {
                         arity(head_name, operands, 1)?;
                         let entry = sym(&operands[0])?;
-                        if dynamic_entries.get(entry).map(String::as_str) != Some("exit-point") { return Err("dynamic-relink requires an exit-point entry".into()); }
+                        if dynamic_entries.get(entry).map(String::as_str) != Some("exit-point") {
+                            return Err("dynamic-relink requires an exit-point entry".into());
+                        }
                         lowered.push(crate::lir::relink_dynamic_entry(entry.to_string()));
                         continue;
                     }
@@ -800,13 +1495,19 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                         if dynamic_entries.get(entry).map(String::as_str) != Some(kind) {
                             return Err("dynamic-enter does not match entry slot".into());
                         }
-                        lowered.extend(crate::lir::enter_dynamic_entry(entry.to_string(), kind, parse_expr(&operands[2])?)?);
+                        lowered.extend(crate::lir::enter_dynamic_entry(
+                            entry.to_string(),
+                            kind,
+                            parse_expr(&operands[2])?,
+                        )?);
                         continue;
                     }
                     if head_name == "dynamic-leave" {
                         arity(head_name, operands, 1)?;
                         let entry = sym(&operands[0])?;
-                        if !dynamic_entries.contains_key(entry) { return Err("dynamic-leave requires a dynamic entry".into()); }
+                        if !dynamic_entries.contains_key(entry) {
+                            return Err("dynamic-leave requires a dynamic entry".into());
+                        }
                         lowered.push(crate::lir::leave_dynamic_entry(entry.to_string()));
                         continue;
                     }
@@ -814,18 +1515,31 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                         arity(head_name, operands, 4)?;
                         let entry = sym(&operands[0])?;
                         let slot = sym(&operands[1])?;
-                        let class = u32::try_from(int(&operands[2])?).map_err(|_| "invalid stack object class")?;
+                        let class = u32::try_from(int(&operands[2])?)
+                            .map_err(|_| "invalid stack object class")?;
                         let count = int(&operands[3])?;
-                        if !stack_root_entries.contains(entry) || stack_objects.get(slot) != Some(&(class, count)) || count <= 0 {
-                            return Err("stack-roots-enter requires matching entry and object slots".into());
+                        if !stack_root_entries.contains(entry)
+                            || stack_objects.get(slot) != Some(&(class, count))
+                            || count <= 0
+                        {
+                            return Err(
+                                "stack-roots-enter requires matching entry and object slots".into(),
+                            );
                         }
-                        lowered.extend(crate::lir::enter_stack_roots(entry.to_string(), slot.to_string(), class, count)?);
+                        lowered.extend(crate::lir::enter_stack_roots(
+                            entry.to_string(),
+                            slot.to_string(),
+                            class,
+                            count,
+                        )?);
                         continue;
                     }
                     if head_name == "stack-roots-leave" {
                         arity(head_name, operands, 1)?;
                         let entry = sym(&operands[0])?;
-                        if !stack_root_entries.contains(entry) { return Err("stack-roots-leave requires a roots entry".into()); }
+                        if !stack_root_entries.contains(entry) {
+                            return Err("stack-roots-leave requires a roots entry".into());
+                        }
                         lowered.push(crate::lir::leave_dynamic_entry(entry.to_string()));
                         continue;
                     }
@@ -833,10 +1547,17 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                         arity(head_name, operands, 3)?;
                         let result = sym(&operands[0])?.to_string();
                         let slot = sym(&operands[1])?;
-                        if !matches!(stack_objects.get(slot), Some((crate::packet::schema::CLASS_FUNCTION, _))) {
+                        if !matches!(
+                            stack_objects.get(slot),
+                            Some((crate::packet::schema::CLASS_FUNCTION, _))
+                        ) {
                             return Err("stack-closure requires a closure slot".into());
                         }
-                        lowered.extend(crate::lir::initialize_stack_closure(result, slot.to_string(), string(&operands[2])?.to_string()));
+                        lowered.extend(crate::lir::initialize_stack_closure(
+                            result,
+                            slot.to_string(),
+                            string(&operands[2])?.to_string(),
+                        ));
                         continue;
                     }
                     if head_name == "stack-cons" {
@@ -844,25 +1565,42 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                         let result = sym(&operands[0])?.to_string();
                         let address = parse_expr(&operands[1])?;
                         match &address {
-                            Expr::Slot(slot) if stack_objects.get(slot) == Some(&(crate::packet::schema::CLASS_CONS, 2)) => (),
+                            Expr::Slot(slot)
+                                if stack_objects.get(slot)
+                                    == Some(&(crate::packet::schema::CLASS_CONS, 2)) => {}
                             Expr::Var(name) if name != &result => (),
-                            _ => return Err("stack-cons requires a cons slot or a stable address variable".into()),
+                            _ => {
+                                return Err(
+                                    "stack-cons requires a cons slot or a stable address variable"
+                                        .into(),
+                                );
+                            }
                         }
                         let car = parse_expr(&operands[2])?;
                         let cdr = parse_expr(&operands[3])?;
-                        if !matches!(car, Expr::Var(_) | Expr::Int(_)) || !matches!(cdr, Expr::Var(_) | Expr::Int(_)) {
+                        if !matches!(car, Expr::Var(_) | Expr::Int(_))
+                            || !matches!(cdr, Expr::Var(_) | Expr::Int(_))
+                        {
                             return Err("stack-cons fields must be stable operands".into());
                         }
-                        lowered.extend(crate::lir::initialize_stack_cons(result, address, car, cdr));
+                        lowered
+                            .extend(crate::lir::initialize_stack_cons(result, address, car, cdr));
                         continue;
                     }
                     if head_name == "stack-object-init" {
                         arity(head_name, operands, 3)?;
                         let slot = sym(&operands[0])?;
-                        let class = u32::try_from(int(&operands[1])?).map_err(|_| "invalid stack object class")?;
+                        let class = u32::try_from(int(&operands[1])?)
+                            .map_err(|_| "invalid stack object class")?;
                         let count = int(&operands[2])?;
-                        if stack_objects.get(slot) != Some(&(class, count)) { return Err("stack object initialization does not match slot".into()); }
-                        lowered.extend(crate::lir::initialize_stack_object(slot.to_string(), class, count)?);
+                        if stack_objects.get(slot) != Some(&(class, count)) {
+                            return Err("stack object initialization does not match slot".into());
+                        }
+                        lowered.extend(crate::lir::initialize_stack_object(
+                            slot.to_string(),
+                            class,
+                            count,
+                        )?);
                         continue;
                     }
                     if head_name == "alloc-symbol" {
@@ -882,13 +1620,21 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                         let raw = format!("{name}_object");
                         f.vars.push((raw.clone(), VarKind::Raw));
                         let (vars, blocks, next_name, mut next_stmts) = crate::lir::allocate_raw(
-                            &name, block_name, lowered, raw.clone(), Expr::Int(kiln_rt::object::SYMBOL_BYTES as i64),
-                            Expr::Int(kiln_rt::object::KIND_SYMBOL as i64), true,
-                            string(&operands[3])?.to_string(), handler(&operands[4])?,
+                            &name,
+                            block_name,
+                            lowered,
+                            raw.clone(),
+                            Expr::Int(kiln_rt::object::SYMBOL_BYTES as i64),
+                            Expr::Int(kiln_rt::object::KIND_SYMBOL as i64),
+                            true,
+                            string(&operands[3])?.to_string(),
+                            handler(&operands[4])?,
                         )?;
                         f.vars.extend(vars);
                         f.blocks.extend(blocks);
-                        next_stmts.extend(crate::lir::initialize_symbol(result, raw, name_value, nil_value));
+                        next_stmts.extend(crate::lir::initialize_symbol(
+                            result, raw, name_value, nil_value,
+                        ));
                         block_name = next_name;
                         lowered = next_stmts;
                         continue;
@@ -915,14 +1661,66 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                         let raw = format!("{name}_object");
                         f.vars.push((raw.clone(), VarKind::Raw));
                         let (vars, blocks, next_name, mut next_stmts) = crate::lir::allocate_raw(
-                            &name, block_name, lowered, raw.clone(), bytes, header, true,
-                            string(&operands[3])?.to_string(), handler(&operands[4])?,
+                            &name,
+                            block_name,
+                            lowered,
+                            raw.clone(),
+                            bytes,
+                            header,
+                            true,
+                            string(&operands[3])?.to_string(),
+                            handler(&operands[4])?,
                         )?;
                         f.vars.extend(vars);
                         f.blocks.extend(blocks);
                         next_stmts.extend(crate::lir::initialize_structure(result, raw, layout));
                         block_name = next_name;
                         lowered = next_stmts;
+                        continue;
+                    }
+                    if head_name == "alloc-undefined-function" || head_name == "alloc-funcallable" {
+                        arity(
+                            head_name,
+                            operands,
+                            if head_name == "alloc-funcallable" {
+                                3
+                            } else {
+                                4
+                            },
+                        )?;
+                        let name = format!("{prefix}{alloc_number}_builtin");
+                        alloc_number += 1;
+                        let expansion = if head_name == "alloc-funcallable" {
+                            crate::lir::builtins::allocate_funcallable(
+                                &name,
+                                block_name,
+                                lowered,
+                                sym(&operands[0])?.into(),
+                                parse_expr(&operands[1])?,
+                                handler(&operands[2])?,
+                            )?
+                        } else {
+                            let setf = match sym(&operands[2])? {
+                                "ordinary" => false,
+                                "setf" => true,
+                                _ => return Err("invalid undefined function kind".into()),
+                            };
+                            crate::lir::builtins::allocate_undefined(
+                                &name,
+                                block_name,
+                                lowered,
+                                sym(&operands[0])?.into(),
+                                parse_expr(&operands[1])?,
+                                setf,
+                                handler(&operands[3])?,
+                            )?
+                        };
+                        let (vars, blocks, next, stmts) = expansion;
+                        f.vars.extend(vars);
+                        f.blocks.extend(blocks);
+                        block_name = next;
+                        lowered = stmts;
+                        *needs_allocation = true;
                         continue;
                     }
                     if head_name == "alloc-closure" {
@@ -935,8 +1733,15 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                         let raw = format!("{name}_object");
                         f.vars.push((raw.clone(), VarKind::Raw));
                         let (vars, blocks, next_name, mut next_stmts) = crate::lir::allocate_raw(
-                            &name, block_name, lowered, raw.clone(), Expr::Int(bytes), Expr::Int(header), true,
-                            string(&operands[3])?.to_string(), handler(&operands[4])?,
+                            &name,
+                            block_name,
+                            lowered,
+                            raw.clone(),
+                            Expr::Int(bytes),
+                            Expr::Int(header),
+                            true,
+                            string(&operands[3])?.to_string(),
+                            handler(&operands[4])?,
                         )?;
                         f.vars.extend(vars);
                         f.blocks.extend(blocks);
@@ -948,7 +1753,10 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                     if head_name == "alloc-vector-elements" {
                         arity(head_name, operands, 4)?;
                         let result = sym(&operands[0])?.to_string();
-                        let values = list(&operands[1])?.iter().map(parse_expr).collect::<R<Vec<_>>>()?;
+                        let values = list(&operands[1])?
+                            .iter()
+                            .map(parse_expr)
+                            .collect::<R<Vec<_>>>()?;
                         for value in &values {
                             match value {
                                 Expr::Int(_) => (),
@@ -956,19 +1764,31 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                                 _ => return Err("alloc-vector-elements: elements must be stable operands distinct from the result".into()),
                             }
                         }
-                        let length = i64::try_from(values.len()).map_err(|_| "vector length out of range")?;
-                        let (bytes, header, _) = crate::lir::vector_layout(crate::packet::schema::CLASS_SIMPLE_VECTOR, &Expr::Int(length))?;
+                        let length = i64::try_from(values.len())
+                            .map_err(|_| "vector length out of range")?;
+                        let (bytes, header, _) = crate::lir::vector_layout(
+                            crate::packet::schema::CLASS_SIMPLE_VECTOR,
+                            &Expr::Int(length),
+                        )?;
                         let name = format!("{prefix}{alloc_number}");
                         alloc_number += 1;
                         let raw = format!("{name}_object");
                         f.vars.push((raw.clone(), VarKind::Raw));
                         let (vars, blocks, next_name, mut next_stmts) = crate::lir::allocate_raw(
-                            &name, block_name, lowered, raw.clone(), bytes, header, false,
-                            string(&operands[2])?.to_string(), handler(&operands[3])?,
+                            &name,
+                            block_name,
+                            lowered,
+                            raw.clone(),
+                            bytes,
+                            header,
+                            false,
+                            string(&operands[2])?.to_string(),
+                            handler(&operands[3])?,
                         )?;
                         f.vars.extend(vars);
                         f.blocks.extend(blocks);
-                        next_stmts.extend(crate::lir::initialize_vector_elements(result, raw, values));
+                        next_stmts
+                            .extend(crate::lir::initialize_vector_elements(result, raw, values));
                         block_name = next_name;
                         lowered = next_stmts;
                         continue;
@@ -976,7 +1796,8 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                     if head_name == "alloc-vector" {
                         arity(head_name, operands, 6)?;
                         let result = sym(&operands[0])?.to_string();
-                        let class = u32::try_from(int(&operands[1])?).map_err(|_| "invalid allocation class")?;
+                        let class = u32::try_from(int(&operands[1])?)
+                            .map_err(|_| "invalid allocation class")?;
                         let length = parse_expr(&operands[2])?;
                         let value = parse_expr(&operands[3])?;
                         for operand in [&length, &value] {
@@ -993,8 +1814,15 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                         f.vars.push((raw.clone(), VarKind::Raw));
                         let zero = shift == 2 || matches!(value, Expr::Int(0));
                         let (vars, blocks, next_name, next_stmts) = crate::lir::allocate_raw(
-                            &name, block_name, lowered, raw.clone(), bytes, header, zero,
-                            string(&operands[4])?.to_string(), handler(&operands[5])?,
+                            &name,
+                            block_name,
+                            lowered,
+                            raw.clone(),
+                            bytes,
+                            header,
+                            zero,
+                            string(&operands[4])?.to_string(),
+                            handler(&operands[5])?,
                         )?;
                         f.vars.extend(vars);
                         f.blocks.extend(blocks);
@@ -1007,21 +1835,40 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                         lowered = next_stmts;
                         continue;
                     }
-                    if head_name == "alloc-raw" || head_name == "alloc-cons" || head_name == "alloc-fixed" {
-                        arity(head_name, operands, if head_name == "alloc-raw" { 6 } else { 5 })?;
+                    if head_name == "alloc-raw"
+                        || head_name == "alloc-cons"
+                        || head_name == "alloc-fixed"
+                    {
+                        arity(
+                            head_name,
+                            operands,
+                            if head_name == "alloc-raw" { 6 } else { 5 },
+                        )?;
                         let result = sym(&operands[0])?.to_string();
                         let name = format!("{prefix}{alloc_number}");
                         alloc_number += 1;
                         let (raw_result, bytes, header, zero, runtime, handler, fields) =
                             if head_name != "alloc-raw" {
                                 let (class, values) = if head_name == "alloc-cons" {
-                                    (crate::packet::schema::CLASS_CONS, vec![parse_expr(&operands[1])?, parse_expr(&operands[2])?])
+                                    (
+                                        crate::packet::schema::CLASS_CONS,
+                                        vec![parse_expr(&operands[1])?, parse_expr(&operands[2])?],
+                                    )
                                 } else {
-                                    let class = u32::try_from(int(&operands[1])?).map_err(|_| "invalid allocation class")?;
-                                    (class, list(&operands[2])?.iter().map(parse_expr).collect::<R<Vec<_>>>()?)
+                                    let class = u32::try_from(int(&operands[1])?)
+                                        .map_err(|_| "invalid allocation class")?;
+                                    (
+                                        class,
+                                        list(&operands[2])?
+                                            .iter()
+                                            .map(parse_expr)
+                                            .collect::<R<Vec<_>>>()?,
+                                    )
                                 };
                                 let (bytes, header, _, count) = crate::lir::fixed_layout(class)?;
-                                if values.len() != count { return Err("fixed allocation: wrong field count".into()); }
+                                if values.len() != count {
+                                    return Err("fixed allocation: wrong field count".into());
+                                }
                                 for value in &values {
                                     match value {
                                         Expr::Int(_) => (),
@@ -1031,25 +1878,50 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
                                 }
                                 let raw = format!("{name}_object");
                                 f.vars.push((raw.clone(), VarKind::Raw));
-                                (raw, Expr::Int(bytes), Expr::Int(header), false,
-                                 string(&operands[3])?.to_string(), handler(&operands[4])?, Some((class, values)))
+                                (
+                                    raw,
+                                    Expr::Int(bytes),
+                                    Expr::Int(header),
+                                    false,
+                                    string(&operands[3])?.to_string(),
+                                    handler(&operands[4])?,
+                                    Some((class, values)),
+                                )
                             } else {
                                 let zero = match int(&operands[3])? {
-                                    0 => false, 1 => true,
+                                    0 => false,
+                                    1 => true,
                                     _ => return Err("alloc-raw: invalid zero flag".into()),
                                 };
-                                (result.clone(), parse_expr(&operands[1])?, parse_expr(&operands[2])?, zero,
-                                 string(&operands[4])?.to_string(), handler(&operands[5])?, None)
+                                (
+                                    result.clone(),
+                                    parse_expr(&operands[1])?,
+                                    parse_expr(&operands[2])?,
+                                    zero,
+                                    string(&operands[4])?.to_string(),
+                                    handler(&operands[5])?,
+                                    None,
+                                )
                             };
                         let (vars, blocks, next_name, next_stmts) = crate::lir::allocate_raw(
-                            &name, block_name, lowered, raw_result.clone(), bytes, header, zero, runtime, handler,
+                            &name,
+                            block_name,
+                            lowered,
+                            raw_result.clone(),
+                            bytes,
+                            header,
+                            zero,
+                            runtime,
+                            handler,
                         )?;
                         f.vars.extend(vars);
                         f.blocks.extend(blocks);
                         block_name = next_name;
                         lowered = next_stmts;
                         if let Some((class, values)) = fields {
-                            lowered.extend(crate::lir::initialize_fixed(result, raw_result, class, values)?);
+                            lowered.extend(crate::lir::initialize_fixed(
+                                result, raw_result, class, values,
+                            )?);
                         }
                     } else {
                         lowered.extend(parse_statements(stmt)?);
@@ -1071,16 +1943,44 @@ fn parse_func(rest: &[Sexp]) -> R<Func> {
 
 fn parse_statements(s: &Sexp) -> R<Vec<Stmt>> {
     let (h, r) = head(list(s)?)?;
+    if h == "move-values" {
+        arity(h, r, 4)?;
+        return Ok(vec![
+            Stmt::Set(sym(&r[0])?.into(), parse_expr(&r[2])?),
+            Stmt::Set(sym(&r[1])?.into(), parse_expr(&r[3])?),
+        ]);
+    }
+    if h == "cell-set" {
+        arity(h, r, 2)?;
+        return Ok(vec![crate::lir::cells::store(
+            string(&r[0])?.into(),
+            0,
+            parse_expr(&r[1])?,
+        )?]);
+    }
+    if h == "forward-incoming" {
+        arity(h, r, 1)?;
+        return Ok(vec![crate::lir::arguments::forward_incoming(parse_expr(
+            &r[0],
+        )?)?]);
+    }
     if h == "tail-invoke" {
         arity(h, r, 2)?;
-        return crate::lir::tail_invoke(sym(&r[0])?.to_string(),
-            list(&r[1])?.iter().map(parse_expr).collect::<R<_>>()?);
+        return crate::lir::tail_invoke(
+            sym(&r[0])?.to_string(),
+            list(&r[1])?.iter().map(parse_expr).collect::<R<_>>()?,
+        );
     }
     if h == "invoke-known" {
         let location = loc(h, r, 6)?;
-        let mut statements = crate::lir::invoke(sym(&r[0])?.to_string(), sym(&r[1])?.to_string(),
-            sym(&r[3])?.to_string(), list(&r[4])?.iter().map(parse_expr).collect::<R<_>>()?,
-            handler(&r[5])?, location)?;
+        let mut statements = crate::lir::invoke(
+            sym(&r[0])?.to_string(),
+            sym(&r[1])?.to_string(),
+            sym(&r[3])?.to_string(),
+            list(&r[4])?.iter().map(parse_expr).collect::<R<_>>()?,
+            handler(&r[5])?,
+            location,
+        )?;
         if let Some(Stmt::CallLisp { entry, .. }) = statements.last_mut() {
             *entry = Expr::Addr(string(&r[2])?.to_string(), 0);
         }
@@ -1092,17 +1992,27 @@ fn parse_statements(s: &Sexp) -> R<Vec<Stmt>> {
     }
     if h == "invoke-prepared" {
         let location = loc(h, r, 6)?;
-        return crate::lir::invoke_prepared(sym(&r[0])?.to_string(), sym(&r[1])?.to_string(),
-            sym(&r[2])?.to_string(), parse_expr(&r[3])?,
-            list(&r[4])?.iter().map(parse_expr).collect::<R<_>>()?, handler(&r[5])?, location);
+        return crate::lir::invoke_prepared(
+            sym(&r[0])?.to_string(),
+            sym(&r[1])?.to_string(),
+            sym(&r[2])?.to_string(),
+            parse_expr(&r[3])?,
+            list(&r[4])?.iter().map(parse_expr).collect::<R<_>>()?,
+            handler(&r[5])?,
+            location,
+        );
     }
     if h != "invoke" {
         return Ok(vec![parse_stmt(s)?]);
     }
     let location = loc(h, r, 5)?;
     crate::lir::invoke(
-        sym(&r[0])?.to_string(), sym(&r[1])?.to_string(), sym(&r[2])?.to_string(),
-        list(&r[3])?.iter().map(parse_expr).collect::<R<_>>()?, handler(&r[4])?, location,
+        sym(&r[0])?.to_string(),
+        sym(&r[1])?.to_string(),
+        sym(&r[2])?.to_string(),
+        list(&r[3])?.iter().map(parse_expr).collect::<R<_>>()?,
+        handler(&r[4])?,
+        location,
     )
 }
 
@@ -1119,8 +2029,11 @@ fn parse_stmt(s: &Sexp) -> R<Stmt> {
         }
         "field-store" => {
             arity(h, r, 3)?;
-            return crate::lir::field_store(u32::try_from(int(&r[0])?).map_err(|_| "invalid field ID")?,
-                parse_expr(&r[1])?, parse_expr(&r[2])?);
+            return crate::lir::field_store(
+                u32::try_from(int(&r[0])?).map_err(|_| "invalid field ID")?,
+                parse_expr(&r[1])?,
+                parse_expr(&r[2])?,
+            );
         }
         "vector-set" => {
             arity(h, r, 3)?;
@@ -1136,11 +2049,19 @@ fn parse_stmt(s: &Sexp) -> R<Stmt> {
         }
         "instance-slot-set" => {
             arity(h, r, 3)?;
-            return crate::lir::set_instance_slot(parse_expr(&r[0])?, parse_expr(&r[1])?, parse_expr(&r[2])?);
+            return crate::lir::set_instance_slot(
+                parse_expr(&r[0])?,
+                parse_expr(&r[1])?,
+                parse_expr(&r[2])?,
+            );
         }
         "structure-slot-set" => {
             arity(h, r, 3)?;
-            crate::lir::set_structure_slot(parse_expr(&r[0])?, parse_expr(&r[1])?, parse_expr(&r[2])?)
+            crate::lir::set_structure_slot(
+                parse_expr(&r[0])?,
+                parse_expr(&r[1])?,
+                parse_expr(&r[2])?,
+            )
         }
         "funcallable-function-set" => {
             arity(h, r, 2)?;
@@ -1184,7 +2105,11 @@ fn parse_stmt(s: &Sexp) -> R<Stmt> {
         }
         "br" => {
             arity(h, r, 3)?;
-            Stmt::Br(parse_expr(&r[0])?, sym(&r[1])?.to_string(), sym(&r[2])?.to_string())
+            Stmt::Br(
+                parse_expr(&r[0])?,
+                sym(&r[1])?.to_string(),
+                sym(&r[2])?.to_string(),
+            )
         }
         "switch" => {
             arity(h, r, 3)?;
@@ -1251,8 +2176,13 @@ fn parse_stmt(s: &Sexp) -> R<Stmt> {
                 "fixnum-sub-ovf" => OvfOp::Sub,
                 _ => OvfOp::Mul,
             };
-            crate::lir::fixnum_arithmetic_ovf(op, sym(&r[0])?.to_string(),
-                sym(&r[1])?.to_string(), parse_expr(&r[2])?, parse_expr(&r[3])?)
+            crate::lir::fixnum_arithmetic_ovf(
+                op,
+                sym(&r[0])?.to_string(),
+                sym(&r[1])?.to_string(),
+                parse_expr(&r[2])?,
+                parse_expr(&r[3])?,
+            )
         }
         "add-ovf" | "sub-ovf" | "mul-ovf" => {
             arity(h, r, 4)?;
@@ -1286,7 +2216,8 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
     let (h, r) = head(list(s)?)?;
     let e = |i: usize| -> R<Box<Expr>> { Ok(Box::new(parse_expr(&r[i])?)) };
     Ok(match h {
-        "add" | "sub" | "mul" | "and" | "or" | "xor" | "sdiv" | "srem" | "shlv" | "sarv" | "f64-add" | "f64-sub" | "f64-mul" | "f64-div" | "f64-compare" => {
+        "add" | "sub" | "mul" | "and" | "or" | "xor" | "sdiv" | "srem" | "shlv" | "sarv"
+        | "shrv" | "f64-add" | "f64-sub" | "f64-mul" | "f64-div" | "f64-compare" => {
             arity(h, r, 2)?;
             let op = match h {
                 "add" => BinOp::Add,
@@ -1303,6 +2234,7 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
                 "f64-compare" => BinOp::F64Compare,
                 "shlv" => BinOp::Shlv,
                 "sarv" => BinOp::Sarv,
+                "shrv" => BinOp::Shrv,
                 _ => BinOp::Xor,
             };
             Expr::Bin(op, e(0)?, e(1)?)
@@ -1330,7 +2262,10 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
         }
         "field-load" => {
             arity(h, r, 2)?;
-            return crate::lir::field_load(u32::try_from(int(&r[0])?).map_err(|_| "invalid field ID")?, parse_expr(&r[1])?);
+            return crate::lir::field_load(
+                u32::try_from(int(&r[0])?).map_err(|_| "invalid field ID")?,
+                parse_expr(&r[1])?,
+            );
         }
         "unwind-target" => {
             arity(h, r, 0)?;
@@ -1344,8 +2279,9 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
             arity(h, r, 1)?;
             return crate::lir::fixnum_operation(h, parse_expr(&r[0])?, None);
         }
-        "fixnum-quotient" | "fixnum-remainder" | "fixnum-logand" | "fixnum-logior" |
-        "fixnum-logxor" | "fixnum-lt" | "fixnum-gt" | "fixnum-ge" | "fixnum-eq" | "fixnum-le" | "fixnum-shift-left" | "fixnum-shift-right" => {
+        "fixnum-quotient" | "fixnum-remainder" | "fixnum-logand" | "fixnum-logior"
+        | "fixnum-logxor" | "fixnum-lt" | "fixnum-gt" | "fixnum-ge" | "fixnum-eq" | "fixnum-le"
+        | "fixnum-shift-left" | "fixnum-shift-right" => {
             arity(h, r, 2)?;
             return crate::lir::fixnum_operation(h, parse_expr(&r[0])?, Some(parse_expr(&r[1])?));
         }
@@ -1373,6 +2309,21 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
         "unbound-slot-value" => {
             arity(h, r, 0)?;
             Expr::Int(kiln_rt::object::UNBOUND_SLOT as i64)
+        }
+        "undefined-function-p" => {
+            arity(h, r, 1)?;
+            crate::lir::builtins::undefined_function(parse_expr(&r[0])?)?
+        }
+        "cell-ref" => {
+            arity(h, r, 1)?;
+            crate::lir::cells::load(string(&r[0])?.into(), 0)?
+        }
+        "literal-ref" => {
+            arity(h, r, 1)?;
+            crate::lir::cells::load(
+                crate::lir::cells::LITERALS.into(),
+                usize::try_from(int(&r[0])?).map_err(|_| "invalid literal index")?,
+            )?
         }
         "poll-test" => {
             arity(h, r, 1)?;
@@ -1456,15 +2407,25 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
         }
         "stack-reference-base" => {
             arity(h, r, 3)?;
-            return crate::lir::stack_reference_base(sym(&r[0])?.to_string(), u32::try_from(int(&r[1])?).map_err(|_| "invalid stack object class")?, int(&r[2])?);
+            return crate::lir::stack_reference_base(
+                sym(&r[0])?.to_string(),
+                u32::try_from(int(&r[1])?).map_err(|_| "invalid stack object class")?,
+                int(&r[2])?,
+            );
         }
         "test-class" => {
             arity(h, r, 2)?;
-            return crate::lir::test_class(u32::try_from(int(&r[0])?).map_err(|_| "invalid class ID")?, parse_expr(&r[1])?);
+            return crate::lir::test_class(
+                u32::try_from(int(&r[0])?).map_err(|_| "invalid class ID")?,
+                parse_expr(&r[1])?,
+            );
         }
         "test-header-class" => {
             arity(h, r, 2)?;
-            return crate::lir::test_header_class(u32::try_from(int(&r[0])?).map_err(|_| "invalid class ID")?, parse_expr(&r[1])?);
+            return crate::lir::test_header_class(
+                u32::try_from(int(&r[0])?).map_err(|_| "invalid class ID")?,
+                parse_expr(&r[1])?,
+            );
         }
         "closure-ref" => {
             arity(h, r, 2)?;
@@ -1472,8 +2433,10 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
         }
         "arg-ref" => {
             arity(h, r, 2)?;
-            return crate::lir::argument_ref(int(&r[0])?,
-                list(&r[1])?.iter().map(parse_expr).collect::<R<Vec<_>>>()?);
+            return crate::lir::argument_ref(
+                int(&r[0])?,
+                list(&r[1])?.iter().map(parse_expr).collect::<R<Vec<_>>>()?,
+            );
         }
         "secondary-value-ref" => {
             arity(h, r, 1)?;
@@ -1496,15 +2459,32 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
             Expr::Load32(e(0)?, int(&r[1])? as i32)
         }
         "addr" => {
-            if r.len() != 1 && r.len() != 2 { return Err("addr: expected name and optional addend".into()); }
+            if r.len() != 1 && r.len() != 2 {
+                return Err("addr: expected name and optional addend".into());
+            }
             let addend = if r.len() > 1 { int(&r[1])? } else { 0 };
             Expr::Addr(string(&r[0])?.to_string(), addend)
         }
         "object-address" => {
             arity(h, r, 2)?;
-            Expr::Addr(string(&r[0])?.to_string(), crate::lir::static_object_tag(sym(&r[1])?)?)
+            Expr::Addr(
+                string(&r[0])?.to_string(),
+                crate::lir::static_object_tag(sym(&r[1])?)?,
+            )
         }
-        "fp" => {
+        "landing-value" => {
+            arity(h, r, 0)?;
+            Expr::Var("exn1".into())
+        }
+        "unwind-target-p" => {
+            arity(h, r, 1)?;
+            Expr::Cmp(
+                CmpOp::Eq,
+                Box::new(crate::lir::unwind_target()),
+                Box::new(Expr::Slot(sym(&r[0])?.into())),
+            )
+        }
+        "fp" | "frame-pointer" => {
             arity(h, r, 0)?;
             Expr::Fp
         }
@@ -1539,12 +2519,24 @@ mod tests {
             ("(character 128512)", (128512_i64 << 8) | 0x0b),
             ("(single-float 0)", 0x1b),
             ("(single-float 2147483648)", i64::MIN | 0x1b),
-            ("(single-float 4294967295)", 0xffff_ffff_0000_001b_u64 as i64),
+            (
+                "(single-float 4294967295)",
+                0xffff_ffff_0000_001b_u64 as i64,
+            ),
         ] {
-            assert!(matches!(word(input).unwrap(), Word::Int(n) if n == expected), "{input}");
+            assert!(
+                matches!(word(input).unwrap(), Word::Int(n) if n == expected),
+                "{input}"
+            );
         }
-        for input in ["(fixnum -4611686018427387905)", "(fixnum 4611686018427387904)", "(character -1)", "(character 1114112)",
-                      "(single-float -1)", "(single-float 4294967296)"] {
+        for input in [
+            "(fixnum -4611686018427387905)",
+            "(fixnum 4611686018427387904)",
+            "(character -1)",
+            "(character 1114112)",
+            "(single-float -1)",
+            "(single-float 4294967296)",
+        ] {
             assert!(word(input).is_err(), "{input}");
         }
     }
@@ -1552,18 +2544,28 @@ mod tests {
     #[test]
     fn switch_accepts_signed_keys_and_empty_table() {
         let Stmt::Switch(_, default, entries) =
-            stmt("(switch v fallback ((-9223372036854775808 low) (9223372036854775807 high)))").unwrap()
+            stmt("(switch v fallback ((-9223372036854775808 low) (9223372036854775807 high)))")
+                .unwrap()
         else {
             panic!("expected switch");
         };
         assert_eq!(default, "fallback");
-        assert_eq!(entries, vec![(i64::MIN, "low".into()), (i64::MAX, "high".into())]);
-        assert!(matches!(stmt("(switch v fallback ())").unwrap(), Stmt::Switch(_, _, v) if v.is_empty()));
+        assert_eq!(
+            entries,
+            vec![(i64::MIN, "low".into()), (i64::MAX, "high".into())]
+        );
+        assert!(
+            matches!(stmt("(switch v fallback ())").unwrap(), Stmt::Switch(_, _, v) if v.is_empty())
+        );
     }
 
     #[test]
     fn switch_rejects_duplicate_keys_and_malformed_entries() {
-        assert!(stmt("(switch v fallback ((1 a) (1 b)))").unwrap_err().contains("duplicate key"));
+        assert!(
+            stmt("(switch v fallback ((1 a) (1 b)))")
+                .unwrap_err()
+                .contains("duplicate key")
+        );
         assert!(stmt("(switch v fallback ((1)))").is_err());
         assert!(stmt("(switch v fallback ((a b)))").is_err());
         assert!(stmt("(switch v fallback ((1 2)))").is_err());

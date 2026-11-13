@@ -28,7 +28,11 @@ pub fn isa(pic: bool) -> Result<OwnedTargetIsa, String> {
     set(&mut flags, "opt_level", &opt)?;
     set(&mut flags, "preserve_frame_pointers", "true")?;
     set(&mut flags, "is_pic", if pic { "true" } else { "false" })?;
-    set(&mut flags, "enable_verifier", if verify { "true" } else { "false" })?;
+    set(
+        &mut flags,
+        "enable_verifier",
+        if verify { "true" } else { "false" },
+    )?;
     let isa_builder = cranelift_native::builder()?;
     isa_builder
         .finish(settings::Flags::new(flags))
@@ -52,7 +56,8 @@ pub enum Memory {
 /// Each kind of memory is allocated from a chunk of pages of its own;
 /// a module's finalization applies the chunks' protections, and the next
 /// module starts new chunks.
-static SHARED: std::sync::Mutex<SharedState> = std::sync::Mutex::new(SharedState { chunks: Vec::new() });
+static SHARED: std::sync::Mutex<SharedState> =
+    std::sync::Mutex::new(SharedState { chunks: Vec::new() });
 
 struct Chunk {
     prot: kiln_rt::code::Prot,
@@ -94,9 +99,16 @@ impl cranelift_jit::JITMemoryProvider for SharedArena {
                 return Ok(at as *mut u8);
             }
         }
-        let len = size.next_multiple_of(kiln_rt::code::PAGE).max(16 * kiln_rt::code::PAGE);
+        let len = size
+            .next_multiple_of(kiln_rt::code::PAGE)
+            .max(16 * kiln_rt::code::PAGE);
         let start = kiln_rt::code::allocate_pages(len).map_err(std::io::Error::other)?;
-        state.chunks.push(Chunk { prot, start, cursor: start + size, end: start + len });
+        state.chunks.push(Chunk {
+            prot,
+            start,
+            cursor: start + size,
+            end: start + len,
+        });
         Ok(start as *mut u8)
     }
 
@@ -108,8 +120,11 @@ impl cranelift_jit::JITMemoryProvider for SharedArena {
     ) -> cranelift_module::ModuleResult<()> {
         let chunks = std::mem::take(&mut SHARED.lock().unwrap().chunks);
         for c in chunks {
-            kiln_rt::code::add_segment(c.start, c.end - c.start, c.prot)
-                .map_err(|e| cranelift_module::ModuleError::Allocation { err: std::io::Error::other(e) })?;
+            kiln_rt::code::add_segment(c.start, c.end - c.start, c.prot).map_err(|e| {
+                cranelift_module::ModuleError::Allocation {
+                    err: std::io::Error::other(e),
+                }
+            })?;
         }
         // x86-64 needs no instruction cache maintenance.
         Ok(())
@@ -139,11 +154,25 @@ pub fn load(kir: &kir::Module, opts: &Options, memory: Memory) -> Result<Loaded,
         builder.symbol(name, ptr);
     }
     builder.symbol("kiln_rt_jit", kiln_rt_jit as *const u8);
-    builder.symbol("kiln_rt_compile_packet", kiln_rt_compile_packet as *const u8);
-    builder.symbol("kiln_rt_compile_program", kiln_rt_compile_program as *const u8);
-    builder.symbol("kiln_rt_encode_packet", crate::packet_heap::kiln_rt_encode_packet as *const u8);
-    builder.symbol("kiln_rt_write_packet", crate::packet_heap::kiln_rt_write_packet as *const u8);
-    builder.symbol_lookup_fn(Box::new(|name| kiln_rt::exported(name).map(|a| a as *const u8)));
+    builder.symbol(
+        "kiln_rt_compile_packet",
+        kiln_rt_compile_packet as *const u8,
+    );
+    builder.symbol(
+        "kiln_rt_compile_program",
+        kiln_rt_compile_program as *const u8,
+    );
+    builder.symbol(
+        "kiln_rt_encode_packet",
+        crate::packet_heap::kiln_rt_encode_packet as *const u8,
+    );
+    builder.symbol(
+        "kiln_rt_write_packet",
+        crate::packet_heap::kiln_rt_write_packet as *const u8,
+    );
+    builder.symbol_lookup_fn(Box::new(|name| {
+        kiln_rt::exported(name).map(|a| a as *const u8)
+    }));
     let mut module = JITModule::new(builder);
     let out = codegen::compile(&mut module, kir, opts)?;
     module.finalize_definitions().map_err(|e| e.to_string())?;
@@ -185,7 +214,9 @@ pub fn load(kir: &kir::Module, opts: &Options, memory: Memory) -> Result<Loaded,
                 None => (0, 0),
                 Some(DebugInfo::Word(n)) => (n as u64, 0),
                 Some(DebugInfo::Data(id, addend)) => (data(id, addend), 0),
-                Some(DebugInfo::Indirect(id, off)) => (data(id, off), kiln_rt::debug::FLAG_INDIRECT),
+                Some(DebugInfo::Indirect(id, off)) => {
+                    (data(id, off), kiln_rt::debug::FLAG_INDIRECT)
+                }
             };
             kiln_rt::debug::FuncDebugRecord {
                 start: module.get_finalized_function(d.func) as usize,
@@ -224,7 +255,7 @@ impl Loaded {
 
 /// Name of the data object holding the literals of code compiled into the
 /// running image: one word per literal, each a static root (lower.lisp).
-const LITERALS_NAME: &str = "kiln_literals";
+const LITERALS_NAME: &str = crate::lir::cells::LITERALS;
 
 /// Compiles the KIR module in the Lisp string `text` into the running
 /// image and returns its init function object, which has not been called.
@@ -265,7 +296,11 @@ unsafe fn jit_text(text: u64, literals: u64) -> Result<u64, String> {
 /// `packet` and `literals` must be valid Lisp objects. The current runtime
 /// has one mutator; no Lisp GC or callback may run during this call.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn kiln_rt_compile_packet(_ctx: *mut Context, packet: u64, literals: u64) -> u64 {
+pub unsafe extern "C" fn kiln_rt_compile_packet(
+    _ctx: *mut Context,
+    packet: u64,
+    literals: u64,
+) -> u64 {
     let result = unsafe { compile_packet(packet, literals) };
     match result {
         Ok(init) => init,
@@ -277,7 +312,10 @@ pub unsafe extern "C" fn kiln_rt_compile_packet(_ctx: *mut Context, packet: u64,
 }
 
 unsafe fn compile_packet(packet: u64, literals: u64) -> Result<u64, String> {
-    use kiln_rt::object::{header, header_length, untag, is_general, is_fixnum, fixnum_value, KIND_MASK, KIND_SIMPLE_VECTOR};
+    use kiln_rt::object::{
+        KIND_MASK, KIND_SIMPLE_VECTOR, fixnum_value, header, header_length, is_fixnum, is_general,
+        untag,
+    };
     let t = std::time::Instant::now();
     if !is_general(packet) || unsafe { header(packet) } & KIND_MASK != KIND_SIMPLE_VECTOR {
         return Err("request must be a simple vector of octets".into());
@@ -286,12 +324,19 @@ unsafe fn compile_packet(packet: u64, literals: u64) -> Result<u64, String> {
         return Err("literals must be a simple vector".into());
     }
     let n = header_length(unsafe { header(packet) });
-    if n > crate::packet::schema::MAX_BYTES as usize { return Err("request too large".into()); }
+    if n > crate::packet::schema::MAX_BYTES as usize {
+        return Err("request too large".into());
+    }
     let words = unsafe { std::slice::from_raw_parts((untag(packet) + 8) as *const u64, n) };
-    let bytes = words.iter().map(|&word| {
-        if !is_fixnum(word) { return Err("request contains a non-octet".to_string()); }
-        u8::try_from(fixnum_value(word)).map_err(|_| "request contains a non-octet".to_string())
-    }).collect::<Result<Vec<_>, _>>()?;
+    let bytes = words
+        .iter()
+        .map(|&word| {
+            if !is_fixnum(word) {
+                return Err("request contains a non-octet".to_string());
+            }
+            u8::try_from(fixnum_value(word)).map_err(|_| "request contains a non-octet".to_string())
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let kir = crate::packet::load(&bytes)?;
     unsafe { install_module(&kir, literals, Some(bytes.len()), t) }
 }
@@ -303,43 +348,80 @@ unsafe fn compile_packet(packet: u64, literals: u64) -> Result<u64, String> {
 /// Arguments must be valid Lisp values. Like the packet compiler, this
 /// entry assumes one mutator and performs no Lisp safepoint or callback.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn kiln_rt_compile_program(_ctx: *mut Context, program: u64, literals: u64, target: u64) -> u64 {
+pub unsafe extern "C" fn kiln_rt_compile_program(
+    _ctx: *mut Context,
+    program: u64,
+    literals: u64,
+    target: u64,
+) -> u64 {
     use kiln_rt::object::*;
     let result = (|| {
         let t = std::time::Instant::now();
         let target = if is_fixnum(target) {
             u64::try_from(fixnum_value(target)).map_err(|_| "invalid target fingerprint")?
         } else if is_general(target) && unsafe { header(target) } & KIND_MASK == KIND_BIGNUM {
-            u64::try_from(unsafe { kiln_rt::bignum::to_bigint(target) }).map_err(|_| "invalid target fingerprint")?
-        } else { return Err("invalid target fingerprint".to_string()); };
-        if target != crate::packet::target_fingerprint() { return Err("target ABI fingerprint mismatch".into()); }
+            u64::try_from(unsafe { kiln_rt::bignum::to_bigint(target) })
+                .map_err(|_| "invalid target fingerprint")?
+        } else {
+            return Err("invalid target fingerprint".to_string());
+        };
+        if target != crate::packet::target_fingerprint() {
+            return Err("target ABI fingerprint mismatch".into());
+        }
         if !is_general(literals) || unsafe { header(literals) } & KIND_MASK != KIND_SIMPLE_VECTOR {
             return Err("literals must be a simple vector".into());
         }
         let program = unsafe { crate::packet_heap::snapshot_program(program) }?;
-        let kir = kir::parse_module(&program)?;
+        let kir = crate::packet::compile_program(&program)?;
         unsafe { install_module(&kir, literals, None, t) }
     })();
     match result {
         Ok(init) => init,
-        Err(error) => { eprintln!("kiln_rt_compile_program: {error}"); nil() }
+        Err(error) => {
+            eprintln!("kiln_rt_compile_program: {error}");
+            nil()
+        }
     }
 }
 
-unsafe fn install_module(kir: &kir::Module, literals: u64, input_size: Option<usize>, t: std::time::Instant) -> Result<u64, String> {
+unsafe fn install_module(
+    kir: &kir::Module,
+    literals: u64,
+    input_size: Option<usize>,
+    t: std::time::Instant,
+) -> Result<u64, String> {
     use kiln_rt::object::{header, header_length, untag};
     let n = header_length(unsafe { header(literals) });
-    if kir.inits.len() != 1 { return Err("image compilation requires exactly one init function".into()); }
+    if kir.inits.len() != 1 {
+        return Err("image compilation requires exactly one init function".into());
+    }
     // Validate the literal table before code or roots are registered.
     if let Some(data) = kir.data.iter().find(|d| d.name == LITERALS_NAME) {
         if !matches!(&data.contents, kir::DataContents::Words(words) if words.len() == n) {
             return Err("literal vector does not match the module's literal words".into());
         }
-        let roots: std::collections::HashSet<_> = kir.roots.iter()
-            .filter(|(name, _)| name == LITERALS_NAME).map(|(_, index)| *index as usize).collect();
-        if (0..n).any(|index| !roots.contains(&index)) { return Err("literal word has no static root".into()); }
+        let roots: std::collections::HashSet<_> = kir
+            .roots
+            .iter()
+            .filter(|(name, _)| name == LITERALS_NAME)
+            .map(|(_, index)| *index as usize)
+            .collect();
+        if (0..n).any(|index| !roots.contains(&index)) {
+            return Err("literal word has no static root".into());
+        }
     } else if n != 0 {
         return Err("missing literal words".into());
+    }
+    let patch_data: std::collections::HashMap<_,_> = kir.data.iter().map(|d| (d.name.as_str(),d)).collect();
+    let patch_roots: std::collections::HashSet<_> = kir.roots.iter().cloned().collect();
+    for (name, word, literal) in &kir.literal_patches {
+        let data = patch_data.get(name.as_str()).ok_or("literal patch has no data")?;
+        if *literal >= n || !matches!(&data.contents, kir::DataContents::Words(words) if (*word as usize) < words.len()) {
+            return Err("literal patch out of range".into());
+        }
+        if !patch_roots.contains(&(name.clone(), *word)) {
+            return Err("literal patch has no static root".into());
+        }
     }
     let loaded = load(kir, &Options { dump_clif: false }, Memory::Shared)?;
     let n = header_length(unsafe { header(literals) });
@@ -358,9 +440,18 @@ unsafe fn install_module(kir: &kir::Module, literals: u64, input_size: Option<us
             unsafe { *(words as *mut u64).add(i) = *elements.add(i) };
         }
     }
+    for (name, word, literal) in &kir.literal_patches {
+        let id = loaded.out.data.get(name).ok_or("missing literal patch data")?;
+        let (words, _) = loaded.module.get_finalized_data(*id);
+        let elements = (untag(literals) + 8) as *const u64;
+        unsafe { *(words as *mut u64).add(*word as usize) = *elements.add(*literal) };
+    }
     let inits = loaded.inits();
     if std::env::var("KILN_TIME").is_ok() {
-        let source = input_size.map_or_else(|| "structured program".to_string(), |n| format!("{n} bytes"));
+        let source = input_size.map_or_else(
+            || "structured program".to_string(),
+            |n| format!("{n} bytes"),
+        );
         eprintln!("kiln compiler: {source} in {:?}", t.elapsed());
     }
     if std::env::var("KILN_PERF_MAP").is_ok() {
@@ -368,7 +459,10 @@ unsafe fn install_module(kir: &kir::Module, literals: u64, input_size: Option<us
     }
     // The memory stays: the code is part of the image now.
     std::mem::forget(loaded);
-    inits.first().copied().ok_or_else(|| "no init function".into())
+    inits
+        .first()
+        .copied()
+        .ok_or_else(|| "no init function".into())
 }
 
 /// Lines of perf's map (/tmp/perf-PID.map) for the functions of `module`:
@@ -379,7 +473,12 @@ pub fn perf_map_lines(module: &JITModule) -> String {
         .declarations()
         .get_functions()
         .filter(|(_, d)| d.linkage.is_definable())
-        .map(|(id, d)| (module.get_finalized_function(id) as usize, d.linkage_name(id).into_owned()))
+        .map(|(id, d)| {
+            (
+                module.get_finalized_function(id) as usize,
+                d.linkage_name(id).into_owned(),
+            )
+        })
         .collect();
     funcs.sort();
     let mut text = String::new();
@@ -393,7 +492,11 @@ pub fn perf_map_lines(module: &JITModule) -> String {
 fn append_perf_map(module: &JITModule) {
     use std::io::Write;
     let path = format!("/tmp/perf-{}.map", std::process::id());
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
         let _ = f.write_all(perf_map_lines(module).as_bytes());
     }
 }

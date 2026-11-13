@@ -556,7 +556,7 @@
             ((eq n 0) 0)
             (t (%primop :integer-ash n count)))
       (progn (check-integers n count) (%primop :integer-ash n count))))
-(defun integer-length (n) (check-integer n) (%primop :integer-length n 0))
+(defun integer-length (n) (check-integer n) (%primop :integer-length n))
 
 (defun evenp (n)
   (if (%primop :fixnump n) (%primop :evenp n) (zerop (logand n 1))))

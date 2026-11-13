@@ -4,16 +4,30 @@ use crate::kir::{Expr, Stmt};
 use crate::packet::schema::*;
 use kiln_rt::object::{FunctionObj, SymbolObj, TAG_CONS, TAG_GENERAL};
 
+pub mod arguments;
+pub mod builtins;
+pub mod cells;
+pub mod poll;
+pub mod program;
+pub mod static_objects;
+pub mod values;
+
 pub fn unwind_target() -> Expr {
     use crate::kir::BinOp;
-    Expr::Bin(BinOp::And, Box::new(Expr::Var("exn0".into())),
-        Box::new(Expr::Int(!(kiln_rt::unwind::PACKED_VALUES_FLAG as i64))))
+    Expr::Bin(
+        BinOp::And,
+        Box::new(Expr::Var("exn0".into())),
+        Box::new(Expr::Int(!(kiln_rt::unwind::PACKED_VALUES_FLAG as i64))),
+    )
 }
 
 pub fn unwind_packed() -> Expr {
     use crate::kir::BinOp;
-    Expr::Bin(BinOp::And, Box::new(Expr::Var("exn0".into())),
-        Box::new(Expr::Int(kiln_rt::unwind::PACKED_VALUES_FLAG as i64)))
+    Expr::Bin(
+        BinOp::And,
+        Box::new(Expr::Var("exn0".into())),
+        Box::new(Expr::Int(kiln_rt::unwind::PACKED_VALUES_FLAG as i64)),
+    )
 }
 
 pub fn static_object_tag(kind: &str) -> Result<i64, String> {
@@ -26,7 +40,9 @@ pub fn static_object_tag(kind: &str) -> Result<i64, String> {
 
 pub fn static_field_root_index(field: u32) -> Result<u32, String> {
     match field {
-        FIELD_CONS_CAR | FIELD_CONS_CDR => Ok(((field_offset(field)? + TAG_CONS as i32) / size_of::<u64>() as i32) as u32),
+        FIELD_CONS_CAR | FIELD_CONS_CDR => {
+            Ok(((field_offset(field)? + TAG_CONS as i32) / size_of::<u64>() as i32) as u32)
+        }
         _ => symbol_root_index(field),
     }
 }
@@ -44,7 +60,11 @@ pub fn test_class(class: u32, object: Expr) -> Result<Expr, String> {
     };
     Ok(Expr::Cmp(
         CmpOp::Eq,
-        Box::new(Expr::Bin(BinOp::And, Box::new(object), Box::new(Expr::Int(mask as i64)))),
+        Box::new(Expr::Bin(
+            BinOp::And,
+            Box::new(object),
+            Box::new(Expr::Int(mask as i64)),
+        )),
         Box::new(Expr::Int(tag as i64)),
     ))
 }
@@ -55,7 +75,10 @@ pub fn test_header_class(class: u32, object: Expr) -> Result<Expr, String> {
     use kiln_rt::object::*;
     let (mask, kind) = match class {
         CLASS_SYMBOL => (KIND_MASK, KIND_SYMBOL),
-        CLASS_FUNCTION => (KIND_MASK ^ (KIND_FUNCTION ^ KIND_FUNCALLABLE_INSTANCE), KIND_FUNCTION),
+        CLASS_FUNCTION => (
+            KIND_MASK ^ (KIND_FUNCTION ^ KIND_FUNCALLABLE_INSTANCE),
+            KIND_FUNCTION,
+        ),
         CLASS_SIMPLE_VECTOR => (KIND_MASK, KIND_SIMPLE_VECTOR),
         CLASS_STRING => (KIND_MASK, KIND_STRING),
         CLASS_BIGNUM => (KIND_MASK, KIND_BIGNUM),
@@ -67,11 +90,15 @@ pub fn test_header_class(class: u32, object: Expr) -> Result<Expr, String> {
         CLASS_STRUCTURE_INSTANCE => (KIND_MASK, KIND_STRUCTURE_INSTANCE),
         _ => return Err(format!("unknown header class {class}")),
     };
-    Ok(Expr::Cmp(CmpOp::Eq,
-        Box::new(Expr::Bin(BinOp::And,
+    Ok(Expr::Cmp(
+        CmpOp::Eq,
+        Box::new(Expr::Bin(
+            BinOp::And,
             Box::new(Expr::Load(Box::new(object), -(TAG_GENERAL as i32))),
-            Box::new(Expr::Int(mask as i64)))),
-        Box::new(Expr::Int(kind as i64))))
+            Box::new(Expr::Int(mask as i64)),
+        )),
+        Box::new(Expr::Int(kind as i64)),
+    ))
 }
 
 pub fn heap_number_test(result: String, temporary: String, object: Expr) -> Vec<Stmt> {
@@ -80,17 +107,42 @@ pub fn heap_number_test(result: String, temporary: String, object: Expr) -> Vec<
     let kind = || Expr::Var(temporary.clone());
     let cmp = |op, n| Expr::Cmp(op, Box::new(kind()), Box::new(Expr::Int(n)));
     vec![
-        Stmt::Set(temporary.clone(), Expr::Bin(BinOp::And,
-            Box::new(Expr::Load(Box::new(object), -(TAG_GENERAL as i32))), Box::new(Expr::Int(KIND_MASK as i64)))),
-        Stmt::Set(result, Expr::Bin(BinOp::Or,
-            Box::new(Expr::Bin(BinOp::And, Box::new(cmp(CmpOp::Ge, KIND_BIGNUM as i64)), Box::new(cmp(CmpOp::Le, KIND_DOUBLE as i64)))),
-            Box::new(cmp(CmpOp::Eq, KIND_COMPLEX as i64)))),
+        Stmt::Set(
+            temporary.clone(),
+            Expr::Bin(
+                BinOp::And,
+                Box::new(Expr::Load(Box::new(object), -(TAG_GENERAL as i32))),
+                Box::new(Expr::Int(KIND_MASK as i64)),
+            ),
+        ),
+        Stmt::Set(
+            result,
+            Expr::Bin(
+                BinOp::Or,
+                Box::new(Expr::Bin(
+                    BinOp::And,
+                    Box::new(cmp(CmpOp::Ge, KIND_BIGNUM as i64)),
+                    Box::new(cmp(CmpOp::Le, KIND_DOUBLE as i64)),
+                )),
+                Box::new(cmp(CmpOp::Eq, KIND_COMPLEX as i64)),
+            ),
+        ),
     ]
 }
 
 #[allow(clippy::type_complexity)]
-pub fn identity_hash(name: &str, block: String, mut preceding: Vec<Stmt>, result: String,
-                     object: String, runtime: String) -> (Vec<(String, crate::kir::VarKind)>, Vec<crate::kir::Block>, String) {
+pub fn identity_hash(
+    name: &str,
+    block: String,
+    mut preceding: Vec<Stmt>,
+    result: String,
+    object: String,
+    runtime: String,
+) -> (
+    Vec<(String, crate::kir::VarKind)>,
+    Vec<crate::kir::Block>,
+    String,
+) {
     use crate::kir::{BinOp, Block, CmpOp, ShiftOp, VarKind};
     use kiln_rt::object::{HASH_SHIFT, TAG_MASK};
     let tag = format!("{name}_tag");
@@ -101,20 +153,74 @@ pub fn identity_hash(name: &str, block: String, mut preceding: Vec<Stmt>, result
     let done = format!("{name}_done");
     let var = |s: &str| Expr::Var(s.to_string());
     let eq_tag = |n| Expr::Cmp(CmpOp::Eq, Box::new(var(&tag)), Box::new(Expr::Int(n)));
-    preceding.push(Stmt::Set(tag.clone(), Expr::Bin(BinOp::And, Box::new(var(&object)), Box::new(Expr::Int(TAG_MASK as i64)))));
-    preceding.push(Stmt::Br(Expr::Bin(BinOp::Or, Box::new(eq_tag(TAG_CONS as i64)), Box::new(eq_tag(TAG_GENERAL as i64))), heap.clone(), slow.clone()));
+    preceding.push(Stmt::Set(
+        tag.clone(),
+        Expr::Bin(
+            BinOp::And,
+            Box::new(var(&object)),
+            Box::new(Expr::Int(TAG_MASK as i64)),
+        ),
+    ));
+    preceding.push(Stmt::Br(
+        Expr::Bin(
+            BinOp::Or,
+            Box::new(eq_tag(TAG_CONS as i64)),
+            Box::new(eq_tag(TAG_GENERAL as i64)),
+        ),
+        heap.clone(),
+        slow.clone(),
+    ));
     let raw = Expr::Bin(BinOp::Sub, Box::new(var(&object)), Box::new(var(&tag)));
     let heap_stmts = vec![
-        Stmt::Set(hash.clone(), Expr::Shift(ShiftOp::Shr, Box::new(Expr::Load(Box::new(raw), 0)), HASH_SHIFT as i64)),
-        Stmt::Br(Expr::Cmp(CmpOp::Ne, Box::new(var(&hash)), Box::new(Expr::Int(0))), fast.clone(), slow.clone()),
+        Stmt::Set(
+            hash.clone(),
+            Expr::Shift(
+                ShiftOp::Shr,
+                Box::new(Expr::Load(Box::new(raw), 0)),
+                HASH_SHIFT as i64,
+            ),
+        ),
+        Stmt::Br(
+            Expr::Cmp(CmpOp::Ne, Box::new(var(&hash)), Box::new(Expr::Int(0))),
+            fast.clone(),
+            slow.clone(),
+        ),
     ];
     let blocks = vec![
-        Block { name: block, stmts: preceding },
-        Block { name: heap, stmts: heap_stmts },
-        Block { name: fast, stmts: vec![Stmt::Set(result.clone(), fixnum_tag(var(&hash))), Stmt::Jump(done.clone())] },
-        Block { name: slow, stmts: vec![Stmt::CallRt { name: runtime, results: vec![result], args: vec![var("ctx"), var(&object)], handler: None, loc: None }, Stmt::Jump(done.clone())] },
+        Block {
+            name: block,
+            stmts: preceding,
+        },
+        Block {
+            name: heap,
+            stmts: heap_stmts,
+        },
+        Block {
+            name: fast,
+            stmts: vec![
+                Stmt::Set(result.clone(), fixnum_tag(var(&hash))),
+                Stmt::Jump(done.clone()),
+            ],
+        },
+        Block {
+            name: slow,
+            stmts: vec![
+                Stmt::CallRt {
+                    name: runtime,
+                    results: vec![result],
+                    args: vec![var("ctx"), var(&object)],
+                    handler: None,
+                    loc: None,
+                },
+                Stmt::Jump(done.clone()),
+            ],
+        },
     ];
-    (vec![(tag, VarKind::Raw), (hash, VarKind::Raw)], blocks, done)
+    (
+        vec![(tag, VarKind::Raw), (hash, VarKind::Raw)],
+        blocks,
+        done,
+    )
 }
 
 fn field_offset(field: u32) -> Result<i32, String> {
@@ -172,9 +278,25 @@ pub fn fixnum_arithmetic(op: crate::kir::OvfOp, a: Expr, b: Expr) -> Expr {
     Expr::Bin(op, Box::new(a), Box::new(b))
 }
 
-pub fn fixnum_arithmetic_ovf(op: crate::kir::OvfOp, result: String, overflow: String, a: Expr, b: Expr) -> Stmt {
-    let a = if matches!(op, crate::kir::OvfOp::Mul) { fixnum_untag(a) } else { a };
-    Stmt::Ovf { op, result, overflow, a, b }
+pub fn fixnum_arithmetic_ovf(
+    op: crate::kir::OvfOp,
+    result: String,
+    overflow: String,
+    a: Expr,
+    b: Expr,
+) -> Stmt {
+    let a = if matches!(op, crate::kir::OvfOp::Mul) {
+        fixnum_untag(a)
+    } else {
+        a
+    };
+    Stmt::Ovf {
+        op,
+        result,
+        overflow,
+        a,
+        b,
+    }
 }
 
 pub fn fixnum_operation(op: &str, a: Expr, b: Option<Expr>) -> Result<Expr, String> {
@@ -182,8 +304,16 @@ pub fn fixnum_operation(op: &str, a: Expr, b: Option<Expr>) -> Result<Expr, Stri
     let bin = |op, x, y| Expr::Bin(op, Box::new(x), Box::new(y));
     let b = || b.clone().ok_or_else(|| format!("{op}: missing operand"));
     Ok(match op {
-        "fixnum-evenp" => Expr::Cmp(CmpOp::Eq, Box::new(bin(BinOp::And, a, Expr::Int(2))), Box::new(Expr::Int(0))),
-        "fixnum-half" => bin(BinOp::And, Expr::Shift(ShiftOp::Sar, Box::new(a), 1), Expr::Int(-2)),
+        "fixnum-evenp" => Expr::Cmp(
+            CmpOp::Eq,
+            Box::new(bin(BinOp::And, a, Expr::Int(2))),
+            Box::new(Expr::Int(0)),
+        ),
+        "fixnum-half" => bin(
+            BinOp::And,
+            Expr::Shift(ShiftOp::Sar, Box::new(a), 1),
+            Expr::Int(-2),
+        ),
         "fixnum-quotient" => Expr::Shift(ShiftOp::Shl, Box::new(bin(BinOp::Sdiv, a, b()?)), 1),
         "fixnum-remainder" => bin(BinOp::Srem, a, b()?),
         "fixnum-logand" => bin(BinOp::And, a, b()?),
@@ -195,7 +325,11 @@ pub fn fixnum_operation(op: &str, a: Expr, b: Option<Expr>) -> Result<Expr, Stri
         "fixnum-eq" => Expr::Cmp(CmpOp::Eq, Box::new(a), Box::new(b()?)),
         "fixnum-le" => Expr::Cmp(CmpOp::Le, Box::new(a), Box::new(b()?)),
         "fixnum-shift-left" => bin(BinOp::Shlv, a, fixnum_untag(b()?)),
-        "fixnum-shift-right" => bin(BinOp::And, bin(BinOp::Sarv, a, fixnum_untag(b()?)), Expr::Int(-2)),
+        "fixnum-shift-right" => bin(
+            BinOp::And,
+            bin(BinOp::Sarv, a, fixnum_untag(b()?)),
+            Expr::Int(-2),
+        ),
         _ => return Err(format!("unknown fixnum operation {op}")),
     })
 }
@@ -210,75 +344,207 @@ pub fn fixnum_unsigned_bits(value: Expr) -> Expr {
 
 pub fn tls_address(index: Expr) -> Expr {
     use crate::kir::{BinOp, ShiftOp};
-    let table = Expr::Load(Box::new(Expr::Var("ctx".into())), core::mem::offset_of!(kiln_rt::context::Context, tls) as i32);
-    Expr::Bin(BinOp::Add, Box::new(table), Box::new(Expr::Shift(ShiftOp::Shl, Box::new(index), 2)))
+    let table = Expr::Load(
+        Box::new(Expr::Var("ctx".into())),
+        core::mem::offset_of!(kiln_rt::context::Context, tls) as i32,
+    );
+    Expr::Bin(
+        BinOp::Add,
+        Box::new(table),
+        Box::new(Expr::Shift(ShiftOp::Shl, Box::new(index), 2)),
+    )
 }
 
 pub fn no_tls_value(value: Expr) -> Expr {
-    Expr::Cmp(crate::kir::CmpOp::Eq, Box::new(value), Box::new(Expr::Int(kiln_rt::special::NO_TLS_VALUE as i64)))
+    Expr::Cmp(
+        crate::kir::CmpOp::Eq,
+        Box::new(value),
+        Box::new(Expr::Int(kiln_rt::special::NO_TLS_VALUE as i64)),
+    )
 }
 
 pub fn poll_test(kind: &str) -> Result<Expr, String> {
     use kiln_rt::context::Context;
     let context = || Expr::Var("ctx".into());
     match kind {
-        "entry" => Ok(Expr::Cmp(crate::kir::CmpOp::Lt, Box::new(Expr::Fp),
-            Box::new(Expr::Load(Box::new(context()), core::mem::offset_of!(Context, stack_limit) as i32)))),
-        "loop" => Ok(Expr::Load(Box::new(context()), core::mem::offset_of!(Context, poll_flag) as i32)),
+        "entry" => Ok(Expr::Cmp(
+            crate::kir::CmpOp::Lt,
+            Box::new(Expr::Fp),
+            Box::new(Expr::Load(
+                Box::new(context()),
+                core::mem::offset_of!(Context, stack_limit) as i32,
+            )),
+        )),
+        "loop" => Ok(Expr::Load(
+            Box::new(context()),
+            core::mem::offset_of!(Context, poll_flag) as i32,
+        )),
         _ => Err(format!("unknown poll test {kind}")),
     }
 }
 
 pub fn tls_read(symbol: Expr) -> Result<Expr, String> {
-    Ok(Expr::Load(Box::new(tls_address(field_load(FIELD_SYMBOL_TLS_INDEX, symbol)?)), 0))
+    Ok(Expr::Load(
+        Box::new(tls_address(field_load(FIELD_SYMBOL_TLS_INDEX, symbol)?)),
+        0,
+    ))
 }
 
 pub fn tls_write(symbol: Expr, value: Expr) -> Result<Stmt, String> {
-    Ok(Stmt::Store(tls_address(field_load(FIELD_SYMBOL_TLS_INDEX, symbol)?), 0, value))
+    Ok(Stmt::Store(
+        tls_address(field_load(FIELD_SYMBOL_TLS_INDEX, symbol)?),
+        0,
+        value,
+    ))
 }
 
 #[allow(clippy::type_complexity)]
-pub fn ensure_tls_index(name: &str, block: String, mut preceding: Vec<Stmt>, result: String,
-                        symbol: String, runtime: String)
-    -> Result<(Vec<crate::kir::Block>, String), String> {
+pub fn register_tls_import(module: &mut crate::kir::Module) -> Result<(), String> {
+    let used = module
+        .funcs
+        .iter()
+        .flat_map(|f| &f.blocks)
+        .flat_map(|b| &b.stmts)
+        .any(|s| matches!(s,Stmt::CallRt {name,..} if name=="kiln_rt_tls_index"));
+    if !used {
+        return Ok(());
+    }
+    if let Some(f) = module
+        .import_funcs
+        .iter()
+        .find(|f| f.name == "kiln_rt_tls_index")
+    {
+        if f.params != 2 || f.returns != 1 || f.unwinds || f.noreturn {
+            return Err("TLS index requires the runtime TLS signature".into());
+        }
+    } else {
+        module.import_funcs.push(crate::kir::ImportFunc {
+            name: "kiln_rt_tls_index".into(),
+            params: 2,
+            returns: 1,
+            unwinds: false,
+            noreturn: false,
+        });
+    }
+    Ok(())
+}
+
+pub fn ensure_tls_index(
+    name: &str,
+    block: String,
+    mut preceding: Vec<Stmt>,
+    result: String,
+    symbol: String,
+) -> Result<(Vec<crate::kir::Block>, String), String> {
     use crate::kir::{Block, CmpOp};
     let assign = format!("{name}_assign");
     let done = format!("{name}_done");
-    preceding.push(Stmt::Set(result.clone(), field_load(FIELD_SYMBOL_TLS_INDEX, Expr::Var(symbol.clone()))?));
-    preceding.push(Stmt::Br(Expr::Cmp(CmpOp::Eq, Box::new(Expr::Var(result.clone())), Box::new(Expr::Int(0))), assign.clone(), done.clone()));
-    Ok((vec![
-        Block { name: block, stmts: preceding },
-        Block { name: assign, stmts: vec![
-            Stmt::CallRt { name: runtime, results: vec![result], args: vec![Expr::Var("ctx".into()), Expr::Var(symbol)], handler: None, loc: None },
-            Stmt::Jump(done.clone()),
-        ] },
-    ], done))
+    preceding.push(Stmt::Set(
+        result.clone(),
+        field_load(FIELD_SYMBOL_TLS_INDEX, Expr::Var(symbol.clone()))?,
+    ));
+    preceding.push(Stmt::Br(
+        Expr::Cmp(
+            CmpOp::Eq,
+            Box::new(Expr::Var(result.clone())),
+            Box::new(Expr::Int(0)),
+        ),
+        assign.clone(),
+        done.clone(),
+    ));
+    Ok((
+        vec![
+            Block {
+                name: block,
+                stmts: preceding,
+            },
+            Block {
+                name: assign,
+                stmts: vec![
+                    Stmt::CallRt {
+                        name: "kiln_rt_tls_index".into(),
+                        results: vec![result],
+                        args: vec![Expr::Var("ctx".into()), Expr::Var(symbol)],
+                        handler: None,
+                        loc: None,
+                    },
+                    Stmt::Jump(done.clone()),
+                ],
+            },
+        ],
+        done,
+    ))
 }
 
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
-pub fn special_access(name: &str, block: String, mut preceding: Vec<Stmt>, symbol: String,
-                      result: Option<String>, value: Option<Expr>)
-    -> Result<(Vec<(String, crate::kir::VarKind)>, Vec<crate::kir::Block>, String), String> {
+pub fn special_access(
+    name: &str,
+    block: String,
+    mut preceding: Vec<Stmt>,
+    symbol: String,
+    result: Option<String>,
+    value: Option<Expr>,
+) -> Result<
+    (
+        Vec<(String, crate::kir::VarKind)>,
+        Vec<crate::kir::Block>,
+        String,
+    ),
+    String,
+> {
     use crate::kir::{Block, VarKind};
     let addr = format!("{name}_tls");
     let global = format!("{name}_global");
     let done = format!("{name}_done");
     let var = |name: &str| Expr::Var(name.to_string());
-    preceding.push(Stmt::Set(addr.clone(), tls_address(field_load(FIELD_SYMBOL_TLS_INDEX, var(&symbol))?)));
+    preceding.push(Stmt::Set(
+        addr.clone(),
+        tls_address(field_load(FIELD_SYMBOL_TLS_INDEX, var(&symbol))?),
+    ));
     let mut blocks = Vec::new();
     if let Some(result) = result {
-        preceding.push(Stmt::Set(result.clone(), Expr::Load(Box::new(var(&addr)), 0)));
-        preceding.push(Stmt::Br(no_tls_value(var(&result)), global.clone(), done.clone()));
-        blocks.push(Block { name: block, stmts: preceding });
-        blocks.push(Block { name: global, stmts: vec![
-            Stmt::Set(result, field_load(FIELD_SYMBOL_VALUE, var(&symbol))?), Stmt::Jump(done.clone()),
-        ] });
+        preceding.push(Stmt::Set(
+            result.clone(),
+            Expr::Load(Box::new(var(&addr)), 0),
+        ));
+        preceding.push(Stmt::Br(
+            no_tls_value(var(&result)),
+            global.clone(),
+            done.clone(),
+        ));
+        blocks.push(Block {
+            name: block,
+            stmts: preceding,
+        });
+        blocks.push(Block {
+            name: global,
+            stmts: vec![
+                Stmt::Set(result, field_load(FIELD_SYMBOL_VALUE, var(&symbol))?),
+                Stmt::Jump(done.clone()),
+            ],
+        });
     } else if let Some(value) = value {
         let local = format!("{name}_local");
-        preceding.push(Stmt::Br(no_tls_value(Expr::Load(Box::new(var(&addr)), 0)), global.clone(), local.clone()));
-        blocks.push(Block { name: block, stmts: preceding });
-        blocks.push(Block { name: global, stmts: vec![field_store(FIELD_SYMBOL_VALUE, var(&symbol), value.clone())?, Stmt::Jump(done.clone())] });
-        blocks.push(Block { name: local, stmts: vec![Stmt::Store(var(&addr), 0, value), Stmt::Jump(done.clone())] });
+        preceding.push(Stmt::Br(
+            no_tls_value(Expr::Load(Box::new(var(&addr)), 0)),
+            global.clone(),
+            local.clone(),
+        ));
+        blocks.push(Block {
+            name: block,
+            stmts: preceding,
+        });
+        blocks.push(Block {
+            name: global,
+            stmts: vec![
+                field_store(FIELD_SYMBOL_VALUE, var(&symbol), value.clone())?,
+                Stmt::Jump(done.clone()),
+            ],
+        });
+        blocks.push(Block {
+            name: local,
+            stmts: vec![Stmt::Store(var(&addr), 0, value), Stmt::Jump(done.clone())],
+        });
     } else {
         return Err("special access requires a result or value".into());
     }
@@ -292,10 +558,15 @@ pub fn fixnum_tag(value: Expr) -> Expr {
 pub fn vector_length(object: Expr) -> Expr {
     use crate::kir::{BinOp, ShiftOp};
     use kiln_rt::object::{LENGTH_MASK, LENGTH_SHIFT};
-    Expr::Bin(BinOp::And,
-        Box::new(Expr::Shift(ShiftOp::Shr,
-            Box::new(Expr::Load(Box::new(object), -(TAG_GENERAL as i32))), LENGTH_SHIFT as i64)),
-        Box::new(Expr::Int(LENGTH_MASK as i64)))
+    Expr::Bin(
+        BinOp::And,
+        Box::new(Expr::Shift(
+            ShiftOp::Shr,
+            Box::new(Expr::Load(Box::new(object), -(TAG_GENERAL as i32))),
+            LENGTH_SHIFT as i64,
+        )),
+        Box::new(Expr::Int(LENGTH_MASK as i64)),
+    )
 }
 
 pub fn invalid_vector_length(value: Expr) -> Expr {
@@ -309,42 +580,81 @@ pub fn invalid_rack_length(value: Expr) -> Expr {
 fn invalid_length(value: Expr, max: u64) -> Expr {
     use crate::kir::{BinOp, CmpOp};
     use kiln_rt::object::FIXNUM_MASK;
-    Expr::Bin(BinOp::Or,
-        Box::new(Expr::Bin(BinOp::And, Box::new(value.clone()), Box::new(Expr::Int(FIXNUM_MASK as i64)))),
-        Box::new(Expr::Bin(BinOp::Or,
-            Box::new(Expr::Cmp(CmpOp::Lt, Box::new(value.clone()), Box::new(Expr::Int(0)))),
-            Box::new(Expr::Cmp(CmpOp::Gt, Box::new(value), Box::new(Expr::Int((max << 1) as i64)))))))
+    Expr::Bin(
+        BinOp::Or,
+        Box::new(Expr::Bin(
+            BinOp::And,
+            Box::new(value.clone()),
+            Box::new(Expr::Int(FIXNUM_MASK as i64)),
+        )),
+        Box::new(Expr::Bin(
+            BinOp::Or,
+            Box::new(Expr::Cmp(
+                CmpOp::Lt,
+                Box::new(value.clone()),
+                Box::new(Expr::Int(0)),
+            )),
+            Box::new(Expr::Cmp(
+                CmpOp::Gt,
+                Box::new(value),
+                Box::new(Expr::Int((max << 1) as i64)),
+            )),
+        )),
+    )
 }
 
 fn vector_element_address(object: Expr, index: Expr) -> Expr {
     use crate::kir::{BinOp, ShiftOp};
-    Expr::Bin(BinOp::Add, Box::new(object),
-        Box::new(Expr::Shift(ShiftOp::Shl, Box::new(index), 3)))
+    Expr::Bin(
+        BinOp::Add,
+        Box::new(object),
+        Box::new(Expr::Shift(ShiftOp::Shl, Box::new(index), 3)),
+    )
 }
 
 pub fn vector_ref(object: Expr, index: Expr) -> Expr {
-    Expr::Load(Box::new(vector_element_address(object, index)), size_of::<u64>() as i32 - TAG_GENERAL as i32)
+    Expr::Load(
+        Box::new(vector_element_address(object, index)),
+        size_of::<u64>() as i32 - TAG_GENERAL as i32,
+    )
 }
 
 pub fn vector_set(object: Expr, index: Expr, value: Expr) -> Stmt {
-    Stmt::Store(vector_element_address(object, index), size_of::<u64>() as i32 - TAG_GENERAL as i32, value)
+    Stmt::Store(
+        vector_element_address(object, index),
+        size_of::<u64>() as i32 - TAG_GENERAL as i32,
+        value,
+    )
 }
 
 pub fn character_untag(value: Expr) -> Expr {
-    Expr::Shift(crate::kir::ShiftOp::Shr, Box::new(value), kiln_rt::object::CHARACTER_SHIFT as i64)
+    Expr::Shift(
+        crate::kir::ShiftOp::Shr,
+        Box::new(value),
+        kiln_rt::object::CHARACTER_SHIFT as i64,
+    )
 }
 
 pub fn character_tag(code: Expr) -> Expr {
     use crate::kir::{BinOp, ShiftOp};
-    Expr::Bin(BinOp::Or,
-        Box::new(Expr::Shift(ShiftOp::Shl, Box::new(code), kiln_rt::object::CHARACTER_SHIFT as i64)),
-        Box::new(Expr::Int(kiln_rt::object::CHARACTER_TAG as i64)))
+    Expr::Bin(
+        BinOp::Or,
+        Box::new(Expr::Shift(
+            ShiftOp::Shl,
+            Box::new(code),
+            kiln_rt::object::CHARACTER_SHIFT as i64,
+        )),
+        Box::new(Expr::Int(kiln_rt::object::CHARACTER_TAG as i64)),
+    )
 }
 
 pub fn single_float_tag(bits: Expr) -> Expr {
     use crate::kir::{BinOp, ShiftOp};
-    Expr::Bin(BinOp::Or, Box::new(Expr::Shift(ShiftOp::Shl, Box::new(bits), 32)),
-        Box::new(Expr::Int(kiln_rt::number::SINGLE_TAG as i64)))
+    Expr::Bin(
+        BinOp::Or,
+        Box::new(Expr::Shift(ShiftOp::Shl, Box::new(bits), 32)),
+        Box::new(Expr::Int(kiln_rt::number::SINGLE_TAG as i64)),
+    )
 }
 
 pub fn single_float_bits(value: Expr) -> Expr {
@@ -353,108 +663,200 @@ pub fn single_float_bits(value: Expr) -> Expr {
 
 fn string_element_address(object: Expr, index: Expr) -> Expr {
     use crate::kir::{BinOp, ShiftOp};
-    Expr::Bin(BinOp::Add, Box::new(object), Box::new(Expr::Shift(ShiftOp::Shl, Box::new(index), 2)))
+    Expr::Bin(
+        BinOp::Add,
+        Box::new(object),
+        Box::new(Expr::Shift(ShiftOp::Shl, Box::new(index), 2)),
+    )
 }
 
 pub fn string_ref(object: Expr, index: Expr) -> Expr {
-    character_tag(Expr::Load32(Box::new(string_element_address(object, index)), size_of::<u64>() as i32 - TAG_GENERAL as i32))
+    character_tag(Expr::Load32(
+        Box::new(string_element_address(object, index)),
+        size_of::<u64>() as i32 - TAG_GENERAL as i32,
+    ))
 }
 
 pub fn string_set(object: Expr, index: Expr, value: Expr) -> Stmt {
-    Stmt::Store32(string_element_address(object, index), size_of::<u64>() as i32 - TAG_GENERAL as i32, character_untag(value))
+    Stmt::Store32(
+        string_element_address(object, index),
+        size_of::<u64>() as i32 - TAG_GENERAL as i32,
+        character_untag(value),
+    )
 }
 
 fn instance_rack_address(object: Expr) -> Result<Expr, String> {
     use crate::kir::BinOp;
     let is_standard = test_header_class(CLASS_INSTANCE, object.clone())?;
-    let offset = Expr::Select(Box::new(is_standard), Box::new(Expr::Int(0)), Box::new(Expr::Int(size_of::<u64>() as i64)));
+    let offset = Expr::Select(
+        Box::new(is_standard),
+        Box::new(Expr::Int(0)),
+        Box::new(Expr::Int(size_of::<u64>() as i64)),
+    );
     Ok(Expr::Bin(BinOp::Add, Box::new(object), Box::new(offset)))
 }
 
 pub fn instance_rack(object: Expr) -> Result<Expr, String> {
-    Ok(Expr::Load(Box::new(instance_rack_address(object)?), size_of::<u64>() as i32 - TAG_GENERAL as i32))
+    Ok(Expr::Load(
+        Box::new(instance_rack_address(object)?),
+        size_of::<u64>() as i32 - TAG_GENERAL as i32,
+    ))
 }
 
 pub fn set_instance_rack(object: Expr, value: Expr) -> Result<Stmt, String> {
-    Ok(Stmt::Store(instance_rack_address(object)?, size_of::<u64>() as i32 - TAG_GENERAL as i32, value))
+    Ok(Stmt::Store(
+        instance_rack_address(object)?,
+        size_of::<u64>() as i32 - TAG_GENERAL as i32,
+        value,
+    ))
 }
 
 fn indexed_object_address(object: Expr, index: Expr) -> Expr {
-    Expr::Bin(crate::kir::BinOp::Add, Box::new(object),
-        Box::new(Expr::Shift(crate::kir::ShiftOp::Shl, Box::new(index), 3)))
+    Expr::Bin(
+        crate::kir::BinOp::Add,
+        Box::new(object),
+        Box::new(Expr::Shift(crate::kir::ShiftOp::Shl, Box::new(index), 3)),
+    )
 }
 
 pub fn instance_class(object: Expr) -> Result<Expr, String> {
-    Ok(Expr::Load(Box::new(instance_rack(object)?), size_of::<u64>() as i32 - TAG_GENERAL as i32))
+    Ok(Expr::Load(
+        Box::new(instance_rack(object)?),
+        size_of::<u64>() as i32 - TAG_GENERAL as i32,
+    ))
 }
 
 pub fn instance_slot(object: Expr, index: Expr) -> Result<Expr, String> {
-    Ok(Expr::Load(Box::new(indexed_object_address(instance_rack(object)?, index)), (4 * size_of::<u64>()) as i32 - TAG_GENERAL as i32))
+    Ok(Expr::Load(
+        Box::new(indexed_object_address(instance_rack(object)?, index)),
+        (4 * size_of::<u64>()) as i32 - TAG_GENERAL as i32,
+    ))
 }
 
 pub fn set_instance_slot(object: Expr, index: Expr, value: Expr) -> Result<Stmt, String> {
-    Ok(Stmt::Store(indexed_object_address(instance_rack(object)?, index), (4 * size_of::<u64>()) as i32 - TAG_GENERAL as i32, value))
+    Ok(Stmt::Store(
+        indexed_object_address(instance_rack(object)?, index),
+        (4 * size_of::<u64>()) as i32 - TAG_GENERAL as i32,
+        value,
+    ))
 }
 
 pub fn structure_layout(object: Expr) -> Expr {
-    Expr::Load(Box::new(object), size_of::<u64>() as i32 - TAG_GENERAL as i32)
+    Expr::Load(
+        Box::new(object),
+        size_of::<u64>() as i32 - TAG_GENERAL as i32,
+    )
 }
 
 pub fn structure_allocation_layout(count: &Expr) -> Result<(Expr, Expr), String> {
     use crate::kir::{BinOp, ShiftOp};
     use kiln_rt::object::{KIND_STRUCTURE_INSTANCE, LENGTH_MASK, LENGTH_SHIFT};
     if let Expr::Int(n) = count {
-        if *n < 0 || *n as u64 > LENGTH_MASK { return Err("structure slot count out of range".into()); }
-        return Ok((Expr::Int(2 * size_of::<u64>() as i64 + n * size_of::<u64>() as i64),
-                   Expr::Int(((*n as u64) << LENGTH_SHIFT | KIND_STRUCTURE_INSTANCE) as i64)));
+        if *n < 0 || *n as u64 > LENGTH_MASK {
+            return Err("structure slot count out of range".into());
+        }
+        return Ok((
+            Expr::Int(2 * size_of::<u64>() as i64 + n * size_of::<u64>() as i64),
+            Expr::Int(((*n as u64) << LENGTH_SHIFT | KIND_STRUCTURE_INSTANCE) as i64),
+        ));
     }
-    Ok((Expr::Bin(BinOp::Add, Box::new(Expr::Int((2 * size_of::<u64>()) as i64)),
-                  Box::new(Expr::Shift(ShiftOp::Shl, Box::new(count.clone()), 3))),
-        Expr::Bin(BinOp::Or, Box::new(Expr::Int(KIND_STRUCTURE_INSTANCE as i64)),
-                  Box::new(Expr::Shift(ShiftOp::Shl, Box::new(count.clone()), LENGTH_SHIFT as i64)))))
+    Ok((
+        Expr::Bin(
+            BinOp::Add,
+            Box::new(Expr::Int((2 * size_of::<u64>()) as i64)),
+            Box::new(Expr::Shift(ShiftOp::Shl, Box::new(count.clone()), 3)),
+        ),
+        Expr::Bin(
+            BinOp::Or,
+            Box::new(Expr::Int(KIND_STRUCTURE_INSTANCE as i64)),
+            Box::new(Expr::Shift(
+                ShiftOp::Shl,
+                Box::new(count.clone()),
+                LENGTH_SHIFT as i64,
+            )),
+        ),
+    ))
 }
 
 pub fn rack_allocation_layout(count: &Expr) -> Result<(Expr, Expr), String> {
     use crate::kir::{BinOp, ShiftOp};
     use kiln_rt::object::{KIND_RACK, LENGTH_MASK, LENGTH_SHIFT};
     if let Expr::Int(n) = count {
-        if *n < 0 || *n as u64 >= LENGTH_MASK { return Err("rack slot count out of range".into()); }
-        return Ok((Expr::Int(2 * size_of::<u64>() as i64 + n * size_of::<u64>() as i64),
-                   Expr::Int(((((*n as u64) + 1) << LENGTH_SHIFT) | KIND_RACK) as i64)));
+        if *n < 0 || *n as u64 >= LENGTH_MASK {
+            return Err("rack slot count out of range".into());
+        }
+        return Ok((
+            Expr::Int(2 * size_of::<u64>() as i64 + n * size_of::<u64>() as i64),
+            Expr::Int(((((*n as u64) + 1) << LENGTH_SHIFT) | KIND_RACK) as i64),
+        ));
     }
     let length = Expr::Bin(BinOp::Add, Box::new(count.clone()), Box::new(Expr::Int(1)));
-    Ok((Expr::Bin(BinOp::Add, Box::new(Expr::Int(size_of::<u64>() as i64)),
-                  Box::new(Expr::Shift(ShiftOp::Shl, Box::new(length.clone()), 3))),
-        Expr::Bin(BinOp::Or, Box::new(Expr::Shift(ShiftOp::Shl, Box::new(length), LENGTH_SHIFT as i64)),
-                  Box::new(Expr::Int(KIND_RACK as i64)))))
+    Ok((
+        Expr::Bin(
+            BinOp::Add,
+            Box::new(Expr::Int(size_of::<u64>() as i64)),
+            Box::new(Expr::Shift(ShiftOp::Shl, Box::new(length.clone()), 3)),
+        ),
+        Expr::Bin(
+            BinOp::Or,
+            Box::new(Expr::Shift(
+                ShiftOp::Shl,
+                Box::new(length),
+                LENGTH_SHIFT as i64,
+            )),
+            Box::new(Expr::Int(KIND_RACK as i64)),
+        ),
+    ))
 }
 
 pub fn initialize_structure(result: String, address: String, layout: Expr) -> Vec<Stmt> {
     vec![
         Stmt::Store(Expr::Var(address.clone()), size_of::<u64>() as i32, layout),
-        Stmt::Set(result, Expr::Bin(crate::kir::BinOp::Add, Box::new(Expr::Var(address)), Box::new(Expr::Int(TAG_GENERAL as i64)))),
+        Stmt::Set(
+            result,
+            Expr::Bin(
+                crate::kir::BinOp::Add,
+                Box::new(Expr::Var(address)),
+                Box::new(Expr::Int(TAG_GENERAL as i64)),
+            ),
+        ),
     ]
 }
 
 pub fn structure_slot(object: Expr, index: Expr) -> Expr {
-    Expr::Load(Box::new(indexed_object_address(object, index)), (2 * size_of::<u64>()) as i32 - TAG_GENERAL as i32)
+    Expr::Load(
+        Box::new(indexed_object_address(object, index)),
+        (2 * size_of::<u64>()) as i32 - TAG_GENERAL as i32,
+    )
 }
 
 pub fn set_structure_slot(object: Expr, index: Expr, value: Expr) -> Stmt {
-    Stmt::Store(indexed_object_address(object, index), (2 * size_of::<u64>()) as i32 - TAG_GENERAL as i32, value)
+    Stmt::Store(
+        indexed_object_address(object, index),
+        (2 * size_of::<u64>()) as i32 - TAG_GENERAL as i32,
+        value,
+    )
 }
 
 pub fn funcallable_function(object: Expr) -> Expr {
-    Expr::Load(Box::new(object), (3 * size_of::<u64>()) as i32 - TAG_GENERAL as i32)
+    Expr::Load(
+        Box::new(object),
+        (3 * size_of::<u64>()) as i32 - TAG_GENERAL as i32,
+    )
 }
 
 pub fn set_funcallable_function(object: Expr, value: Expr) -> Stmt {
-    Stmt::Store(object, (3 * size_of::<u64>()) as i32 - TAG_GENERAL as i32, value)
+    Stmt::Store(
+        object,
+        (3 * size_of::<u64>()) as i32 - TAG_GENERAL as i32,
+        value,
+    )
 }
 
 fn closure_offset(index: i64) -> Result<i32, String> {
     let index = usize::try_from(index).map_err(|_| "invalid closure index")?;
-    let offset = index.checked_mul(size_of::<u64>())
+    let offset = index
+        .checked_mul(size_of::<u64>())
         .and_then(|n| n.checked_add(size_of::<FunctionObj>()))
         .and_then(|n| n.checked_sub(TAG_GENERAL as usize))
         .and_then(|n| i32::try_from(n).ok())
@@ -467,41 +869,78 @@ pub fn closure_layout(count: i64) -> Result<(i64, i64), String> {
     if count < 0 || count as u64 > LENGTH_MASK {
         return Err("closure environment length out of range".into());
     }
-    let size = (count as u64).checked_mul(size_of::<u64>() as u64)
+    let size = (count as u64)
+        .checked_mul(size_of::<u64>() as u64)
         .and_then(|n| n.checked_add(size_of::<FunctionObj>() as u64))
         .and_then(|n| i64::try_from(n).ok())
         .ok_or("closure allocation size out of range")?;
-    Ok((size, ((count as u64) << LENGTH_SHIFT | KIND_FUNCTION) as i64))
+    Ok((
+        size,
+        ((count as u64) << LENGTH_SHIFT | KIND_FUNCTION) as i64,
+    ))
 }
 
 pub fn initialize_closure(result: String, address: String, entry: String) -> Vec<Stmt> {
     use crate::kir::BinOp;
     vec![
-        Stmt::Store(Expr::Var(address.clone()), core::mem::offset_of!(FunctionObj, entry) as i32, Expr::Addr(entry, 0)),
-        Stmt::Set(result, Expr::Bin(BinOp::Add, Box::new(Expr::Var(address)), Box::new(Expr::Int(TAG_GENERAL as i64)))),
+        Stmt::Store(
+            Expr::Var(address.clone()),
+            core::mem::offset_of!(FunctionObj, entry) as i32,
+            Expr::Addr(entry, 0),
+        ),
+        Stmt::Set(
+            result,
+            Expr::Bin(
+                BinOp::Add,
+                Box::new(Expr::Var(address)),
+                Box::new(Expr::Int(TAG_GENERAL as i64)),
+            ),
+        ),
     ]
 }
 
 pub fn initialize_symbol(result: String, address: String, name: Expr, nil: Expr) -> Vec<Stmt> {
     use crate::kir::BinOp;
     use kiln_rt::object::{SymbolObj, UNBOUND};
-    let store = |offset: usize, value| Stmt::Store(Expr::Var(address.clone()), offset as i32, value);
+    let store =
+        |offset: usize, value| Stmt::Store(Expr::Var(address.clone()), offset as i32, value);
     vec![
         store(core::mem::offset_of!(SymbolObj, name), name),
         store(core::mem::offset_of!(SymbolObj, package), nil.clone()),
         store(core::mem::offset_of!(SymbolObj, function), nil.clone()),
-        store(core::mem::offset_of!(SymbolObj, value), Expr::Int(UNBOUND as i64)),
+        store(
+            core::mem::offset_of!(SymbolObj, value),
+            Expr::Int(UNBOUND as i64),
+        ),
         store(core::mem::offset_of!(SymbolObj, plist), nil.clone()),
         store(core::mem::offset_of!(SymbolObj, setf_function), nil),
-        Stmt::Set(result, Expr::Bin(BinOp::Add, Box::new(Expr::Var(address)), Box::new(Expr::Int(TAG_GENERAL as i64)))),
+        Stmt::Set(
+            result,
+            Expr::Bin(
+                BinOp::Add,
+                Box::new(Expr::Var(address)),
+                Box::new(Expr::Int(TAG_GENERAL as i64)),
+            ),
+        ),
     ]
 }
 
 pub fn initialize_stack_closure(result: String, slot: String, entry: String) -> Vec<Stmt> {
     use crate::kir::BinOp;
     vec![
-        Stmt::Store(Expr::Slot(slot.clone()), core::mem::offset_of!(FunctionObj, entry) as i32, Expr::Addr(entry, 0)),
-        Stmt::Set(result, Expr::Bin(BinOp::Add, Box::new(Expr::Slot(slot)), Box::new(Expr::Int(TAG_GENERAL as i64)))),
+        Stmt::Store(
+            Expr::Slot(slot.clone()),
+            core::mem::offset_of!(FunctionObj, entry) as i32,
+            Expr::Addr(entry, 0),
+        ),
+        Stmt::Set(
+            result,
+            Expr::Bin(
+                BinOp::Add,
+                Box::new(Expr::Slot(slot)),
+                Box::new(Expr::Int(TAG_GENERAL as i64)),
+            ),
+        ),
     ]
 }
 
@@ -510,19 +949,32 @@ pub fn initialize_stack_cons(result: String, address: Expr, car: Expr, cdr: Expr
     vec![
         Stmt::Store(address.clone(), size_of::<u64>() as i32, car),
         Stmt::Store(address.clone(), (2 * size_of::<u64>()) as i32, cdr),
-        Stmt::Set(result, Expr::Bin(BinOp::Add, Box::new(address), Box::new(Expr::Int(TAG_CONS as i64)))),
+        Stmt::Set(
+            result,
+            Expr::Bin(
+                BinOp::Add,
+                Box::new(address),
+                Box::new(Expr::Int(TAG_CONS as i64)),
+            ),
+        ),
     ]
 }
 
 pub fn stack_object_layout(class: u32, count: i64) -> Result<(u32, i64, i32), String> {
     match class {
-        CLASS_CONS if count == 2 => Ok((kiln_rt::object::CONS_BYTES as u32, kiln_rt::object::KIND_CONS as i64, size_of::<u64>() as i32)),
+        CLASS_CONS if count == 2 => Ok((
+            kiln_rt::object::CONS_BYTES as u32,
+            kiln_rt::object::KIND_CONS as i64,
+            size_of::<u64>() as i32,
+        )),
         CLASS_FUNCTION => {
             if count > (MAX_EXPANDED_BYTES / EXPANSION_RECORD_BYTES) as i64 {
                 return Err("stack closure initialization exceeds expansion budget".into());
             }
             let (size, header) = closure_layout(count)?;
-            if size > i32::MAX as i64 { return Err("stack closure too large".into()); }
+            if size > i32::MAX as i64 {
+                return Err("stack closure too large".into());
+            }
             Ok((size as u32, header, size_of::<FunctionObj>() as i32))
         }
         _ => Err("invalid stack object class or reference count".into()),
@@ -534,28 +986,53 @@ pub fn initialize_stack_object(slot: String, class: u32, count: i64) -> Result<V
     let mut statements = Vec::with_capacity((size / 8) as usize);
     statements.push(Stmt::Store(Expr::Slot(slot.clone()), 0, Expr::Int(header)));
     for offset in (8..size).step_by(8) {
-        statements.push(Stmt::Store(Expr::Slot(slot.clone()), offset as i32, Expr::Int(0)));
+        statements.push(Stmt::Store(
+            Expr::Slot(slot.clone()),
+            offset as i32,
+            Expr::Int(0),
+        ));
     }
     Ok(statements)
 }
 
 pub fn stack_reference_base(slot: String, class: u32, count: i64) -> Result<Expr, String> {
     let (_, _, offset) = stack_object_layout(class, count)?;
-    Ok(Expr::Bin(crate::kir::BinOp::Add, Box::new(Expr::Slot(slot)), Box::new(Expr::Int(offset as i64))))
+    Ok(Expr::Bin(
+        crate::kir::BinOp::Add,
+        Box::new(Expr::Slot(slot)),
+        Box::new(Expr::Int(offset as i64)),
+    ))
 }
 
-pub fn enter_stack_roots(entry: String, object: String, class: u32, count: i64) -> Result<Vec<Stmt>, String> {
-    use kiln_rt::context::{Context, DynEntry, DYN_STACK_ROOTS};
+pub fn enter_stack_roots(
+    entry: String,
+    object: String,
+    class: u32,
+    count: i64,
+) -> Result<Vec<Stmt>, String> {
+    use kiln_rt::context::{Context, DYN_STACK_ROOTS, DynEntry};
     let field = |offset: usize, value| Stmt::Store(Expr::Slot(entry.clone()), offset as i32, value);
     let context = || Expr::Var("ctx".into());
     let dynenv = core::mem::offset_of!(Context, dynenv) as i32;
     Ok(vec![
-        field(core::mem::offset_of!(DynEntry, kind), Expr::Int(DYN_STACK_ROOTS as i64)),
-        field(core::mem::offset_of!(DynEntry, prev), Expr::Load(Box::new(context()), dynenv)),
+        field(
+            core::mem::offset_of!(DynEntry, kind),
+            Expr::Int(DYN_STACK_ROOTS as i64),
+        ),
+        field(
+            core::mem::offset_of!(DynEntry, prev),
+            Expr::Load(Box::new(context()), dynenv),
+        ),
         field(core::mem::offset_of!(DynEntry, fp), Expr::Fp),
         field(core::mem::offset_of!(DynEntry, tag), Expr::Int(0)),
-        field(core::mem::offset_of!(DynEntry, pend_target), stack_reference_base(object, class, count)?),
-        field(core::mem::offset_of!(DynEntry, pend_value), Expr::Int(count)),
+        field(
+            core::mem::offset_of!(DynEntry, pend_target),
+            stack_reference_base(object, class, count)?,
+        ),
+        field(
+            core::mem::offset_of!(DynEntry, pend_value),
+            Expr::Int(count),
+        ),
         Stmt::Store(context(), dynenv, Expr::Slot(entry)),
     ])
 }
@@ -578,8 +1055,14 @@ pub fn enter_dynamic_entry(entry: String, kind: &str, tag: Expr) -> Result<Vec<S
     let context = || Expr::Var("ctx".into());
     let dynenv = core::mem::offset_of!(Context, dynenv) as i32;
     Ok(vec![
-        field(core::mem::offset_of!(DynEntry, kind), Expr::Int(dynamic_entry_kind(kind)?)),
-        field(core::mem::offset_of!(DynEntry, prev), Expr::Load(Box::new(context()), dynenv)),
+        field(
+            core::mem::offset_of!(DynEntry, kind),
+            Expr::Int(dynamic_entry_kind(kind)?),
+        ),
+        field(
+            core::mem::offset_of!(DynEntry, prev),
+            Expr::Load(Box::new(context()), dynenv),
+        ),
         field(core::mem::offset_of!(DynEntry, fp), Expr::Fp),
         field(core::mem::offset_of!(DynEntry, tag), tag),
         field(core::mem::offset_of!(DynEntry, pend_target), Expr::Int(0)),
@@ -590,16 +1073,29 @@ pub fn enter_dynamic_entry(entry: String, kind: &str, tag: Expr) -> Result<Vec<S
 
 pub fn leave_dynamic_entry(entry: String) -> Stmt {
     use kiln_rt::context::{Context, DynEntry};
-    Stmt::Store(Expr::Var("ctx".into()), core::mem::offset_of!(Context, dynenv) as i32,
-        Expr::Load(Box::new(Expr::Slot(entry)), core::mem::offset_of!(DynEntry, prev) as i32))
+    Stmt::Store(
+        Expr::Var("ctx".into()),
+        core::mem::offset_of!(Context, dynenv) as i32,
+        Expr::Load(
+            Box::new(Expr::Slot(entry)),
+            core::mem::offset_of!(DynEntry, prev) as i32,
+        ),
+    )
 }
 
 pub fn bind_special(entry: String, index: Expr, address: Expr, value: Expr) -> Vec<Stmt> {
     use kiln_rt::context::DynEntry;
     vec![
-        Stmt::Store(Expr::Slot(entry.clone()), core::mem::offset_of!(DynEntry, pend_target) as i32, index),
-        Stmt::Store(Expr::Slot(entry), core::mem::offset_of!(DynEntry, pend_value) as i32,
-                    Expr::Load(Box::new(address.clone()), 0)),
+        Stmt::Store(
+            Expr::Slot(entry.clone()),
+            core::mem::offset_of!(DynEntry, pend_target) as i32,
+            index,
+        ),
+        Stmt::Store(
+            Expr::Slot(entry),
+            core::mem::offset_of!(DynEntry, pend_value) as i32,
+            Expr::Load(Box::new(address.clone()), 0),
+        ),
         Stmt::Store(address, 0, value),
     ]
 }
@@ -614,15 +1110,29 @@ pub fn unbind_special(entry: String) -> Stmt {
     use kiln_rt::context::DynEntry;
     let field = |offset: usize| Expr::Load(Box::new(Expr::Slot(entry.clone())), offset as i32);
     let index = field(core::mem::offset_of!(DynEntry, pend_target));
-    Stmt::Store(tls_address(index), 0, field(core::mem::offset_of!(DynEntry, pend_value)))
+    Stmt::Store(
+        tls_address(index),
+        0,
+        field(core::mem::offset_of!(DynEntry, pend_value)),
+    )
 }
 
 pub fn progv_bindings(result: String, entry: String) -> Stmt {
-    Stmt::Set(result, Expr::Load(Box::new(Expr::Slot(entry)), core::mem::offset_of!(kiln_rt::context::DynEntry, tag) as i32))
+    Stmt::Set(
+        result,
+        Expr::Load(
+            Box::new(Expr::Slot(entry)),
+            core::mem::offset_of!(kiln_rt::context::DynEntry, tag) as i32,
+        ),
+    )
 }
 
 pub fn relink_dynamic_entry(entry: String) -> Stmt {
-    Stmt::Store(Expr::Var("ctx".into()), core::mem::offset_of!(kiln_rt::context::Context, dynenv) as i32, Expr::Slot(entry))
+    Stmt::Store(
+        Expr::Var("ctx".into()),
+        core::mem::offset_of!(kiln_rt::context::Context, dynenv) as i32,
+        Expr::Slot(entry),
+    )
 }
 
 pub fn closure_ref(object: Expr, index: i64) -> Result<Expr, String> {
@@ -655,11 +1165,18 @@ pub fn argument_ref(index: i64, registers: Vec<Expr>) -> Result<Expr, String> {
 }
 
 pub fn transfer_ref(index: i64) -> Result<Expr, String> {
-    Ok(Expr::Load(Box::new(Expr::Var("ctx".into())), transfer_offset(index)?))
+    Ok(Expr::Load(
+        Box::new(Expr::Var("ctx".into())),
+        transfer_offset(index)?,
+    ))
 }
 
 pub fn transfer_set(index: i64, value: Expr) -> Result<Stmt, String> {
-    Ok(Stmt::Store(Expr::Var("ctx".into()), transfer_offset(index)?, value))
+    Ok(Stmt::Store(
+        Expr::Var("ctx".into()),
+        transfer_offset(index)?,
+        value,
+    ))
 }
 
 fn transfer_address(index: Expr) -> Expr {
@@ -671,11 +1188,18 @@ fn transfer_address(index: Expr) -> Expr {
 }
 
 pub fn transfer_ref_dynamic(index: Expr) -> Expr {
-    Expr::Load(Box::new(transfer_address(index)), core::mem::offset_of!(kiln_rt::context::Context, values) as i32)
+    Expr::Load(
+        Box::new(transfer_address(index)),
+        core::mem::offset_of!(kiln_rt::context::Context, values) as i32,
+    )
 }
 
 pub fn transfer_set_dynamic(index: Expr, value: Expr) -> Stmt {
-    Stmt::Store(transfer_address(index), core::mem::offset_of!(kiln_rt::context::Context, values) as i32, value)
+    Stmt::Store(
+        transfer_address(index),
+        core::mem::offset_of!(kiln_rt::context::Context, values) as i32,
+        value,
+    )
 }
 
 pub fn transfer_roots(count: Expr) -> Stmt {
@@ -690,19 +1214,53 @@ pub fn fixed_layout(class: u32) -> Result<(i64, i64, i64, usize), String> {
     use kiln_rt::object::*;
     match class {
         CLASS_CONS => Ok((CONS_BYTES as i64, KIND_CONS as i64, TAG_CONS as i64, 2)),
-        CLASS_COMPLEX => Ok((3 * size_of::<u64>() as i64, KIND_COMPLEX as i64, TAG_GENERAL as i64, 2)),
-        CLASS_DOUBLE => Ok((2 * size_of::<u64>() as i64, KIND_DOUBLE as i64, TAG_GENERAL as i64, 1)),
-        CLASS_INSTANCE => Ok((2 * size_of::<u64>() as i64, KIND_INSTANCE as i64, TAG_GENERAL as i64, 1)),
-        CLASS_FUNCALLABLE_INSTANCE => Ok((4 * size_of::<u64>() as i64, (KIND_FUNCALLABLE_INSTANCE | (2 << LENGTH_SHIFT)) as i64, TAG_GENERAL as i64, 3)),
+        CLASS_COMPLEX => Ok((
+            3 * size_of::<u64>() as i64,
+            KIND_COMPLEX as i64,
+            TAG_GENERAL as i64,
+            2,
+        )),
+        CLASS_DOUBLE => Ok((
+            2 * size_of::<u64>() as i64,
+            KIND_DOUBLE as i64,
+            TAG_GENERAL as i64,
+            1,
+        )),
+        CLASS_INSTANCE => Ok((
+            2 * size_of::<u64>() as i64,
+            KIND_INSTANCE as i64,
+            TAG_GENERAL as i64,
+            1,
+        )),
+        CLASS_FUNCALLABLE_INSTANCE => Ok((
+            4 * size_of::<u64>() as i64,
+            (KIND_FUNCALLABLE_INSTANCE | (2 << LENGTH_SHIFT)) as i64,
+            TAG_GENERAL as i64,
+            3,
+        )),
         _ => Err(format!("unsupported fixed allocation class {class}")),
     }
 }
 
-pub fn initialize_fixed(result: String, address: String, class: u32, fields: Vec<Expr>) -> Result<Vec<Stmt>, String> {
+pub fn initialize_fixed(
+    result: String,
+    address: String,
+    class: u32,
+    fields: Vec<Expr>,
+) -> Result<Vec<Stmt>, String> {
     use crate::kir::BinOp;
     let (_, _, tag, count) = fixed_layout(class)?;
-    if fields.len() != count { return Err("fixed allocation: wrong field count".into()); }
-    let mut stmts = vec![Stmt::Set(result.clone(), Expr::Bin(BinOp::Add, Box::new(Expr::Var(address)), Box::new(Expr::Int(tag))))];
+    if fields.len() != count {
+        return Err("fixed allocation: wrong field count".into());
+    }
+    let mut stmts = vec![Stmt::Set(
+        result.clone(),
+        Expr::Bin(
+            BinOp::Add,
+            Box::new(Expr::Var(address)),
+            Box::new(Expr::Int(tag)),
+        ),
+    )];
     for (index, value) in fields.into_iter().enumerate() {
         let offset = ((index + 1) * size_of::<u64>()) as i32 - tag as i32;
         stmts.push(Stmt::Store(Expr::Var(result.clone()), offset, value));
@@ -719,22 +1277,56 @@ pub fn vector_layout(class: u32, length: &Expr) -> Result<(Expr, Expr, u32), Str
         _ => return Err("unsupported vector allocation class".into()),
     };
     if let Expr::Int(n) = length {
-        if !(0..=u32::MAX as i64).contains(n) { return Err("vector length out of range".into()); }
+        if !(0..=u32::MAX as i64).contains(n) {
+            return Err("vector length out of range".into());
+        }
         let bytes = 8 + (((n << shift) + 7) & !7);
-        return Ok((Expr::Int(bytes), Expr::Int((n << LENGTH_SHIFT) | kind as i64), shift));
+        return Ok((
+            Expr::Int(bytes),
+            Expr::Int((n << LENGTH_SHIFT) | kind as i64),
+            shift,
+        ));
     }
     let payload = Expr::Shift(ShiftOp::Shl, Box::new(length.clone()), shift as i64);
     let aligned = if shift == 2 {
-        Expr::Bin(BinOp::And, Box::new(Expr::Bin(BinOp::Add, Box::new(payload), Box::new(Expr::Int(7)))), Box::new(Expr::Int(-8)))
-    } else { payload };
-    Ok((Expr::Bin(BinOp::Add, Box::new(Expr::Int(8)), Box::new(aligned)),
-        Expr::Bin(BinOp::Or, Box::new(Expr::Shift(ShiftOp::Shl, Box::new(length.clone()), LENGTH_SHIFT as i64)), Box::new(Expr::Int(kind as i64))), shift))
+        Expr::Bin(
+            BinOp::And,
+            Box::new(Expr::Bin(
+                BinOp::Add,
+                Box::new(payload),
+                Box::new(Expr::Int(7)),
+            )),
+            Box::new(Expr::Int(-8)),
+        )
+    } else {
+        payload
+    };
+    Ok((
+        Expr::Bin(BinOp::Add, Box::new(Expr::Int(8)), Box::new(aligned)),
+        Expr::Bin(
+            BinOp::Or,
+            Box::new(Expr::Shift(
+                ShiftOp::Shl,
+                Box::new(length.clone()),
+                LENGTH_SHIFT as i64,
+            )),
+            Box::new(Expr::Int(kind as i64)),
+        ),
+        shift,
+    ))
 }
 
 pub fn initialize_vector_elements(result: String, address: String, values: Vec<Expr>) -> Vec<Stmt> {
     use crate::kir::BinOp;
     let mut stmts = Vec::with_capacity(values.len() + 1);
-    stmts.push(Stmt::Set(result.clone(), Expr::Bin(BinOp::Add, Box::new(Expr::Var(address)), Box::new(Expr::Int(TAG_GENERAL as i64)))));
+    stmts.push(Stmt::Set(
+        result.clone(),
+        Expr::Bin(
+            BinOp::Add,
+            Box::new(Expr::Var(address)),
+            Box::new(Expr::Int(TAG_GENERAL as i64)),
+        ),
+    ));
     for (index, value) in values.into_iter().enumerate() {
         let offset = ((index + 1) * size_of::<u64>()) as i32 - TAG_GENERAL as i32;
         stmts.push(Stmt::Store(Expr::Var(result.clone()), offset, value));
@@ -743,19 +1335,50 @@ pub fn initialize_vector_elements(result: String, address: String, values: Vec<E
 }
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-pub fn initialize_vector(name: &str, block: String, mut preceding: Vec<Stmt>, result: String,
-                         address: String, length: Expr, value: Expr, shift: u32)
-    -> (Vec<(String, crate::kir::VarKind)>, Vec<crate::kir::Block>, String, Vec<Stmt>) {
+pub fn initialize_vector(
+    name: &str,
+    block: String,
+    mut preceding: Vec<Stmt>,
+    result: String,
+    address: String,
+    length: Expr,
+    value: Expr,
+    shift: u32,
+) -> (
+    Vec<(String, crate::kir::VarKind)>,
+    Vec<crate::kir::Block>,
+    String,
+    Vec<Stmt>,
+) {
     use crate::kir::{BinOp, Block, CmpOp, ShiftOp, VarKind};
     let var = |s: &str| Expr::Var(s.to_string());
-    preceding.push(Stmt::Set(result, Expr::Bin(BinOp::Add, Box::new(var(&address)), Box::new(Expr::Int(TAG_GENERAL as i64)))));
-    if matches!(value, Expr::Int(0)) { return (vec![], vec![], block, preceding); }
+    preceding.push(Stmt::Set(
+        result,
+        Expr::Bin(
+            BinOp::Add,
+            Box::new(var(&address)),
+            Box::new(Expr::Int(TAG_GENERAL as i64)),
+        ),
+    ));
+    if matches!(value, Expr::Int(0)) {
+        return (vec![], vec![], block, preceding);
+    }
     let store = |index: Expr| {
-        let base = Expr::Bin(BinOp::Add, Box::new(var(&address)), Box::new(Expr::Shift(ShiftOp::Shl, Box::new(index), shift as i64)));
-        if shift == 2 { Stmt::Store32(base, 8, value.clone()) } else { Stmt::Store(base, 8, value.clone()) }
+        let base = Expr::Bin(
+            BinOp::Add,
+            Box::new(var(&address)),
+            Box::new(Expr::Shift(ShiftOp::Shl, Box::new(index), shift as i64)),
+        );
+        if shift == 2 {
+            Stmt::Store32(base, 8, value.clone())
+        } else {
+            Stmt::Store(base, 8, value.clone())
+        }
     };
     if let Expr::Int(n @ 0..=15) = length {
-        for i in 0..n { preceding.push(store(Expr::Int(i))); }
+        for i in 0..n {
+            preceding.push(store(Expr::Int(i)));
+        }
         return (vec![], vec![], block, preceding);
     }
     let index = format!("{name}_index");
@@ -765,9 +1388,29 @@ pub fn initialize_vector(name: &str, block: String, mut preceding: Vec<Stmt>, re
     preceding.push(Stmt::Set(index.clone(), Expr::Int(0)));
     preceding.push(Stmt::Jump(head.clone()));
     let blocks = vec![
-        Block { name: block, stmts: preceding },
-        Block { name: head, stmts: vec![Stmt::Br(Expr::Cmp(CmpOp::Lt, Box::new(var(&index)), Box::new(length)), body.clone(), done.clone())] },
-        Block { name: body, stmts: vec![store(var(&index)), Stmt::Set(index.clone(), Expr::Bin(BinOp::Add, Box::new(var(&index)), Box::new(Expr::Int(1)))), Stmt::Jump(format!("{name}_fill_head"))] },
+        Block {
+            name: block,
+            stmts: preceding,
+        },
+        Block {
+            name: head,
+            stmts: vec![Stmt::Br(
+                Expr::Cmp(CmpOp::Lt, Box::new(var(&index)), Box::new(length)),
+                body.clone(),
+                done.clone(),
+            )],
+        },
+        Block {
+            name: body,
+            stmts: vec![
+                store(var(&index)),
+                Stmt::Set(
+                    index.clone(),
+                    Expr::Bin(BinOp::Add, Box::new(var(&index)), Box::new(Expr::Int(1))),
+                ),
+                Stmt::Jump(format!("{name}_fill_head")),
+            ],
+        },
     ];
     (vec![(index, VarKind::Raw)], blocks, done, vec![])
 }
@@ -775,15 +1418,32 @@ pub fn initialize_vector(name: &str, block: String, mut preceding: Vec<Stmt>, re
 /// Expand allocation after operand evaluation; only the slow path can safepoint.
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub fn allocate_raw(
-    name: &str, block: String, mut preceding: Vec<Stmt>, result: String,
-    bytes: Expr, header: Expr, zero: bool, runtime: String, handler: Option<String>,
-) -> Result<(Vec<(String, crate::kir::VarKind)>, Vec<crate::kir::Block>, String, Vec<Stmt>), String> {
+    name: &str,
+    block: String,
+    mut preceding: Vec<Stmt>,
+    result: String,
+    bytes: Expr,
+    header: Expr,
+    zero: bool,
+    runtime: String,
+    handler: Option<String>,
+) -> Result<
+    (
+        Vec<(String, crate::kir::VarKind)>,
+        Vec<crate::kir::Block>,
+        String,
+        Vec<Stmt>,
+    ),
+    String,
+> {
     use crate::kir::{BinOp, Block, CmpOp, VarKind};
     use kiln_rt::context::Context;
     let slow_call = || Stmt::CallRt {
-        name: runtime.clone(), results: vec![result.clone()],
+        name: runtime.clone(),
+        results: vec![result.clone()],
         args: vec![Expr::Var("ctx".into()), bytes.clone(), header.clone()],
-        handler: handler.clone(), loc: None,
+        handler: handler.clone(),
+        loc: None,
     };
     let size = match bytes {
         Expr::Int(n) if (8..=128).contains(&n) && n % 8 == 0 => n,
@@ -798,12 +1458,41 @@ pub fn allocate_raw(
     let slow = format!("{name}_slow");
     let done = format!("{name}_done");
     let var = |s: &str| Expr::Var(s.to_string());
-    preceding.push(Stmt::Set(cursor.clone(), Expr::Load(Box::new(var("ctx")), core::mem::offset_of!(Context, alloc_cursor) as i32)));
-    preceding.push(Stmt::Set(result.clone(), Expr::Load(Box::new(var(&cursor)), 0)));
-    preceding.push(Stmt::Set(end.clone(), Expr::Bin(BinOp::Add, Box::new(var(&result)), Box::new(Expr::Int(size)))));
-    let limit = Expr::Load(Box::new(Expr::Load(Box::new(var("ctx")), core::mem::offset_of!(Context, alloc_limit) as i32)), 0);
-    preceding.push(Stmt::Br(Expr::Cmp(CmpOp::Le, Box::new(var(&end)), Box::new(limit)), fast.clone(), slow.clone()));
-    let mut fast_stmts = vec![Stmt::Store(var(&cursor), 0, var(&end)), Stmt::Store(var(&result), 0, header.clone())];
+    preceding.push(Stmt::Set(
+        cursor.clone(),
+        Expr::Load(
+            Box::new(var("ctx")),
+            core::mem::offset_of!(Context, alloc_cursor) as i32,
+        ),
+    ));
+    preceding.push(Stmt::Set(
+        result.clone(),
+        Expr::Load(Box::new(var(&cursor)), 0),
+    ));
+    preceding.push(Stmt::Set(
+        end.clone(),
+        Expr::Bin(
+            BinOp::Add,
+            Box::new(var(&result)),
+            Box::new(Expr::Int(size)),
+        ),
+    ));
+    let limit = Expr::Load(
+        Box::new(Expr::Load(
+            Box::new(var("ctx")),
+            core::mem::offset_of!(Context, alloc_limit) as i32,
+        )),
+        0,
+    );
+    preceding.push(Stmt::Br(
+        Expr::Cmp(CmpOp::Le, Box::new(var(&end)), Box::new(limit)),
+        fast.clone(),
+        slow.clone(),
+    ));
+    let mut fast_stmts = vec![
+        Stmt::Store(var(&cursor), 0, var(&end)),
+        Stmt::Store(var(&result), 0, header.clone()),
+    ];
     if zero {
         for offset in (8..size).step_by(8) {
             fast_stmts.push(Stmt::Store(var(&result), offset as i32, Expr::Int(0)));
@@ -811,11 +1500,25 @@ pub fn allocate_raw(
     }
     fast_stmts.push(Stmt::Jump(done.clone()));
     let blocks = vec![
-        Block { name: block, stmts: preceding },
-        Block { name: fast, stmts: fast_stmts },
-        Block { name: slow, stmts: vec![slow_call(), Stmt::Jump(done.clone())] },
+        Block {
+            name: block,
+            stmts: preceding,
+        },
+        Block {
+            name: fast,
+            stmts: fast_stmts,
+        },
+        Block {
+            name: slow,
+            stmts: vec![slow_call(), Stmt::Jump(done.clone())],
+        },
     ];
-    Ok((vec![(cursor, VarKind::Raw), (end, VarKind::Raw)], blocks, done, vec![]))
+    Ok((
+        vec![(cursor, VarKind::Raw), (end, VarKind::Raw)],
+        blocks,
+        done,
+        vec![],
+    ))
 }
 
 /// Materialize the target calling convention after the front end has
@@ -888,19 +1591,31 @@ mod tests {
 #[cfg(test)]
 #[test]
 fn argument_reference_checks_capacity_and_register_boundary() {
-    let registers = || (0..crate::kir::REG_ARGS).map(|i| Expr::Var(format!("saved{i}"))).collect();
+    let registers = || {
+        (0..crate::kir::REG_ARGS)
+            .map(|i| Expr::Var(format!("saved{i}")))
+            .collect()
+    };
     assert!(matches!(argument_ref(2, registers()).unwrap(), Expr::Var(v) if v == "saved2"));
-    assert_eq!(format!("{:?}", argument_ref(3, registers()).unwrap()),
-               format!("{:?}", transfer_ref(0).unwrap()));
+    assert_eq!(
+        format!("{:?}", argument_ref(3, registers()).unwrap()),
+        format!("{:?}", transfer_ref(0).unwrap())
+    );
     assert!(argument_ref(-1, registers()).is_err());
     assert!(argument_ref(1024, registers()).is_err());
     assert!(argument_ref(0, Vec::new()).is_err());
 }
 
 /// Read an argument without evaluating a transfer-area address on register paths.
-pub fn argument_read(prefix: &str, start: String, mut before: Vec<Stmt>, result: String,
-                     index: String, registers: Vec<Expr>) -> Result<(Vec<crate::kir::Block>, String), String> {
-    use crate::kir::{Block, CmpOp, BinOp};
+pub fn argument_read(
+    prefix: &str,
+    start: String,
+    mut before: Vec<Stmt>,
+    result: String,
+    index: String,
+    registers: Vec<Expr>,
+) -> Result<(Vec<crate::kir::Block>, String), String> {
+    use crate::kir::{BinOp, Block, CmpOp};
     if registers.len() != crate::kir::REG_ARGS || result == index {
         return Err("arg-read requires saved register arguments and a distinct index".into());
     }
@@ -910,26 +1625,60 @@ pub fn argument_read(prefix: &str, start: String, mut before: Vec<Stmt>, result:
     for (i, value) in registers.into_iter().enumerate() {
         let yes = format!("{prefix}_reg{i}");
         let next = format!("{prefix}_next{i}");
-        before.push(Stmt::Br(Expr::Cmp(CmpOp::Eq, Box::new(Expr::Var(index.clone())),
-            Box::new(Expr::Int(i as i64))), yes.clone(), next.clone()));
-        blocks.push(Block { name: current, stmts: before });
-        blocks.push(Block { name: yes, stmts: vec![Stmt::Set(result.clone(), value), Stmt::Jump(done.clone())] });
+        before.push(Stmt::Br(
+            Expr::Cmp(
+                CmpOp::Eq,
+                Box::new(Expr::Var(index.clone())),
+                Box::new(Expr::Int(i as i64)),
+            ),
+            yes.clone(),
+            next.clone(),
+        ));
+        blocks.push(Block {
+            name: current,
+            stmts: before,
+        });
+        blocks.push(Block {
+            name: yes,
+            stmts: vec![Stmt::Set(result.clone(), value), Stmt::Jump(done.clone())],
+        });
         current = next;
         before = Vec::new();
     }
-    before.push(Stmt::Set(result, transfer_ref_dynamic(Expr::Bin(BinOp::Sub,
-        Box::new(Expr::Var(index)), Box::new(Expr::Int(crate::kir::REG_ARGS as i64))))));
+    before.push(Stmt::Set(
+        result,
+        transfer_ref_dynamic(Expr::Bin(
+            BinOp::Sub,
+            Box::new(Expr::Var(index)),
+            Box::new(Expr::Int(crate::kir::REG_ARGS as i64)),
+        )),
+    ));
     before.push(Stmt::Jump(done.clone()));
-    blocks.push(Block { name: current, stmts: before });
+    blocks.push(Block {
+        name: current,
+        stmts: before,
+    });
     Ok((blocks, done))
 }
 
 /// Assign an argument to saved registers or the transfer area. The caller checks capacity.
-pub fn argument_write(prefix: &str, start: String, mut before: Vec<Stmt>, index: String,
-                      value: Expr, registers: Vec<String>) -> Result<(Vec<crate::kir::Block>, String), String> {
-    use crate::kir::{Block, CmpOp, BinOp};
-    if registers.len() != crate::kir::REG_ARGS || registers.iter().any(|r| r == &index)
-        || registers.iter().collect::<std::collections::HashSet<_>>().len() != registers.len() {
+pub fn argument_write(
+    prefix: &str,
+    start: String,
+    mut before: Vec<Stmt>,
+    index: String,
+    value: Expr,
+    registers: Vec<String>,
+) -> Result<(Vec<crate::kir::Block>, String), String> {
+    use crate::kir::{BinOp, Block, CmpOp};
+    if registers.len() != crate::kir::REG_ARGS
+        || registers.iter().any(|r| r == &index)
+        || registers
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+            != registers.len()
+    {
         return Err("arg-write requires saved registers distinct from the index".into());
     }
     let done = format!("{prefix}_done");
@@ -938,25 +1687,58 @@ pub fn argument_write(prefix: &str, start: String, mut before: Vec<Stmt>, index:
     for (i, register) in registers.into_iter().enumerate() {
         let yes = format!("{prefix}_reg{i}");
         let next = format!("{prefix}_next{i}");
-        before.push(Stmt::Br(Expr::Cmp(CmpOp::Eq, Box::new(Expr::Var(index.clone())),
-            Box::new(Expr::Int(i as i64))), yes.clone(), next.clone()));
-        blocks.push(Block { name: current, stmts: before });
-        blocks.push(Block { name: yes, stmts: vec![Stmt::Set(register, value.clone()), Stmt::Jump(done.clone())] });
+        before.push(Stmt::Br(
+            Expr::Cmp(
+                CmpOp::Eq,
+                Box::new(Expr::Var(index.clone())),
+                Box::new(Expr::Int(i as i64)),
+            ),
+            yes.clone(),
+            next.clone(),
+        ));
+        blocks.push(Block {
+            name: current,
+            stmts: before,
+        });
+        blocks.push(Block {
+            name: yes,
+            stmts: vec![Stmt::Set(register, value.clone()), Stmt::Jump(done.clone())],
+        });
         current = next;
         before = Vec::new();
     }
-    before.push(transfer_set_dynamic(Expr::Bin(BinOp::Sub, Box::new(Expr::Var(index)),
-        Box::new(Expr::Int(crate::kir::REG_ARGS as i64))), value));
+    before.push(transfer_set_dynamic(
+        Expr::Bin(
+            BinOp::Sub,
+            Box::new(Expr::Var(index)),
+            Box::new(Expr::Int(crate::kir::REG_ARGS as i64)),
+        ),
+        value,
+    ));
     before.push(Stmt::Jump(done.clone()));
-    blocks.push(Block { name: current, stmts: before });
+    blocks.push(Block {
+        name: current,
+        stmts: before,
+    });
     Ok((blocks, done))
 }
 
 /// Call after the caller has populated the transfer area and saved register arguments.
-pub fn invoke_prepared(v0: String, nv: String, callee: String, count: Expr,
-                       saved: Vec<Expr>, handler: Option<String>, loc: Option<crate::kir::Loc>) -> Result<Vec<Stmt>, String> {
-    if saved.len() != crate::kir::REG_ARGS || saved.iter().chain(std::iter::once(&count))
-        .any(|v| !matches!(v, Expr::Int(_) | Expr::Var(_))) {
+pub fn invoke_prepared(
+    v0: String,
+    nv: String,
+    callee: String,
+    count: Expr,
+    saved: Vec<Expr>,
+    handler: Option<String>,
+    loc: Option<crate::kir::Loc>,
+) -> Result<Vec<Stmt>, String> {
+    if saved.len() != crate::kir::REG_ARGS
+        || saved
+            .iter()
+            .chain(std::iter::once(&count))
+            .any(|v| !matches!(v, Expr::Int(_) | Expr::Var(_)))
+    {
         return Err("invoke-prepared requires stable count and saved register arguments".into());
     }
     if let Expr::Int(n) = &count {
@@ -967,20 +1749,303 @@ pub fn invoke_prepared(v0: String, nv: String, callee: String, count: Expr,
     }
     let mut args = vec![Expr::Var("ctx".into()), Expr::Var(callee.clone()), count];
     args.extend(saved);
-    Ok(vec![Stmt::CallLisp { v0, nv, entry: field_load(FIELD_FUNCTION_ENTRY, Expr::Var(callee))?,
-        args, handler, loc }])
+    Ok(vec![Stmt::CallLisp {
+        v0,
+        nv,
+        entry: field_load(FIELD_FUNCTION_ENTRY, Expr::Var(callee))?,
+        args,
+        handler,
+        loc,
+    }])
+}
+
+/// Signal through the kernel's current definition, with a fatal fallback.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+pub fn runtime_error(
+    prefix: &str,
+    start: String,
+    mut before: Vec<Stmt>,
+    code: i64,
+    value: Expr,
+    handler: Option<String>,
+    loc: Option<crate::kir::Loc>,
+) -> Result<
+    (
+        Vec<(String, crate::kir::VarKind)>,
+        Vec<crate::kir::Block>,
+        String,
+        Vec<Stmt>,
+    ),
+    String,
+> {
+    use crate::kir::{Block, CmpOp, VarKind};
+    let bad = format!("{prefix}_bad");
+    let callee = format!("{prefix}_callee");
+    let object_code = format!("{prefix}_code");
+    let v0 = format!("{prefix}_v0");
+    let nv = format!("{prefix}_nv");
+    let lisp = format!("{prefix}_lisp");
+    let fatal = format!("{prefix}_fatal");
+    let var = |s: &str| Expr::Var(s.to_string());
+    before.push(Stmt::Set(bad.clone(), value));
+    before.push(Stmt::Set(
+        callee.clone(),
+        field_load(
+            FIELD_SYMBOL_FUNCTION,
+            Expr::Addr(kiln_rt::RUNTIME_ERROR_SYMBOL.into(), TAG_GENERAL as i64),
+        )?,
+    ));
+    before.push(Stmt::Br(
+        Expr::Cmp(
+            CmpOp::Eq,
+            Box::new(field_load(FIELD_FUNCTION_ENTRY, var(&callee))?),
+            Box::new(Expr::Addr("kiln_undefined_function".into(), 0)),
+        ),
+        fatal.clone(),
+        lisp.clone(),
+    ));
+    let mut call = vec![Stmt::Set(object_code.clone(), fixnum_tag(Expr::Int(code)))];
+    call.extend(invoke(
+        v0.clone(),
+        nv.clone(),
+        callee.clone(),
+        vec![var(&object_code), var(&bad)],
+        handler.clone(),
+        loc,
+    )?);
+    call.push(Stmt::Jump(fatal.clone()));
+    Ok((
+        vec![
+            (bad.clone(), VarKind::Obj),
+            (callee, VarKind::Obj),
+            (object_code, VarKind::Obj),
+            (v0, VarKind::Obj),
+            (nv, VarKind::Raw),
+        ],
+        vec![
+            Block {
+                name: start,
+                stmts: before,
+            },
+            Block {
+                name: lisp,
+                stmts: call,
+            },
+        ],
+        fatal,
+        vec![
+            Stmt::CallRt {
+                name: "kiln_rt_error".into(),
+                results: vec![],
+                args: vec![var("ctx"), Expr::Int(code), var(&bad)],
+                handler,
+                loc,
+            },
+            Stmt::Trap,
+        ],
+    ))
+}
+
+/// Expand the final proper-list argument after all source operands have been
+/// evaluated. Staging is bounded and has no safepoint before the invocation.
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+pub fn invoke_spread(
+    prefix: &str,
+    start: String,
+    mut before: Vec<Stmt>,
+    v0: String,
+    nv: String,
+    callee: String,
+    fixed: Vec<Expr>,
+    list: Expr,
+    handler: Option<String>,
+    loc: Option<crate::kir::Loc>,
+) -> Result<
+    (
+        Vec<(String, crate::kir::VarKind)>,
+        Vec<crate::kir::Block>,
+        String,
+    ),
+    String,
+> {
+    use crate::kir::{BinOp, Block, CmpOp, VarKind};
+    let limit = crate::kir::REG_ARGS + kiln_rt::context::VALUES_MAX;
+    if fixed.len() > limit {
+        return Err("spread call: too many fixed arguments".into());
+    }
+    if fixed
+        .iter()
+        .chain(std::iter::once(&list))
+        .any(|v| !matches!(v, Expr::Var(_) | Expr::Int(_)))
+    {
+        return Err(
+            "spread call: operands must be evaluated into stable variables or immediates".into(),
+        );
+    }
+    let cursor = format!("{prefix}_cursor");
+    let count = format!("{prefix}_count");
+    let target = format!("{prefix}_target");
+    let head = format!("{prefix}_head");
+    let check = format!("{prefix}_check");
+    let body = format!("{prefix}_body");
+    let store = format!("{prefix}_store");
+    let call = format!("{prefix}_call");
+    let done = format!("{prefix}_done");
+    let bad_list = format!("{prefix}_badlist");
+    let overflow = format!("{prefix}_overflow");
+    let registers: Vec<String> = (0..crate::kir::REG_ARGS)
+        .map(|i| format!("{prefix}_arg{i}"))
+        .collect();
+    let var = |s: &str| Expr::Var(s.to_string());
+    let mut vars = vec![
+        (cursor.clone(), VarKind::Obj),
+        (count.clone(), VarKind::Raw),
+        (target.clone(), VarKind::Obj),
+    ];
+    vars.extend(registers.iter().map(|r| (r.clone(), VarKind::Obj)));
+    before.push(Stmt::Set(target.clone(), var(&callee)));
+    before.push(Stmt::Set(cursor.clone(), list));
+    before.push(Stmt::Set(count.clone(), Expr::Int(fixed.len() as i64)));
+    for r in &registers {
+        before.push(Stmt::Set(r.clone(), Expr::Int(0)));
+    }
+    for (i, value) in fixed.into_iter().enumerate() {
+        if i < registers.len() {
+            before.push(Stmt::Set(registers[i].clone(), value));
+        } else {
+            before.push(transfer_set((i - registers.len()) as i64, value)?);
+        }
+    }
+    before.push(Stmt::Jump(head.clone()));
+    let mut blocks = vec![
+        Block {
+            name: start,
+            stmts: before,
+        },
+        Block {
+            name: head.clone(),
+            stmts: vec![Stmt::Br(
+                Expr::Cmp(
+                    CmpOp::Eq,
+                    Box::new(var(&cursor)),
+                    Box::new(Expr::Addr("kiln_nil".into(), TAG_GENERAL as i64)),
+                ),
+                call.clone(),
+                check.clone(),
+            )],
+        },
+        Block {
+            name: check,
+            stmts: vec![Stmt::Br(
+                test_class(CLASS_CONS, var(&cursor))?,
+                body.clone(),
+                bad_list.clone(),
+            )],
+        },
+        Block {
+            name: body,
+            stmts: vec![Stmt::Br(
+                Expr::Cmp(
+                    CmpOp::Ge,
+                    Box::new(var(&count)),
+                    Box::new(Expr::Int(limit as i64)),
+                ),
+                overflow.clone(),
+                store.clone(),
+            )],
+        },
+    ];
+    let (staging, next) = argument_write(
+        &format!("{prefix}_write"),
+        store,
+        vec![],
+        count.clone(),
+        field_load(FIELD_CONS_CAR, var(&cursor))?,
+        registers.clone(),
+    )?;
+    blocks.extend(staging);
+    blocks.push(Block {
+        name: next,
+        stmts: vec![
+            Stmt::Set(cursor.clone(), field_load(FIELD_CONS_CDR, var(&cursor))?),
+            Stmt::Set(
+                count.clone(),
+                Expr::Bin(BinOp::Add, Box::new(var(&count)), Box::new(Expr::Int(1))),
+            ),
+            Stmt::Jump(head),
+        ],
+    });
+    let mut invoke = invoke_prepared(
+        v0,
+        nv,
+        target,
+        var(&count),
+        registers.iter().map(|r| var(r)).collect(),
+        handler.clone(),
+        loc,
+    )?;
+    invoke.push(Stmt::Jump(done.clone()));
+    blocks.push(Block {
+        name: call,
+        stmts: invoke,
+    });
+    for (suffix, block, code, value) in [
+        (
+            "list_error",
+            bad_list,
+            kiln_rt::rtfun::ERR_NOT_LIST,
+            var(&cursor),
+        ),
+        (
+            "count_error",
+            overflow,
+            kiln_rt::rtfun::ERR_WRONG_NARGS,
+            fixnum_tag(var(&count)),
+        ),
+    ] {
+        let (temps, errors, fatal, statements) = runtime_error(
+            &format!("{prefix}_{suffix}"),
+            block,
+            vec![],
+            code as i64,
+            value,
+            handler.clone(),
+            loc,
+        )?;
+        vars.extend(temps);
+        blocks.extend(errors);
+        blocks.push(Block {
+            name: fatal,
+            stmts: statements,
+        });
+    }
+    Ok((vars, blocks, done))
 }
 
 #[cfg(test)]
 #[test]
 fn prepared_call_validates_counts_and_preserves_unwind_metadata() {
     let saved = || vec![Expr::Int(0); crate::kir::REG_ARGS];
-    let call = |count, registers| invoke_prepared("v".into(), "n".into(), "f".into(),
-        count, registers, Some("caught".into()), Some((12, 24)));
-    for n in [0, (crate::kir::REG_ARGS + kiln_rt::context::VALUES_MAX) as i64] {
+    let call = |count, registers| {
+        invoke_prepared(
+            "v".into(),
+            "n".into(),
+            "f".into(),
+            count,
+            registers,
+            Some("caught".into()),
+            Some((12, 24)),
+        )
+    };
+    for n in [
+        0,
+        (crate::kir::REG_ARGS + kiln_rt::context::VALUES_MAX) as i64,
+    ] {
         let result = call(Expr::Int(n), saved()).unwrap();
-        assert!(matches!(&result[0], Stmt::CallLisp { args, handler: Some(h), loc: Some((12, 24)), .. }
-            if args.len() == 3 + crate::kir::REG_ARGS && h == "caught"));
+        assert!(
+            matches!(&result[0], Stmt::CallLisp { args, handler: Some(h), loc: Some((12, 24)), .. }
+            if args.len() == 3 + crate::kir::REG_ARGS && h == "caught")
+        );
     }
     assert!(call(Expr::Int(-1), saved()).is_err());
     assert!(call(Expr::Int(1025), saved()).is_err());
@@ -996,7 +2061,11 @@ fn secondary_value_index(index: Expr) -> Result<Expr, String> {
         }
         Ok(Expr::Int(i - 1))
     } else {
-        Ok(Expr::Bin(crate::kir::BinOp::Sub, Box::new(index), Box::new(Expr::Int(1))))
+        Ok(Expr::Bin(
+            crate::kir::BinOp::Sub,
+            Box::new(index),
+            Box::new(Expr::Int(1)),
+        ))
     }
 }
 
@@ -1018,8 +2087,10 @@ pub fn secondary_value_set(index: Expr, value: Expr) -> Result<Stmt, String> {
 #[test]
 fn secondary_values_check_primary_and_capacity_boundaries() {
     for i in [1, kiln_rt::context::VALUES_MAX as i64] {
-        assert_eq!(format!("{:?}", secondary_value_ref(Expr::Int(i)).unwrap()),
-                   format!("{:?}", transfer_ref(i - 1).unwrap()));
+        assert_eq!(
+            format!("{:?}", secondary_value_ref(Expr::Int(i)).unwrap()),
+            format!("{:?}", transfer_ref(i - 1).unwrap())
+        );
         assert!(secondary_value_set(Expr::Int(i), Expr::Int(0)).is_ok());
     }
     for i in [-1, 0, kiln_rt::context::VALUES_MAX as i64 + 1] {
@@ -1039,9 +2110,18 @@ pub fn counted_transfer_roots(count: Expr, arguments: bool) -> Result<Stmt, Stri
         return Ok(transfer_roots(Expr::Int((n - prefix).max(0))));
     }
     Ok(transfer_roots(Expr::Select(
-        Box::new(Expr::Cmp(CmpOp::Gt, Box::new(count.clone()), Box::new(Expr::Int(prefix)))),
-        Box::new(Expr::Bin(BinOp::Sub, Box::new(count), Box::new(Expr::Int(prefix)))),
-        Box::new(Expr::Int(0)))))
+        Box::new(Expr::Cmp(
+            CmpOp::Gt,
+            Box::new(count.clone()),
+            Box::new(Expr::Int(prefix)),
+        )),
+        Box::new(Expr::Bin(
+            BinOp::Sub,
+            Box::new(count),
+            Box::new(Expr::Int(prefix)),
+        )),
+        Box::new(Expr::Int(0)),
+    )))
 }
 
 #[cfg(test)]
@@ -1053,9 +2133,20 @@ fn counted_roots_bound_counts_and_saturate_at_zero() {
             assert!(counted_transfer_roots(Expr::Int(n), arguments).is_ok());
         }
         assert!(counted_transfer_roots(Expr::Int(-1), arguments).is_err());
-        assert!(counted_transfer_roots(Expr::Int(prefix + kiln_rt::context::VALUES_MAX as i64 + 1), arguments).is_err());
-        assert_eq!(format!("{:?}", counted_transfer_roots(Expr::Int(0), arguments).unwrap()),
-                   format!("{:?}", transfer_roots(Expr::Int(0))));
+        assert!(
+            counted_transfer_roots(
+                Expr::Int(prefix + kiln_rt::context::VALUES_MAX as i64 + 1),
+                arguments
+            )
+            .is_err()
+        );
+        assert_eq!(
+            format!(
+                "{:?}",
+                counted_transfer_roots(Expr::Int(0), arguments).unwrap()
+            ),
+            format!("{:?}", transfer_roots(Expr::Int(0)))
+        );
     }
 }
 
@@ -1064,7 +2155,12 @@ pub fn publish_values(values: Vec<Expr>) -> Result<Vec<Stmt>, String> {
     if values.len() > 1 + kiln_rt::context::VALUES_MAX {
         return Err("too many return values".into());
     }
-    values.into_iter().skip(1).enumerate().map(|(i, value)| transfer_set(i as i64, value)).collect()
+    values
+        .into_iter()
+        .skip(1)
+        .enumerate()
+        .map(|(i, value)| transfer_set(i as i64, value))
+        .collect()
 }
 
 #[cfg(test)]
@@ -1073,7 +2169,16 @@ fn published_values_preserve_order_and_check_capacity() {
     assert!(publish_values(Vec::new()).unwrap().is_empty());
     assert!(publish_values(vec![Expr::Int(7)]).unwrap().is_empty());
     let result = publish_values(vec![Expr::Int(7), Expr::Int(8), Expr::Int(9)]).unwrap();
-    assert_eq!(format!("{result:?}"), format!("{:?}", vec![transfer_set(0, Expr::Int(8)).unwrap(), transfer_set(1, Expr::Int(9)).unwrap()]));
+    assert_eq!(
+        format!("{result:?}"),
+        format!(
+            "{:?}",
+            vec![
+                transfer_set(0, Expr::Int(8)).unwrap(),
+                transfer_set(1, Expr::Int(9)).unwrap()
+            ]
+        )
+    );
     assert!(publish_values(vec![Expr::Int(0); 1 + kiln_rt::context::VALUES_MAX]).is_ok());
     assert!(publish_values(vec![Expr::Int(0); 2 + kiln_rt::context::VALUES_MAX]).is_err());
 }
@@ -1092,8 +2197,14 @@ pub fn tail_invoke(callee: String, args: Vec<Expr>) -> Result<Vec<Stmt>, String>
 #[test]
 fn tail_invocation_preserves_transfer_order_and_checks_capacity() {
     let statements = tail_invoke("f".into(), (0..5).map(Expr::Int).collect()).unwrap();
-    assert_eq!(format!("{:?}", statements[0]), format!("{:?}", transfer_set(0, Expr::Int(3)).unwrap()));
-    assert_eq!(format!("{:?}", statements[1]), format!("{:?}", transfer_set(1, Expr::Int(4)).unwrap()));
+    assert_eq!(
+        format!("{:?}", statements[0]),
+        format!("{:?}", transfer_set(0, Expr::Int(3)).unwrap())
+    );
+    assert_eq!(
+        format!("{:?}", statements[1]),
+        format!("{:?}", transfer_set(1, Expr::Int(4)).unwrap())
+    );
     assert!(matches!(&statements[2], Stmt::TailCallLisp { args, .. } if args.len() == 6));
     assert!(tail_invoke("f".into(), vec![Expr::Int(0); 1025]).is_err());
 }
@@ -1102,28 +2213,83 @@ fn tail_invocation_preserves_transfer_order_and_checks_capacity() {
 #[test]
 fn dynamic_argument_routes_have_distinct_blocks_and_common_exit() {
     let registers = || vec!["saved0".into(), "saved1".into(), "saved2".into()];
-    let (blocks, done) = argument_write("route", "entry".into(), Vec::new(), "index".into(),
-        Expr::Var("value".into()), registers()).unwrap();
+    let (blocks, done) = argument_write(
+        "route",
+        "entry".into(),
+        Vec::new(),
+        "index".into(),
+        Expr::Var("value".into()),
+        registers(),
+    )
+    .unwrap();
     let names: std::collections::HashSet<_> = blocks.iter().map(|b| &b.name).collect();
     assert_eq!(names.len(), blocks.len());
     assert!(!names.contains(&done));
-    assert_eq!(blocks.iter().filter(|b| matches!(b.stmts.last(), Some(Stmt::Jump(name)) if name == &done)).count(),
-               crate::kir::REG_ARGS + 1);
-    assert!(argument_write("route", "entry".into(), Vec::new(), "index".into(), Expr::Int(0),
-        vec!["same".into(); crate::kir::REG_ARGS]).is_err());
-    assert!(argument_write("route", "entry".into(), Vec::new(), "saved0".into(), Expr::Int(0), registers()).is_err());
+    assert_eq!(
+        blocks
+            .iter()
+            .filter(|b| matches!(b.stmts.last(), Some(Stmt::Jump(name)) if name == &done))
+            .count(),
+        crate::kir::REG_ARGS + 1
+    );
+    assert!(
+        argument_write(
+            "route",
+            "entry".into(),
+            Vec::new(),
+            "index".into(),
+            Expr::Int(0),
+            vec!["same".into(); crate::kir::REG_ARGS]
+        )
+        .is_err()
+    );
+    assert!(
+        argument_write(
+            "route",
+            "entry".into(),
+            Vec::new(),
+            "saved0".into(),
+            Expr::Int(0),
+            registers()
+        )
+        .is_err()
+    );
 }
 
 /// Test a header class only on the general-object branch.
-pub fn guarded_class_test(prefix: &str, start: String, mut before: Vec<Stmt>, result: String,
-                          class: u32, object: Expr) -> Result<(Vec<crate::kir::Block>, String), String> {
+pub fn guarded_class_test(
+    prefix: &str,
+    start: String,
+    mut before: Vec<Stmt>,
+    result: String,
+    class: u32,
+    object: Expr,
+) -> Result<(Vec<crate::kir::Block>, String), String> {
     use crate::kir::Block;
     let yes = format!("{prefix}_general");
     let no = format!("{prefix}_immediate");
     let done = format!("{prefix}_done");
     let header = test_header_class(class, object.clone())?;
-    before.push(Stmt::Br(test_class(CLASS_GENERAL, object)?, yes.clone(), no.clone()));
-    Ok((vec![Block { name: start, stmts: before },
-        Block { name: yes, stmts: vec![Stmt::Set(result.clone(), header), Stmt::Jump(done.clone())] },
-        Block { name: no, stmts: vec![Stmt::Set(result, Expr::Int(0)), Stmt::Jump(done.clone())] }], done))
+    before.push(Stmt::Br(
+        test_class(CLASS_GENERAL, object)?,
+        yes.clone(),
+        no.clone(),
+    ));
+    Ok((
+        vec![
+            Block {
+                name: start,
+                stmts: before,
+            },
+            Block {
+                name: yes,
+                stmts: vec![Stmt::Set(result.clone(), header), Stmt::Jump(done.clone())],
+            },
+            Block {
+                name: no,
+                stmts: vec![Stmt::Set(result, Expr::Int(0)), Stmt::Jump(done.clone())],
+            },
+        ],
+        done,
+    ))
 }

@@ -570,6 +570,8 @@ dependencies = [
  "cranelift-object",
  "kiln-rt",
  "libc",
+ "num-bigint",
+ "num-integer",
 ]
 
 [[package]]

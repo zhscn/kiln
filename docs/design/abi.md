@@ -164,6 +164,10 @@ HIR 前端转换 lambda list 之后（`lisp/hir/convert.lisp`），每个 `&opti
 
 **栈耗尽**：函数入口的帧指针低于真正的界限（`stack_real_limit`）时，慢路径报告栈耗尽。`kiln_rt_poll` 返回 1 表示栈耗尽，入口随后调用 `kiln.kernel::%stack-exhausted`，它发出 `kiln.sys:stack-exhausted`（`storage-condition` 的子类，不是 `error`，和 SBCL 一样）。
 
+内核导出 `%stack-exhausted` 的静态 symbol 对象，Rust 后端生成的 LIR poll 慢路径通过该对象的函数格调用当前定义。运行期编译和文件编译使用同一符号链接约定；导出名由 runtime 的 `STACK_EXHAUSTED_SYMBOL` 定义。
+
+`%runtime-error` 的静态 symbol 也属于内核导出接口，导出名为 runtime 的 `RUNTIME_ERROR_SYMBOL`。后端生成的错误路径先调用它的当前函数定义；函数尚未定义或意外返回时，调用 `kiln_rt_error` 结束程序。
+
 - runtime 为每个栈设两个界限（`rust/kiln-rt/src/stack.rs`）：软界限在栈底之上栈大小的 1/8（256 KiB 到 4 MiB 之间），硬界限在栈底之上 64 KiB。
 - 越过软界限时界限降到硬界限，handler 有空间运行；再越过硬界限就结束程序。
 - 展开落到比软界限高出一段距离的帧时，界限恢复为软界限，所以同一个栈可以反复耗尽、反复处理。

@@ -1,0 +1,17 @@
+(lir-module "numeric" (init "run")
+  (constants (bignum "18446744073709551616") (double-bits 4612811918334230528))
+  (function "run"
+    (vars (a obj) (b obj) (saved obj) (q obj) (r obj) (float obj) (ratio obj)
+          (product obj) (noise obj) (n word) (one word) (more word) (m mv))
+    (block entry
+      (set a (constant 0)) (set b (fixnum 3))
+      (numeric m integer-mul (a b)) (mv-save saved m)
+      (set a (fixnum -17)) (set b (fixnum 5))
+      (numeric m integer-floor (a b)) (set q (mv-ref m 0)) (set r (mv-ref m 1))
+      (set a (constant 1)) (numeric m number-add (a b)) (set float (mv-ref m 0))
+      (set a (fixnum 2)) (numeric m number-div (b a)) (set ratio (mv-ref m 0))
+      (set n (word 150000)) (set one (word 1)) (jump loop))
+    (block loop (alloc noise cons heap (q r)) (set n (word-sub n one))
+      (set more (word-lt one n)) (branch more loop done))
+    (block done (mv-restore m saved) (set product (mv-ref m 0))
+      (return (product q r float ratio)))))

@@ -101,37 +101,26 @@ so local names carry the module's name; shared ones (symbols) do not."
 
 ;;; Runtime functions
 
-(defun rt-print () (module-import-func "kiln_rt_print" 2 1))
-(defun rt-error () (module-import-func "kiln_rt_error" 3 0 :unwinds :noreturn))
-(defun rt-poll () (module-import-func "kiln_rt_poll" 2 1 :unwinds))
-(defun rt-throw () (module-import-func "kiln_rt_throw" 4 0 :unwinds))
-(defun rt-exit-to () (module-import-func "kiln_rt_exit_to" 4 0 :unwinds))
-(defun rt-continue-unwind ()
-  (module-import-func "kiln_rt_continue_unwind" 2 0 :unwinds :noreturn))
-(defun rt-alloc () (module-import-func "kiln_rt_alloc" 3 1 :unwinds))
-(defun rt-gc () (module-import-func "kiln_rt_gc" 1 1 :unwinds))
-(defun rt-gc-count () (module-import-func "kiln_rt_gc_count" 1 1))
-(defun rt-call-on-new-stack ()
-  (module-import-func "kiln_rt_call_on_new_stack" 3 1 :unwinds))
+(defun emit-runtime-op (operation arguments)
+  "Submits a runtime service with evaluated object operands."
+  (let ((result (new-var)) (arguments (mapcar #'copy-to-var arguments)))
+    (emit `(:runtime-op ,result ,operation ,arguments ,(handler) ,@(call-loc)))
+    result))
 
 ;;; Constants and static data
 ;;;
 ;;; Operands are KIR expressions; data words are KIR data words. A constant
 ;;; is built as a data word, then turned into an operand.
 ;;;
-;;; Code compiled into the running image (COMPILE) refers to
-;;; the image's objects: a literal that is not an immediate is a word of
-;;; the module's literal words ("kiln_literals", static roots), which the
-;;; loader fills in from a vector (kiln_rt_jit), and its data word is
-;;; (:LITERAL index). The shared functions are the image's (imported).
+;;; Image compilation preserves object identity through an indexed literal
+;;; table supplied by the loader. References carry indices; the backend owns
+;;; the table layout, roots, and installation.
 
 (defvar *image-literals* nil
   "When compiling into the running image: a hash table from literal objects
 to their indices in the literal words; else NIL.")
 
 (defvar *image-literal-objects*)        ; the literals, newest first
-
-(defparameter +literals-label+ "kiln_literals")
 
 (defun literal-word (x)
   `(:literal ,(or (gethash x *image-literals*)
@@ -142,28 +131,20 @@ to their indices in the literal words; else NIL.")
 (defun word-operand (word)
   (cond ((integerp word) word)
         ((eq (first word) :literal)
-         `(:load (:addr ,+literals-label+) ,(* 8 (second word))))
+         `(:literal-ref ,(second word)))
         ((eq (first word) :fixnum) `(:fixnum-tag ,(second word)))
         ((eq (first word) :character) `(:character-tag ,(second word)))
         ((eq (first word) :single-float) `(:single-float-tag ,(second word)))
         ((eq (first word) :object-data)
          `(:object-address ,@(rest word)))
-        (t `(:addr ,@(rest word)))))
+        (t (fail "invalid constant descriptor ~S" word))))
 
 (defun emit-literal-words ()
   "Defines the literal words of a module compiled into the running image;
 returns the literals, a vector."
   (let ((n (length *image-literal-objects*)))
-    (module-data +literals-label+ `(:words ,@(make-list (max n 1) :initial-element 0)))
-    (dotimes (i n)
-      (module-root +literals-label+ i))
+    (kiln.kir::module-literal-table n)
     (coerce (nreverse *image-literal-objects*) 'simple-vector)))
-
-(defun shared-entry (name)
-  "When compiling into the running image, imports the shared definition
-NAME, and returns NAME; else NIL (the caller defines it)."
-  (when *image-literals*
-    (module-import-data name)))
 
 (defun nil-word () `(:object-data ,(module-import-data "kiln_nil") :general))
 (defun t-word () `(:object-data ,(module-import-data "kiln_t") :general))
@@ -172,28 +153,14 @@ NAME, and returns NAME; else NIL (the caller defines it)."
 (defun boolean-value (condition)
   (copy-to-var `(:select ,condition ,(t-value) ,(nil-value))))
 
-(defun undefined-function-entry ()
-  "A function that signals an undefined-function error for the symbol in
-its first env word. Every function cell starts out holding one."
-  (let ((name "kiln_undefined_function"))
-    (unless (or (shared-entry name) (gethash name (kiln.kir::kmodule-defined *module*)))
-      (setf (gethash name (kiln.kir::kmodule-defined *module*)) t)
-      (module-shared name)
-      (let ((*regions* '()))
-        (with-function (name)
-          (emit-error +err-undefined-function+ `(:closure-ref :self 0)))))
-    name))
+(defun require-builtin (kind)
+  (kiln.kir::module-builtin kind (if *image-literals* :image :file)))
 
-(defun undefined-setf-function-entry ()
-  "As UNDEFINED-FUNCTION-ENTRY, for the function (SETF symbol)."
-  (let ((name "kiln_undefined_setf_function"))
-    (unless (or (shared-entry name) (gethash name (kiln.kir::kmodule-defined *module*)))
-      (setf (gethash name (kiln.kir::kmodule-defined *module*)) t)
-      (module-shared name)
-      (let ((*regions* '()))
-        (with-function (name)
-          (emit-error +err-undefined-setf-function+ `(:closure-ref :self 0)))))
-    name))
+(defun undefined-function-test (function)
+  "Tests whether FUNCTION is an undefined function-cell placeholder."
+  (require-builtin :undefined-function)
+  (require-builtin :undefined-setf-function)
+  `(:undefined-function-p ,function))
 
 (defun function-cell-place (name)
   "The symbol operand and field ID of the global function cell of NAME."
@@ -237,8 +204,8 @@ name of its package as a string."
       (let ((name (string-data (kiln.kir::kir-name "kiln_name_" label) (module-symbol-name sym)))
             (undef (kiln.kir::kir-name "kiln_undef_" label))
             (undef-setf (kiln.kir::kir-name "kiln_undef_setf_" label)))
-        (module-data undef `(:static-function ,(undefined-function-entry) (:object-data ,obj :general)))
-        (module-data undef-setf `(:static-function ,(undefined-setf-function-entry) (:object-data ,obj :general)))
+        (module-data undef `(:static-builtin ,(require-builtin :undefined-function) (:object-data ,obj :general)))
+        (module-data undef-setf `(:static-builtin ,(require-builtin :undefined-setf-function) (:object-data ,obj :general)))
         (module-data obj `(:static-symbol (:object-data ,name :general)
                                          ,(package-name-word (symbol-package sym))
                                          (:object-data ,undef :general)
@@ -294,12 +261,8 @@ name of its package as a string."
      (if (<= +most-negative-fixnum+ x +most-positive-fixnum+)
          `(:fixnum ,x)
          (or (gethash x *constants*)
-             (let ((label (fresh-label "kiln_bignum_"))
-                   (n (ceiling (1+ (integer-length x)) 64)))
-               ;; Two's complement digits, minimal length.
-               (module-data label `(:static-bignum ,@(loop for i below n
-                                                   collect (let ((d (ldb (byte 64 (* 64 i)) x)))
-                                                             (if (logbitp 63 d) (- d (ash 1 64)) d)))))
+             (let ((label (fresh-label "kiln_bignum_")))
+               (module-data label `(:static-integer ,(kiln.kir::decimal-string x)))
                (setf (gethash x *constants*) `(:object-data ,label :general))))))
     (symbol (symbol-word x))
     (single-float
@@ -401,82 +364,20 @@ one (bindings have none)."
 
 (defun emit-fatal-error (code obj)
   "Reports error CODE about the Lisp value OBJ and ends the program."
-  (emit `(:call-rt ,(rt-error) () (:ctx ,code ,obj) ,(handler)))
-  (emit '(:trap)))
+  (emit `(:fatal-error ,code ,obj ,@(call-loc))))
 
 (defun emit-error (code obj)
-  "Signals error CODE about the Lisp value OBJ: by calling the kernel's
-%RUNTIME-ERROR with the code (a fixnum) and OBJ, which the condition
-system redefines to signal a condition; before the kernel has defined it,
-by ending the program."
-  (let ((obj (copy-to-var obj))
-        (f (function-cell-value 'kiln.kernel::%runtime-error))
-        (lisp (new-block))
-        (fatal (new-block)))
-    (br `(:eq (:field-load ,kiln.kir::+packet-field-function-entry+ ,f) (:addr ,(undefined-function-entry))) fatal lisp)
-    (start-block lisp)
-    (emit-lisp-call f (list `(:fixnum-tag ,code) obj))
-    (jump fatal)
-    (start-block fatal)
-    (emit-fatal-error code obj)))
+  "Signals error CODE about OBJ through the current runtime error definition."
+  (let ((obj (copy-to-var obj)))
+    (emit `(:signal-error ,code ,obj ,(handler) ,@(call-loc)))))
 
 (defun emit-poll (&key stack)
-  "A poll point. With STACK (function entries), it compares the frame
-with the context's stack limit instead of reading the poll flag: a poll
-request raises the limit above every stack, so one
-comparison covers both. The slow path returns true when the stack is
-exhausted, and KILN.KERNEL::%STACK-EXHAUSTED signals the STORAGE-CONDITION."
-  (let ((slow (new-block)) (overflow (new-block)) (cont (new-block))
-        (exhausted (new-var :raw)))
-    (br (if stack '(:poll-test :entry) '(:poll-test :loop))
-        slow cont)
-    (start-block slow)
-    (emit `(:call-rt ,(rt-poll) (,exhausted) (:ctx 0) ,(handler)))
-    (br exhausted overflow cont)
-    (start-block overflow)
-    (emit-slow-call 'kiln.kernel::%stack-exhausted)
-    (jump cont)
-    (start-block cont)))
-
-(defun poll-retry ()
-  "The shared function that the entry poll of a function with at most
-+REG-ARGS+ positional parameters and no &REST or &KEY tail-calls on its
-slow path, with that function as self and its arguments: it calls the poll
-slow path, then enters the function again. The function's own hit path
-makes no call, so its arguments are not spilled for the safepoint.
-Registers beyond the arguments are zeroed, so that the GC never sees
-them."
-  (let ((name "kiln_poll_retry"))
-    (unless (or (shared-entry name) (gethash name (kiln.kir::kmodule-defined *module*)))
-      (setf (gethash name (kiln.kir::kmodule-defined *module*)) t)
-      (module-shared name)
-      (let ((*regions* '()) (*call-source* nil))
-        (with-function (name)
-          (let ((self (copy-to-var :self))
-                (entry (copy-to-var `(:field-load ,kiln.kir::+packet-field-function-entry+ :self) :raw))
-                (args (loop for reg in '(:a0 :a1 :a2)
-                            for i from 0
-                            collect (copy-to-var `(:select (:gt :nargs ,i) ,reg 0))))
-                (exhausted (new-var :raw))
-                (overflow (new-block)) (cont (new-block)))
-            (emit `(:call-rt ,(rt-poll) (,exhausted) (:ctx ,entry) ,(handler)))
-            (br exhausted overflow cont)
-            (start-block overflow)
-            (emit-slow-call 'kiln.kernel::%stack-exhausted)
-            (jump cont)
-            (start-block cont)
-            (emit `(:tail-call-lisp ,entry (:ctx ,self :nargs ,@args)))))))
-    name))
+  "Polls for pending runtime work and stack exhaustion."
+  (emit `(:poll ,(if stack :entry :loop) ,(handler))))
 
 (defun emit-entry-poll ()
-  "The poll at the entry of a function whose arguments are all in
-registers, before it reads them: the slow path re-enters the function
-through POLL-RETRY."
-  (let ((slow (new-block)) (cont (new-block)))
-    (br '(:poll-test :entry) slow cont)
-    (start-block slow)
-    (emit `(:tail-call-lisp (:addr ,(poll-retry)) (:ctx :self :nargs :a0 :a1 :a2)))
-    (start-block cont)))
+  "Checks the entry before reading register arguments, retrying after a slow poll."
+  (emit `(:poll ,(if *image-literals* :entry-retry-image :entry-retry) :nil)))
 
 (defun pop-entry (region)
   (if (eq (region-kind region) :stack-roots)
@@ -507,38 +408,25 @@ region; code inside it runs with the region pushed on *REGIONS*."
     region))
 
 (defun start-dispatch (region land)
-  "Emits the handler block of REGION: payload exn0 names the target entry.
-Unwinds to other entries of this frame are dispatched outward."
+  "Emits the handler block of REGION, dispatching other targets outward."
   (start-block (region-handler region))
   (let ((outer (new-block)))
-    (br `(:eq (:unwind-target) (:slot ,(region-slot region))) land outer)
+    (br `(:unwind-target-p ,(region-slot region)) land outer)
     (start-block outer)
     (let ((h (let ((*regions* (region-outer region))) (handler))))
       (if (eq h :nil)
           (emit '(:trap))
           (emit `(:jump ,h))))))
 
-(defun emit-unwind-values (v n)
-  "Operands for passing the values (V, N) through an unwind: the value
-word and the packed flag. With more or fewer than one value, the value
-word is a list of them and the flag is 1."
-  (if (eql n 1)
-      (values v 0)
-      (values (emit-save-values v n) (copy-to-var `(:ne ,n 1) :raw))))
+(defun emit-nonlocal-values (kind target primary count)
+  "Passes the current values to a nonlocal target."
+  (emit `(:unwind-values ,kind ,target ,primary ,count ,(handler) ,@(call-loc))))
 
 (defun emit-landed-values ()
-  "In a landing block: the values passed by the unwind (exn0, exn1)."
-  (let ((v (new-var)) (n (new-var :raw))
-        (packed (new-block)) (single (new-block)) (join (new-block)))
-    (br `(:unwind-packed) packed single)
-    (start-block single)
-    (set-mv v n :exn1 1)
-    (jump join)
-    (start-block packed)
-    (multiple-value-call #'set-mv v n (emit-list-to-values :exn1))
-    (jump join)
-    (start-block join)
-    (values v n)))
+  "Decodes the values carried by the current nonlocal landing."
+  (let ((primary (new-var)) (count (new-var :raw)))
+    (emit `(:landed-values ,primary ,count))
+    (values primary count)))
 
 ;;; Variables. Closure conversion guarantees that a variable is only
 ;;; referenced in the function that defines it.
@@ -622,7 +510,7 @@ in the function being compiled."
                         (and *debug-vars* (coerce (nreverse *debug-vars*) 'simple-vector))))))
     (setf (kiln.kir::kfunc-debug *func*)
           (if (and (consp word) (eq (first word) :literal))
-              `(:debug-ref ,+literals-label+ ,(* 8 (second word)))
+              `(:debug-literal ,(second word))
               `(:debug ,word)))))
 
 (defun source-variable-name (definition)
@@ -683,8 +571,7 @@ true if the variable holds the cell of the variable NAME."
 
 (defun set-mv (r n v nv)
   "Assigns the values (V, NV) to the variables R and N."
-  (emit `(:set ,r ,v))
-  (emit `(:set ,n ,nv)))
+  (emit `(:move-values ,r ,n ,v ,nv)))
 
 (defun constant-value (ast)
   "The value of AST if it is a constant (QUOTE, a literal, or a variable
@@ -750,27 +637,7 @@ known to hold one), and true; else NIL and NIL."
   (br (or (boolean-condition v) `(:ne ,v ,(nil-value))) then else))
 
 
-;;; Special variables: TLS-index scheme (C1, rust/kiln-rt/src/special.rs).
-;;; Symbols store their TLS index as a fixnum (index << 1), so the address
-;;; of the slot is the table plus the stored index shifted left by 2.
-;;; A symbol's value in a context is its slot in the context's TLS table if
-;;; that holds a value, else its global value. Slot 0 is always empty, so a
-;;; symbol that was never bound (index 0) needs no test.
-
-(defun rt-tls-index () (module-import-func "kiln_rt_tls_index" 2 1))
-(defun rt-identity-hash () (module-import-func "kiln_rt_identity_hash" 2 1))
-(defun rt-fd-write () (module-import-func "kiln_rt_fd_write" 5 1))
-(defun rt-fd-read () (module-import-func "kiln_rt_fd_read" 5 1))
-(defun rt-float-decimal () (module-import-func "kiln_rt_float_decimal" 3 1))
-(defun rt-sys () (module-import-func "kiln_rt_sys" 5 1))
-(defun rt-write-kir () (module-import-func "kiln_rt_write_kir" 3 1))
-(defun rt-jit () (module-import-func "kiln_rt_jit" 3 1))
-(defun rt-write-packet () (module-import-func "kiln_rt_write_packet" 3 1))
-(defun rt-encode-packet () (module-import-func "kiln_rt_encode_packet" 3 1 :unwinds))
-(defun rt-compile-program () (module-import-func "kiln_rt_compile_program" 4 1))
-(defun rt-compile-packet () (module-import-func "kiln_rt_compile_packet" 3 1))
-(defun rt-save-image () (module-import-func "kiln_rt_save_image" 4 1))
-(defun rt-frame () (module-import-func "kiln_rt_frame" 4 1))
+;;; Special variables. The backend selects TLS slots and the global fallback.
 
 (defun emit-symbol-value (sym)
   "Current value of the symbol operand SYM, possibly UNBOUND."
@@ -800,7 +667,7 @@ known to hold one), and true; else NIL and NIL."
   "Raw variable holding the TLS index of the symbol operand SYM, assigned
 if needed (not a safepoint)."
   (let ((sym (copy-to-var sym)) (index (new-var :raw)))
-    (emit `(:ensure-tls-index ,index ,sym ,(rt-tls-index)))
+    (emit `(:ensure-tls-index ,index ,sym))
     index))
 
 (defun emit-unbind-progv (region)
@@ -825,13 +692,13 @@ if needed (not a safepoint)."
 (defun emit-fixed-object (class fields)
   "Allocate an object with already evaluated, stable field operands."
   (let ((result (new-var)))
-    (emit `(:alloc-fixed ,result ,class ,fields ,(rt-alloc) ,(handler)))
+    (emit `(:alloc-fixed ,result ,class ,fields ,(handler)))
     result))
 
 (defun emit-vector-object (class length initial-value)
   "Allocate and fill a vector using evaluated length and initial value."
   (let ((result (new-var)))
-    (emit `(:alloc-vector ,result ,class ,length ,initial-value ,(rt-alloc) ,(handler)))
+    (emit `(:alloc-vector ,result ,class ,length ,initial-value ,(handler)))
     result))
 
 (defun emit-cons (a b)
@@ -854,19 +721,15 @@ if needed (not a safepoint)."
   (key-p nil)
   (allow-other-keys nil))
 
-(defun arg-operand (args i)
-  "Argument I on function entry, using the saved register operands ARGS."
-  `(:arg-ref ,i ,args))
-
-(defun emit-nargs-check (min max)
-  "MAX is NIL for no upper limit."
+(defun emit-nargs-check (count min max)
+  "Checks the incoming argument COUNT; MAX is NIL for no upper limit."
   (let ((bad (new-block)) (ok (new-block)))
-    (br (cond ((and max (= min max)) `(:ne :nargs ,min))
-              (max `(:or (:lt :nargs ,min) (:gt :nargs ,max)))
-              (t `(:lt :nargs ,min)))
+    (br (cond ((and max (= min max)) `(:ne ,count ,min))
+              (max `(:or (:lt ,count ,min) (:gt ,count ,max)))
+              (t `(:lt ,count ,min)))
         bad ok)
     (start-block bad)
-    (emit-error +err-wrong-nargs+ `(:fixnum-tag :nargs))
+    (emit-error +err-wrong-nargs+ `(:fixnum-tag ,count))
     (start-block ok)))
 
 (defun emit-find-key (plist keyword value supplied)
@@ -939,25 +802,25 @@ allowed) a keyword not in KEYWORDS."
 
 (defun emit-entry (ll &key rest-slots)
   "Binds the parameters of the parsed lambda list LL on function entry."
-  (let* ((args (loop for reg in '(:a0 :a1 :a2) collect (copy-to-var reg)))
-         (nreq (length (ll-required ll)))
+  (let* ((nreq (length (ll-required ll)))
          (npos (+ nreq (length (ll-optional ll))))
-         (rest-p (or (ll-rest ll) (ll-key-p ll))))
+         (rest-p (or (ll-rest ll) (ll-key-p ll)))
+         (count (new-var :raw))
+         (args (loop repeat npos collect (new-var))))
     (when (> npos (+ kiln.kir::+backend-reg-args+ kiln.kir::+backend-values-max+))
       (fail "functions with more than ~D positional parameters are not supported"
             (+ kiln.kir::+backend-reg-args+ kiln.kir::+backend-values-max+)))
-    ;; Positional arguments first: the transfer area is only valid until
-    ;; the first safepoint. Reading it before the count check is harmless.
+    (emit `(:receive-prefix ,args ,count))
     (loop for p in (ll-required ll)
           for i from 0
-          do (bind-var p (arg-operand args i)))
+          do (bind-var p (nth i args)))
     (loop for (p supplied) in (ll-optional ll)
           for i from nreq
-          do (bind-var p `(:select (:gt :nargs ,i) ,(arg-operand args i) ,(nil-value)))
-             (bind-var supplied `(:select (:gt :nargs ,i) ,(t-value) ,(nil-value))))
-    (emit-nargs-check nreq (if rest-p nil npos))
+          do (bind-var p `(:select (:gt ,count ,i) ,(nth i args) ,(nil-value)))
+             (bind-var supplied `(:select (:gt ,count ,i) ,(t-value) ,(nil-value))))
+    (emit-nargs-check count nreq (if rest-p nil npos))
     (when rest-p
-      (let ((list (emit-rest-list args npos rest-slots)))
+      (let ((list (emit-rest-list npos rest-slots)))
         (when (ll-rest ll)
           (bind-var (ll-rest ll) list))
         (when (ll-key-p ll)
@@ -1244,7 +1107,7 @@ stamp of the last object's class and the result. Holding
 no pointer, the cons need not be scanned by the GC."
   (let ((object (copy-to-var (lower object-ast)))
         (label (fresh-label "kiln_typep_cache_")))
-    (module-data label `(:static-cons ,(nil-word) ,(nil-word)))
+    (module-data label `(:static-mutable-cons ,(nil-word) ,(nil-word)))
     (emit-lisp-call (function-cell-value 'kiln.kernel::%typep-cached)
                     (list object (constant-object type) `(:object-address ,label :cons)))))
 
@@ -1257,7 +1120,7 @@ a class, so it is the guard of the location (see lisp/target/clos/
 support.lisp)."
   (let ((object (copy-to-var (lower object-ast)))
         (label (fresh-label "kiln_slot_value_cache_")))
-    (module-data label `(:static-cons ,(nil-word) ,(nil-word)))
+    (module-data label `(:static-mutable-cons ,(nil-word) ,(nil-word)))
     (emit-lisp-call (function-cell-value 'kiln.kernel::%slot-value-cached)
                     (list object (constant-object slot-name)
                           `(:object-address ,label :cons)))))
@@ -1268,7 +1131,7 @@ LOWER-CACHED-SLOT-VALUE."
   (let ((value (copy-to-var (lower value-ast)))
         (object (copy-to-var (lower object-ast)))
         (label (fresh-label "kiln_set_slot_value_cache_")))
-    (module-data label `(:static-cons ,(nil-word) ,(nil-word)))
+    (module-data label `(:static-mutable-cons ,(nil-word) ,(nil-word)))
     (emit-lisp-call (function-cell-value 'kiln.kernel::%set-slot-value-cached)
                     (list value object (constant-object slot-name)
                           `(:object-address ,label :cons)))))
@@ -1276,8 +1139,7 @@ LOWER-CACHED-SLOT-VALUE."
 (defun call-site-root ()
   "A mutable cache cons whose object-valued car is a static GC root."
   (let ((label (fresh-label "kiln_call_site_")))
-    (module-data label `(:static-cons ,(nil-word) ,(nil-word)))
-    (kiln.kir::module-cons-car-root label)
+    (module-data label `(:static-mutable-cons ,(nil-word) ,(nil-word)))
     `(:object-address ,label :cons)))
 
 (defun call-site-specialization-p ()
@@ -1287,10 +1149,9 @@ LOWER-CACHED-SLOT-VALUE."
 (defun lower-constructor-call (name arg-asts class-name keys)
   (let* ((vals (lower-args arg-asts))
          (helper (function-cell-value 'kiln.kernel::%constructor-target))
-         (entry (copy-to-var `(:field-load ,kiln.kir::+packet-field-function-entry+ ,helper) :raw))
          (fallback (new-block)) (specialized (new-block)) (done (new-block))
          (result (new-var)) (count (new-var :raw)))
-    (br `(:eq ,entry (:addr ,(undefined-function-entry))) fallback specialized)
+    (br (undefined-function-test helper) fallback specialized)
     (start-block fallback)
     (multiple-value-call #'set-mv result count
       (emit-lisp-call (function-cell-value name) vals))
@@ -1431,10 +1292,9 @@ after a LIST call."
                (emit `(:field-store ,field ,base ,f)))
              ;; Early kernel definitions precede the notification function.
              (let* ((notify (function-cell-value 'kiln.kernel::note-function-change))
-                    (entry (copy-to-var `(:field-load ,kiln.kir::+packet-field-function-entry+ ,notify) :raw))
                     (changed (new-block))
                     (done (new-block)))
-               (br `(:eq ,entry (:addr ,(undefined-function-entry))) done changed)
+               (br (undefined-function-test notify) done changed)
                (start-block changed)
                (emit-lisp-call notify (list (constant-object constant-name)))
                (jump done)
@@ -1511,11 +1371,11 @@ its global value is used directly."
     (emit `(:set ,old ,(nil-value)))
     (jump join)
     (start-block join)
-    (let ((table (copy-to-var `(:load (:addr ,(symbol-table-cell)) 0))))
+    (let ((table (copy-to-var `(:cell-ref ,(symbol-table-cell)))))
       (emit `(:field-store ,kiln.kir::+packet-field-symbol-value+ ,sym ,(emit-cons table old)))))
   (let ((f (function-cell-value 'kiln.kernel::%register-module-symbols))
         (call (new-block)) (join (new-block)))
-    (br `(:eq (:field-load ,kiln.kir::+packet-field-function-entry+ ,f) (:addr ,(undefined-function-entry))) join call)
+    (br (undefined-function-test f) join call)
     (start-block call)
     (emit-lisp-call f '())
     (jump join)
@@ -1687,9 +1547,8 @@ Returns the module and the vector of its literals."
                 (pushnew sym symbols))))
           (dolist (sym (sort symbols #'string< :key #'symbol-name))
             (symbol-word sym)))))
-    (module-data (symbol-table-cell)
-                 `(:words ,(constant-word (symbol-table-literal
-                                           *module-symbols* session defined-packages))))
+    (kiln.kir::module-object-cell (symbol-table-cell)
+      (constant-word (symbol-table-literal *module-symbols* session defined-packages)))
     (let ((init (format nil "kiln_toplevel_~A" *module-label*)))
       (module-data (format nil "~A_fobj" init) `(:static-function ,init))
       (module-init (format nil "~A_fobj" init)))

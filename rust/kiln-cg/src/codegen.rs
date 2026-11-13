@@ -192,6 +192,17 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
                             }
                             _ => return Err(format!("data {}: unknown data {name}", d.name)),
                         },
+                        Word::CodeAddr(name) => match names.get(name) {
+                            Some(Ref::Func(target)) => {
+                                let fr = module.declare_func_in_data(*target, &mut desc);
+                                desc.write_function_addr(off, fr);
+                            }
+                            Some(Ref::Data(target)) => {
+                                let gv = module.declare_data_in_data(*target, &mut desc);
+                                desc.write_data_addr(off, gv, 0);
+                            }
+                            _ => return Err(format!("data {}: unknown code entry {name}", d.name)),
+                        },
                         Word::FuncAddr(name) => match names.get(name) {
                             Some(Ref::Func(target)) => {
                                 let fr = module.declare_func_in_data(*target, &mut desc);
@@ -274,7 +285,7 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
                 Some(Ref::Data(d)) => Some(DebugInfo::Data(*d, *addend)),
                 _ => return Err(format!("func {}: debug: unknown data {name}", f.name)),
             },
-            Some(DebugRef::Direct(Word::FuncAddr(_))) => {
+            Some(DebugRef::Direct(Word::FuncAddr(_) | Word::CodeAddr(_))) => {
                 return Err(format!("func {}: debug: not an object", f.name));
             }
             Some(DebugRef::Indirect(name, off)) => match names.get(name) {
@@ -1254,6 +1265,7 @@ impl<M: Module> FuncLowering<'_, M> {
                     BinOp::Srem => b.ins().srem(x, y),
                     BinOp::Shlv => b.ins().ishl(x, y),
                     BinOp::Sarv => b.ins().sshr(x, y),
+                    BinOp::Shrv => b.ins().ushr(x, y),
                     BinOp::F64Add | BinOp::F64Sub | BinOp::F64Mul | BinOp::F64Div => {
                         let x = b.ins().bitcast(ir::types::F64, MemFlagsData::new(), x);
                         let y = b.ins().bitcast(ir::types::F64, MemFlagsData::new(), y);

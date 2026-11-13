@@ -1,17 +1,17 @@
 # LIR 编译协议
 
-状态：结构化传输已实现，布局无关的 LIR 操作仍在迁移。当前 payload 1 保存兼容操作树（KIR 与迁移中的字段、调用操作），payload 2 为 LIR 保留，后端暂时拒绝；二进制 KIR 不等同于完成 LIR 降级。LIR 是后端输入语言，本文定义其编码、调用和资源生命周期；操作含义见 [lir.md](lir.md)。它是编译器专用单向协议，不依赖通用 Rust 宿主模块、对象借用或 Lisp 回调网关。
+状态：结构化传输已实现，布局无关的 LIR 操作仍在迁移。当前 payload 1 保存兼容操作树（KIR 与迁移中的字段、调用操作），payload 2 保存独立的类型化 LIR 核心。后者使用独立解析器、CFG 验证器和 Rust 降级器，具体覆盖范围见 [lir.md](lir.md) 的“已实现的独立核心”；Lisp 生产发射仍在迁移。二进制 KIR 不等同于完成 LIR 降级。LIR 是后端输入语言，本文定义其编码、调用和资源生命周期；操作含义见 [lir.md](lir.md)。它是编译器专用单向协议，不依赖通用 Rust 宿主模块、对象借用或 Lisp 回调网关。
 
 ## 已实现的封套
 
-`protocol/lir-schema.def` 定义记录种类和版本，`tools/gen-lir-schema.py` 生成 Lisp 与 Rust 常量，`--check` 检查副本。`kiln-cg abi-description` 从运行时错误码生成 `lisp/abi.lisp`；`kiln-cg target-description` 生成 `lisp/backend-target.lisp`；目标描述提供参数寄存器数与多值传递区容量。目标指纹涵盖 runtime 对象、数值、动态退出、错误接口与 context 定义、参数寄存器数、共享 schema 以及目标架构、系统，采用严格的构建匹配，不承诺布局相同时跨构建兼容。修改这些定义后重新生成目标描述。
+`protocol/lir-schema.def` 定义记录种类和版本，`tools/gen-lir-schema.py` 生成 Lisp 与 Rust 常量，`--check` 检查副本。`kiln-cg abi-description` 从运行时错误码生成 `lisp/abi.lisp`；`kiln-cg target-description` 生成 `lisp/backend-target.lisp`；目标描述提供参数寄存器数与多值传递区容量。目标指纹涵盖 runtime 对象、数值、动态退出、错误接口、context 定义及 runtime 导出接口、参数寄存器数、共享 schema、LIR 类型和操作定义及其解码规则，以及目标架构、系统，采用严格的构建匹配，不承诺布局相同时跨构建兼容。修改这些定义后重新生成目标描述。
 
 头部为 64 字节，整数按小端编码：
 
 | 偏移 | 宽度 | 内容 |
 |---|---|---|
 | 0 | 8 | magic：`KILNLIR` 和零字节 |
-| 8、12 | 各 4 | major、minor，当前为 1、1 |
+| 8、12 | 各 4 | major、minor，取值由 schema 定义 |
 | 16、20 | 各 4 | payload 种类、标志（当前为零） |
 | 24、32 | 各 8 | 目标指纹、总字节数 |
 | 40、44、48、52 | 各 4 | 记录数、子记录引用数、UTF-8 字节数、根记录 ID |
@@ -44,7 +44,7 @@
 以下是解码后的示意记录，不是可直接提交的文本格式或已实现的 opcode 编号：
 
 ```text
-header { schema: 1.1, target: ABI, module: "example" }
+header { schema: MAJOR.MINOR, target: ABI, module: "example" }
 variables [ {id: 0, repr: obj}, {id: 1, repr: word} ]
 operations [
   { op: arg-count, dst: 1 },

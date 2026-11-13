@@ -17,7 +17,7 @@
 | — | 性能：降低编译延迟，优化数值、数组、流和字符串等运行期热点；见下文“性能” | 阶段一完成 |
 | — | seal、WPO 和 AOT 交付（[positioning.md](design/positioning.md)） | 未开始 |
 | — | 异步（[async.md](design/async.md)） | 未开始，ANSI 自举完成之前不做 |
-| — | 编译器分层：Lisp MIR（CFG 加 SSA）承担语义分析和表示选择，kiln-cg 承担 LIR 到 KIR 的布局和 ABI 降级（[compiler.md](design/compiler.md)） | 结构化交接、二进制构建、动态分配、静态对象布局及部分字段、调用和动态条目降级已接入；完整 LIR 和 Lisp MIR 待实现 |
+| — | 编译器分层：Lisp MIR（CFG 加 SSA）承担语义分析和表示选择，kiln-cg 承担 LIR 到 KIR 的布局和 ABI 降级（[compiler.md](design/compiler.md)） | 结构化交接和独立 LIR 核心（类型化表示、CFG 验证、普通调用与列表实参展开、多值保存、动态区域与非局部退出、special 绑定与 progv、堆闭包、栈 cons 与栈闭包、定长与动态容器分配、结构与实例构造及 poll、静态常量图与 cell、源码和变量调试描述、具名数值操作、错误终结操作及入口 rest 的堆／栈构造及具名 runtime 服务）已接入；剩余底层操作、生产发射向独立载荷迁移和 Lisp MIR 待实现 |
 | — | Rust 宿主模块（[rust-interop.md](design/rust-interop.md)）、编辑器（[editor.md](design/editor.md)） | 设计草案 |
 
 ## 当前优先级

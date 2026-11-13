@@ -85,7 +85,7 @@ key 和 value 的 cons。未绑定槽和无法读取的 NIL 元素类型数组�
 
 ## 函数的调试信息对象
 
-每个编译出的函数带一个 Lisp 对象（`lower.lisp` 构造，作为常量放进模块）：
+每个编译出的函数带一个 Lisp 对象。独立 LIR 由 Rust 按函数调试声明构造，兼容路径由 `lower.lisp` 作为常量放进模块：
 
 ```
 #(NAME FILE START END VARIABLES)
@@ -111,6 +111,12 @@ key 和 value 的 cons。未绑定槽和无法读取的 NIL 元素类型数组�
 - 定义的名字由 `front.lisp` 的 `definition-name` 在宏展开之前从形式算出：上表中的定义宏有专门的规则；其他 CL 包里以 `DEF` 开头的宏，取 `(宏名 名字)`。原生 `eval` 在展开定义宏之前记下它（[eval-compile.md](eval-compile.md)）。
 - 展开结果里的定义优先于外层的定义。例如 `defstruct` 展开出的访问函数用自己的名字。
 - 这是下文定义记录（dspec）的一个子集，只用于命名。依赖追踪也用它命名定义（[dependencies.md](dependencies.md)）。
+
+## 独立 LIR 的调试声明
+
+函数使用 `(debug NAME FILE START END ((VAR NAME [cell])...))` 声明源码描述。名称和文件使用常量引用、image literal 或对象立即数；范围为非负 32 位偏移。每项将已声明的对象或 binary64 变量关联到源码名称。cell 标注表示对象变量保存一个闭包共享 cell，frame 接口返回其 car。Rust 按表示生成 binary64 描述，构造函数信息和名称向量，登记静态 roots，并安排 image literal 的加载绑定。生成方不构造这些 runtime 向量，也不提供字节偏移。
+
+调用的 `loc` 决定该调用点的范围；没有位置的调用使用函数范围。变量的可见性使用与内部 KIR 相同的存活规则。cell 和 binary64 的描述引用运行环境的标准关键字符号，文件链接和 image 安装都保留其身份。
 
 ## KIR 里的调试数据
 

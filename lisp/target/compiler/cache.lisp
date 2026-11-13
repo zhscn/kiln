@@ -33,8 +33,8 @@ Native code already registered with the runtime follows the runtime's lifetime."
 
 (defun compilation-debug-literals (module)
   (loop for function in (kiln.kir::kmodule-funcs module)
-        for debug = (assoc :debug-ref (cddr function))
-        when debug collect (/ (third debug) 8)))
+        for debug = (assoc :debug-literal (cddr function))
+        when debug collect (second debug)))
 
 (defun compilation-literals-match-p (old new debug-literals)
   (and (= (length old) (length new))

@@ -50,6 +50,21 @@
     (push `(:data ,name ,contents) (kmodule-data *module*)))
   name)
 
+(defun module-builtin (kind scope)
+  "Requests a backend entry by its fixed role and compilation scope."
+  (when (declare-once (list :builtin kind))
+    (push `(:builtin ,kind ,scope) (kmodule-data *module*)))
+  kind)
+
+(defun module-object-cell (name initial)
+  "Defines a mutable object cell initialized from INITIAL."
+  (when (declare-once name)
+    (push `(:object-cell ,name ,initial) (kmodule-data *module*)))
+  name)
+
+(defun module-literal-table (count)
+  (push `(:literal-table ,count) (kmodule-data *module*)))
+
 (defun module-root (data index)
   "Declares word INDEX of the data object DATA a GC root."
   (push `(:root ,data ,index) (kmodule-roots *module*)))
@@ -164,7 +179,7 @@ dropped (they are unreachable)."
     (unless (kblock-terminated b)
       (push stmt (kblock-stmts b))
       (case (first stmt)
-        ((:jump :br :switch :return :tail-call-lisp :tail-invoke :trap)
+        ((:jump :br :switch :return :tail-call-lisp :tail-invoke :forward-incoming :signal-error :fatal-error :unwind-values :continue-unwind :trap)
          (setf (kblock-terminated b) t)))))
   (values))
 

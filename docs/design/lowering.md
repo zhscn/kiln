@@ -1,6 +1,6 @@
 # 降级：HIR 到 KIR
 
-本文描述现在的实现。cons/symbol 固定字段及函数入口读取已经改为 schema 字段 ID，由 Rust 展开偏移；普通函数对象调用使用 `invoke`，由 Rust 安排传递区和机器参数；其他布局与控制流发射仍由 Lisp 负责。目标设计里降级分成两段（[compiler.md](compiler.md)）：Lisp 的 MIR 完成表示选择后输出 LIR（[mir.md](mir.md)、[lir.md](lir.md)），kiln-cg 把 LIR 降级成 KIR。下面的闭包、退出点、多值、常量和分配规则届时分别归入 MIR 的表示选择（存储、闭包转换、退出令牌）和 Rust 的 LIR 降级（布局、条目、payload、静态数据）；“降级时的改写”改由 MIR 的类型驱动改写实现。
+本文描述现在的实现。cons/symbol 固定字段使用 schema 字段 ID，由 Rust 展开偏移；普通函数对象调用使用 `invoke`，apply 使用 `invoke-list`，由 Rust 安排参数展开、传递区和机器参数；数值原语、错误分派及一般 runtime 服务也使用由 Rust 展开的具名操作；其他布局与控制流发射仍由 Lisp 负责。目标设计里降级分成两段（[compiler.md](compiler.md)）：Lisp 的 MIR 完成表示选择后输出 LIR（[mir.md](mir.md)、[lir.md](lir.md)），kiln-cg 把 LIR 降级成 KIR。下面的闭包、退出点、多值、常量和分配规则届时分别归入 MIR 的表示选择（存储、闭包转换、退出令牌）和 Rust 的 LIR 降级（布局、条目、payload、静态数据）；“降级时的改写”改由 MIR 的类型驱动改写实现。
 
 `lisp/hir/lower.lisp` 按 HIR 节点的整数 kind 分派（`hir-lower-mv`），返回保存结果的 KIR 操作数；模块、函数、调用、特殊变量、非局部退出、分配和常量的发射工具在 `lisp/lower.lisp`、`lisp/values.lisp` 和 `lisp/primitives.lisp`。输入是前端的输出（[front-end.md](front-end.md)、[hir.md](hir.md)），输出的 KIR 见 [codegen.md](codegen.md)，ABI 见 [abi.md](abi.md)。
 
@@ -33,9 +33,47 @@
 
 `catch`、`throw`、`unwind-protect`、特殊变量绑定和 `progv` 都按 [abi.md](abi.md) 的动态环境条目降级。
 
+## apply
+
+Lisp 先按源码顺序求值函数设计符、固定参数和最后的列表，检查函数设计符后，提交 `invoke-list`。固定参数以操作数向量传给 Rust；后端依次展开列表，检查 dotted 尾部与总参数容量，再安排调用。展开过程有目标参数上限，填充传递区后到调用之间没有 safepoint。类型错误与参数数量错误沿当前动态区域展开，调用位置沿用 apply 形式的位置。
+
+## 入口参数
+
+生产发射的 `receive-prefix` 提交位置参数的目标变量列表和实参数量变量。Rust 在首个可能复用传递区的操作之前保存整个前缀，缺失位置填 NIL；独立 LIR 的 `receive` 声明使用同一实现。Lisp 根据这些普通变量检查参数数量、绑定 supplied-p 并求值默认式，不读取参数寄存器或 `nargs`。
+
+funcallable trampoline 使用 `forward-incoming` 转交未改写的入口实参。Rust 从目标函数对象取得入口并生成尾调用，传递区保持原有内容，整个转发路径没有 safepoint。
+
+## 入口 rest 列表
+
+生产发射以 `rest-list` 提交后缀起始位置与候选栈 cons 槽。Rust 保存所需的入口寄存器实参并保护未读取的传递区，倒序构造列表；整个列表能放进候选槽时使用栈存储，否则使用堆存储，完成后撤销传递区 roots。候选槽由生成方按逃逸证明选择并在入口登记，地址选择与分配循环在后端展开。
+
+独立 LIR 通过函数的 `rest` 声明表达同一需求，Rust 同时建立候选栈槽及根条目，负责返回、尾调用和非局部展开时的清理。位置参数仍由 `receive` 保存，默认式、special 绑定和关键字处理保持源码求值顺序。
+
+## Poll
+
+Lisp 在入口和循环控制流中提交 `poll`，由 Rust 决定检查、runtime 签名和慢路径。参数尚未保存的寄存器入口使用重试模式；共享 helper 保存有效参数并清零无效寄存器，poll 后尾调用原函数。已保存实参的入口和循环使用普通模式，栈耗尽时调用当前 `%stack-exhausted` 定义。独立 LIR 通过 CFG 分析选择循环 poll，使用同一检查与慢路径实现。
+
+## 固定角色入口
+
+普通和 SETF 函数格的未定义占位对象、funcallable 转发及未设置目标时的错误入口由 Rust 生成。Lisp 按角色和 file/image 作用域声明所需入口；静态或动态占位对象提交其所属 symbol，funcallable 分配提交 rack。后端决定捕获字段、入口引用和初始调用目标。函数格的未定义检测使用 `undefined-function-p`，不比较代码地址。
+
+## Runtime 服务
+
+普通 runtime 服务提交 `runtime-op`，包含操作名、已求值对象、动态 handler 和源码位置。Rust 的闭合表定义调用名称、参数数量、签名和 safepoint 效果，补齐 imports，并为身份哈希保留缓存快路径。Lisp 发射不声明这些函数的 ABI，也不选择哪些服务需要 safepoint trampoline。生产路径的帧指针操作表达为后端 token，不在 Lisp 中构造地址。
+
+GC、packet 编码和跨栈 Lisp 调用可能 safepoint 或覆盖传递区；独立 LIR 验证器使旧多值视图失效并传播异常边。其余服务遵守当前 runtime 的 NoSafepoint 合同，保留传递区内容。运行期编译的批量快照、代码安装和 literal 绑定期间不调用 Lisp。
+
+## 数值与错误分派
+
+整数和实数 runtime 原语提交具名 `numeric-op`。操作码、调用签名、context 参数和返回个数在 Rust 中选择，除法余数按 runtime 约定转换成多值结果；Lisp 不读取余数所在的传递区槽。普通数值快路径仍由 HIR 类型和区间事实选择，后端接口不重新进行语言类型推导。
+
+可恢复错误提交 `signal-error`，包含语义错误码、已求值对象、动态 handler 和源码位置。Rust 查找当前 `%runtime-error` 定义，安排 Lisp 调用，并在定义不可用或返回时调用 fatal runtime 入口。该操作终结当前块；条件系统引发的非局部退出沿原有 handler 展开。
+
 ## 多值
 
 `lower-mv` 返回主值的操作数和值的个数（整数或 raw 变量）。会把值传递出去的节点（`progn`、`if`、`let`、局部函数、`block`、`catch`、`unwind-protect`、绑定、函数调用等）在 `hir-lower-mv` 里传出全部值，`hir-lower` 只取主值。函数体用 `lower-mv`，所以函数返回它最后一个形式的全部值。`multiple-value-bind` 展开出的 `(multiple-value-call (lambda (&optional ... &rest g) (declare (ignore g)) ...) form)` 由 HIR 转换识别并归约为多值 `let` 节点（`hir-node-d` 为真），降级时直接按返回值个数用 `:select` 从主值和 `ctx.values` 取出绑定，不生成闭包，也不会让主体里的赋值或 `return-from`/`go` 变成跨函数的单元或非局部退出。`multiple-value-call` 在被调函数是 `#'list`（即 `multiple-value-list` 的展开）时直接把推入的值 `nreverse` 后返回，其余情况收集成列表再按 `apply` 调用。保留和传递多值的约定见 [abi.md](abi.md)。
+
+生产发射通过 `values-list`、`push-values`、`save-values` 和 `restore-values` 表达列表收集、逆序累积和跨调用保存。Rust 与独立 LIR 共用遍历及分配实现，保护主值和传递区并检查用户提供列表的类型与多值上限。`unwind-values` 提交目标和主值、计数，`landed-values` 解码非局部落地值；多值 payload 的打包标志及 `continue-unwind` 的 runtime 调用序列均由 Rust 选择。
 
 ## 分支
 

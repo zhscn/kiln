@@ -1,0 +1,10 @@
+(0 NIL NIL)
+(4 10 40)
+(1024 0 1023)
+TOO-MANY
+(BAD-TAIL 9)
+BOUNDED-CYCLE
+(T T)
+(1 2 3 4)
+(1 2 3 4)
+(7 8)

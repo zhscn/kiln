@@ -13,3 +13,5 @@ cranelift-module.workspace = true
 cranelift-jit.workspace = true
 cranelift-object.workspace = true
 cranelift-native.workspace = true
+num-bigint = "0.4"
+num-integer = "0.1"

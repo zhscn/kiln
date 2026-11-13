@@ -185,18 +185,15 @@ are compared (no short circuit), which also checks every argument."
 ;;; Objects
 
 (define-primitive eq (a b) (boolean-value `(:eq ,a ,b)))
-;;; Only fixnums, symbols and conses exist so far, so EQL is EQ.
 (define-primitive eql (a b)
   ;; Identical objects are EQL; otherwise only numbers that are heap
   ;; objects (bignums, ratios, double floats, complexes) can be, which the kernel
   ;; decides.
   (let ((a (copy-to-var a)) (r (copy-to-var (t-value))) (number-p (new-var :raw))
-        (no (new-block)) (general (new-block)) (slow (new-block)) (false (new-block))
+        (no (new-block)) (slow (new-block)) (false (new-block))
         (done (new-block)))
     (br `(:eq ,a ,b) done no)
     (start-block no)
-    (br `(:test-class ,kiln.kir::+packet-class-general+ ,a) general false)
-    (start-block general)
     (emit `(:heap-number-p ,number-p ,a))
     (br number-p slow false)
     (start-block slow)
@@ -216,22 +213,12 @@ are compared (no short circuit), which also checks every argument."
   (boolean-value `(:or (:test-class ,kiln.kir::+packet-class-cons+ ,a) (:eq ,a ,(nil-value)))))
 
 (defun emit-kind-p (a class)
-  "Is A a general object of KIND?"
-  (let ((r (new-var)) (general (new-block)) (no (new-block)) (join (new-block)))
-    (br `(:test-class ,kiln.kir::+packet-class-general+ ,a) general no)
-    (start-block general)
-    (emit `(:set ,r (:select (:test-header-class ,class ,a)
-                             ,(t-value) ,(nil-value))))
-    (jump join)
-    (start-block no)
-    (emit `(:set ,r ,(nil-value)))
-    (jump join)
-    (start-block join)
-    r))
+  "Whether A has the requested heap representation class."
+  (boolean-value (emit-kind-test a class)))
 
 (define-primitive symbolp (a) (emit-kind-p a kiln.kir::+packet-class-symbol+))
 (define-primitive functionp (a) (boolean-value (emit-function-test a)))
-;;; Only fixnums exist so far.
+
 (defun emit-integer-test (a)
   "Raw 0/1: is A a fixnum or a bignum?"
   `(:or (:test-class ,kiln.kir::+packet-class-fixnum+ ,a) ,(emit-kind-test a kiln.kir::+packet-class-bignum+)))
@@ -341,7 +328,7 @@ are compared (no short circuit), which also checks every argument."
   (emit-list (butlast vals) (car (last vals))))
 (define-nary-primitive vector (vals)
   (let ((result (new-var)))
-    (emit `(:alloc-vector-elements ,result ,vals ,(rt-alloc) ,(handler)))
+    (emit `(:alloc-vector-elements ,result ,vals ,(handler)))
     result))
 
 ;;; Primitives may return a second value, the number of values;
@@ -354,20 +341,16 @@ are compared (no short circuit), which also checks every argument."
   (values (if vals (first vals) (nil-value)) (length vals)))
 
 (define-primitive values-list (list)
-  (emit-check-proper-list list)
   (emit-list-to-values list))
 
 (define-nary-primitive apply (vals)
   (when (< (length vals) 2) (hir-error "APPLY needs a function and a list"))
   (let ((f (emit-function-designator (first vals)))
-        (list (emit-list (butlast (rest vals)) (car (last vals)))))
-    (emit-check-proper-list list)
-    (emit-apply f list)))
+        (list (car (last vals))))
+    (emit-apply f list (butlast (rest vals)))))
 
 (define-primitive print (a)
-  (let ((r (new-var)))
-    (emit `(:call-rt ,(rt-print) (,r) (:ctx ,a) :nil))
-    r))
+  (emit-runtime-op :print (list a)))
 
 ;;; Functions and symbols
 
@@ -412,10 +395,7 @@ are compared (no short circuit), which also checks every argument."
   (emit `(:field-store ,kiln.kir::+packet-field-symbol-setf-function+ ,name ,function))
   function)
 (define-primop :undefined-function-p (f)
-  ;; F is the content of a function cell.
-  (let ((entry (copy-to-var `(:field-load ,kiln.kir::+packet-field-function-entry+ ,f) :raw)))
-    (boolean-value `(:or (:eq ,entry (:addr ,(undefined-function-entry)))
-                         (:eq ,entry (:addr ,(undefined-setf-function-entry)))))))
+  (boolean-value (undefined-function-test f)))
 
 (define-primitive symbol-value (name)
   (emit-check-symbol name)
@@ -436,20 +416,14 @@ are compared (no short circuit), which also checks every argument."
 ;;; kiln.sys
 
 (define-primitive kiln.sys:%gc ()
-  (let ((r (new-var)))
-    (emit `(:call-rt ,(rt-gc) (,r) (:ctx) ,(handler)))
-    r))
+  (emit-runtime-op :gc (list)))
 
 (define-primitive kiln.sys:%gc-count ()
-  (let ((r (new-var)))
-    (emit `(:call-rt ,(rt-gc-count) (,r) (:ctx) :nil))
-    r))
+  (emit-runtime-op :gc-count (list)))
 
 (define-primitive kiln.sys:%call-on-new-stack (f arg)
-  (let ((r (new-var)))
-    (emit-check-function f)
-    (emit `(:call-rt ,(rt-call-on-new-stack) (,r) (:ctx ,f ,arg) ,(handler)))
-    r))
+  (emit-check-function f)
+  (emit-runtime-op :call-on-new-stack (list f arg)))
 ;;; Primops. Type checks are the kernel's job; primops that
 ;;; index check their index.
 
@@ -662,15 +636,13 @@ of it, SLOW-FN otherwise; both return an operand. Returns the result."
 (defun emit-aref-1 (v i x)
   "The one-subscript AREF of V at I, or with X true, the store of X there."
   (let ((r (new-var))
-        (general (new-block)) (other (new-block)) (vector (new-block)) (string (new-block))
+        (other (new-block)) (vector (new-block)) (string (new-block))
         (fast-vector (new-block)) (fast-string (new-block)) (slow (new-block))
         (done (new-block))
         (bad-index `(:or (:eq (:test-class ,kiln.kir::+packet-class-fixnum+ ,i) 0) (:or (:lt ,i 0) (:ge ,i ,(vector-length v))))))
-    (br `(:test-class ,kiln.kir::+packet-class-general+ ,v) general slow)
-    (start-block general)
-    (br `(:test-header-class ,kiln.kir::+packet-class-simple-vector+ ,v) vector other)
+    (br (emit-kind-test v kiln.kir::+packet-class-simple-vector+) vector other)
     (start-block other)
-    (br `(:test-header-class ,kiln.kir::+packet-class-string+ ,v) string slow)
+    (br (emit-kind-test v kiln.kir::+packet-class-string+) string slow)
     (start-block vector)
     (br bad-index slow fast-vector)
     (start-block fast-vector)
@@ -741,19 +713,16 @@ of it, SLOW-FN otherwise; both return an operand. Returns the result."
   (let* ((name (copy-to-var name))
          (nil-object (copy-to-var (nil-value)))
          (s (new-var)))
-    (emit `(:alloc-symbol ,s ,name ,nil-object ,(rt-alloc) ,(handler)))
+    (emit `(:alloc-symbol ,s ,name ,nil-object ,(handler)))
     (emit-undefined-function-cells s)
     s))
 (defun emit-undefined-function-cells (s &key (function t) (setf-function t))
-  "Stores new undefined-function objects for the symbol S into its function
-cells (both by default)."
-  (dolist (cell (append (and function
-                             (list (cons kiln.kir::+packet-field-symbol-function+ (undefined-function-entry))))
-                        (and setf-function
-                             (list (cons kiln.kir::+packet-field-symbol-setf-function+ (undefined-setf-function-entry))))))
+  "Stores undefined-function placeholders in the requested symbol cells."
+  (dolist (cell (append (and function (list (cons kiln.kir::+packet-field-symbol-function+ :ordinary)))
+                        (and setf-function (list (cons kiln.kir::+packet-field-symbol-setf-function+ :setf)))))
+    (require-builtin (if (eq (cdr cell) :setf) :undefined-setf-function :undefined-function))
     (let ((f (new-var)))
-      (emit `(:alloc-closure ,f ,(cdr cell) 1 ,(rt-alloc) ,(handler)))
-      (emit `(:closure-set ,f 0 ,s))
+      (emit `(:alloc-undefined-function ,f ,s ,(cdr cell) ,(handler)))
       (emit `(:field-store ,(car cell) ,s ,f)))))
 ;; NIL and T are defined by the runtime with empty function cells; the
 ;; kernel fills them in first thing.
@@ -803,29 +772,25 @@ cells (both by default)."
 
 (define-primop :bignump (x) (boolean-value (emit-kind-test x kiln.kir::+packet-class-bignum+)))
 
-(defun rt-integer-op () (module-import-func "kiln_rt_integer_op" 4 1 :unwinds))
+(defun emit-numeric-op (operation arguments)
+  (let ((primary (new-var)) (count (new-var :raw))
+        (arguments (mapcar #'copy-to-var arguments)))
+    (emit `(:numeric-op ,primary ,count ,operation ,arguments ,(handler) ,@(call-loc)))
+    (values primary count)))
 
-(defun emit-integer-op (code a b)
-  (let ((r (new-var)))
-    (emit `(:call-rt ,(rt-integer-op) (,r) (:ctx ,code ,a ,b) ,(handler)))
-    r))
-
-;;; Operation codes: rust/kiln-rt/src/bignum.rs.
-(macrolet ((define-integer-ops (&rest specs)
+(macrolet ((define-numeric-ops (&rest specs)
              `(progn
                 ,@(mapcar (lambda (spec)
-                            (destructuring-bind (name code &optional two-values) spec
-                              `(define-primop ,name (a b)
-                                 ,(if two-values
-                                      ;; The remainder is in ctx.values[0].
-                                      `(values (emit-integer-op ,code a b) 2)
-                                      `(emit-integer-op ,code a b)))))
+                            (destructuring-bind (name &optional unary) (if (consp spec) spec (list spec))
+                              (let ((arguments (if unary '(a) '(a b))))
+                                `(define-primop ,name ,arguments
+                                   (emit-numeric-op ,name (list ,@arguments))))))
                           specs))))
-  (define-integer-ops
-    (:integer-add 0) (:integer-sub 1) (:integer-mul 2)
-    (:integer-truncate 3 t) (:integer-floor 4 t) (:integer-ceiling 5 t) (:integer-round 6 t)
-    (:integer-compare 7) (:integer-logand 8) (:integer-logior 9) (:integer-logxor 10)
-    (:integer-ash 11) (:integer-gcd 12) (:integer-expt 13) (:integer-length 14)))
+  (define-numeric-ops
+    :integer-add :integer-sub :integer-mul
+    :integer-truncate :integer-floor :integer-ceiling :integer-round
+    :integer-compare :integer-logand :integer-logior :integer-logxor
+    :integer-ash :integer-gcd :integer-expt (:integer-length t)))
 
 ;;; The caller checks the divisor and quotient before division.
 (define-primop :fixnum-quotient (a b) (copy-to-var `(:fixnum-quotient ,a ,b)))
@@ -866,35 +831,21 @@ cells (both by default)."
   (boolean-value `(:test-class ,kiln.kir::+packet-class-single-float+ ,x)))
 (define-primop :type-error-number (x) (emit-error +err-not-number+ x) (nil-value))
 
-(defun rt-number-op () (module-import-func "kiln_rt_number_op" 4 1 :unwinds))
-
-(defun emit-number-op (code a b)
-  (let ((r (new-var)))
-    (emit `(:call-rt ,(rt-number-op) (,r) (:ctx ,code ,a ,b) ,(handler)))
-    r))
-
-;;; Operation codes: rust/kiln-rt/src/number.rs.
-(macrolet ((define-number-ops (&rest specs)
+(macrolet ((define-numeric-ops (&rest specs)
              `(progn
                 ,@(mapcar (lambda (spec)
-                            (destructuring-bind (name code &optional kind) spec
-                              (ecase kind
-                                ((nil) `(define-primop ,name (a b) (emit-number-op ,code a b)))
-                                (:unary `(define-primop ,name (a) (emit-number-op ,code a 0)))
-                                ;; The remainder is in ctx.values[0].
-                                (:two-values `(define-primop ,name (a b)
-                                                (values (emit-number-op ,code a b) 2))))))
+                            (destructuring-bind (name &optional unary) (if (consp spec) spec (list spec))
+                              (let ((arguments (if unary '(a) '(a b))))
+                                `(define-primop ,name ,arguments
+                                   (emit-numeric-op ,name (list ,@arguments))))))
                           specs))))
-  (define-number-ops
-    (:number-add 0) (:number-sub 1) (:number-mul 2) (:number-div 3)
-    (:number-truncate 4 :two-values) (:number-floor 5 :two-values)
-    (:number-ceiling 6 :two-values) (:number-round 7 :two-values)
-    (:number-compare 8) (:number-eql 9)
-    (:to-single-float 10 :unary) (:to-double-float 11 :unary)
-    (:numerator 12 :unary) (:denominator 13 :unary)
-    (:sqrt 14 :unary) (:exp 15 :unary) (:log 16 :unary)
-    (:sin 17 :unary) (:cos 18 :unary) (:tan 19 :unary) (:atan 20 :unary)
-    (:rational 21 :unary) (:atan2 22) (:number-expt 23)))
+  (define-numeric-ops
+    :number-add :number-sub :number-mul :number-div
+    :number-truncate :number-floor :number-ceiling :number-round
+    :number-compare :number-eql
+    (:to-single-float t) (:to-double-float t) (:numerator t) (:denominator t)
+    (:sqrt t) (:exp t) (:log t) (:sin t) (:cos t) (:tan t) (:atan t)
+    (:rational t) :atan2 :number-expt))
 (define-primop :type-error-type (x) (emit-error +err-bad-type+ x) (nil-value))
 (define-primop :lisp-error (x) (emit-fatal-error +err-lisp-error+ x) (nil-value))
 (define-primop :fatal-error (code x)
@@ -905,21 +856,6 @@ cells (both by default)."
 ;;; CLOS objects. A rack is [header, class, stamp, slot list,
 ;;; slots...]; STANDARD-INSTANCE-ACCESS location L is rack word L + 4, so
 ;;; -2 is the stamp and -1 the slot list (Clostrophilia's convention).
-
-(defun funcallable-trampoline ()
-  "Shared entry of funcallable instances: tail-calls the installed function
-with the same arguments, so that it leaves no frame of its own. No
-safepoint before the call, so arguments in the transfer area are passed on
-intact."
-  (let ((name "kiln_funcallable_trampoline"))
-    (unless (or (shared-entry name) (gethash name (kiln.kir::kmodule-defined *module*)))
-      (setf (gethash name (kiln.kir::kmodule-defined *module*)) t)
-      (module-shared name)
-      (let ((*regions* '()))
-        (with-function (name)
-          (let ((f (copy-to-var `(:funcallable-function :self))))
-            (emit `(:tail-call-lisp (:field-load ,kiln.kir::+packet-field-function-entry+ ,f) (:ctx ,f :nargs :a0 :a1 :a2)))))))
-    name))
 
 (defun emit-tail-call (fobj vals)
   "Tail-calls FOBJ with the argument operands VALS: its values are the
@@ -953,21 +889,6 @@ current function's. Nothing after it in the block is reached."
         (emit-tail-call (copy-to-var (first vals))
                         (mapcar (lambda (v) (copy-to-var v)) (rest vals)))))
 
-(defun funcallable-unset ()
-  "Function object installed in a new funcallable instance: signals an
-error when called."
-  (let ((name "kiln_funcallable_unset"))
-    (unless (or (shared-entry "kiln_funcallable_unset_fobj")
-                (gethash name (kiln.kir::kmodule-defined *module*)))
-      (setf (gethash name (kiln.kir::kmodule-defined *module*)) t)
-      (module-shared name)
-      (let ((*regions* '()))
-        (with-function (name)
-          (emit-error +err-not-function+ :self)))
-      (module-shared (module-data "kiln_funcallable_unset_fobj"
-                                  `(:static-function ,name))))
-    `(:object-address "kiln_funcallable_unset_fobj" :general)))
-
 (defun emit-allocate-rack (class size)
   "A rack for CLASS with SIZE cells after the class word (stamp, slot list
 and slots), zero-filled."
@@ -979,7 +900,7 @@ and slots), zero-filled."
   (let* ((n (copy-to-var `(:fixnum-untag ,size) :raw))
          (class (copy-to-var class))
          (result (new-var)))
-    (emit `(:alloc-rack ,result ,class ,n ,(rt-alloc) ,(handler)))
+    (emit `(:alloc-rack ,result ,class ,n ,(handler)))
     result))
 
 (define-primop :allocate-general-instance (class size)
@@ -987,95 +908,68 @@ and slots), zero-filled."
     (emit-fixed-object kiln.kir::+packet-class-instance+ (list rack))))
 
 (define-primop :allocate-general-funcallable-instance (class size)
-  (let* ((rack (emit-allocate-rack class size))
-         (entry (copy-to-var `(:addr ,(funcallable-trampoline)) :raw))
-         (unset (copy-to-var (funcallable-unset))))
-    (emit-fixed-object kiln.kir::+packet-class-funcallable-instance+ (list entry rack unset))))
+  (require-builtin :funcallable-trampoline)
+  (require-builtin :funcallable-unset)
+  (let ((rack (emit-allocate-rack class size)) (result (new-var)))
+    (emit `(:alloc-funcallable ,result ,rack ,(handler)))
+    result))
 
 (define-primop :unbound-slot-value () '(:unbound-slot-value))
 
-;;; Hashing (Salmagundi). The identity hash survives moving collections
-;;; (header bits 40..64, rust/kiln-rt/src/rtfun.rs).
+;;; Identity hashes remain stable across moving collections.
 (define-primop :identity-hash (x)
-  (let ((r (new-var)) (x (copy-to-var x)))
-    (emit `(:identity-hash ,r ,x ,(rt-identity-hash)))
-    r))
+  (emit-runtime-op :identity-hash (list x)))
 ;;; File descriptor I/O (Cyclosis' POSIX file streams): VECTOR
 ;;; is a simple vector of octets as fixnums; the result is the count, or -1.
 ;;; The callers check the arguments.
 (define-primop :fd-write (fd vector start end)
-  (let ((r (new-var)))
-    (emit `(:call-rt ,(rt-fd-write) (,r) (:ctx ,fd ,vector ,start ,end) :nil))
-    r))
+  (emit-runtime-op :fd-write (list fd vector start end)))
 (define-primop :fd-read (fd vector start end)
-  (let ((r (new-var)))
-    (emit `(:call-rt ,(rt-fd-read) (,r) (:ctx ,fd ,vector ,start ,end) :nil))
-    r))
+  (emit-runtime-op :fd-read (list fd vector start end)))
 ;;; File system calls (pathnames and file streams): OP selects
 ;;; the call (rtfun.rs, kiln_rt_sys); the result is a fixnum, minus errno
 ;;; on failure.
 (define-primop :sys (op a b c)
-  (let ((r (new-var)))
-    (emit `(:call-rt ,(rt-sys) (,r) (:ctx ,op ,a ,b ,c) :nil))
-    r))
+  (emit-runtime-op :sys (list op a b c)))
 ;;; Writes the text of the KIR form FORM to the file descriptor FD
 ;;; (kirtext.rs, kiln_rt_write_kir): the bytes written, minus errno, or
 ;;; -1000 if FORM is not KIR.
 (define-primop :write-kir (form fd)
-  (let ((r (new-var)))
-    (emit `(:call-rt ,(rt-write-kir) (,r) (:ctx ,form ,fd) :nil))
-    r))
+  (emit-runtime-op :write-kir (list form fd)))
 ;;; Compiles the KIR module in the string TEXT into the running image, its
 ;;; literal words filled from the simple vector LITERALS; the module's init
 ;;; function object, not yet called, or NIL if kiln-cg failed
 ;;; (kiln_rt_jit).
 (define-primop :jit (text literals)
-  (let ((r (new-var)))
-    (emit `(:call-rt ,(rt-jit) (,r) (:ctx ,text ,literals) :nil))
-    r))
+  (emit-runtime-op :jit (list text literals)))
 ;;; Write owned packet bytes directly, avoiding a Lisp octet carrier.
 (define-primop :write-packet (program fd)
-  (let ((r (new-var)))
-    (emit `(:call-rt ,(rt-write-packet) (,r) (:ctx ,program ,fd) :nil))
-    r))
+  (emit-runtime-op :write-packet (list program fd)))
 ;;; Snapshot compiler records before the result allocation can move objects.
 (define-primop :encode-packet (program language)
-  (let ((r (new-var)))
-    (emit `(:call-rt ,(rt-encode-packet) (,r) (:ctx ,program ,language) ,(handler)))
-    r))
+  (emit-runtime-op :encode-packet (list program language)))
 ;;; Single-use image program: copy records without a serialized intermediate.
 (define-primop :compile-program (program literals target)
-  (let ((r (new-var)))
-    (emit `(:call-rt ,(rt-compile-program) (,r) (:ctx ,program ,literals ,target) :nil))
-    r))
+  (emit-runtime-op :compile-program (list program literals target)))
 ;;; Indexed backend request; PACKET and LITERALS remain caller roots.
 (define-primop :compile-packet (packet literals)
-  (let ((r (new-var)))
-    (emit `(:call-rt ,(rt-compile-packet) (,r) (:ctx ,packet ,literals) :nil))
-    r))
+  (emit-runtime-op :compile-packet (list packet literals)))
 ;;; Writes a heap image (kiln_rt_save_image): PATH is a simple
 ;;; vector of octets, TOPLEVEL the function an executable started from
 ;;; the image calls, EXECUTABLE true to write a copy of the executable
 ;;; with the image appended. 0, or 1 if it failed.
 (define-primop :save-image (path toplevel executable)
-  (let ((r (new-var)))
-    (emit `(:call-rt ,(rt-save-image) (,r) (:ctx ,path ,toplevel ,executable) :nil))
-    r))
-;;; Frames (kiln_rt_frame): the frame pointer of the calling
-;;; function, an aligned address, so a fixnum; and the inspection of
-;;; frames, OP selecting what (debug.rs).
+  (emit-runtime-op :save-image (list path toplevel executable)))
+;;; An opaque token for the calling frame, and frame inspection selected
+;;; by OP.
 (define-primop :frame-pointer ()
-  (copy-to-var '(:fp)))
+  (copy-to-var '(:frame-pointer)))
 (define-primop :frame (op a b)
-  (let ((r (new-var)))
-    (emit `(:call-rt ,(rt-frame) (,r) (:ctx ,op ,a ,b) :nil))
-    r))
+  (emit-runtime-op :frame (list op a b)))
 ;;; The shortest decimal representation of a float: WHICH selects the
 ;;; significand (0), exponent (1) or sign (2) (rtfun.rs).
 (define-primop :float-decimal (x which)
-  (let ((r (new-var)))
-    (emit `(:call-rt ,(rt-float-decimal) (,r) (:ctx ,x ,which) :nil))
-    r))
+  (emit-runtime-op :float-decimal (list x which)))
 ;;; One FNV-1a step on fixnums H and V, wrapping: (H xor V) * prime. Both
 ;;; are tagged (even), so the product is too.
 (define-primop :hash-mix (h v)
@@ -1119,5 +1013,5 @@ and slots), zero-filled."
                 (second size)
                 (copy-to-var `(:fixnum-untag ,size) :raw)))
          (result (new-var)))
-    (emit `(:alloc-structure ,result ,layout ,n ,(rt-alloc) ,(handler)))
+    (emit `(:alloc-structure ,result ,layout ,n ,(handler)))
     result))
