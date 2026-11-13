@@ -146,7 +146,7 @@
                    ;; slot fully unbound.
                    (push name unbound-slots))))))
       `(defun ,name ,(nreverse reconstructed-lambda-list)
-         (let ((,object ,(generate-allocation-form client description all-slots)))
+         (let ((,object ,(generate-allocation-form client description layout)))
            ,@(loop for slot in all-slots
                    for name = (slot-name slot)
                    when (and slot

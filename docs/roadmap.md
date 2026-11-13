@@ -113,7 +113,6 @@
 
 ### 运行期的 `eval`/`compile`
 
-- `defsetf` 长形式在 image 里求值时出错（[eval-compile.md](design/eval-compile.md)），要在 vendor 的 Common-macros 上打补丁。
 
 ### CLOS
 

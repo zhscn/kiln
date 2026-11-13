@@ -84,7 +84,7 @@ Parcl 以 intrinsic 方式加载：`parcl-low`（泛函协议和默认方法）�
 - 复制函数调用 `cl:copy-structure`；typed 结构（`:type list`/`vector`）的描述也记在会话里，只生成访问器。BOA 构造函数用 Anatomicl 生成的 lambda list，分配和写槽同样走 `:allocate-structure` 和 `:set-structure-slot`。
 - **目标端**（`lisp/target/clos/structures.lisp`）：`structure-class` 是 `standard-class` 的子类，`structure-object` 是 `standard-object` 的子类；`%ensure-structure-layout` 在类终结后建立布局向量；`copy-structure` 直接分配同长度的原生结构对象并逐槽复制。
 - `#S`：每次结构定义把第一个标准关键字构造函数登记到类型名上；重新定义时更新登记。Eclector 的运行期与原生编译器 reader client 共用构造协议，把槽名转成 keyword 后调用该构造函数，保留默认值和继承槽。没有标准构造函数的结构和未定义的类型报告关联输入流的 `reader-error`。随机状态有私有标准构造函数，打印形式可回读并保持生成序列。
-- 运行期 `defstruct` 使用 image 共用的结构布局表，宏展开和访问器生成与编译器前端一致。重定义结构走类的重定义（[clos.md](clos.md)），inline 访问器在已编译的调用者中不会自动更新。typed-vector 的位置构造器仍有布局展开限制。
+- 运行期 `defstruct` 使用 image 共用的结构布局表，宏展开和访问器生成与编译器前端一致。重定义结构走类的重定义（[clos.md](clos.md)），inline 访问器在已编译的调用者中不会自动更新。typed 结构的位置构造器按完整布局分配，保留初始偏移、名字标记和槽位置。
 
 ## LOOP（Khazern）
 

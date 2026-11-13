@@ -558,3 +558,5 @@ Under `#+kiln`:
 - Typed structures require `:named` when requesting a predicate, and named
   vector structures require an element type that admits every symbol.
   Incompatible options signal `simple-error` during macro expansion.
+- BOA constructors allocate from the complete layout, retaining typed sequence
+  offsets and name markers as well as slot descriptors.
