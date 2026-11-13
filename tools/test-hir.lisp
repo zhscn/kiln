@@ -2721,3 +2721,28 @@
        (var (svref (hir-lambda-list-required (hir-fun-lambda-list fun)) 0)))
   (assert (equal (hir-declaration-expanded (hir-var-type var)) '(integer 0 7)))
   (assert (equal (hir-node-type (hir-fun-body fun)) '(integer 1 8))))
+
+;; Class accessors count as definitions even when referenced before the class.
+(let ((warnings nil))
+  (handler-bind ((undefined-function-warning
+                   (lambda (condition) (push (undefined-function-names condition) warnings)
+                     (muffle-warning condition))))
+    (front-end-forms
+     '((defun read-future-slot (x) (future-reader x))
+       (defun write-future-slot (x v) (funcall #'(setf future-accessor) v x))
+       (defclass future-class ()
+         ((value :reader future-reader :writer future-writer :accessor future-accessor))))))
+  (assert (notany (lambda (names)
+                    (intersection names '(future-reader (setf future-accessor)) :test #'equal))
+                  warnings)))
+
+;; Literal identities remain distinct while host gensym counters disappear
+;; from the emitted names, including names containing only digits.
+(flet ((names (counter)
+         (let ((*gensym-counter* counter)
+               (*uninterned-symbols* (make-hash-table :test #'eq))
+               (*uninterned-count* 0))
+           (mapcar #'module-symbol-name
+                   (list (gensym "LITERAL") (gensym "LITERAL") (gensym ""))))))
+  (assert (equal (names 10) (names 9000)))
+  (assert (equal (names 10) '("LITERAL1" "LITERAL2" "3"))))

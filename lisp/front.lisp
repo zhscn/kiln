@@ -659,11 +659,25 @@ module).")
   (let ((entry (assoc (string designator) *package-renames* :test #'string=)))
     (if entry (cdr entry) (string designator))))
 
+(defun note-class-accessors (form)
+  ;; The macro client's compile-time action receives no slot specifications.
+  ;; Record the source-level names before DEFCLASS expands them away.
+  (dolist (slot (fourth form))
+    (when (consp slot)
+      (loop for (option name) on (rest slot) by #'cddr
+            do (case option
+                 ((:reader :accessor) (setf (gethash name *defined-functions*) t)))
+               (case option
+                 (:writer (setf (gethash name *defined-functions*) t))
+                 (:accessor (setf (gethash (list 'setf name) *defined-functions*) t)))))))
+
 (defun process-toplevel (cst compile-time-too)
   (let* ((form (hir-raw cst))
          (*macro-source* (or (cst-source-range cst) *macro-source*))
          (*definition-name* (multiple-value-bind (name function-p) (definition-name form)
                               (if name (cons name function-p) *definition-name*))))
+    (when (and (consp form) (eq (first form) 'defclass))
+      (note-class-accessors form))
     (when (and (consp form) (eq (first form) 'defun) (consp (rest form)) (consp (cddr form)))
       (note-inline-definition form))
     (if (and (consp form) (symbolp (first form)))

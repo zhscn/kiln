@@ -88,7 +88,7 @@ raw cons 到 CST 的只读映射，再分别为 car、cdr 筛选引用、登记�
 - 读目标源码时 `*features*` 绑定为 kiln 的列表（`:kiln :common-lisp :64-bit :x86-64 ...`），编译期环境里的 `*features*` 也是它，所以 `#+sbcl` 的分支不会读进 kiln 的代码。
 - `#.` 在编译期环境里求值。
 
-**未定义函数的警告**推迟到文件末尾（CLHS 3.2.2.3）：转换遇到环境里没有的函数时记下名字（`*referenced-functions*`）；文件处理完后，去掉本文件定义过的函数和原语，剩下的作为一个 style-warning 报告。
+**未定义函数的警告**推迟到文件末尾（CLHS 3.2.2.3）：转换遇到环境里没有的函数时记下名字（`*referenced-functions*`）；文件处理完后，去掉本文件定义过的函数和原语，剩下的作为一个 style-warning 报告。`defclass` 的 reader、writer 和 accessor 名字在展开前从槽选项登记，包含 accessor 的 setf 函数。
 
 ## 转换时的处理
 
@@ -158,11 +158,8 @@ image 中的定义记录编译器宏依赖，包括当前不存在或拒绝展�
 - **宿主包名**：符号的标签和包名字符串统一用 `target-package-name`（测试程序的包在运行期叫 COMMON-LISP-USER）。
 - **源码位置**：位置是 `file-position` 的八位组偏移，kiln 的文件流要扣除 `unread-char` 退回的字符；编译时的文件名两边要相同。
 
-还不确定的：字面数据里未 intern 的符号，名字里带宿主当时的 gensym 计数（宿主自己也会调用 `gensym`，例如 SBCL 的 PCL）。
-
 ## 已知限制
 
-- `defclass` 定义的访问函数，在文件末尾被报成未定义函数（`cmd:defclass-compile-time-action` 拿不到槽）。
 - 全局符号宏（`define-symbol-macro`）：image-client 的运行期环境描述没有它，目标端编译器看不到。
 - 运行期的 `proclaim` 支持 `special`、声明名字、`optimize` 和 inline 相关的声明，其他全局声明仍需扩展。
 
