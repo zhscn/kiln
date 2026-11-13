@@ -647,7 +647,14 @@ Trucler ENVIRONMENT, for CLIENT. Cross and image clients use the HIR evaluator."
 
 (defun process-eval-when (cst compile-time-too)
   (let* ((parts (rest (hir-parts cst)))
-         (situations (hir-raw (first parts)))
+         (situations (progn
+                       (hir-arity 'eval-when parts 1 nil)
+                       (let ((values (mapcar #'hir-raw (hir-parts (first parts)))))
+                         (unless (every (lambda (value)
+                                          (member value '(:compile-toplevel :load-toplevel :execute compile load eval)))
+                                        values)
+                           (hir-error "Invalid EVAL-WHEN situations ~S" values))
+                         values)))
          (body (rest parts))
          (ct (intersection situations '(:compile-toplevel compile)))
          (lt (intersection situations '(:load-toplevel load)))
