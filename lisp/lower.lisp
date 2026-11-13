@@ -1,5 +1,7 @@
 (in-package #:kiln.compiler)
 
+(defvar *compiler-pipeline* :hir)
+
 ;;;; Lowering to KIR: the module, functions, calls, special variables,
 ;;;; non-local exits, allocation and constants. lisp/hir/lower.lisp walks
 ;;;; the HIR of each top-level form and emits its nodes with these; the
@@ -1382,7 +1384,9 @@ returns the operand of its (static) function object."
         (emit-poll)
         (dolist (form asts)
           (let ((*toplevel* form))
-            (hir-lower-toplevel (toplevel-form-ast form))))
+            (ecase *compiler-pipeline*
+              (:hir (hir-lower-toplevel (toplevel-form-ast form)))
+              (:mir (mir-lower-toplevel (toplevel-form-ast form))))))
         (emit `(:return ,(nil-value) 1)))
       (let ((*toplevel* (and (= (length files) 1) (first files)
                              (make-toplevel-form nil (first files) nil nil nil))))
@@ -1477,7 +1481,7 @@ use list only names packages that exist at run time."
                                     (target-package-local-nicknames p known)))
               'simple-vector))))
 
-(defun compile-module (asts module-name &key session defined-packages extra-symbols image)
+(defun compile-module (asts module-name &key session defined-packages extra-symbols image (pipeline :hir))
   "Compiles the top-level forms ASTS (TOPLEVEL-FORMs) into a KIR module. The module's
 symbol table describes its symbols, the EXTRA-SYMBOLS and the symbols of
 the DEFINED-PACKAGES (host packages its DEFPACKAGE forms created) for the
@@ -1485,7 +1489,9 @@ package system.
 IMAGE true: the module is to be loaded into the running image; its
 literals are the image's objects, and it has no symbol table.
 Returns the module and the vector of its literals."
-  (let ((*module* (make-kmodule module-name))
+  (unless (member pipeline '(:hir :mir)) (fail "Unknown compiler pipeline ~S" pipeline))
+  (let ((*compiler-pipeline* pipeline)
+        (*module* (make-kmodule module-name))
         (*hir-lowering-epoch* (list nil))
         (*hir-native-environments* nil)
         (*hir-lifted-environments* nil)

@@ -17,13 +17,13 @@
 | — | 性能：降低编译延迟，优化数值、数组、流和字符串等运行期热点；见下文“性能” | 阶段一完成 |
 | — | seal、WPO 和 AOT 交付（[positioning.md](design/positioning.md)） | 未开始 |
 | — | 异步（[async.md](design/async.md)） | 未开始，ANSI 自举完成之前不做 |
-| — | 编译器分层：Lisp MIR（CFG 加 SSA）承担语义分析和表示选择，kiln-cg 承担 LIR 到 KIR 的布局和 ABI 降级（[compiler.md](design/compiler.md)） | 结构化交接和独立 LIR 核心（类型化表示、CFG 验证、普通调用与列表实参展开、多值保存、动态区域与非局部退出、special 绑定与 progv、堆闭包、栈 cons 与栈闭包、定长与动态容器分配、结构与实例构造及 poll、静态常量图与 cell、源码和变量调试描述、具名数值操作、错误终结操作及入口 rest 的堆／栈构造及具名 runtime 服务）已接入；生产发射已使用独立载荷；Lisp MIR 待实现 |
+| — | 编译器分层：Lisp MIR（CFG 加 SSA）承担语义分析和表示选择，kiln-cg 承担 LIR 到 KIR 的布局和 ABI 降级（[compiler.md](design/compiler.md)） | 结构化交接和独立 LIR 核心（类型化表示、CFG 验证、普通调用与列表实参展开、多值保存、动态区域与非局部退出、special 绑定与 progv、堆闭包、栈 cons 与栈闭包、定长与动态容器分配、结构与实例构造及 poll、静态常量图与 cell、源码和变量调试描述、具名数值操作、错误终结操作及入口 rest 的堆／栈构造及具名 runtime 服务）已接入；生产发射已使用独立载荷；Lisp MIR 的 CFG、块参数 SSA、验证与装箱值实验路径已接入，完整语义构造和分析迁移待推进 |
 | — | Rust 宿主模块（[rust-interop.md](design/rust-interop.md)）、编辑器（[editor.md](design/editor.md)） | 设计草案 |
 
 ## 当前优先级
 
 1. **ANSI 兼容性与库支持**。标准行为以 SBCL 为参照，用 `ansi-test` 和实际库运行定位语义差异。重点是支持 ASDF/UIOP 与第三方库，并维护 reader、编译期环境、对象系统和文件接口的一致语义。
-2. **编译器分层与深度优化、库快路径**（见“性能”一节）：先按 [compiler.md](design/compiler.md) 的“迁移”实现结构化 LIR 协议（内存入口、二进制文件、literal roots 和产物所有权），再引入 Lisp MIR，再在 MIR 上推进 Lisp 语义层优化（局部类型推导与浮点拆箱、不逃逸局部函数的 lambda lifting、高阶函数调用点展开与类型驱动的改写、`dynamic-extent` 栈上分配）；标准库协议层快路径（流/FORMAT/打印、bignum、多维数组、运行期 CLOS 编译化）照常进行。
+2. **编译器分层与深度优化、库快路径**（见“性能”一节）：先按 [compiler.md](design/compiler.md) 的“迁移”实现结构化 LIR 协议（内存入口、二进制文件、literal roots 和产物所有权），扩展已有 Lisp MIR 实验框架，再在 MIR 上推进 Lisp 语义层优化（局部类型推导与浮点拆箱、不逃逸局部函数的 lambda lifting、高阶函数调用点展开与类型驱动的改写、`dynamic-extent` 栈上分配）；标准库协议层快路径（流/FORMAT/打印、bignum、多维数组、运行期 CLOS 编译化）照常进行。
 3. **M6 的剩余部分**：打断正在运行的任务，以及编辑器对定义查询接口的集成。它们是编辑器 IDE 阶段的前提。
 4. **构建期初始化和 seal**：决定 seal 的语义和目标文件格式。
 

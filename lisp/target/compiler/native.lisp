@@ -26,12 +26,13 @@
 (defun native-compile (definition)
   "The function of the lambda expression DEFINITION, compiled into the
 running image, in the null lexical environment."
-  (let ((*dependencies* nil) (*source-definition-calls* nil)
+  (let ((pipeline *compiler-pipeline*) (*compiler-pipeline* :hir)
+        (*dependencies* nil) (*source-definition-calls* nil)
         (*source-record-observer* nil) (*source-definition-parent* nil))
     (call-with-image-session
-     (lambda (session) (native-compile-in-session definition session)))))
+     (lambda (session) (native-compile-in-session definition session pipeline)))))
 
-(defun native-compile-in-session (definition session)
+(defun native-compile-in-session (definition session &optional (pipeline :hir))
   (let* ((*eval-definition* (and kiln.kernel::*compile-name*
                                 (cons kiln.kernel::*compile-name* t)))
          (name (kiln.kir::kir-name "compile-" (incf *native-compile-count*))))
@@ -43,7 +44,7 @@ running image, in the null lexical environment."
                            (muffle-warning condition))))
           (compile-module (front-end-forms `((setq *compiled-function* (function ,definition)))
                                            session)
-                          name :session session :image t))
+                          name :session session :image t :pipeline pipeline))
       (multiple-value-bind (program bindings) (kiln.kir::normalize-lir-module module literals)
         (let ((init (kiln.sys:%primop :compile-program program bindings
                                             kiln.kir::+backend-target-fingerprint+)))

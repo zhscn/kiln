@@ -1,6 +1,6 @@
 # 编译器架构
 
-状态：**LIR 分层已接入，Lisp MIR 待实现**。文件模块、运行期编译、缓存和 FASL 使用独立 LIR。Lisp 从 HIR 生成布局无关的语义操作和控制流，规范化器建立类型化的 LIR 程序；kiln-cg 验证程序后展开布局、调用约定、动态区域、精确根和 poll，构造内部 KIR 并交给 Cranelift。结构化协议提供文件与内存入口，兼容 KIR 仍可作为诊断输入。HIR 分析及其存储、调用优化仍在 Lisp 中，下一阶段引入 MIR（见 [hir.md](hir.md)、[lowering.md](lowering.md)）。
+状态：**LIR 分层与 MIR 实验框架已接入**。文件模块、运行期编译、缓存和 FASL 使用独立 LIR。Lisp 从 HIR 生成布局无关的语义操作和控制流，规范化器建立类型化的 LIR 程序；kiln-cg 验证程序后展开布局、调用约定、动态区域、精确根和 poll，构造内部 KIR 并交给 Cranelift。结构化协议提供文件与内存入口，兼容 KIR 仍可作为诊断输入。HIR 分析及其存储、调用优化仍在 Lisp 中，MIR 的 CFG、SSA 验证及装箱值降级已有显式实验入口，后续扩展动态区域并迁移分析（见 [hir.md](hir.md)、[lowering.md](lowering.md)）。
 
 ## 分层
 
@@ -57,7 +57,7 @@ KIR 变成 kiln-cg 内部的数据结构；`kiln-cg dump FILE.lir` 将输入记�
 ## 迁移
 
 1. **LIR 和 Rust 降级**：定义 LIR（[lir.md](lir.md)），kiln-cg 实现二进制文件和内存入口、LIR 验证及 LIR → KIR。先完成编译器专用的缓冲区所有权和 literal roots，通用双向 interop 不在前置范围。现有 Lisp 降级改为输出 LIR：`primitives.lisp`、`lower.lisp`、`values.lisp` 里展开 tag、偏移、动态环境条目和多值的代码移到 Rust，`abi.lisp` 换成 Rust 生成的目标描述。验证：保持发射顺序的部分逐字节比较新旧 KIR；合法的布局与控制流展开差异通过执行与元数据验证，`tools/test.sh` 三遍、ANSI 测试和自举照常。
-2. **MIR 骨架**：HIR → MIR 构造、MIR 验证器、MIR → LIR 的降级（[mir.md](mir.md)）。仅导入能够映射到具体绑定、操作和作用域的有效事实；结构改变后失效的证明重新分析或保守回退，不能直接照搬 HIR 标记。保守路径只用于开发验证。两条路径并存，满足下述切换门槛后，MIR 成为默认路径，删除 `lisp/hir/lower.lisp`。
+2. **MIR 骨架**：已有标量绑定、普通控制流和多值 bundle 的实验入口；继续扩展 HIR → MIR 构造、MIR 验证器、MIR → LIR 的降级（[mir.md](mir.md)）。仅导入能够映射到具体绑定、操作和作用域的有效事实；结构改变后失效的证明重新分析或保守回退，不能直接照搬 HIR 标记。保守路径只用于开发验证。两条路径并存，满足下述切换门槛后，MIR 成为默认路径，删除 `lisp/hir/lower.lisp`。
 3. **分析迁到 MIR**：类型和区间传播、逃逸和存储选择、局部函数的调用摘要和 lambda lifting、double 拆箱，逐项在 MIR 上重写；仅在旧生产路径和求值器不再依赖相应代码后删除 HIR 上的对应实现（`lisp/hir/types.lisp`、`escape.lisp`、`analyze.lisp` 的相应部分）。
 4. **新的优化**：类型驱动的改写、高阶序列函数的展开、跨迭代的对象图、更多机器值表示；seal 后的 WPO。
 

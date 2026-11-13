@@ -1,8 +1,57 @@
 # MIR：Lisp 语义中端
 
-状态：**目标设计，尚未实现**。现在的分析做在 HIR 树上（[hir.md](hir.md)），降级直接生成 KIR（[lowering.md](lowering.md)）。分层和迁移见 [compiler.md](compiler.md)。
+状态：**实验框架已接入**。生产编译仍使用 HIR → LIR；MIR 通过显式入口构造 CFG、验证 SSA 并输出同一套 LIR。HIR 求值器和已有优化保留原来的路径。分层和迁移见 [compiler.md](compiler.md)。
 
 MIR（mid-level IR）由 Lisp 从 HIR 构造，是控制流图加 SSA。它负责 Lisp 程序的分析、优化和表示选择，最后退出 SSA，输出 [LIR](lir.md)。MIR 不是通用的低级 SSA：对象身份、闭包、可写捕获、多值和动态范围在 MIR 里仍是可辨认的操作。机器层的通用优化留给 Cranelift。
+
+## 当前框架与入口
+
+树上的绑定读写不能直接作为 SSA 使用，循环回边和条件合流必须给每条进入边
+提供变量的当前版本。当前构造器为每个函数单独编号绑定，在非入口块上为全部
+局部绑定建立参数；需要表达式结果的合流块再带一个多值 bundle 参数。每条边
+显式传入完整绑定状态，因此回边和交换赋值也服从同一规则。尚未删除冗余块参数，
+这使初始构造简单、可验证，代价是图和边的实参数量较大。
+
+实现分为 `lisp/mir/data.lisp`、`verify.lisp`、`build.lisp`、`lower.lisp` 和
+`dump.lisp`。编号索引复用可增长向量容器，语义值表示为 `obj`、`bundle` 和
+参数计数 `count`；LIR 发射时将 bundle 实现为保存载体和个数。跨调用的多值先保存，
+取主值和函数返回时再恢复，避免借用的多值传递区被后续调用覆盖。
+
+已支持常量、非捕获局部绑定与赋值、全局变量和函数 cell、无捕获函数、普通调用、
+原语调用、`if`、顺序形式、函数内 `block`/`return-from` 与 `tagbody`/`go`、
+`multiple-value-prog1` 和单值类型检查。函数入口支持必需参数并检查数量。
+值保持装箱，类型声明重新生成检查；HIR 的区间、逃逸、栈存储和拆箱证明不导入 MIR。
+指令和终结点保留源码位置与策略，运行期变量帧映射尚未接入。
+
+动态区域、跨函数退出、捕获闭包、局部函数组、optional/key/rest 参数、
+load-time values、多值绑定及 `multiple-value-call` 尚未接入；构造器发出
+`mir-unsupported` 编译条件，调用者不会收到部分代码。生产路径的切换仍按
+[compiler.md](compiler.md) 的语义与性能门槛进行。
+
+- `hir-to-mir` 接受一个 HIR 函数，返回已验证的函数单元。
+- `verify-mir` 检查编号所有权、边参数、表示、效果下界、入口数量检查及 SSA 支配关系。
+- `print-mir` 输出编号、块参数、操作、效果、源码和策略，供调试查看。
+- `compile-module` 的 `:pipeline :mir` 为显式文件模块入口；默认是 `:hir`。
+- 运行期动态绑定 `kiln.compiler::*compiler-pipeline*` 为 `:mir` 后调用原生 `compile`，
+  只选择本次函数编译。转换期间内部生成的编译器辅助函数继续使用生产路径。
+  `eval`、`load`、缓存及 FASL 保持原有入口。
+
+`mir-analysis` 按函数修订号缓存一个分析结果。结构变换通过 `mir-run-pass`
+执行：先增加修订号，清除没有列入 `:preserves` 的分析，再运行变换并验证结果。
+默认不保留分析；pass 必须对明确保留的事实负责。当前验证器计算可达性和支配关系，
+类型传播、调用摘要和存储选择尚未迁移。
+
+退出 SSA 时为每条边建立独立的复制块，先把所有来源复制到临时量，再写入目标
+块参数。这覆盖临界边、自回边和复制环；bundle 的载体及个数一起复制。
+所有块入口发射 poll，以覆盖回边；Rust 后端继续负责 ABI、多值载体和精确 GC roots。
+
+模型测试见 `tools/test-mir.lisp`，运行方式与 HIR 模型测试相同。
+`tools/test-mir-lir.lisp` 使用 `tools/test.sh` 已生成的 kernel、CLOS 模块，验证
+SBCL 从显式 MIR 入口生成二进制 LIR 并交给 JIT 执行。端到端用例在
+`tests/m6/co-mir.lisp`，覆盖循环中的并行复制、多值跨调用保存、声明检查、参数数量
+和未支持形式的失败路径。
+
+以下各节描述 MIR 扩展到完整语义中端后的契约。
 
 ## 数据模型
 

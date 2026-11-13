@@ -1,0 +1,62 @@
+(in-package #:kiln.compiler)
+
+(defvar *compiler-pipeline* :hir
+  "Native COMPILE pipeline: :HIR for production, :MIR for the experimental middle end.")
+
+(define-condition mir-error (kiln-compile-error) ())
+(define-condition mir-unsupported (mir-error) ())
+
+(defun mir-fail (control &rest args)
+  (error 'mir-error :message (apply #'format nil control args)))
+
+(defstruct mir-unit (functions (make-hir-buffer)))
+(defstruct mir-function
+  (id 0) name source (policy 1023) (required 0) (bindings #())
+  (blocks (make-hir-buffer)) (instructions (make-hir-buffer)) (values (make-hir-buffer))
+  (revision 0) (analyses (make-hash-table :test 'eq)))
+(defstruct mir-block (id 0) (parameters #()) (instructions (make-hir-buffer)) terminator)
+(defstruct mir-value (id 0) (representation :obj) (block 0) (position -1))
+(defstruct mir-instruction (id 0) (kind 0) (operands #()) result data source (policy 1023) (effects 0))
+(defstruct mir-edge (target 0) (arguments #()))
+(defstruct mir-terminator (kind 0) (operands #()) (edges #()) source (policy 1023))
+
+;;; Instruction kinds: constant, argument, global-read, global-write,
+;;; global-function, function, global-call, call, primop, single, primary,
+;;; declaration-check, argument-count, arity-check.
+(defparameter *mir-instruction-effects* #(0 0 33 34 33 8 127 127 127 56 56 127 0 32))
+;;; Effects: global read/write, dynamic environment, allocation, GC,
+;;; possible exit, unknown call. No operation is deleted from this summary alone.
+
+(defun mir-at (buffer id)
+  (unless (and (integerp id) (<= 0 id) (< id (hir-buffer-count buffer)))
+    (mir-fail "MIR index ~S outside 0..~D" id (hir-buffer-count buffer)))
+  (svref (hir-buffer-data buffer) id))
+
+(defun mir-add-value (function representation block position)
+  (let ((id (hir-buffer-count (mir-function-values function))))
+    (hir-push (make-mir-value :id id :representation representation :block block :position position)
+              (mir-function-values function))
+    id))
+
+(defun mir-analysis (function name compute)
+  "Cache an analysis at the current revision; COMPUTE receives FUNCTION."
+  (let ((entry (gethash name (mir-function-analyses function))))
+    (if (and entry (= (car entry) (mir-function-revision function))) (cdr entry)
+        (let ((result (funcall compute function)))
+          (setf (gethash name (mir-function-analyses function))
+                (cons (mir-function-revision function) result))
+          result))))
+
+(defun mir-run-pass (unit function transform &key preserves)
+  "TRANSFORM must explicitly name every analysis it preserves."
+  (incf (mir-function-revision function))
+  (let ((remove nil))
+    (maphash (lambda (name entry)
+               (if (member name preserves)
+                   (setf (car entry) (mir-function-revision function))
+                   (push name remove)))
+             (mir-function-analyses function))
+    (dolist (name remove) (remhash name (mir-function-analyses function))))
+  (funcall transform function)
+  (verify-mir-function unit function)
+  function)

@@ -1,0 +1,25 @@
+(in-package #:kiln.compiler)
+
+(defun print-mir (unit &optional (stream *standard-output*))
+  "Print indexed MIR for inspection; this is not a persistence format."
+  (verify-mir unit)
+  (let ((*print-circle* t) (*print-level* 8) (*print-length* 24))
+    (loop for function across (hir-vector (mir-unit-functions unit))
+          do (format stream "~&function ~D ~S required=~D revision=~D~%"
+                     (mir-function-id function) (mir-function-name function)
+                     (mir-function-required function) (mir-function-revision function))
+             (loop for block across (hir-vector (mir-function-blocks function))
+                   do (format stream "  block ~D ~S~%" (mir-block-id block) (mir-block-parameters block))
+                      (loop for id across (hir-vector (mir-block-instructions block))
+                            for instruction = (mir-at (mir-function-instructions function) id)
+                            do (format stream "    ~D: ~S <- ~D ~S ~S effects=~D source=~S policy=~D~%"
+                                       id (mir-instruction-result instruction) (mir-instruction-kind instruction)
+                                       (mir-instruction-operands instruction) (mir-instruction-data instruction)
+                                       (mir-instruction-effects instruction) (mir-instruction-source instruction)
+                                       (mir-instruction-policy instruction)))
+                      (let ((term (mir-block-terminator block)))
+                        (format stream "    end ~D ~S~{ -> ~S~}~%" (mir-terminator-kind term)
+                                (mir-terminator-operands term)
+                                (loop for edge across (mir-terminator-edges term)
+                                      collect (list (mir-edge-target edge) (mir-edge-arguments edge))))))))
+  unit)
