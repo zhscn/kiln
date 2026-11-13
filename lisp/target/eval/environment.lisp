@@ -18,10 +18,11 @@
          (make-instance 'trucler:constant-variable-description
            :name name :value (symbol-value name)))
         ((get name 'kiln.kernel::%special)
-         (make-instance 'trucler:global-special-variable-description :name name))
+         (make-instance 'trucler:global-special-variable-description :name name :type (or (get name 'kiln.kernel::%variable-type) t)))
         ((kiln.kernel::%has-property name 'kiln.kernel::%symbol-macro)
          (make-instance 'trucler:global-symbol-macro-description
-           :name name :expansion (kiln.kernel::%get name 'kiln.kernel::%symbol-macro)))
+           :name name :type (or (get name 'kiln.kernel::%variable-type) t)
+           :expansion (kiln.kernel::%get name 'kiln.kernel::%symbol-macro)))
         (t nil)))
 
 (defmethod trucler:describe-function ((client client) (env null) name)
@@ -34,7 +35,10 @@
         ((fboundp name)
          (make-instance 'trucler:global-function-description :name name
                         :compiler-macro (compiler-macro-function name)
-                        :inline (kiln.kernel::function-inline-declaration name)))
+                        :inline (kiln.kernel::function-inline-declaration name)
+                        :type (or (if (consp name)
+                                      (get (second name) 'kiln.kernel::%setf-function-type)
+                                      (get name 'kiln.kernel::%function-type)) t)))
         (t nil)))
 
 (defmethod trucler:describe-block ((client client) (env null) name)

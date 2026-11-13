@@ -25,6 +25,15 @@ compiles kiln (M5.4). On kiln, IMAGE-CLIENT
 (lisp/target/compiler/client.lisp) compiles in the running image, as
 COMPILE-FILE does."))
 
+(defgeneric client-global-variable-type (client name)
+  (:method (client name) (declare (ignore client name)) t))
+
+(defgeneric client-type-specifier-p (client environment specifier)
+  (:method (client environment specifier)
+    (declare (ignore client environment))
+    #+kiln (kiln.kernel::type-specifier-p specifier)
+    #-kiln (sb-ext:valid-type-specifier-p specifier)))
+
 (defgeneric make-compile-environment (client))
 
 (defgeneric initialize-session (client session)

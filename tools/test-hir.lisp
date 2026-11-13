@@ -2746,3 +2746,21 @@
                    (list (gensym "LITERAL") (gensym "LITERAL") (gensym ""))))))
   (assert (equal (names 10) (names 9000)))
   (assert (equal (names 10) '("LITERAL1" "LITERAL2" "3"))))
+
+;; Cross proclamations belong to the target environment, including types
+;; proclaimed before their function or variable definitions.
+(let* ((session (make-session)) (*client* (session-client session))
+       (*environment* (session-environment session))
+       (global (trucler:global-environment *client* *environment*)))
+  (proclaim-in *client* global '(ftype (function (fixnum) fixnum) future-typed-function))
+  (proclaim-in *client* global '(type fixnum future-typed-value))
+  (proclaim-in *client* global '(declaration frontend-annotation))
+  (proclaim-in *client* global '(optimize (space 1) (debug 2)))
+  (assert (equal (trucler:type (trucler:describe-function *client* global 'future-typed-function))
+                 '(function (fixnum) fixnum)))
+  (assert (eq (client-global-variable-type *client* 'future-typed-value) 'fixnum))
+  (assert (member 'frontend-annotation
+                  (trucler:declarations (trucler:describe-declarations *client* global))))
+  (let ((policy (trucler:describe-optimize *client* global)))
+    (assert (= (trucler:space policy) 1))
+    (assert (= (trucler:debug policy) 2))))

@@ -95,7 +95,9 @@ Each named alias queried is a dependency, including currently undefined names."
 
 (defun hir-declared-variable-type (environment variable)
   "Intersect declarations on this binding identity in the current scope."
-  (let ((types nil))
+  (let* ((global (if (boundp '*client*)
+                     (client-global-variable-type *client* (hir-var-name variable)) t))
+         (types (unless (eq global t) (list (hir-expand-declaration global environment)))))
     (loop for env = environment then (hir-env-parent env) while (hir-env-p env)
           do (dolist (entry (hir-env-types env))
                (when (and (eq (car entry) variable)
@@ -246,10 +248,7 @@ Each named alias queried is a dependency, including currently undefined names."
                      (member (car spec)
                              (trucler:declarations (trucler:describe-declarations *client* env))))
            (cond
-             #+kiln
-             ((not (or (and (symbolp (car spec)) (boundp '*client*) *client* (hir-base-environment env)
-                            (client-type-expander *client* env (car spec)))
-                       (kiln.kernel::type-specifier-p (car spec))))
+             ((not (client-type-specifier-p (and (boundp '*client*) *client*) env (car spec)))
               (warn 'unknown-declaration-warning :specifier spec))
              (t
               (dolist (name (cdr spec))

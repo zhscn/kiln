@@ -56,7 +56,7 @@ HIR 的词法绑定、自由变量、赋值、退出点和闭包布局直接记�
 
 运行期 `compile`、`eval`、`load` 用它（[eval-compile.md](eval-compile.md)）。编译期环境就是运行期的环境，和一般的实现一样：
 
-- Trucler 的全局环境是一个 `run-time-environment` 对象，对它的查询转给 eval 模块的 image 全局环境 client：宏、特殊变量、常量、已定义的函数都来自运行中的 image。依赖追踪在这里记录查询（[dependencies.md](dependencies.md)）。
+- Trucler 的全局环境是一个 `run-time-environment` 对象，对它的查询转给 eval 模块的 image 全局环境 client：宏、全局 symbol macro、特殊变量、常量、已定义的函数都来自运行中的 image。symbol macro 的存在与展开值分开查询，因此 NIL 展开也能保留。依赖追踪在这里记录查询（[dependencies.md](dependencies.md)）。
 - 编译期求值使用 HIR 求值器，直接保留前端的局部宏和 symbol macro 环境。`macrolet` 的展开函数由同一转换器和求值器构造；其环境保留外层的局部宏、symbol macro 和 special 声明，屏蔽词法值及局部函数。
 - 局部宏与 `defmacro` 共用规范化的宏 lambda-list 展开器。`&whole` 绑定完整调用形式，参数解构处理调用的参数部分；解构参数数量错误报告 `program-error`。局部宏可以使用 NIL 作为名字。
 - 编译期的效果直接落在 image 里：`defmacro` 定义宏，`defvar` 宣告特殊变量，`deftype` 和 `define-setf-expander` 记在 plist 上。`declaim inline` 经 kernel `proclaim` 的 `*proclaim-hook*` 通知前端。
@@ -96,6 +96,18 @@ raw cons 到 CST 的只读映射，再分别为 car、cdr 筛选引用、登记�
 - **词法类型声明**按绑定身份和作用域保留，供 Trucler 查询。可投影到证明域的声明在绑定、赋值或局部读取处检查后用于特化；用户类型别名在当前编译期环境中展开，保留原始声明供环境查询与诊断；尚未支持的复合类型不建立证明事实，见 [HIR 类型传播](hir.md#类型传播与降级特化)。
 - **`(setf (the 类型 place) 值)`**（CLHS 5.1.2.6）：交叉编译和运行期都按 `(setf place (the 类型 值))` 处理。
 - **Trucler 的缓存**：reference 环境会把查到的全局描述缓存在环境对象里，而会话的环境在多个文件之间是同一个，后来重新定义的宏会被缓存挡住，所以每个顶层形式之前都清空缓存。
+
+## 全局声明
+
+`proclaim` 和 `declaim` 在当前编译环境记录 `special`、`type`（含类型名简写）、
+`ftype`、`inline`、`notinline`、`optimize` 和用户声明名。cross-client 把这些信息
+保存在独立环境中；image-client 使用 image 的元数据。变量类型声明参与绑定检查和
+HIR 类型分析，函数类型保留在 Trucler 的全局函数描述中，可在函数定义之前声明。
+全局类型声明对同名词法绑定同样生效，不会把变量改成 special。
+
+声明位置先识别标准声明和已注册的用户声明，再查询类型展开器及已知类型。
+未知名字报告 style-warning；用户声明的参数不会被当作变量类型处理。
+优化策略的各质量独立保存，未覆盖的质量沿用当前环境。
 
 ## inline 声明
 
@@ -157,11 +169,6 @@ image 中的定义记录编译器宏依赖，包括当前不存在或拒绝展�
 - **宿主里碰巧共享的结构**：静态字符串常量按内容合并，KIR 的 cons 常量按 car 和 cdr 合并（`constant-word`）；Eclector 的反引号对模板里没有 unquote 的子表和尾部、以及最后的 `,@x`，都像 SBCL 一样当作字面量或尾部共享（vendor 补丁，CLHS 2.4.6 允许）。
 - **宿主包名**：符号的标签和包名字符串统一用 `target-package-name`（测试程序的包在运行期叫 COMMON-LISP-USER）。
 - **源码位置**：位置是 `file-position` 的八位组偏移，kiln 的文件流要扣除 `unread-char` 退回的字符；编译时的文件名两边要相同。
-
-## 已知限制
-
-- 全局符号宏（`define-symbol-macro`）：image-client 的运行期环境描述没有它，目标端编译器看不到。
-- 运行期的 `proclaim` 支持 `special`、声明名字、`optimize` 和 inline 相关的声明，其他全局声明仍需扩展。
 
 ## 名字、主体和诊断
 

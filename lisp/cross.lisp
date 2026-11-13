@@ -87,12 +87,47 @@ at compile time (USE-HOST-MACROS).")
           (t (call-next-method)))))
 
 (defun proclaim-in (client genv declaration)
-  (when (and (consp declaration) (eq (first declaration) 'special))
-    (dolist (name (rest declaration))
-      (clo:make-variable client genv name)))
-  (when (and (consp declaration) (member (first declaration) '(inline notinline)))
-    (note-inline-proclamation (first declaration) (rest declaration)))
+  (unless (and (consp declaration) (hir-proper-list-p declaration))
+    (error "Malformed proclamation ~S" declaration))
+  (let ((head (first declaration)))
+    (case head
+      (special
+       (dolist (name (rest declaration)) (clo:make-variable client genv name)))
+      ((inline notinline)
+       (note-inline-proclamation head (rest declaration))
+       (dolist (name (rest declaration)) (setf (clo:operator-inline client genv name) head)))
+      (optimize (clo:proclaim-optimize client genv (rest declaration)))
+      (declaration
+       (dolist (name (rest declaration))
+         (when (client-type-specifier-p client genv name)
+           (error "~S names a type and cannot name a declaration." name))
+         (setf (clo:proclamation client genv name) t)))
+      (ftype
+       (dolist (name (cddr declaration))
+         (clo:note-function client genv name)
+         (setf (clo:operator-ftype client genv name) (second declaration))))
+      (otherwise
+       (cond ((or (eq head 'type) (client-type-specifier-p client genv head))
+              (dolist (name (if (eq head 'type) (cddr declaration) (cdr declaration)))
+                (setf (clo:variable-type client genv name)
+                      (if (eq head 'type) (second declaration) head))))
+             ((clo:proclamation client genv head))
+             (t (warn 'unknown-declaration-warning :specifier declaration))))))
   nil)
+
+(defmethod client-global-variable-type ((client cross-client) name)
+  (clo:variable-type client (trucler:global-environment client *environment*) name))
+
+;;; Query each optimization quality explicitly; the environment's stored
+;;; proclamations are shared with compile-time evaluation.
+(defmethod trucler:describe-optimize ((client cross-client) (environment clostrum-basic::basic-environment))
+  (let ((qualities (clo:optimize client environment)))
+    (flet ((quality (name)
+             (let ((entry (find name qualities :key (lambda (x) (if (consp x) (car x) x)))))
+               (if (consp entry) (second entry) 3))))
+      (make-instance 'trucler:optimize-description
+        :speed (quality 'speed) :safety (quality 'safety) :debug (quality 'debug)
+        :space (quality 'space) :compilation-speed (quality 'compilation-speed)))))
 
 (defvar *host-macros* (make-hash-table :test 'equal)
   "Names of the macros expanded by host functions at compile time.")
@@ -417,6 +452,10 @@ at compile time (USE-HOST-MACROS).")
   (declare (ignore environment))
   (multiple-value-bind (expander found) (gethash name (cross-compiler-macros client))
     (if found expander (gethash name *host-compiler-macros*))))
+
+(defmethod client-type-specifier-p ((client cross-client) environment specifier)
+  (or (and (symbolp specifier) (client-type-expander client environment specifier))
+      (call-next-method)))
 
 (defmethod client-type-expander ((client cross-client) environment name)
   (clo:type-expander client (trucler:global-environment client environment) name))

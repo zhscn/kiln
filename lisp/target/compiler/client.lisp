@@ -18,6 +18,13 @@
   (unless (eq (kiln.kernel::function-inline-declaration name) 'notinline)
     (compiler-macro-function name)))
 
+(defmethod client-global-variable-type ((client image-client) name)
+  (or (get name 'kiln.kernel::%variable-type) t))
+
+(defmethod client-type-specifier-p ((client image-client) environment specifier)
+  (or (and (symbolp specifier) (client-type-expander client environment specifier))
+      (kiln.kernel::type-specifier-p specifier)))
+
 (defmethod client-type-expander ((client image-client) environment name)
   (declare (ignore environment))
   (get name 'kiln.kernel::type-expander))
