@@ -1338,6 +1338,8 @@ fn errors_are_checked_terminators_with_exceptional_control_flow() {
         "kiln_rt_number_op",
         "kiln_sym_TEST_3A_X",
         "_kiln_lir_debug_x",
+        "kiln_funcallable_unset",
+        "kiln_poll_retry",
     ] {
         let text = source("(block entry (return ()))").replace("\"body\"", &format!("\"{name}\""));
         assert!(compile(&text).unwrap_err().contains("reserved function"));
