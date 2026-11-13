@@ -246,6 +246,13 @@
       ((:alloc-closure :closure-set) (lir-closure-statement state statement))
       ((:stack-object-init :stack-roots-enter :stack-roots-leave :stack-cons :stack-closure :rest-list)
        (lir-stack-statement state statement))
+      (:alloc-rack
+       (lir-check-handler state (fourth args))
+       (lir-emit state `(:alloc-rack ,(first args) ,(lir-operand state (second args) :obj)
+                         ,(lir-operand state (third args) :word))))
+      (:alloc-funcallable
+       (lir-check-handler state (third args))
+       (lir-emit state `(:alloc-funcallable ,(first args) ,(lir-operand state (second args) :obj))))
       (:alloc-symbol
        (lir-check-handler state (third args))
        (lir-emit state `(:alloc-symbol ,(first args) ,(lir-operand state (second args) :obj))))

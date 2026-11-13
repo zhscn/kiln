@@ -27,7 +27,7 @@
      (lir-pair-view state (second statement) (third statement))
      (lir-record-alias state (second statement) :unknown)
      (lir-record-word-write state (third statement) :unknown))
-    ((:fixnum-add-ovf :fixnum-sub-ovf :fixnum-mul-ovf :heap-number-p :guarded-class-test :special-ref :alloc-fixed :alloc-symbol :alloc-undefined-function :alloc-vector :alloc-vector-elements :alloc-structure :stack-cons :rest-list)
+    ((:fixnum-add-ovf :fixnum-sub-ovf :fixnum-mul-ovf :heap-number-p :guarded-class-test :special-ref :alloc-fixed :alloc-rack :alloc-funcallable :alloc-symbol :alloc-undefined-function :alloc-vector :alloc-vector-elements :alloc-structure :stack-cons :rest-list)
      (lir-record-alias state (second statement) :unknown))))
 
 (defun lir-primary-alias-p (state value primary)

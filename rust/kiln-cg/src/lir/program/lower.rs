@@ -16,6 +16,12 @@ fn compare(op: CmpOp, a: Expr, b: Expr) -> Expr {
     Expr::Cmp(op, Box::new(a), Box::new(b))
 }
 
+enum IndexedKind {
+    Structure,
+    Rack,
+    Instance(bool, Expr, Expr),
+}
+
 struct Lowerer<'a> {
     function: kir::Func,
     constants: &'a [Expr],
@@ -279,8 +285,13 @@ impl Lowerer<'_> {
         descriptor: Expr,
         count: Expr,
         initial: Expr,
-        instance: Option<(bool, Expr, Expr)>,
+        kind: IndexedKind,
     ) -> Result<()> {
+        let (rack, instance) = match kind {
+            IndexedKind::Structure => (false, None),
+            IndexedKind::Rack => (true, None),
+            IndexedKind::Instance(callable, stamp, slots) => (true, Some((callable, stamp, slots))),
+        };
         let count_name = self.temporary(VarKind::Raw);
         self.emit(Stmt::Set(count_name.clone(), count));
         let save = |this: &mut Self, value: Expr| {
@@ -294,6 +305,8 @@ impl Lowerer<'_> {
             .map(|(callable, stamp, slots)| (callable, save(self, stamp), save(self, slots)));
         let limit = if instance.is_some() {
             u32::MAX - 3
+        } else if rack {
+            u32::MAX - 1
         } else {
             u32::MAX
         };
@@ -317,6 +330,8 @@ impl Lowerer<'_> {
         );
         let (bytes, header) = if instance.is_some() {
             layout::rack_allocation_layout(&rack_count)?
+        } else if rack {
+            layout::rack_allocation_layout(&var(&count_name))?
         } else {
             layout::structure_allocation_layout(&var(&count_name))?
         };
@@ -371,40 +386,20 @@ impl Lowerer<'_> {
         Ok(())
     }
     fn allocate_funcallable(&mut self, result: String, rack: Expr) -> Result<()> {
-        self.imports.insert("kiln_funcallable_trampoline".into());
-        self.imports.insert("kiln_funcallable_unset_fobj".into());
-        let rack_name = self.temporary(VarKind::Obj);
-        self.emit(Stmt::Set(rack_name.clone(), rack));
-        let raw = self.temporary(VarKind::Raw);
+        self.imports
+            .insert(layout::builtins::Kind::FuncallableTrampoline.entry().into());
+        self.imports
+            .insert(layout::builtins::Kind::FuncallableUnset.object()?.into());
         let prefix = self.fresh();
-        let handler = self.handler();
-        let (bytes, header, _, _) =
-            layout::fixed_layout(crate::packet::schema::CLASS_FUNCALLABLE_INSTANCE)?;
-        let (vars, blocks, next, mut statements) = layout::allocate_raw(
+        let expansion = layout::builtins::allocate_funcallable(
             &prefix,
             self.block.clone(),
             std::mem::take(&mut self.statements),
-            raw.clone(),
-            Expr::Int(bytes),
-            Expr::Int(header),
-            true,
-            "kiln_rt_alloc".into(),
-            handler,
-        )?;
-        statements.extend(layout::initialize_fixed(
             result,
-            raw,
-            crate::packet::schema::CLASS_FUNCALLABLE_INSTANCE,
-            vec![
-                Expr::Addr("kiln_funcallable_trampoline".into(), 0),
-                var(rack_name),
-                object("kiln_funcallable_unset_fobj"),
-            ],
-        )?);
-        self.function.vars.extend(vars);
-        self.function.blocks.extend(blocks);
-        self.block = next;
-        self.statements = statements;
+            rack,
+            self.handler(),
+        )?;
+        self.append_expansion(expansion);
         Ok(())
     }
 
@@ -812,6 +807,22 @@ impl Lowerer<'_> {
                 self.block = next;
                 self.statements = statements;
             }
+            Instruction::AllocateRack {
+                result,
+                class,
+                count,
+            } => {
+                self.allocate_indexed_object(
+                    self.name(result),
+                    self.value(class),
+                    self.value(count),
+                    layout::fixnum_tag(Expr::Int(0)),
+                    IndexedKind::Rack,
+                )?;
+            }
+            Instruction::AllocateFuncallable { result, rack } => {
+                self.allocate_funcallable(self.name(result), self.value(rack))?;
+            }
             Instruction::AllocateSymbol { result, name } => {
                 let prefix = self.fresh();
                 let expansion = layout::allocate_symbol(
@@ -902,7 +913,7 @@ impl Lowerer<'_> {
                     self.value(layout),
                     self.value(count),
                     self.value(initial),
-                    None,
+                    IndexedKind::Structure,
                 )?;
             }
             Instruction::AllocateInstance {
@@ -919,7 +930,7 @@ impl Lowerer<'_> {
                     self.value(class),
                     self.value(count),
                     self.value(initial),
-                    Some((*funcallable, self.value(stamp), self.value(slots))),
+                    IndexedKind::Instance(*funcallable, self.value(stamp), self.value(slots)),
                 )?;
             }
             Instruction::CellSet(i, value) => self.emit(layout::cells::store(

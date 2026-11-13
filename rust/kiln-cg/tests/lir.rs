@@ -1940,3 +1940,35 @@ fn symbol_constructors_check_representations_initialization_and_value_lifetimes(
         assert!(compile(&text).unwrap_err().contains("not initialized"));
     }
 }
+
+#[test]
+fn staged_instance_allocations_preserve_aliases_and_expire_value_views() {
+    let text = source(
+        "(block e (set a (nil)) (set x (word 4)) (alloc-rack a a x) (alloc-funcallable a a) (return (a)))",
+    );
+    compile(&text).unwrap();
+    reject(
+        "(block e (set a (nil)) (alloc-rack b a a) (return (b)))",
+        "expected Word",
+    );
+    reject(
+        "(block e (set x (word 4)) (alloc-rack a x x) (return (a)))",
+        "expected Obj",
+    );
+    reject(
+        "(block e (alloc-funcallable a b) (return (a)))",
+        "not initialized",
+    );
+    reject(
+        "(block e (set x (word 0)) (alloc-funcallable a x) (return (a)))",
+        "expected Obj",
+    );
+    for operation in ["(alloc-rack b a x)", "(alloc-funcallable b a)"] {
+        reject(
+            &format!(
+                "(block e (set a (nil)) (set x (word 4)) (values m (a)) {operation} (return-mv m))"
+            ),
+            "expired",
+        );
+    }
+}

@@ -406,6 +406,21 @@ fn block(xs: &[Sexp]) -> Result<Block> {
             continue;
         }
         instructions.push(match name {
+            "alloc-rack" => {
+                arity(name, args, 3)?;
+                Instruction::AllocateRack {
+                    result: symbol(&args[0])?,
+                    class: symbol(&args[1])?,
+                    count: symbol(&args[2])?,
+                }
+            }
+            "alloc-funcallable" => {
+                arity(name, args, 2)?;
+                Instruction::AllocateFuncallable {
+                    result: symbol(&args[0])?,
+                    rack: symbol(&args[1])?,
+                }
+            }
             "alloc-symbol" => {
                 arity(name, args, 2)?;
                 Instruction::AllocateSymbol {

@@ -366,6 +366,15 @@ pub enum Instruction {
         loc: Option<kir::Loc>,
         region: Option<String>,
     },
+    AllocateRack {
+        result: String,
+        class: String,
+        count: String,
+    },
+    AllocateFuncallable {
+        result: String,
+        rack: String,
+    },
     AllocateSymbol {
         result: String,
         name: String,

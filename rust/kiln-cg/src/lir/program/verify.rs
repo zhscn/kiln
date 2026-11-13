@@ -258,6 +258,19 @@ fn instruction(
                 find_region(f, region)?;
             }
         }
+        Instruction::AllocateRack {
+            result,
+            class,
+            count,
+        } => {
+            types.expect(result, Type::Obj)?;
+            types.expect(class, Type::Obj)?;
+            types.expect(count, Type::Word)?;
+        }
+        Instruction::AllocateFuncallable { result, rack } => {
+            types.expect(result, Type::Obj)?;
+            types.expect(rack, Type::Obj)?;
+        }
         Instruction::AllocateSymbol { result, name } => {
             types.expect(result, Type::Obj)?;
             types.expect(name, Type::Obj)?;
@@ -633,7 +646,9 @@ impl State {
                     self.view = None;
                 }
             }
-            Instruction::AllocateSymbol { result: dst, .. }
+            Instruction::AllocateRack { result: dst, .. }
+            | Instruction::AllocateFuncallable { result: dst, .. }
+            | Instruction::AllocateSymbol { result: dst, .. }
             | Instruction::AllocateUndefined { result: dst, .. }
             | Instruction::AllocateStructure { result: dst, .. }
             | Instruction::AllocateInstance { result: dst, .. }
@@ -694,6 +709,11 @@ impl State {
     }
     fn check_instruction(&self, inst: &Instruction) -> Result<()> {
         match inst {
+            Instruction::AllocateRack { class, count, .. } => {
+                self.use_var(class)?;
+                self.use_var(count)?;
+            }
+            Instruction::AllocateFuncallable { rack, .. } => self.use_var(rack)?,
             Instruction::AllocateSymbol { name, .. } => self.use_var(name)?,
             Instruction::AllocateUndefined { symbol, .. } => self.use_var(symbol)?,
             Instruction::AllocateSequence {
@@ -877,7 +897,9 @@ fn may_unwind(inst: &Instruction, f: &Function) -> bool {
     matches!(inst,Instruction::Runtime {operation,..} if operation.descriptor().safepoint)
         || matches!(
             inst,
-            Instruction::AllocateSymbol { .. }
+            Instruction::AllocateRack { .. }
+                | Instruction::AllocateFuncallable { .. }
+                | Instruction::AllocateSymbol { .. }
                 | Instruction::AllocateUndefined { .. }
                 | Instruction::AllocateStructure { .. }
                 | Instruction::AllocateInstance { .. }
