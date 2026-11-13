@@ -23,13 +23,13 @@
 
 生产构建、自举、REPL 和基准的 `.lir` 输出使用二进制封套，旧 `.kir` 文件及 `kiln_rt_jit` 文本入口保留用于迁移对照。原生 `compile` 使用 `:compile-program`，一次性程序不物化字节向量；`eval` 的缓存载荷和 FASL 加载使用 `:compile-packet`。缓存和定义指纹采用规范化记录字节。FASL 格式版本为 2，记录标签 6 保存 packet octets；旧版本会拒绝加载。
 
-## 已接入的字段操作
+## 语义构建器与兼容输入的字段操作
 
 `field-load(field-id, object)` 和 `field-store(field-id, object, value)` 使用共享 schema 的字段编号。Rust 负责 cons、symbol、函数入口、double-float 位模式和 complex 分量的偏移；函数入口和 double 位模式只允许通过字段操作读取，其余已接入字段保存对象引用。类型检查和错误路径仍由 Lisp 生成。迁移期 KIR 文本读取器也接受这些操作，构造的内部 KIR 只含普通 load/store，便于保持旧后端和差分验证。
 
-## 已接入的动态调用
+## 语义构建器与兼容输入的动态调用
 
-`invoke(v0, count, callee, arguments, handler, location)` 接收已经求值到变量或立即数的参数，Rust 根据 runtime 的寄存器数量和 context 布局安排传递区，再构造低级 `call-lisp`。参数操作数不得包含需要重新读取内存的表达式，避免参数传递覆盖尚未求值的输入。Lisp 仍负责函数 designator 检查、参数表达式求值及 lambda-list 语义；已知局部调用、apply、尾调用和多值 ABI 尚未全部迁移。
+`invoke(v0, count, callee, arguments, handler, location)` 接收已经求值到变量或立即数的参数，Rust 根据 runtime 的寄存器数量和 context 布局安排传递区，再构造低级 `call-lisp`。参数操作数不得包含需要重新读取内存的表达式，避免参数传递覆盖尚未求值的输入。Lisp 负责函数 designator 检查、参数表达式求值及 lambda-list 语义。规范化器将普通调用、已知入口调用、apply、尾调用和返回值对转换为独立 LIR 的调用及多值视图，Rust 统一安排参数和返回值传递。
 
 ## LIR 载荷的目标契约
 
