@@ -796,7 +796,7 @@ unsupported call. Arguments retain their evaluation order and effects."
                (hir-fixnum-type-p (hir-node-type (svref args 0))))
       (let ((value (copy-to-var (hir-lower (svref args 0)))))
         (return-from hir-lower-typed-call
-          (values (boolean-value `(,(case name (zerop :eq) (plusp :gt) (minusp :lt)) ,value 0)) t))))
+          (values (boolean-value `(,(case name (zerop :eq) (plusp :gt) (minusp :lt)) ,value (:fixnum-tag 0))) t))))
     (when (and (= count 1) (not (eq (hir-node-d node) :notinline))
                (member name '(zerop plusp minusp))
                (eq (hir-node-type (svref args 0)) 'double-float))

@@ -291,6 +291,8 @@
        (lir-check-handler state (second args))
        (ecase (first args) (:loop (lir-emit state '(:poll)))
                            ((:entry :entry-retry :entry-retry-image) nil)))
+      (:heap-number-p
+       (lir-emit state `(:set ,(first args) ,(lir-pure-expression state :heap-number-p (rest args)))))
       (:guarded-class-test
        (lir-emit state `(:set ,(first args) (:test ,(lir-class-name (second args))
                                                   ,(lir-operand state (third args) :obj)))))
@@ -432,7 +434,7 @@
             ((:fixnum-add-ovf :fixnum-sub-ovf :fixnum-mul-ovf)
              (lir-record-word-write state (second statement) :unknown)
              (lir-record-word-write state (third statement) :unknown))
-            ((:guarded-class-test :special-ref)
+            ((:heap-number-p :guarded-class-test :special-ref)
              (lir-record-word-write state (second statement) :unknown))))))
     (dolist (part parts)
       (case (first part)

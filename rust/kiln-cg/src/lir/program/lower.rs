@@ -588,6 +588,18 @@ impl Lowerer<'_> {
             },
             Copy(name) => self.value(name),
             Op(op, args) => {
+                if matches!(op, super::Op::HeapNumber) {
+                    let prefix = self.fresh();
+                    let expansion = layout::guarded_heap_number_test(
+                        &prefix,
+                        self.block.clone(),
+                        std::mem::take(&mut self.statements),
+                        self.name(result),
+                        self.value(&args[0]),
+                    )?;
+                    self.append_expansion(expansion);
+                    return Ok(self.value(result));
+                }
                 if matches!(op, super::Op::UndefinedFunction) {
                     self.imports
                         .insert(layout::builtins::Kind::UndefinedFunction.entry().into());
@@ -654,6 +666,8 @@ impl Lowerer<'_> {
         let a = self.value(&args[0]);
         let b = || self.value(&args[1]);
         Ok(match op {
+            HeapNumber => return Err("heap number tests require control-flow expansion".into()),
+            HashMix => layout::hash_mix(a, b()),
             WordAdd | WordSub | WordAnd | WordOr | WordXor | WordMul | WordDiv | WordRem
             | WordShl | WordSar | WordShr | F64Add | F64Sub | F64Mul | F64Div | F64Compare => {
                 let op = match op {

@@ -250,6 +250,8 @@ macro_rules! operations {
 }
 
 operations! {
+    HeapNumber => ("heap-number-p", [Obj], Word),
+    HashMix => ("hash-mix", [Obj, Obj], Obj),
     WordAdd => ("word-add", [Word, Word], Word),
     WordSub => ("word-sub", [Word, Word], Word),
     WordAnd => ("word-and", [Word, Word], Word),

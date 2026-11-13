@@ -83,14 +83,14 @@
          (first vals))
         (t (reduce (lambda (a b) (emit-arith op a b)) vals))))
 
-(define-nary-primitive + (vals) (fold-arith '+ 0 vals))
+(define-nary-primitive + (vals) (fold-arith '+ '(:fixnum-tag 0) vals))
 (define-nary-primitive * (vals) (fold-arith '* '(:fixnum-tag 1) vals))
 (defun emit-negate (n)
   (let ((r (new-var)) (overflow (new-var :raw))
         (fast (new-block)) (slow (new-block)) (done (new-block)))
     (br `(:test-class ,kiln.kir::+packet-class-fixnum+ ,n) fast slow)
     (start-block fast)
-    (emit `(:fixnum-sub-ovf ,r ,overflow 0 ,n))
+    (emit `(:fixnum-sub-ovf ,r ,overflow (:fixnum-tag 0) ,n))
     (br overflow slow done)
     (start-block slow)
     (emit `(:set ,r ,(emit-slow-call 'kiln.kernel::negate-number n)))
@@ -229,9 +229,9 @@ are compared (no short circuit), which also checks every argument."
                             (:or (:or ,(emit-kind-test a kiln.kir::+packet-class-ratio+)
                                       ,(emit-kind-test a kiln.kir::+packet-class-double+))
                                  ,(emit-kind-test a kiln.kir::+packet-class-complex+))))))
-(define-primitive zerop (a) (boolean-value (emit-compare-pair :eq a 0)))
-(define-primitive plusp (a) (boolean-value (emit-compare-pair :gt a 0)))
-(define-primitive minusp (a) (boolean-value (emit-compare-pair :lt a 0)))
+(define-primitive zerop (a) (boolean-value (emit-compare-pair :eq a '(:fixnum-tag 0))))
+(define-primitive plusp (a) (boolean-value (emit-compare-pair :gt a '(:fixnum-tag 0))))
+(define-primitive minusp (a) (boolean-value (emit-compare-pair :lt a '(:fixnum-tag 0))))
 
 (define-primitive cons (a b) (emit-cons a b))
 
@@ -285,7 +285,7 @@ are compared (no short circuit), which also checks every argument."
 (defun emit-nthcdr (n list)
   (emit-check-fixnums n n)
   (let ((ok (new-block)) (bad (new-block)))
-    (br `(:ge ,n 0) ok bad)
+    (br `(:ge ,n (:fixnum-tag 0)) ok bad)
     (start-block bad)
     (emit-error +err-index+ n)
     (start-block ok))
@@ -293,7 +293,7 @@ are compared (no short circuit), which also checks every argument."
         (head (new-block)) (body (new-block)) (done (new-block)))
     (jump head)
     (start-block head)
-    (br `(:gt ,i 0) body done)
+    (br `(:gt ,i (:fixnum-tag 0)) body done)
     (start-block body)
     (emit `(:set ,cur ,(emit-car-cdr cur kiln.kir::+packet-field-cons-cdr+)))
     (emit `(:set ,i (:sub ,i (:fixnum-tag 1))))
@@ -969,10 +969,9 @@ and slots), zero-filled."
 ;;; significand (0), exponent (1) or sign (2) (rtfun.rs).
 (define-primop :float-decimal (x which)
   (emit-runtime-op :float-decimal (list x which)))
-;;; One FNV-1a step on fixnums H and V, wrapping: (H xor V) * prime. Both
-;;; are tagged (even), so the product is too.
+;;; One FNV-1a step on fixnum payloads, wrapping at the target width.
 (define-primop :hash-mix (h v)
-  (copy-to-var `(:mul (:xor ,h ,v) #x100000001b3)))
+  (copy-to-var `(:hash-mix ,h ,v)))
 (define-primop :standard-instance-p (x) (boolean-value (emit-kind-test x kiln.kir::+packet-class-instance+)))
 (define-primop :funcallable-instance-p (x)
   (boolean-value (emit-kind-test x kiln.kir::+packet-class-funcallable-instance+)))

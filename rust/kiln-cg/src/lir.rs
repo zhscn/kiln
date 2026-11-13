@@ -132,6 +132,56 @@ pub fn heap_number_test(result: String, temporary: String, object: Expr) -> Vec<
     ]
 }
 
+pub fn guarded_heap_number_test(
+    prefix: &str,
+    block: String,
+    mut statements: Vec<Stmt>,
+    result: String,
+    object: Expr,
+) -> Result<values::Expansion, String> {
+    use crate::kir::{Block, VarKind};
+    let temporary = format!("{prefix}_kind");
+    let yes = format!("{prefix}_general");
+    let no = format!("{prefix}_immediate");
+    let done = format!("{prefix}_done");
+    statements.push(Stmt::Br(
+        test_class(CLASS_GENERAL, object.clone())?,
+        yes.clone(),
+        no.clone(),
+    ));
+    let mut test = heap_number_test(result.clone(), temporary.clone(), object);
+    test.push(Stmt::Jump(done.clone()));
+    Ok((
+        vec![(temporary, VarKind::Raw)],
+        vec![
+            Block {
+                name: block,
+                stmts: statements,
+            },
+            Block {
+                name: yes,
+                stmts: test,
+            },
+            Block {
+                name: no,
+                stmts: vec![Stmt::Set(result, Expr::Int(0)), Stmt::Jump(done.clone())],
+            },
+        ],
+        done,
+        Vec::new(),
+    ))
+}
+
+/// One FNV-1a step with the fixnum payload wrapping at the target width.
+pub fn hash_mix(hash: Expr, value: Expr) -> Expr {
+    use crate::kir::BinOp;
+    Expr::Bin(
+        BinOp::Mul,
+        Box::new(Expr::Bin(BinOp::Xor, Box::new(hash), Box::new(value))),
+        Box::new(Expr::Int(0x100000001b3)),
+    )
+}
+
 #[allow(clippy::type_complexity)]
 pub fn identity_hash(
     name: &str,

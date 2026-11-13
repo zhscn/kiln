@@ -1867,3 +1867,27 @@ fn known_calls_validate_names_and_lower_to_direct_entries() {
         "entry is not defined",
     );
 }
+
+#[test]
+fn numeric_class_and_hash_operations_preserve_views_and_check_representations() {
+    let text = source(
+        "(block e (set a (fixnum -1)) (values m (a)) (set x (heap-number-p a)) (set b (hash-mix a a)) (return-mv m))",
+    );
+    let ast = sexp::parse_one(&text).unwrap();
+    let direct = program::compile(&ast).unwrap();
+    let decoded =
+        packet::load(&packet::encode(&ast, packet::schema::LIR_PAYLOAD).unwrap()).unwrap();
+    assert_eq!(format!("{direct:?}"), format!("{decoded:?}"));
+    reject(
+        "(block e (set x (word 0)) (set a (hash-mix x x)) (return (a)))",
+        "expected Obj",
+    );
+    reject(
+        "(block e (set a (nil)) (set b (heap-number-p a)) (return (b)))",
+        "expected Word",
+    );
+    reject(
+        "(block e (set x (word 0)) (set y (heap-number-p x)) (return ()))",
+        "expected Obj",
+    );
+}

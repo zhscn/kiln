@@ -1303,37 +1303,20 @@ fn parse_func(
                         if result == object {
                             return Err("heap-number-p result must differ from object".into());
                         }
-                        let temp = format!("{prefix}{alloc_number}_kind");
+                        let name = format!("{prefix}{alloc_number}_heap_number");
                         alloc_number += 1;
-                        f.vars.push((temp.clone(), VarKind::Raw));
-                        let yes = format!("{temp}_general");
-                        let no = format!("{temp}_immediate");
-                        let done = format!("{temp}_done");
-                        lowered.push(Stmt::Br(
-                            crate::lir::test_class(
-                                crate::packet::schema::CLASS_GENERAL,
-                                Expr::Var(object.clone()),
-                            )?,
-                            yes.clone(),
-                            no.clone(),
-                        ));
-                        f.blocks.push(Block {
-                            name: block_name,
-                            stmts: lowered,
-                        });
-                        let mut test =
-                            crate::lir::heap_number_test(result.clone(), temp, Expr::Var(object));
-                        test.push(Stmt::Jump(done.clone()));
-                        f.blocks.push(Block {
-                            name: yes,
-                            stmts: test,
-                        });
-                        f.blocks.push(Block {
-                            name: no,
-                            stmts: vec![Stmt::Set(result, Expr::Int(0)), Stmt::Jump(done.clone())],
-                        });
-                        block_name = done;
-                        lowered = Vec::new();
+                        let (vars, blocks, next, statements) =
+                            crate::lir::guarded_heap_number_test(
+                                &name,
+                                block_name,
+                                lowered,
+                                result,
+                                Expr::Var(object),
+                            )?;
+                        f.vars.extend(vars);
+                        f.blocks.extend(blocks);
+                        block_name = next;
+                        lowered = statements;
                         continue;
                     }
                     if head_name == "identity-hash" {
@@ -2330,6 +2313,10 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
         | "fixnum-shift-left" | "fixnum-shift-right" => {
             arity(h, r, 2)?;
             return crate::lir::fixnum_operation(h, parse_expr(&r[0])?, Some(parse_expr(&r[1])?));
+        }
+        "hash-mix" => {
+            arity(h, r, 2)?;
+            crate::lir::hash_mix(parse_expr(&r[0])?, parse_expr(&r[1])?)
         }
         "fixnum-add" | "fixnum-sub" | "fixnum-mul" => {
             arity(h, r, 2)?;
