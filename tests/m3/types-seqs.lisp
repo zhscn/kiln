@@ -33,7 +33,7 @@
 (print (map 'list #'+ '(1 2) '(10 20)))
 (print (map 'string #'char-upcase "abc"))
 (print (sort (list 5 3 1 4 2) #'<))
-(print (sort "kiln" #'char<))
+(print (sort (copy-seq "kiln") #'char<))
 (print (stable-sort (list '(1 . a) '(0 . b) '(1 . c)) #'< :key #'car))
 (print (search "ln" "kiln"))
 (print (mismatch "kiln" "kilt"))

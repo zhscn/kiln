@@ -1305,7 +1305,9 @@ apply."
           (t (make-array n :element-type element)))))
 
 (defun make-sequence-like (seq n)
-  (cond ((stringp seq) (make-array n :element-type (array-element-type seq)))
+  ;; Native strings are available before the full array constructor is loaded.
+  (cond ((%primop :stringp seq) (make-string n))
+        ((stringp seq) (make-array n :element-type (array-element-type seq)))
         ((%primop :simple-vector-p seq) (make-simple-vector n))
         ;; Another vector: a simple vector of its element type.
         ((vectorp seq) (complex-array-op :make-like seq n))
