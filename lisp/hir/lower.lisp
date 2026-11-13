@@ -310,19 +310,15 @@ Return the storage slot and its root region, if any."
             (*debug-vars* '()) (*debug-var-count* 0)
             (*function-name* (local-function-debug-name (or (hir-fun-name fun) (gensym "LAMBDA")))))
         (with-function (name)
-          (let* ((ll (hir-parsed-lambda-list fun *hir-lifted-operands*))
-                 ;; All arguments in registers: poll first, re-entering
-                 ;; on the slow path (EMIT-ENTRY-POLL).
-                 (early-poll (and (not (ll-rest ll)) (not (ll-key-p ll))
-                                  (<= (+ (length (ll-required ll)) (length (ll-optional ll)))
-                                      kiln.kir::+backend-reg-args+))))
-            (when early-poll (emit-entry-poll))
+          (let ((ll (hir-parsed-lambda-list fun *hir-lifted-operands*)))
             (multiple-value-bind (v n)
                 (hir-with-stack-storage
                  fun
                  (lambda ()
                    (let ((*self* (copy-to-var :self)))
                      (let ((*hir-entry-p* t)) (emit-entry ll :rest-slots *hir-rest-slots*))
+                     ;; Poll while arguments are private roots, before source bindings are visible.
+                     (emit-poll :stack t)
                      (dolist (capture *hir-lifted-operands*)
                        (note-debug-var (hir-var-lowering (cdr capture))
                                        (source-variable-name (car capture))
@@ -332,7 +328,6 @@ Return the storage slot and its root region, if any."
                        (let ((var (svref parameter 0)) (supplied (svref parameter 2)))
                          (hir-bind-variable var (hir-var-lowering var))
                          (when supplied (hir-bind-variable supplied (hir-var-lowering supplied)))))
-                     (unless early-poll (emit-poll :stack t))
                      (hir-entry-defaults (hir-parameter-list fun) fun))))
               (emit `(:return ,v ,n))))
           (set-function-debug *function-name* (hir-source-range (hir-fun-source fun))))))

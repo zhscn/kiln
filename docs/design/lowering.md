@@ -51,7 +51,9 @@ funcallable trampoline 使用 `forward-incoming` 转交未改写的入口实参�
 
 ## Poll
 
-Lisp 在入口和循环控制流中提交 `poll`，由 Rust 决定检查、runtime 签名和慢路径。参数尚未保存的寄存器入口使用重试模式；共享 helper 保存有效参数并清零无效寄存器，poll 后尾调用原函数。已保存实参的入口和循环使用普通模式，栈耗尽时调用当前 `%stack-exhausted` 定义。独立 LIR 通过 CFG 分析选择循环 poll，使用同一检查与慢路径实现。
+独立 LIR 由 Rust 在入口保存参数、构造 rest 后插入 poll，并通过 CFG 分析选择循环 poll；检查、runtime 签名、根和慢路径均由后端决定。栈耗尽时调用当前 `%stack-exhausted` 定义。
+
+源构建器也为诊断 KIR 保留入口 poll：先将实参保存为私有临时值，完成 lambda-list 入口处理，再 poll，随后建立调试器可见的源码变量绑定。普通位置参数入口的 poll 因而不会暴露借入的栈对象，逃逸证明无需按寄存器数量区分入口；rest、keyword 初始化以及可能分配的变量绑定仍需各自的可见性检查。规范化器不保留源入口 poll，独立 LIR 的入口安排统一由 Rust 完成。
 
 ## 固定角色入口
 

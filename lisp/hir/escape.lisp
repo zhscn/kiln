@@ -208,7 +208,6 @@ invoked, and lists retain their identity through tail projections."
           ;; Rest and keyword entries can allocate and poll after positional bindings.
           (when (or (hir-lambda-list-rest (hir-fun-lambda-list fun))
                     (hir-lambda-list-key-p (hir-fun-lambda-list fun))) (fail))
-          (when (> (+ (length (hir-cons-borrow-parameters fun)) (length (hir-lifted-environment fun))) kiln.kir::+backend-reg-args+) (fail))
           (loop for v across variables
                 when (or (logtest 4 (hir-var-flags v))
                          (and (not (eq v var)) (not (eq (hir-var-type v) t))))

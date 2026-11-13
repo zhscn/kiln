@@ -375,10 +375,6 @@ one (bindings have none)."
   "Polls for pending runtime work and stack exhaustion."
   (emit `(:poll ,(if stack :entry :loop) ,(handler))))
 
-(defun emit-entry-poll ()
-  "Checks the entry before reading register arguments, retrying after a slow poll."
-  (emit `(:poll ,(if *image-literals* :entry-retry-image :entry-retry) :nil)))
-
 (defun pop-entry (region)
   (if (eq (region-kind region) :stack-roots)
       (emit `(:stack-roots-leave ,(region-slot region)))
