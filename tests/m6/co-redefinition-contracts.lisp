@@ -13,3 +13,13 @@
 (eval '(defun early-consumer () (list (root-value) (pending-value))))
 (eval '(defmacro root-value () 9))
 (print (early-consumer))
+
+;; An earlier consumer can be selected before a mutually dependent macro
+;; group. Its expansion must agree with the definitions the update leaves.
+(handler-bind ((style-warning #'muffle-warning))
+  (eval '(defun first-cycle-consumer () (list (cycle-left) (cycle-right)))))
+(eval '(defmacro cycle-left () 1))
+(eval '(defmacro cycle-right () (cycle-left)))
+(eval '(defmacro cycle-left () (+ (cycle-right) 1)))
+(print (equal (first-cycle-consumer)
+              (list (macroexpand '(cycle-left)) (macroexpand '(cycle-right)))))
