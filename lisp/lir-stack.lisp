@@ -11,7 +11,7 @@
         (when (eq (first statement) :rest-list)
           (when (lir-function-rest state) (lir-function-error state "duplicate incoming rest list"))
           (let ((variable (second statement)) (start (third statement)) (slots (fourth statement)))
-            (lir-no-handler state (fifth statement))
+            (lir-check-handler state (fifth statement))
             (unless (and (integerp start) (<= 0 start))
               (lir-function-error state "rest start needs a nonnegative constant"))
             (unless (= (length slots) (length (remove-duplicates slots :test #'equalp)))
@@ -88,7 +88,7 @@
           (:stack-roots-entry
            (unless (gethash name entries) (lir-function-error state "stack roots have no entry")))
           (:dynamic-entry
-           (unless (eq (second shape) :bind)
+           (unless (member (second shape) '(:bind :catch :unwind-protect :exit-point))
              (lir-function-error state "dynamic slots need structured region declarations")))
           (t (lir-function-error state "unknown storage declaration ~S" shape)))))
     (nreverse declarations)))

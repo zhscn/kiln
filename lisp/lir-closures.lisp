@@ -31,7 +31,7 @@
   (let ((args (rest statement)))
     (ecase (first statement)
       (:alloc-closure
-       (lir-no-handler state (fourth args))
+       (lir-check-handler state (fourth args))
        (unless (eql (third args) (gethash (second args) (lir-data-function-captures (lir-function-data state))))
          (lir-function-error state "closure allocation disagrees with its entry shape"))
        (lir-emit state `(:alloc-closure ,(first args) ,(second args) :heap)))

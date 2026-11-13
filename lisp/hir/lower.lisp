@@ -1031,7 +1031,7 @@ unsupported call. Arguments retain their evaluation order and effects."
           (make-exit-info :func *func* :regions *regions* :exit exit :result r :count n))
     (if (not nonlocal)
         (progn
-          (bind-var (hir-exit-token (hir-node-a ast)) 0 :name nil)
+          (bind-var (hir-exit-token (hir-node-a ast)) (nil-value) :name nil)
           (multiple-value-call #'set-mv r n (lower-progn-mv body))
           (jump exit))
         (let* ((token (emit-exit-token))
@@ -1055,7 +1055,7 @@ unsupported call. Arguments retain their evaluation order and effects."
     (setf (hir-exit-lowering def)
           (make-exit-info :func *func* :regions *regions* :exit exit
                           :result result :double-primary t))
-    (bind-var (hir-exit-token def) 0 :name nil)
+    (bind-var (hir-exit-token def) (nil-value) :name nil)
     (emit `(:set ,result ,(hir-lower-double-bits (hir-node-b node))))
     (jump exit)
     (start-block exit)

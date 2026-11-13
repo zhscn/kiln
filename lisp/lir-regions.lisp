@@ -1,26 +1,56 @@
 (in-package #:kiln.kir)
 
-;;;; Binding scopes can begin in different branches. Carry their active
+;;;; Dynamic scopes can begin in different branches. Carry their active
 ;;;; stack along CFG edges rather than deriving parents from block order;
 ;;;; each join must agree before a structured region can be declared.
+
+;;; Source handlers select an unwind target and forward nonmatches.
+;;; Convert those isolated dispatch blocks to landing declarations so
+;;; the backend owns target routing and the runtime payload representation.
+
+(defun lir-prepare-landings (state parts)
+  (let ((removed (make-hash-table :test 'equalp))
+        (landings (make-hash-table :test 'equalp)))
+    (dolist (part parts)
+      (when (eq (first part) :block)
+        (let* ((statement (third part)) (condition (second statement)))
+          (when (and (eq (first statement) :br) (consp condition) (eq (first condition) :unwind-target-p))
+            (unless (= (length (cddr part)) 1)
+              (lir-function-error state "source handler needs an isolated dispatch block"))
+            (let ((region (second condition)) (landing (third statement)))
+              (when (or (gethash region (lir-function-region-landings state)) (gethash landing landings))
+                (lir-function-error state "duplicate source landing"))
+              (setf (gethash (second part) (lir-function-handler-regions state)) region
+                    (gethash region (lir-function-region-landings state)) landing
+                    (gethash landing landings) region
+                    (gethash (second part) removed) t
+                    (gethash (fourth statement) removed) t))))))
+    (loop for part in parts
+          unless (and (eq (first part) :block) (gethash (second part) removed))
+            collect (let ((region (and (eq (first part) :block) (gethash (second part) landings))))
+                      (if region `(:block ,(second part) (:lir-landing ,region) ,@(cddr part)) part)))))
 
 (defun lir-prepare-regions (state parts)
   (let ((blocks (make-hash-table :test 'equalp))
         (inputs (make-hash-table :test 'equalp))
         (declarations (make-hash-table :test 'equalp))
         (pending nil) (result nil))
+    (dolist (slot (rest (assoc :slots parts)))
+      (when (eq (first (second slot)) :dynamic-entry)
+        (setf (gethash (first slot) (lir-function-region-kinds state)) (second (second slot)))))
     (dolist (part parts)
       (when (eq (first part) :block)
         (setf (gethash (second part) blocks) part)
         (dolist (statement (cddr part))
           (when (eq (first statement) :dynamic-enter)
-            (unless (eq (third statement) :bind)
+            (unless (member (third statement) '(:bind :catch :unwind-protect :exit-point))
               (lir-function-error state "unsupported dynamic region ~S" (third statement)))
             (multiple-value-bind (old found) (gethash (second statement) (lir-function-region-tags state))
               (when (and found (not (equalp old (fourth statement))))
                 (lir-function-error state "binding region has conflicting symbols")))
-            (setf (gethash (second statement) (lir-function-region-tags state)) (fourth statement))))))
-    (when (zerop (hash-table-count (lir-function-region-tags state)))
+            (setf (gethash (second statement) (lir-function-region-tags state)) (fourth statement)
+                  (gethash (second statement) (lir-function-region-kinds state)) (third statement))))))
+    (when (zerop (hash-table-count (lir-function-region-kinds state)))
       (return-from lir-prepare-regions nil))
     (labels ((edge (name active)
                (unless (gethash name blocks) (lir-function-error state "unknown source block ~S" name))
@@ -39,13 +69,20 @@
                  (case (first statement)
                    (:dynamic-enter
                     (let* ((name (second statement))
-                           (declaration `(:region ,name :bind ,(or (first active) :nil))))
+                           (kind (third statement))
+                           (landing (gethash name (lir-function-region-landings state)))
+                           (declaration `(:region ,name ,kind ,(or (first active) :nil) ,@(and landing (list landing)))))
+                      (when (and (not (eq kind :bind)) (null landing))
+                        (lir-function-error state "region has no source landing"))
+                      (when landing
+                        (edge landing (if (eq kind :unwind-protect) (cons name active) active)))
                       (multiple-value-bind (old found) (gethash name declarations)
                         (when (and found (not (equalp old declaration)))
                           (lir-function-error state "binding region has conflicting parents"))
                         (unless found (push declaration result)))
                       (setf (gethash name declarations) declaration)
                       (push name active)))
+                   (:dynamic-relink (push (second statement) active))
                    (:stack-roots-enter
                     (unless (private-root-p (second statement)) (push (second statement) active)))
                    ((:dynamic-leave :stack-roots-leave)
@@ -58,16 +95,48 @@
                    (:switch
                     (edge (third statement) active)
                     (dolist (arm (fourth statement)) (edge (second arm) active)))))))
+    ;; Dead source blocks still need region declarations for type checking.
+    ;; Their lexical parents have no executable path to preserve.
     (dolist (slot (rest (assoc :slots parts)))
-      (when (and (equal (second slot) '(:dynamic-entry :bind))
+      (when (and (eq (first (second slot)) :dynamic-entry)
                  (not (gethash (first slot) declarations)))
-        (push `(:region ,(first slot) :bind :nil) result)))
+        (let ((landing (gethash (first slot) (lir-function-region-landings state))))
+          (push `(:region ,(first slot) ,(second (second slot)) :nil ,@(and landing (list landing))) result))))
     (nreverse result)))
 
 (defun lir-region-statement (state statement)
   (let ((args (rest statement)))
     (ecase (first statement)
-      ((:ensure-tls-index :dynamic-enter :special-unbind) nil)
+      ((:ensure-tls-index :special-unbind) nil)
+      (:dynamic-enter
+       (unless (eq (second args) :bind)
+         (lir-emit state `(:enter ,(first args)
+                           ,(unless (eq (second args) :unwind-protect)
+                              (list (lir-operand state (third args) :obj)))))))
+      (:dynamic-relink
+       (unless (eq (gethash (first args) (lir-function-region-kinds state)) :exit-point)
+         (lir-function-error state "only an exit point can relink"))
+       (lir-emit state `(:enter ,(first args)
+                         (,(lir-operand state (gethash (first args) (lir-function-region-tags state)) :obj)))))
+      (:lir-landing
+       (let ((view (unless (eq (gethash (first args) (lir-function-region-kinds state)) :unwind-protect)
+                     (lir-new-temporary state :mv))))
+         (setf (lir-function-landing-view state) view)
+         (lir-emit state `(:landing ,(first args) ,@(and view (list view))))))
+      (:landed-values
+       (let ((source (lir-function-landing-view state))
+             (target (gethash (second args) (lir-function-views state))))
+         (unless source (lir-function-error state "values have no landing view"))
+         (lir-emit state `(:mv-move ,target ,source))
+         (lir-bind-result-pair state (first args) (second args) target)))
+      (:unwind-values
+       (lir-check-handler state (fifth args))
+       (let ((target (lir-operand state (second args) :obj))
+             (view (lir-view-for-values state (third args) (fourth args))))
+         (lir-emit state `(,(ecase (first args) (:throw :throw) (:exit-to :exit-to)) ,target ,view))))
+      (:continue-unwind
+       (lir-check-handler state (second args))
+       (lir-emit state `(:continue-unwind ,(first args))))
       (:special-bind-index
        (multiple-value-bind (symbol found) (gethash (first args) (lir-function-region-tags state))
          (unless found (lir-function-error state "binding has no region declaration"))

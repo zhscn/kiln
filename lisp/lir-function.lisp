@@ -23,6 +23,10 @@
   (views (make-hash-table :test 'equalp))
   (view-primaries (make-hash-table :test 'equalp))
   (value-aliases (make-hash-table :test 'equalp))
+  (handler-regions (make-hash-table :test 'equalp))
+  (region-landings (make-hash-table :test 'equalp))
+  (region-kinds (make-hash-table :test 'equalp))
+  landing-view
   (region-tags (make-hash-table :test 'equalp))
   (stack-shapes (make-hash-table :test 'equalp))
   (closure-entries (make-hash-table :test 'equalp))
@@ -82,7 +86,7 @@
              (let ((op (first expression)))
                (case op
                  ((:object-address :object-data :literal-ref :cell-ref :closure-ref
-                   :unbound-value :unbound-slot-value :frame-pointer :secondary-value-ref) :obj)
+                   :unbound-value :unbound-slot-value :frame-pointer :secondary-value-ref :landing-value) :obj)
                  (:word :word) (:f64 :f64)
                  ((:fixnum :character :single-float) :obj)
                  (:field-load (if (eql (second expression) +packet-field-double-bits+) :f64 :obj))
@@ -155,6 +159,10 @@
                   `(:select ,(lir-operand state (first args) :word)
                             ,(lir-operand state (second args) expected)
                             ,(lir-operand state (third args) expected))))
+               (:landing-value
+                (unless (lir-function-landing-view state)
+                  (lir-function-error state "value has no landing view"))
+                `(:mv-ref ,(lir-function-landing-view state) 0))
                (:secondary-value-ref
                 (let ((view (or *lir-view-hint* (lir-function-active-view state))))
                   (unless (and view (integerp (first args)))
@@ -197,9 +205,14 @@
                             ((:sar :sarv) :word-shift-right) (:sdiv :word-quotient) (:srem :word-remainder)) args))
                (t (lir-pure-expression state op args))))))))
 
-(defun lir-no-handler (state handler)
+(defun lir-check-handler (state handler)
   (unless (member handler '(nil :nil))
-    (lir-function-error state "dynamic region needs structured lowering: ~S" handler)))
+    (or (gethash handler (lir-function-handler-regions state))
+        (lir-function-error state "unknown source handler ~S" handler))))
+
+(defun lir-handler-options (state handler)
+  (let ((region (lir-check-handler state handler)))
+    (and region `((:region ,region)))))
 
 (defun lir-return-count (state count)
   (if (integerp count) count
@@ -220,20 +233,21 @@
       ((:move-values :publish-values :save-values :values-list :push-values :list-values :restore-values)
        (lir-value-statement state statement))
       (:runtime-op
-       (lir-no-handler state (fourth args))
+       (lir-check-handler state (fourth args))
        (lir-emit state `(:runtime ,(first args) ,(second args)
                           ,(mapcar (lambda (argument) (lir-operand state argument :obj)) (third args))
-                          ,@(cddddr args))))
+                          ,@(lir-handler-options state (fourth args)) ,@(cddddr args))))
       (:tail-invoke
        (lir-emit state `(:tail-call ,(lir-operand state (first args) :obj)
                                    ,(mapcar (lambda (argument) (lir-operand state argument :obj)) (second args)))))
-      ((:ensure-tls-index :dynamic-enter :special-bind-index :special-unbind :dynamic-leave)
+      ((:ensure-tls-index :dynamic-enter :special-bind-index :special-unbind :dynamic-leave
+        :lir-landing :landed-values :unwind-values :continue-unwind :dynamic-relink)
        (lir-region-statement state statement))
       ((:alloc-closure :closure-set) (lir-closure-statement state statement))
       ((:stack-object-init :stack-roots-enter :stack-roots-leave :stack-cons :stack-closure :rest-list)
        (lir-stack-statement state statement))
       (:alloc-vector
-       (lir-no-handler state (fifth args))
+       (lir-check-handler state (fifth args))
        (let* ((kind (lir-class-name (second args)))
               (initial (fourth args)))
          (unless (member kind '(:simple-vector :string))
@@ -242,17 +256,17 @@
                            ,(lir-operand state (third args) :word)
                            ,(lir-operand state (if (eq kind :string) `(:character-tag ,initial) initial) :obj)))))
       (:alloc-vector-elements
-       (lir-no-handler state (third args))
+       (lir-check-handler state (third args))
        (lir-emit state `(:vector ,(first args)
                          ,(mapcar (lambda (value) (lir-operand state value :obj)) (second args)))))
       (:alloc-structure
-       (lir-no-handler state (fourth args))
+       (lir-check-handler state (fourth args))
        (lir-emit state `(:alloc-structure ,(first args)
                          ,(lir-operand state (second args) :obj)
                          ,(lir-operand state (third args) :word)
                          ,(lir-operand state '(:fixnum 0) :obj))))
       (:alloc-fixed
-       (lir-no-handler state (fourth args))
+       (lir-check-handler state (fourth args))
        (multiple-value-bind (kind types)
            (cond ((eql (second args) +packet-class-cons+) (values :cons '(:obj :obj)))
                  ((eql (second args) +packet-class-double+) (values :double-float '(:f64)))
@@ -274,7 +288,7 @@
        (loop for variable in (first args) for index from 0
              do (lir-emit state `(:set ,variable (:arg-ref ,index)))))
       (:poll
-       (lir-no-handler state (second args))
+       (lir-check-handler state (second args))
        (ecase (first args) (:loop (lir-emit state '(:poll)))
                            ((:entry :entry-retry :entry-retry-image) nil)))
       (:guarded-class-test
@@ -298,7 +312,7 @@
          (lir-emit state `(:cell-set ,index ,(lir-operand state (second args) :obj)))))
       (:jump (lir-emit state statement))
       (:br (lir-emit state `(:branch ,(lir-operand state (first args) :word) ,@(rest args))))
-      (:switch (lir-emit state `(:switch ,(lir-operand state (first args) :word) ,@(rest args))))
+      (:switch (lir-emit state `(:switch ,(lir-operand state (first args) :word) ,(second args) ,@(third args))))
       (:return
        (let ((view (gethash (second args) (lir-function-views state))))
          (cond (view
@@ -311,7 +325,7 @@
                     (1 (lir-emit state `(:return (,(lir-operand state (first args) :obj)))))
                     (t (lir-function-error state "multiple-value return needs a view")))))))
       (:signal-error
-       (lir-no-handler state (third args))
+       (lir-check-handler state (third args))
        (lir-emit state `(:error ,(first args) ,(lir-operand state (second args) :obj) ,@(cdddr args))))
       (:fatal-error
        (lir-emit state `(:fatal-error ,(lir-operand state (first args) :word)
@@ -394,8 +408,9 @@
 
 (defun normalize-lir-function (data function)
   "Normalizes source expressions and binding code to the independent function grammar."
-  (let* ((parts (cddr function)) (declarations (rest (assoc :vars parts)))
+  (let* ((source (cddr function)) (declarations (rest (assoc :vars source)))
          (state (make-lir-function :name (second function) :data data))
+         (parts (lir-prepare-landings state source))
          (storage (progn (lir-prepare-rest state parts)
                          (append (lir-prepare-stack state parts) (lir-prepare-regions state parts)))))
     (setf (lir-function-captures state)
@@ -423,7 +438,8 @@
       (case (first part)
         (:block
          (setf (lir-function-statements state) '()
-               (lir-function-active-view state) nil (lir-function-active-count state) nil)
+               (lir-function-active-view state) nil (lir-function-active-count state) nil
+               (lir-function-landing-view state) nil)
          (dolist (statement (cddr part)) (lir-statement state statement))
          (push `(:block ,(second part) ,@(nreverse (lir-function-statements state))) (lir-function-blocks state)))
         ((:vars :slots :debug :debug-literal) nil)
