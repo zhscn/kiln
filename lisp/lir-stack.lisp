@@ -1,6 +1,6 @@
 (in-package #:kiln.kir)
 
-;;;; Source stack storage is established in the entry block and remains
+;;;; Source stack storage is established at a lexical boundary and remains
 ;;;; registered through the lexical body. Describe each object and its
 ;;;; root region together so Rust can initialize and link them atomically.
 
@@ -29,12 +29,11 @@
 
 (defun lir-prepare-stack (state parts)
   (let* ((slots (rest (assoc :slots parts)))
-         (entry (find :block parts :key #'first))
          (entries (make-hash-table :test 'equalp))
          (closures (make-hash-table :test 'equalp))
          (initialized (make-hash-table :test 'equalp))
          (rooted (make-hash-table :test 'equalp))
-         (outer :nil) (declarations '()))
+         (declarations '()))
     (dolist (slot slots)
       (when (gethash (first slot) (lir-function-stack-shapes state))
         (lir-function-error state "duplicate stack storage ~S" (first slot)))
@@ -50,26 +49,22 @@
                    (lir-function-error state "stack closure storage has conflicting entries")))
                (setf (gethash slot closures) name)))
             (:stack-object-init
-             (unless (and (eq part entry)
-                          (equalp (rest (lir-stack-shape state (second statement))) (cddr statement))
+             (unless (and (equalp (rest (lir-stack-shape state (second statement))) (cddr statement))
                           (not (gethash (second statement) initialized)))
-               (lir-function-error state "stack initialization needs a unique matching entry declaration"))
+               (lir-function-error state "stack initialization needs a unique matching declaration"))
              (setf (gethash (second statement) initialized) t))
             (:stack-roots-enter
              (let ((region (second statement)) (object (third statement)))
-               (unless (and (eq part entry)
-                            (equal (lir-stack-shape state region) '(:stack-roots-entry))
+               (unless (and (equal (lir-stack-shape state region) '(:stack-roots-entry))
                             (equalp (lir-stack-shape state object) (cons :stack-object (cdddr statement)))
                             (gethash object initialized)
                             (not (gethash region entries))
                             (not (gethash object rooted)))
-                 (lir-function-error state "stack roots need unique matching entry storage"))
+                 (lir-function-error state "stack roots need unique matching storage"))
                (setf (gethash region entries) t (gethash object rooted) t)
                (if (member object (lir-function-rest-slots state) :test #'equalp)
                    (push region (lir-function-rest-regions state))
-                   (progn
-                     (push `(:region ,region :stack-roots ,outer ,object) declarations)
-                     (setf outer region)))))))))
+                   (setf (gethash region (lir-function-stack-root-objects state)) object))))))))
     (dolist (slot slots)
       (let* ((name (first slot)) (shape (second slot))
              (class (second shape)) (count (third shape)))

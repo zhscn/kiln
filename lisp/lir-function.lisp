@@ -28,6 +28,7 @@
   (region-kinds (make-hash-table :test 'equalp))
   landing-view
   (region-tags (make-hash-table :test 'equalp))
+  (stack-root-objects (make-hash-table :test 'equalp))
   (stack-shapes (make-hash-table :test 'equalp))
   (closure-entries (make-hash-table :test 'equalp))
   rest rest-slots rest-regions
