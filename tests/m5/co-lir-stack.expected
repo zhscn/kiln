@@ -1,0 +1,9 @@
+(T T)
+(T T)
+(T T)
+:INIT-SHAPE
+:ROOT-SHAPE
+kiln_rt_compile_program: LIR function bad: stack object s has no active root region
+:INACTIVE-ROOT
+kiln_rt_compile_program: LIR function bad: leave r is not innermost
+:ROOT-ORDER

@@ -494,7 +494,7 @@ those whose names are in EXCLUDE."
      (system-files "anatomicl")
      ;; kiln's compiler (M5.3): its packages are the host's.
      (mapcar (lambda (name) (asdf:system-relative-pathname "kiln" (format nil "lisp/~A.lisp" name)))
-             '("abi" "kir" "lir-schema" "backend-target" "backend-packet" "lir" "lir-function" "lir-values" "lir-closures" "hir/data" "lower" "values" "primitives" "structures" "front" "cross"
+             '("abi" "kir" "lir-schema" "backend-target" "backend-packet" "lir" "lir-function" "lir-values" "lir-closures" "lir-stack" "hir/data" "lower" "values" "primitives" "structures" "front" "cross"
                "hir/environment" "hir/convert" "hir/analyze" "hir/types" "hir/escape" "hir/eval" "hir/lower"
                "target/compiler/client" "target/eval/interpreter"))))
 

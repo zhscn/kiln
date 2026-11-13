@@ -23,6 +23,7 @@
   (views (make-hash-table :test 'equalp))
   (view-primaries (make-hash-table :test 'equalp))
   (value-aliases (make-hash-table :test 'equalp))
+  (stack-shapes (make-hash-table :test 'equalp))
   (closure-entries (make-hash-table :test 'equalp))
   active-view active-count
   (variables '()) (temporaries '()) (statements '()) (blocks '())
@@ -225,6 +226,8 @@
        (lir-emit state `(:tail-call ,(lir-operand state (first args) :obj)
                                    ,(mapcar (lambda (argument) (lir-operand state argument :obj)) (second args)))))
       ((:alloc-closure :closure-set) (lir-closure-statement state statement))
+      ((:stack-object-init :stack-roots-enter :stack-roots-leave :stack-cons :stack-closure)
+       (lir-stack-statement state statement))
       (:alloc-vector
        (lir-no-handler state (fifth args))
        (let* ((kind (lir-class-name (second args)))
@@ -388,14 +391,14 @@
 (defun normalize-lir-function (data function)
   "Normalizes source expressions and binding code to the independent function grammar."
   (let* ((parts (cddr function)) (declarations (rest (assoc :vars parts)))
-         (state (make-lir-function :name (second function) :data data)))
+         (state (make-lir-function :name (second function) :data data))
+         (storage (lir-prepare-stack state parts)))
     (setf (lir-function-captures state)
           (or (gethash (second function) (lir-data-function-captures data)) 0))
     (dolist (declaration declarations)
       (let ((kind (ecase (second declaration) (:obj :obj) (:raw :word) (:f64 :f64))))
         (setf (gethash (first declaration) (lir-function-types state)) kind)
         (push (list (first declaration) kind) (lir-function-variables state))))
-    (when (rest (assoc :slots parts)) (lir-function-error state "stack and dynamic slots need structured declarations"))
     (dolist (part parts)
       (when (eq (first part) :block)
         (dolist (statement (cddr part))
@@ -424,6 +427,7 @@
       `(:function ,(lir-function-name state) (:receive ,(lir-function-receive state))
         (:captures ,(lir-function-captures state))
         (:vars ,@(nreverse (lir-function-variables state)) ,@(nreverse (lir-function-temporaries state)))
+        ,@storage
         ,@(and debug (list debug))
         ,@(nreverse (lir-function-blocks state))))))
 

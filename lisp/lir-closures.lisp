@@ -5,8 +5,9 @@
 ;;;; retain the entry name so the backend can check every position.
 
 (defun lir-scan-closure-statement (state statement)
-  (when (eq (first statement) :alloc-closure)
-    (let ((variable (second statement)) (entry (third statement)))
+  (when (member (first statement) '(:alloc-closure :stack-closure))
+    (let ((variable (second statement))
+          (entry (if (eq (first statement) :stack-closure) (fourth statement) (third statement))))
       (multiple-value-bind (old found) (gethash variable (lir-function-closure-entries state))
         (when (and found (not (equal old entry)))
           (lir-function-error state "closure variable has conflicting entries")))
