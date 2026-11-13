@@ -713,12 +713,15 @@ image 中查询的类型名字记录为依赖，别名链中任一名字重定�
 - **局部函数**：直接调用、lambda lifting、逃逸分析和 `dynamic-extent`，都只需要 `fun` 上已有的标志。
 - **交接**：目标是 MIR 输出 LIR、kiln-cg 降级成 KIR（[compiler.md](compiler.md)）；文件与内存采用同一二进制 schema，见 [compiler-protocol.md](compiler-protocol.md)。
 
+## 语法诊断
+
+转换器按特殊形式检查参数数量、有限 proper list、绑定名字、重复绑定、
+lambda list 关键字顺序、参数规格、supplied-p 名字和 `eval-when` situations。
+错误通过统一编译条件报告文件及 CST 范围；宏自身的语法错误由展开器报告。
+新增语法入口时，先验证列表形状和名字，再查询环境或生成 HIR，避免将输入错误
+暴露为实现内部的 `type-error`。
+
 ## 待定
 
 - **inline 函数的跨模块表示**：记源码形式（现在）还是 HIR（需要序列化进模块）。
 - **调试信息**：变量的源码名字和作用域由 `var` 提供，帧里变量的位置由降级记录，和现在 [debugging.md](debugging.md) 的格式兼容。
-- **语法诊断**：转换器按特殊形式检查参数数量、有限 proper list、绑定名字、重复绑定、
-  lambda list 关键字顺序、参数规格、supplied-p 名字和 `eval-when` situations。
-  错误通过统一编译条件报告文件及 CST 范围；宏自身的语法错误由展开器报告。
-  新增语法入口时，先验证列表形状和名字，再查询环境或生成 HIR，避免将输入错误
-  暴露为实现内部的 `type-error`。
