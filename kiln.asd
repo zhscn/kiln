@@ -27,6 +27,7 @@
                (:file "lir-values")
                (:file "lir-closures")
                (:file "lir-stack")
+               (:file "lir-regions")
                (:file "hir/data")
                (:file "lower")
                (:file "values")

@@ -23,6 +23,7 @@
   (views (make-hash-table :test 'equalp))
   (view-primaries (make-hash-table :test 'equalp))
   (value-aliases (make-hash-table :test 'equalp))
+  (region-tags (make-hash-table :test 'equalp))
   (stack-shapes (make-hash-table :test 'equalp))
   (closure-entries (make-hash-table :test 'equalp))
   rest rest-slots rest-regions
@@ -226,6 +227,8 @@
       (:tail-invoke
        (lir-emit state `(:tail-call ,(lir-operand state (first args) :obj)
                                    ,(mapcar (lambda (argument) (lir-operand state argument :obj)) (second args)))))
+      ((:ensure-tls-index :dynamic-enter :special-bind-index :special-unbind :dynamic-leave)
+       (lir-region-statement state statement))
       ((:alloc-closure :closure-set) (lir-closure-statement state statement))
       ((:stack-object-init :stack-roots-enter :stack-roots-leave :stack-cons :stack-closure :rest-list)
        (lir-stack-statement state statement))
@@ -393,7 +396,8 @@
   "Normalizes source expressions and binding code to the independent function grammar."
   (let* ((parts (cddr function)) (declarations (rest (assoc :vars parts)))
          (state (make-lir-function :name (second function) :data data))
-         (storage (progn (lir-prepare-rest state parts) (lir-prepare-stack state parts))))
+         (storage (progn (lir-prepare-rest state parts)
+                         (append (lir-prepare-stack state parts) (lir-prepare-regions state parts)))))
     (setf (lir-function-captures state)
           (or (gethash (second function) (lir-data-function-captures data)) 0))
     (dolist (declaration declarations)
