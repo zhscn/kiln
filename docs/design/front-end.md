@@ -33,6 +33,19 @@ HIR 的词法绑定、自由变量、赋值、退出点和闭包布局直接记�
 
 `make-session` 的 `:client-class` 选择 client。宿主默认 `cross-client`，kiln 上默认 `image-client`。少量差异在 `front.lisp` 里用 `#+kiln` 区分（宿主为目标端编译时读入用的是目标的 features）：client 的超类、目标端读入的包是 CL-USER 而宿主是 KILN-USER、Common-macros 的包名等。
 
+### 编译请求的所有权
+
+session 保存可跨文件使用的环境、内联定义、结构描述和源码索引。一次编译的依赖、
+调用关系、输出键、代码指纹、诊断和结果由 `compilation-request` 保存；请求记录
+父请求和使用的 session，正常返回后标为完成，异常离开后标为失败。
+
+嵌套编译可能用于执行用户宏，也可能只是编译器临时生成辅助函数。前者需要让环境
+查询进入外层定义的依赖集合，后者混入这些数据会污染调用关系和代码指纹。
+`call-with-compilation-request` 因此为每类收集器显式选择继承、新建或隔离。
+前端转换继承定义请求，定义求值新建收集器，独立原生 `compile` 隔离收集器。
+动态变量是当前请求的访问入口，退出时恢复外层状态；warning 只登记到当前请求，
+仍由调用者原来的 condition handler 决定如何处理。
+
 ### cross-client：交叉编译
 
 编译 kiln 自己的模块用它，在 SBCL 上和在 kiln 上都一样（kiln 编译自己时不能改掉正在运行编译器的 image，而且两边必须从同一个空的编译期环境开始）。

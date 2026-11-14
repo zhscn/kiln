@@ -35,6 +35,7 @@
                (:file "structures")
                (:file "macro-client")
                (:file "source-forms")
+               (:file "compilation-context")
                (:file "front")
                (:file "cross")
                (:file "hir/environment")

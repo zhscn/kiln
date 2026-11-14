@@ -26,11 +26,15 @@
 (defun native-compile (definition)
   "The function of the lambda expression DEFINITION, compiled into the
 running image, in the null lexical environment."
-  (let ((pipeline *compiler-pipeline*) (*compiler-pipeline* :hir)
-        (*dependencies* nil) (*source-definition-calls* nil)
-        (*source-record-observer* nil) (*source-definition-parent* nil))
-    (call-with-image-session
-     (lambda (session) (native-compile-in-session definition session pipeline)))))
+  (let ((pipeline *compiler-pipeline*))
+    (call-with-compilation-request
+     :native-compile nil
+     (lambda (request)
+       (call-with-image-session
+        (lambda (session)
+          (setf (compilation-request-session request) session)
+          (native-compile-in-session definition session pipeline))))
+     :pipeline :hir)))
 
 (defun native-compile-in-session (definition session &optional (pipeline :hir))
   (let* ((*eval-definition* (and kiln.kernel::*compile-name*
@@ -60,10 +64,14 @@ running image, in the null lexical environment."
 ;;; macro forms after their expansion; any other form is compiled as the
 ;;; body of a function of no arguments, which is called.
 (defun native-eval (form)
+  (call-with-compilation-request
+   :eval nil (lambda (request) (declare (ignore request)) (native-eval-request form))
+   :dependencies :fresh :calls :inherit :outputs :inherit :fingerprint :inherit :observers :inherit))
+
+(defun native-eval-request (form)
   (let ((outermost (not *evaluating*)))
     (multiple-value-prog1
         (let ((*evaluating* t)
-              (*dependencies* (list :dependencies))
               (*eval-definition* nil)
               (*eval-form* form))
           (native-eval-1 form))

@@ -176,20 +176,23 @@ are KEYS (replacing those of its previous evaluation)."
                        :key #'definition-unit-order)))))))
 
 (defun evaluate-definition (name form evaluate)
+  (call-with-compilation-request
+   :definition nil
+   (lambda (request) (declare (ignore request)) (evaluate-definition-request name form evaluate))
+   :dependencies :fresh :calls :fresh :outputs :fresh :fingerprint :fresh :observers :inherit))
+
+(defun evaluate-definition-request (name form evaluate)
   "Calls EVALUATE, which evaluates the definition FORM named NAME,
 collecting the dependencies of the code compiled for it; returns its
 values. A definition within FORM's expansion is a unit of its own."
   (import-source-definitions)
-  (let ((*dependencies* (list :dependencies))
-        (*source-definition-calls* (list :calls))
-        (parent *source-definition-parent*)
+  (let ((parent *source-definition-parent*)
         (*source-definition-parent* (definition-specifier form))
-        (records (list :records))
-        (*unit-outputs* (list :outputs))
-        (*unit-fingerprint* (list :fingerprint)))
+        (records (compilation-request-records *compilation-request*)))
     (note-dependency :macro (first form))
     (multiple-value-prog1
         (let ((*source-record-observer* (lambda (record) (push record (cdr records)))))
+          (setf (compilation-request-observer *compilation-request*) *source-record-observer*)
           (funcall evaluate))
       (dolist (record (reverse (cdr records))) (record-source-definition record))
       (let ((fingerprint (reverse (rest *unit-fingerprint*))))

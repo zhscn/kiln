@@ -93,15 +93,8 @@ time only.")
 (defvar *environment*)                  ; Trucler environment
 (defvar *structures*)                   ; DEFSTRUCT layouts (structures.lisp)
 
-;;; Dependency tracking. While a definition is compiled in the
-;;; image (lisp/target/compiler/dependencies.lisp), *DEPENDENCIES* is a
-;;; cons whose cdr collects the keys (KIND NAME) of the definitions its
-;;; code depends on at compile time: (:MACRO name) for a global macro
-;;; expanded (or a name not defined when the code was compiled),
-;;; (:INLINE name), (:SETF name) for a place, (:CONSTANT name). Elsewhere
-;;; (cross compilation) it is NIL.
+;;; Environment queries collect dependencies in the active request.
 
-(defvar *dependencies* nil)
 (defvar *dependency-query-hook* nil)
 
 (defun prepare-dependency (kind name)
@@ -553,11 +546,8 @@ the second value."
 
 (defvar *record-module-definitions* nil)
 (defvar *source-definition-records* nil)
-(defvar *source-definition-parent* nil)
-(defvar *source-definition-calls* nil)
 (defvar *source-definition-index* nil)
 (defvar *source-definition-lookup* nil)
-(defvar *source-record-observer* nil)
 
 (defun lookup-source-definition (dspec)
   (or (and *source-definition-index* (gethash dspec *source-definition-index*))
@@ -1040,6 +1030,12 @@ created."
     (process-toplevel cst compile-time-too)))
 
 (defun call-with-front-end (session thunk)
+  (call-with-compilation-request
+   :front-end session
+   (lambda (request) (call-with-front-end-request session thunk request))
+   :dependencies :inherit :calls :inherit :outputs :inherit :fingerprint :inherit :observers :inherit))
+
+(defun call-with-front-end-request (session thunk request)
   "Calls THUNK, which processes top-level forms, with the front end's state
 bound for SESSION. Returns the TOPLEVEL-FORMs of the forms to compile, in
 order, and the host packages that DEFPACKAGE forms created."
@@ -1047,7 +1043,7 @@ order, and the host packages that DEFPACKAGE forms created."
          (#-kiln cmd:*client* #+kiln kiln.cmd:*client* *client*)
          (*environment* (session-environment session))
          (*toplevel-asts* '())
-         (*source-definition-records* (list :records))
+         (*source-definition-records* (compilation-request-records request))
          (*source-definition-parent* *source-definition-parent*)
          (*source-definition-index* (session-source-definitions session))
          (*defined-functions* (session-defined-functions session))
