@@ -56,7 +56,13 @@
                (t type))))
       (t type))))
 
-(defun mir-compute-types (function &key summaries value-summaries functions inputs (finalize t))
+(defun mir-cell-read-type (bits cells)
+  (when (logbitp 0 bits) (return-from mir-cell-read-type t))
+  (let ((result :unseen))
+    (dotimes (index (length cells) result)
+      (when (logbitp (1+ index) bits) (setf result (mir-type-join result (svref cells index)))))))
+
+(defun mir-compute-types (function &key summaries value-summaries functions inputs captures cell-types cell-points (finalize t))
   "Infer primary-value types. :UNSEEN is solver bottom; T is unknown."
   (let* ((types (make-array (hir-buffer-count (mir-function-values function))
                             :initial-element :unseen))
@@ -108,7 +114,10 @@
                    (0 (hir-constant-type (mir-instruction-data instruction)))
                    (1 (if inputs (svref inputs (mir-instruction-data instruction)) t))
                    ((4 5 23) 'function)
-                   (22 (if (svref (mir-function-capture-functions function) (mir-instruction-data instruction)) 'function t))
+                   (22 (if captures (svref captures (mir-instruction-data instruction))
+                           (if (svref (mir-function-capture-functions function) (mir-instruction-data instruction)) 'function t)))
+                   (20 (if (and cell-types cell-points)
+                           (mir-cell-read-type (svref cell-points (svref args 0)) cell-types) t))
                    (16 'boolean)
                    (17 'list)
                    ;; A bundle carries only a primary-value fact here. Unknown

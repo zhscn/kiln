@@ -1,6 +1,6 @@
 (in-package #:kiln.compiler)
 
-(defstruct mir-call-analysis identities outgoing components external inputs summaries value-summaries types packets)
+(defstruct mir-call-analysis identities outgoing components external inputs capture-inputs cell-types cell-aliases summaries value-summaries types packets)
 
 (defun mir-function-identity-join (old new)
   (cond ((eq old :unseen) new) ((eq new :unseen) old)
@@ -173,6 +173,57 @@
                        (setf (svref result position) (mir-values-ref-type packet slot)) (incf position)))
             result)))))
 
+(defstruct mir-cell-aliases sites points captures (count 0))
+
+(defun mir-propagate-cell-aliases (functions sites points captures)
+  (let ((changed nil))
+    (labels ((merge-bits (row index bits)
+               (let ((joined (logior (svref row index) bits)))
+                 (unless (= joined (svref row index)) (setf (svref row index) joined changed t)))))
+      (loop for function across functions for id from 0 for row across points
+            for reachable = (mir-reachable-blocks function) do
+        (loop for block across (hir-vector (mir-function-blocks function))
+              when (logbitp (mir-block-id block) reachable) do
+          (loop for index across (hir-vector (mir-block-instructions block))
+                for instruction = (mir-at (mir-function-instructions function) index)
+                for args = (mir-instruction-operands instruction) do
+            (case (mir-instruction-kind instruction)
+              (19 (merge-bits row (mir-instruction-result instruction) (ash 1 (1+ (svref (svref sites id) index)))))
+              (22 (let ((slot (mir-instruction-data instruction)))
+                    (when (logbitp slot (mir-function-capture-cells function))
+                      (merge-bits row (mir-instruction-result instruction) (svref (svref captures id) slot)))))
+              (24 (let* ((data (mir-instruction-data instruction)) (target (svref functions (car data))))
+                    (when (logbitp (cdr data) (mir-function-capture-cells target))
+                      (merge-bits (svref captures (car data)) (cdr data) (svref row (svref args 1))))))))
+          (loop for edge across (mir-terminator-edges (mir-block-terminator block)) do
+            (loop for parameter across (mir-block-parameters (mir-at (mir-function-blocks function) (mir-edge-target edge)))
+                  for arg across (mir-edge-arguments edge) do (merge-bits row parameter (svref row arg)))))))
+    changed))
+
+(defun mir-compute-cell-aliases (unit)
+  "Track opaque cell identities through SSA and closure environment slots."
+  (let* ((functions (hir-vector (mir-unit-functions unit))) (count 0)
+         (sites (map 'simple-vector (lambda (function)
+                                     (make-array (hir-buffer-count (mir-function-instructions function)) :initial-element nil)) functions))
+         (points (map 'simple-vector (lambda (function)
+                                      (make-array (hir-buffer-count (mir-function-values function)) :initial-element 0)) functions))
+         (captures (map 'simple-vector (lambda (function) (make-array (length (mir-function-captures function)) :initial-element 0)) functions)))
+    (loop for function across functions for row across sites do
+      (loop for instruction across (hir-vector (mir-function-instructions function))
+            when (= 19 (mir-instruction-kind instruction))
+              do (setf (svref row (mir-instruction-id instruction)) count) (incf count)))
+    (loop while (mir-propagate-cell-aliases functions sites points captures))
+    ;; Unseeded environments may denote cells outside the known site set.
+    (loop for function across functions for row across captures do
+      (dotimes (slot (length row))
+        (when (and (logbitp slot (mir-function-capture-cells function)) (zerop (svref row slot)))
+          (setf (svref row slot) 1))))
+    (loop while (mir-propagate-cell-aliases functions sites points captures))
+    (make-mir-cell-aliases :sites sites :points points :captures captures :count count)))
+
+(defun mir-infer-cell-aliases (unit)
+  (mir-unit-analysis unit :cell-aliases #'mir-compute-cell-aliases))
+
 (defun mir-compute-calls (unit)
   (let* ((functions (hir-vector (mir-unit-functions unit))) (count (length functions))
          (identities (map 'simple-vector #'mir-function-identities functions))
@@ -192,6 +243,18 @@
          (input-changes (map 'simple-vector
                              (lambda (function) (make-array (mir-function-positional-count function) :initial-element 0))
                              functions))
+         (capture-inputs (map 'simple-vector
+                              (lambda (function)
+                                (let ((row (make-array (length (mir-function-captures function)) :initial-element :unseen)))
+                                  (dotimes (slot (length row) row)
+                                    (cond ((logbitp slot (mir-function-capture-cells function)) (setf (svref row slot) t))
+                                          ((svref (mir-function-capture-functions function) slot)
+                                           (setf (svref row slot) 'function))))))
+                              functions))
+         (capture-changes (map 'simple-vector (lambda (row) (make-array (length row) :initial-element 0)) capture-inputs))
+         (cell-aliases (mir-infer-cell-aliases unit))
+         (cell-types (make-array (mir-cell-aliases-count cell-aliases) :initial-element :unseen))
+         (cell-changes (make-array (length cell-types) :initial-element 0))
          (types (make-array count)) (packets (make-array count)))
     (loop for function across functions for id from 0
           for known across identities for reachable = (mir-reachable-blocks function) do
@@ -203,36 +266,48 @@
                 (let ((target (svref known (svref (mir-instruction-operands instruction) 0))))
                   (when (integerp target) (pushnew target (svref outgoing id)))))))
     (let ((components (mir-strong-components outgoing)) (changed t))
-      (labels ((merge-inputs (function facts packets known)
-                 (let ((reachable (mir-reachable-blocks function)))
+      (labels ((merge-fact (row counts position candidate)
+                 (let ((old (svref row position)))
+                   (multiple-value-bind (joined expansions)
+                       (mir-widen-summary old candidate (svref counts position))
+                     (setf (svref counts position) expansions)
+                     (unless (equal old joined) (setf (svref row position) joined changed t)))))
+               (merge-inputs (function facts packets known)
+                 (let* ((id (mir-function-id function)) (reachable (mir-reachable-blocks function))
+                        (cell-points (svref (mir-cell-aliases-points cell-aliases) id)))
                    (loop for block across (hir-vector (mir-function-blocks function))
                          when (logbitp (mir-block-id block) reachable) do
                      (loop for index across (hir-vector (mir-block-instructions block))
                            for instruction = (mir-at (mir-function-instructions function) index)
-                           for args = (mir-instruction-operands instruction)
-                           when (member (mir-instruction-kind instruction) '(7 15)) do
-                       (let ((target (svref known (svref args 0))))
-                         (when (integerp target)
-                           (let* ((row (svref inputs target)) (counts (svref input-changes target))
-                                  (arguments (mir-call-argument-types instruction facts packets
-                                                                      (mir-function-required (svref functions target))
-                                                                      (mir-function-maximum (svref functions target)))))
-                             ;; Unknown counts may match this signature; every
-                             ;; argument must then allow arbitrary object types.
-                             (when (or (vectorp arguments) (eq arguments :unknown))
-                               (dotimes (position (length row))
-                                 (let ((old (svref row position))
-                                       (candidate (cond ((eq arguments :unknown) t)
-                                                        ((< position (length arguments)) (svref arguments position))
-                                                        (t 'null))))
-                                   (multiple-value-bind (joined expansions)
-                                       (mir-widen-summary old candidate (svref counts position))
-                                     (setf (svref counts position) expansions)
-                                     (unless (equal old joined)
-                                       (setf (svref row position) joined changed t)))))))))))))
+                           for args = (mir-instruction-operands instruction) do
+                       (case (mir-instruction-kind instruction)
+                         ((7 15)
+                          (let ((target (svref known (svref args 0))))
+                            (when (integerp target)
+                              (let* ((row (svref inputs target)) (counts (svref input-changes target))
+                                     (arguments (mir-call-argument-types instruction facts packets
+                                                                         (mir-function-required (svref functions target))
+                                                                         (mir-function-maximum (svref functions target)))))
+                                (when (or (vectorp arguments) (eq arguments :unknown))
+                                  (dotimes (position (length row))
+                                    (merge-fact row counts position
+                                                (cond ((eq arguments :unknown) t)
+                                                      ((< position (length arguments)) (svref arguments position))
+                                                      (t 'null)))))))))
+                         (24 (let* ((data (mir-instruction-data instruction)) (target (car data)) (slot (cdr data)))
+                               (unless (logbitp slot (mir-function-capture-cells (svref functions target)))
+                                 (merge-fact (svref capture-inputs target) (svref capture-changes target) slot
+                                             (svref facts (svref args 1))))))
+                         (19 (merge-fact cell-types cell-changes
+                                         (svref (svref (mir-cell-aliases-sites cell-aliases) id) index)
+                                         (svref facts (svref args 0))))
+                         (21 (let ((bits (svref cell-points (svref args 0))))
+                               (dotimes (site (length cell-types))
+                                 (when (or (logbitp 0 bits) (logbitp (1+ site) bits))
+                                   (merge-fact cell-types cell-changes site (svref facts (svref args 1))))))))))))
                (solve ()
-                 ;; Inputs flow from caller to callee, results in the reverse
-                 ;; direction. Repeat SCC sweeps until both have stabilized.
+                 ;; Parameters and environment facts flow into callees; results
+                 ;; and cell writes feed back into callers and shared bindings.
                  (loop while changed do
                    (setf changed nil)
                    (dolist (component components)
@@ -241,7 +316,9 @@
                          (multiple-value-bind (facts packet-facts)
                              (mir-compute-types function :summaries summaries :value-summaries value-summaries
                                                 :functions (svref identities id)
-                                                :inputs (svref inputs id) :finalize nil)
+                                                :inputs (svref inputs id) :captures (svref capture-inputs id)
+                                                :cell-types cell-types :cell-points (svref (mir-cell-aliases-points cell-aliases) id)
+                                                :finalize nil)
                            (let ((old (svref summaries id)))
                              (multiple-value-bind (joined expansions)
                                  (mir-widen-summary old (mir-return-type function facts) (svref changes id))
@@ -263,15 +340,22 @@
             (setf (svref value-summaries id) (mir-unknown-values (svref summaries id)) changed t))
           (dotimes (position (length (svref inputs id)))
             (when (eq (svref (svref inputs id) position) :unseen)
-              (setf (svref (svref inputs id) position) t changed t))))
+              (setf (svref (svref inputs id) position) t changed t)))
+          (dotimes (slot (length (svref capture-inputs id)))
+            (when (eq (svref (svref capture-inputs id) slot) :unseen)
+              (setf (svref (svref capture-inputs id) slot) t changed t))))
+        (dotimes (site (length cell-types))
+          (when (eq (svref cell-types site) :unseen) (setf (svref cell-types site) t changed t)))
         (solve)
         (dotimes (id count)
           (multiple-value-bind (facts packet-facts)
               (mir-compute-types (svref functions id) :summaries summaries :value-summaries value-summaries
-                                 :functions (svref identities id) :inputs (svref inputs id))
+                                 :functions (svref identities id) :inputs (svref inputs id) :captures (svref capture-inputs id)
+                                 :cell-types cell-types :cell-points (svref (mir-cell-aliases-points cell-aliases) id))
             (setf (svref types id) facts (svref packets id) packet-facts)))
         (make-mir-call-analysis :identities identities :outgoing outgoing :components components
-                                :external external :inputs inputs :summaries summaries :value-summaries value-summaries
+                                :external external :inputs inputs :capture-inputs capture-inputs :cell-types cell-types :cell-aliases cell-aliases
+                                :summaries summaries :value-summaries value-summaries
                                 :types types :packets packets)))))
 
 (defun mir-infer-calls (unit)
