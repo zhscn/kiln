@@ -15,7 +15,7 @@
              (transfer (instruction)
                (let ((args (mir-instruction-operands instruction)))
                  (case (mir-instruction-kind instruction)
-                   ((9 11) (svref origins (svref args 0)))
+                   ((9 11 39) (svref origins (svref args 0)))
                    ((10 14) (if (and (single-p (svref args 0))
                                     (or (= 10 (mir-instruction-kind instruction))
                                         (zerop (mir-instruction-data instruction))))
@@ -56,7 +56,7 @@
     (labels ((allowed (instruction index origin)
                (let ((kind (mir-instruction-kind instruction)) (args (mir-instruction-operands instruction)))
                  (case kind
-                   ((9 10) t)
+                   ((9 10 37 39) t)
                    (11 (and (integerp origin)
                             (= (svref points (svref args 0)) (ash 1 (1+ origin)))
                             (mir-check-proven-p instruction types)))

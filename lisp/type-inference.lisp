@@ -173,9 +173,33 @@
            (if (<= low high) (hir-integer-range low high) b)))
         (t b)))
 
+(defun hir-declaration-check-type (type)
+  "Return a discrimination type that cannot reject a valid declaration value."
+  (labels ((walk (type positive)
+             (cond ((and (consp type) (hir-proper-list-p type))
+                    (case (car type)
+                      (function (if positive 'function t))
+                      ((and or)
+                       (cons (if positive (car type) (if (eq (car type) 'and) 'or 'and))
+                             (mapcar (lambda (part) (walk part positive)) (cdr type))))
+                      (not (if (= (length type) 2) (walk (second type) (not positive)) type))
+                      (cons
+                       (let ((parts (mapcar (lambda (part) (if (eq part '*) part (walk part t))) (cdr type))))
+                         (if positive (cons 'cons parts)
+                             (if (equal parts (cdr type)) (list 'not type) t))))
+                      ((array simple-array vector)
+                       (if (null (cdr type)) (if positive type (list 'not type))
+                           (let* ((element (second type))
+                                  (checked (if (eq element '*) element (walk element t))))
+                             (if positive (list* (car type) checked (cddr type))
+                                 (if (equal element checked) (list 'not type) t)))))
+                      (otherwise (if positive type (list 'not type)))))
+                   (t (if positive type (list 'not type))))))
+    (walk (hir-declaration-expanded type) t)))
+
 (defun hir-declaration-type (specifier)
   "Project supported declarations into the value domain; T is unsupported."
-  (setf specifier (hir-declaration-expanded specifier))
+  (setf specifier (hir-declaration-check-type specifier))
   (cond ((member specifier '(fixnum integer rational real number float single-float double-float
                             cons symbol character simple-vector simple-string string vector array
                             function null list)) specifier)

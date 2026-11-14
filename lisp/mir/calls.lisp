@@ -21,7 +21,7 @@
                  (case (mir-instruction-kind instruction)
                    ((5 23) (mir-instruction-data instruction))
                    (22 (or (svref (mir-function-capture-functions function) (mir-instruction-data instruction)) :unknown))
-                   ((3 9 10 11) (svref identities (svref args 0)))
+                   ((3 9 10 11 39) (svref identities (svref args 0)))
                    (14 (if (zerop (mir-instruction-data instruction))
                            (svref identities (svref args 0)) :unknown))
                    (6 (if (and (member (mir-instruction-data instruction) '(identity values))
@@ -101,7 +101,7 @@
                    ((5 23) (ash 1 (mir-instruction-data instruction)))
                    (22 (let ((target (svref (mir-function-capture-functions function) (mir-instruction-data instruction))))
                          (if target (ash 1 target) 0)))
-                   ((3 9 10 11 14) (svref sets (svref args 0)))
+                   ((3 9 10 11 14 39) (svref sets (svref args 0)))
                    (6 (case (mir-instruction-data instruction)
                         (identity (if (plusp (length args)) (svref sets (svref args 0)) 0))
                         (values (loop for arg across args for bits = (svref sets arg)
@@ -137,7 +137,7 @@
               for args = (mir-instruction-operands instruction) do
           ;; Parameter identities and heap contents are not yet tracked across
           ;; calls. Passing a function to any callee therefore exposes it.
-          (unless (or (member kind '(0 1 2 4 5 9 10 12 13 14 16 22 23 25))
+          (unless (or (member kind '(0 1 2 4 5 9 10 12 13 14 16 22 23 25 37 39))
                       (and (= kind 6) (member (mir-instruction-data instruction) '(identity values))))
             (loop for arg across args for index from 0
                   unless (and (zerop index) (or (= kind 24) (and (member kind '(7 15)) (integerp (svref known arg)))))

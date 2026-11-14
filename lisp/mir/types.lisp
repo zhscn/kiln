@@ -22,7 +22,7 @@
 (defun mir-primary-origin (id definitions)
   "Follow operations that preserve a value's primary identity."
   (loop for instruction = (svref definitions id)
-        while (and instruction (member (mir-instruction-kind instruction) '(9 10 11)))
+        while (and instruction (member (mir-instruction-kind instruction) '(9 10 11 39)))
         do (setf id (svref (mir-instruction-operands instruction) 0))
         finally (return id)))
 
@@ -97,6 +97,7 @@
                           (mir-fixed-values (vector (svref types result)))
                           (mir-unknown-values (svref types result))))
                    (9 (mir-fixed-values (vector (svref types (svref args 0)))))
+                   (39 (mir-asserted-values (svref packets (svref args 0)) (mir-instruction-data instruction)))
                    (11 (mir-check-values (svref packets (svref args 0)) (svref types result)))
                    (6 (let ((name (mir-instruction-data instruction)))
                         (cond ((eq name 'values)
@@ -123,7 +124,10 @@
                            (if (svref (mir-function-capture-functions function) (mir-instruction-data instruction)) 'function t)))
                    (20 (if (and cell-types cell-points)
                            (mir-cell-read-type (svref cell-points (svref args 0)) cell-types) t))
-                   (16 'boolean)
+                   ((16 37) 'boolean)
+                   (38 'list)
+                   (39 (let ((fact (mir-asserted-values (svref packets (svref args 0)) (mir-instruction-data instruction))))
+                         (if (eq fact :unseen) :unseen (mir-values-ref-type fact 0))))
                    (17 'list)
                    ;; A bundle carries only a primary-value fact here. Unknown
                    ;; calls include the zero-values case, whose primary is NIL.

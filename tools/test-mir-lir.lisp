@@ -960,3 +960,33 @@
     (assert (equal values '(((11) 12) 3 (2 1 :block)))
             () "Unexpected lexical exit output: ~S" values)))
 (format t "Host MIR lexical returns, repeated closure GO and cleanup GC passed.~%")
+
+(let* ((root (asdf:system-source-directory "kiln"))
+       (output (merge-pathnames "build/mir-test/values-declarations.lir" root))
+       (session (make-session))
+       (form '(progn
+                (print (multiple-value-list (the (values) (values 1 2))))
+                (print (multiple-value-list (the (values symbol symbol symbol) (values 'a 'b))))
+                (print (multiple-value-list (the (values &optional fixnum) (values))))
+                (print (multiple-value-list
+                        (the (values integer &optional symbol &rest character) (values 1 'a #\x #\y))))
+                (flet ((produce (flag) (if flag (values 'a 'b) (values))))
+                  (declare (notinline produce))
+                  (print (multiple-value-list (the (values &rest symbol) (produce nil))))
+                  (print (multiple-value-list (the (values &rest symbol) (produce t)))))
+                (print (funcall (the (values (function (t t) cons)) #'cons) 11 nil))
+                (print (the (values (not (function (t) t))) 7))))
+       (module (compile-module (front-end-forms (list form) session)
+                               "mir-values-declarations" :session session :pipeline :mir)))
+  (kiln::write-module module output)
+  (let* ((text (uiop:run-program
+                (mapcar #'namestring
+                        (list (merge-pathnames "target/debug/kiln-cg" root) #P"jit"
+                              (merge-pathnames "build/test/kernel.lir" root)
+                              (merge-pathnames "build/test/clos.lir" root) output))
+                :output :string :error-output :string))
+         (values (with-input-from-string (stream text)
+                   (loop for value = (read stream nil :eof) until (eq value :eof) collect value))))
+    (assert (equal values '((1 2) (a b) nil (1 a #\x #\y) nil (a b) (11) 7))
+            () "Unexpected VALUES declaration output: ~S" values)))
+(format t "Host MIR VALUES padding, optional and rest checks preserve values and function declarations.~%")

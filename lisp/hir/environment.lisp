@@ -70,6 +70,11 @@ Each named alias queried is a dependency, including currently undefined names."
                                (hir-proper-list-p specifier))
                           (cons name (mapcar (lambda (part) (walk part (cons specifier path)))
                                              (cdr specifier))))
+                         ((and (consp specifier) (eq name 'values) (hir-proper-list-p specifier))
+                          (cons name (mapcar (lambda (part)
+                                               (if (member part '(&optional &rest &allow-other-keys)) part
+                                                   (walk part (cons specifier path))))
+                                             (cdr specifier))))
                          ((and (consp specifier) (member name '(array simple-array vector))
                                (consp (cdr specifier)) (hir-proper-list-p specifier))
                           (list* name (walk (second specifier) (cons specifier path))

@@ -103,7 +103,7 @@
               when (and result (width result) (not (environment result))) do
                 (let* ((kind (mir-instruction-kind instruction)) (args (mir-instruction-operands instruction))
                        (source (and (plusp (length args))
-                                    (or (member kind '(9 10 11))
+                                    (or (member kind '(9 10 11 39))
                                         (and (= kind 14) (zerop (mir-instruction-data instruction)))
                                         (and (= kind 6) (member (mir-instruction-data instruction) '(identity values))))
                                     (svref args 0))))

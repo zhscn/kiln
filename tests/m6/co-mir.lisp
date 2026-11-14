@@ -33,8 +33,8 @@
 (defun mir-kept-definition () 17)
 (handler-case
     (let ((kiln.compiler::*compiler-pipeline* :mir))
-      (compile 'mir-kept-definition '(lambda () (the (values fixnum fixnum) (values 99 100)))))
-  (kiln.compiler::mir-unsupported () nil))
+      (compile 'mir-kept-definition '(lambda () (the (values *) (values 99)))))
+  (kiln.compiler::mir-error () nil))
 (print (mir-kept-definition))
 (let ((function (mir-test-compile
                  '(lambda (p) (the fixnum (if p 1 2))))))
@@ -1643,3 +1643,83 @@
                         (declare (notinline exit)) (exit (cons 71 nil))))))))
   (let ((object (funcall function)))
     (kiln.sys:%gc) (print (equal object '(71)))))
+
+(defvar *mir-values-visits* nil)
+(defun mir-values-seen-p (value)
+  (push value *mir-values-visits*)
+  (kiln.sys:%gc)
+  (values t :overwritten :secondary))
+
+(let ((function (mir-test-compile
+                 '(lambda (callback) (the (values) (funcall callback))))))
+  (let ((valid t))
+    (dolist (values '(() (1) ((2) 3 4)))
+      (unless (equal (multiple-value-list (funcall function (lambda () (values-list values)))) values)
+        (setq valid nil)))
+    (print valid)))
+
+(let ((function (mir-test-compile
+                 '(lambda (callback) (the (values integer symbol symbol) (funcall callback))))))
+  (print (and (equal (multiple-value-list (funcall function (lambda () (values 1 'a)))) '(1 a))
+              (handler-case (progn (funcall function (lambda () (values))) nil)
+                (type-error (condition) (null (type-error-datum condition)))))))
+
+(let ((function (mir-test-compile
+                 '(lambda (callback) (the (values &optional fixnum) (funcall callback))))))
+  (print (and (null (multiple-value-list (funcall function (lambda () (values)))))
+              (equal (multiple-value-list (funcall function (lambda () (values 1 :extra)))) '(1 :extra))
+              (handler-case (progn (funcall function (lambda () (values 'bad))) nil) (type-error () t)))))
+
+(let ((function (mir-test-compile
+                 '(lambda (callback) (the (values &rest integer) (funcall callback))))))
+  (let ((values (loop for i below 20 collect i)))
+    (print (and (equal (multiple-value-list (funcall function (lambda () (values-list values)))) values)
+                (handler-case
+                    (progn (funcall function (lambda () (values-list (append values '(bad))))) nil)
+                  (type-error (condition) (eq (type-error-datum condition) 'bad)))))))
+
+(let ((function (mir-test-compile
+                 '(lambda (callback)
+                    (the (values (satisfies mir-values-seen-p)
+                                 &optional (satisfies mir-values-seen-p) &rest (satisfies mir-values-seen-p))
+                         (funcall callback))))))
+  (setq *mir-values-visits* nil)
+  (let* ((wanted (list (cons 1 nil) (vector 2) (copy-seq "three") 'four))
+         (observed (multiple-value-list (funcall function (lambda () (values-list wanted))))))
+    (print (and (= 4 (length observed)) (= 4 (length *mir-values-visits*)) (every #'eq wanted observed)
+                (every #'eq wanted (reverse *mir-values-visits*))))))
+
+(let ((function (mir-test-compile
+                 '(lambda ()
+                    (funcall (the (values (function (t t) cons)) #'cons) 11 nil)))))
+  (print (equal (funcall function) '(11))))
+
+(let ((function (mir-test-compile
+                 '(lambda () (the (values (not (function (t) t))) 7)))))
+  (print (= 7 (funcall function))))
+
+(let ((function (mir-test-compile
+                 '(lambda (callback) (the (values integer integer) (funcall callback))))))
+  (print (handler-case (progn (funcall function (lambda () (values 1 'bad))) nil)
+           (type-error (condition) (and (eq (type-error-datum condition) 'bad)
+                                        (eq (type-error-expected-type condition) 'integer))))))
+
+(let ((function (mir-test-compile
+                 '(lambda (x)
+                    (declare (optimize (debug 0)) (type double-float x))
+                    (+ (the (values double-float) (+ x 1.0d0)) 2.0d0)))))
+  (print (= 4.25d0 (funcall function 1.25d0))))
+
+(eval '(deftype mir-values-domain () '(integer 0 10)))
+(eval '(deftype mir-values-result () '(values mir-values-domain &optional symbol)))
+(let* ((source '(lambda (x) (the (values mir-values-domain) x)))
+       (old (mir-test-compile source))
+       (old-pack (mir-test-compile '(lambda (x) (the mir-values-result x)))))
+  (eval '(deftype mir-values-domain () 'symbol))
+  (let ((new (mir-test-compile source)))
+    (print (and (= 5 (funcall old 5))
+                (equal (multiple-value-list (funcall old-pack 5)) '(5))
+                (eq (funcall new 'a) 'a)
+                (handler-case (progn (funcall old 20) nil)
+                  (type-error (condition) (eq (type-error-expected-type condition) 'mir-values-domain)))
+                (handler-case (progn (funcall new 5) nil) (type-error () t))))))

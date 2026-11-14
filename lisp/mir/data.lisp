@@ -9,6 +9,8 @@
 (defun mir-fail (control &rest args)
   (error 'mir-error :message (apply #'format nil control args)))
 
+(defstruct mir-values-declaration (required #()) (optional #()) (rest t))
+
 (defstruct mir-unit (load-time-functions #()) (functions (make-hir-buffer)) (analyses (make-hash-table :test 'eq)))
 (defstruct mir-function
   (id 0) name source (policy 1023) (internal-prefix 0) (argument-cells 0) (required 0) (optional 0) (rest nil) (key-p nil) (keys #()) (allow-other-keys nil) (bindings #()) (binding-cells 0) (captures #()) (capture-cells 0) (capture-functions #())
@@ -38,8 +40,8 @@
 ;;; global-function, function, global-call, call, primop, single, primary,
 ;;; declaration-check, argument-count, arity-check, value-ref, multiple-value-call,
 ;;; argument-present, rest-list, argument-error, cell, cell-read, cell-write,
-;;; capture, closure, closure-set, unbound-cell, load-time-value, special-bind, special-unbind, progv-enter, catch-enter, landed-values, protect-enter, cleanup-landing, block-enter, tagbody-enter, go-landing.
-(defparameter *mir-instruction-effects* #(0 0 33 34 33 8 127 127 127 56 56 127 0 32 56 127 0 56 127 56 1 2 1 56 2 0 1 7 7 63 7 57 7 4 7 7 7))
+;;; capture, closure, closure-set, unbound-cell, load-time-value, special-bind, special-unbind, progv-enter, catch-enter, landed-values, protect-enter, cleanup-landing, block-enter, tagbody-enter, go-landing, value-present, values-tail, values-asserted.
+(defparameter *mir-instruction-effects* #(0 0 33 34 33 8 127 127 127 56 56 127 0 32 56 127 0 56 127 56 1 2 1 56 2 0 1 7 7 63 7 57 7 4 7 7 7 0 127 0))
 ;;; Effects: heap/global read/write, dynamic environment, allocation, GC,
 ;;; possible exit, unknown call. No operation is deleted from this summary alone.
 

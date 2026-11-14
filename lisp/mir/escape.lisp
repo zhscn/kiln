@@ -23,7 +23,7 @@
 (defun mir-closure-use-p (instruction index types)
   "Allow forwarding and valid non-retaining uses of a function object."
   (case (mir-instruction-kind instruction)
-    ((9 10 14) t)
+    ((9 10 14 37 39) t)
     (11 (mir-check-proven-p instruction types))
     ((7 15 24) (zerop index))
     (6 (and (mir-borrow-call-p instruction)
@@ -155,7 +155,7 @@
                    (2 1)
                    ((4 5 12 16) 0)
                    ((17 23) (ash 1 (1+ (mir-instruction-id instruction))))
-                   ((3 9 10 11) (svref points (svref args 0)))
+                   ((3 9 10 11 39) (svref points (svref args 0)))
                    (14 (let ((fact (svref packets (svref args 0))))
                          (if (and (mir-values-fact-p fact) (mir-values-fact-count fact)
                                   (>= name (mir-values-fact-count fact))) 0
@@ -205,7 +205,7 @@
                                 unless (logbitp (1- index) (mir-parameter-summary-borrow summary))
                                   do (setf escaped (logior escaped
                                                     (svref points (svref (mir-instruction-operands instruction) index))))))
-                         ((not (or (member kind '(0 1 2 4 5 9 10 12 13 14 16 17))
+                         ((not (or (member kind '(0 1 2 4 5 9 10 12 13 14 16 17 37 39))
                                    (mir-cons-allocation-p instruction) (mir-borrow-call-p instruction)
                                    (and (= kind 11) (mir-check-proven-p instruction types))))
                           (loop for arg across (mir-instruction-operands instruction) for index from 0
@@ -338,7 +338,7 @@
                  (let ((args (mir-instruction-operands instruction)) (name (mir-instruction-data instruction)))
                    (case (mir-instruction-kind instruction)
                      (1 (list (list name)))
-                     ((3 9 10 11) (svref paths (svref args 0)))
+                     ((3 9 10 11 39) (svref paths (svref args 0)))
                      (14 (let ((fact (svref packets (svref args 0))))
                            (unless (and (mir-values-fact-p fact) (mir-values-fact-count fact)
                                         (>= name (mir-values-fact-count fact)))

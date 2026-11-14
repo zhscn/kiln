@@ -901,7 +901,7 @@ unsupported call. Arguments retain their evaluation order and effects."
 (defun hir-check-declaration (value type &optional (actual t))
   (unless (or (zerop (hir-policy-quality *hir-policy* :safety))
               (eq (hir-declaration-type type) t) (hir-declaration-proven-p actual type))
-    (let* ((bad (new-block)) (done (new-block)) (expanded (hir-declaration-expanded type))
+    (let* ((bad (new-block)) (done (new-block)) (expanded (hir-declaration-check-type type))
            (test (if (inline-typep-specifier-p expanded)
                      (emit-inline-typep value expanded)
                      (emit-slow-call 'typep value (constant-object expanded)))))
