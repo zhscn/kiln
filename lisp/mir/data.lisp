@@ -9,7 +9,7 @@
 (defun mir-fail (control &rest args)
   (error 'mir-error :message (apply #'format nil control args)))
 
-(defstruct mir-unit (functions (make-hir-buffer)) (analyses (make-hash-table :test 'eq)))
+(defstruct mir-unit (load-time-functions #()) (functions (make-hir-buffer)) (analyses (make-hash-table :test 'eq)))
 (defstruct mir-function
   (id 0) name source (policy 1023) (internal-prefix 0) (argument-cells 0) (required 0) (optional 0) (rest nil) (key-p nil) (keys #()) (allow-other-keys nil) (bindings #()) (binding-cells 0) (captures #()) (capture-cells 0) (capture-functions #())
   (blocks (make-hir-buffer)) (instructions (make-hir-buffer)) (values (make-hir-buffer))
@@ -37,8 +37,8 @@
 ;;; global-function, function, global-call, call, primop, single, primary,
 ;;; declaration-check, argument-count, arity-check, value-ref, multiple-value-call,
 ;;; argument-present, rest-list, argument-error, cell, cell-read, cell-write,
-;;; capture, closure, closure-set, unbound-cell.
-(defparameter *mir-instruction-effects* #(0 0 33 34 33 8 127 127 127 56 56 127 0 32 56 127 0 56 127 56 1 2 1 56 2 0))
+;;; capture, closure, closure-set, unbound-cell, load-time-value.
+(defparameter *mir-instruction-effects* #(0 0 33 34 33 8 127 127 127 56 56 127 0 32 56 127 0 56 127 56 1 2 1 56 2 0 1))
 ;;; Effects: heap/global read/write, dynamic environment, allocation, GC,
 ;;; possible exit, unknown call. No operation is deleted from this summary alone.
 
@@ -63,9 +63,10 @@
           result))))
 
 (defun mir-unit-analysis (unit name compute)
-  "Cache an analysis against every member function and its revision."
-  (let* ((revisions (loop for function across (hir-vector (mir-unit-functions unit))
-                          collect (cons function (mir-function-revision function))))
+  "Cache an analysis against load-time entries and every function revision."
+  (let* ((revisions (cons (coerce (mir-unit-load-time-functions unit) 'list)
+                           (loop for function across (hir-vector (mir-unit-functions unit))
+                                collect (cons function (mir-function-revision function)))))
          (entry (gethash name (mir-unit-analyses unit))))
     (if (and entry (equal (car entry) revisions)) (cdr entry)
         (let ((result (funcall compute unit)))
@@ -82,8 +83,9 @@
         (mir-function-internal-prefix function) (mir-function-argument-cells function)))
 
 (defun mir-run-pass (unit function transform &key preserves)
-  "Rewrite one body without changing its entry or capture layout."
-  (let ((signatures (map 'simple-vector
+  "Rewrite one body while preserving function and load-time entry layouts."
+  (let ((load-time-functions (copy-seq (mir-unit-load-time-functions unit)))
+        (signatures (map 'simple-vector
                          (lambda (entry) (cons entry (mir-function-signature entry)))
                          (hir-vector (mir-unit-functions unit)))))
     (incf (mir-function-revision function))
@@ -95,6 +97,8 @@
                (mir-function-analyses function))
       (dolist (name remove) (remhash name (mir-function-analyses function))))
     (funcall transform function)
+    (unless (equalp load-time-functions (mir-unit-load-time-functions unit))
+      (mir-fail "MIR load-time entry changes require a unit pass"))
     (unless (= (length signatures) (hir-buffer-count (mir-unit-functions unit)))
       (mir-fail "MIR function membership changes require a unit pass"))
     (loop for saved across signatures for entry across (hir-vector (mir-unit-functions unit))
@@ -102,6 +106,7 @@
              (mir-verify-function-layout unit entry)
              (unless (equalp (cdr saved) (mir-function-signature entry))
                (mir-fail "MIR entry or capture layout changes require a unit pass")))
+    (mir-verify-load-time-functions unit)
     (verify-mir-function unit function)
     (mir-verify-private-entries unit)
     function))

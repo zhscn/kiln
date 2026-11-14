@@ -5,6 +5,7 @@
 (defvar *mir-lir-boxed*)
 (defvar *mir-lir-live*)
 (defvar *mir-lir-labels*)
+(defvar *mir-lir-load-time-cells*)
 (defvar *mir-lir-functions*)
 (defvar *mir-lir-types*)
 (defvar *mir-lir-value-facts*)
@@ -255,6 +256,7 @@
         (unless (svref *mir-lir-boxed* result) (return-from mir-lir-instruction))))
     (case kind
       (0 (emit `(:set ,out ,(constant-object data))))
+      (26 (emit `(:set ,out (:cell-ref ,(svref *mir-lir-load-time-cells* data)))))
       (1 (emit `(:set ,out ,(svref arguments data))))
       (2 (let ((symbol (constant-object data)))
            (emit `(:set ,out ,(emit-symbol-value symbol)))
@@ -433,9 +435,16 @@
 (defun mir-lower-toplevel (hir)
   (let* ((unit (mir-scalar-replace (mir-lift-local-functions (mir-fold-type-predicates (hir-to-mir hir))))) (*mir-lir-functions* (hir-vector (mir-unit-functions unit)))
          (functions *mir-lir-functions*)
+         (*mir-lir-load-time-cells* (map 'simple-vector
+                                        (lambda (id) (declare (ignore id)) (fresh-label "kiln_mir_ltv_"))
+                                        (mir-unit-load-time-functions unit)))
          (*mir-lir-labels* (map 'simple-vector (lambda (function) (declare (ignore function))
                                                 (fresh-label "kiln_mir_")) functions)))
     (verify-mir unit)
+    (when (plusp (length *mir-lir-load-time-cells*))
+      (setf (kiln.kir::kmodule-replayable-p *module*) nil)
+      (loop for cell across *mir-lir-load-time-cells*
+            do (kiln.kir::module-object-cell cell (nil-word))))
     (loop for function across functions for id from 0
           do (let ((*regions* nil) (*debug-vars* nil) (*debug-var-count* 0)
                    (*function-name* (local-function-debug-name (or (mir-function-name function) 'lambda))))
@@ -446,4 +455,7 @@
     (loop for label across *mir-lir-labels* for function across functions
           when (zerop (length (mir-function-captures function)))
           do (module-data (kiln.kir::kir-name label "_fobj") `(:static-function ,label)))
+    (loop for id across (mir-unit-load-time-functions unit) for cell across *mir-lir-load-time-cells*
+          for object = (copy-to-var `(:object-address ,(kiln.kir::kir-name (svref *mir-lir-labels* id) "_fobj") :general))
+          do (emit `(:cell-set ,cell ,(emit-lisp-call object nil))))
     (emit-lisp-call (copy-to-var `(:object-address ,(kiln.kir::kir-name (svref *mir-lir-labels* 0) "_fobj") :general)) nil)))

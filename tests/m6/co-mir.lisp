@@ -1201,3 +1201,56 @@
                     (declare (optimize (debug 0)) (type symbol x))
                     (if x 11 22)))))
   (print (and (= 22 (funcall function nil)) (= 11 (funcall function t)))))
+
+(defvar *mir-ltv-events* nil)
+(setq *mir-ltv-events* nil)
+(let* ((source '(lambda ()
+                  (load-time-value
+                   (progn (push :once *mir-ltv-events*) (kiln.sys:%gc) (cons 11 nil)))))
+       (first (mir-test-compile source))
+       (second (mir-test-compile source))
+       (object (funcall first)))
+  (rplacd object (list 22))
+  (kiln.sys:%gc)
+  (print (and (equal *mir-ltv-events* '(:once :once))
+              (eq object (funcall first))
+              (equal (funcall first) '(11 22))
+              (equal (funcall second) '(11))
+              (not (eq object (funcall second))))))
+(setq *mir-ltv-events* nil)
+(let ((function (mir-test-compile
+                 '(lambda ()
+                    (values
+                     (load-time-value
+                      (progn
+                        (push :outer *mir-ltv-events*)
+                        (cons (load-time-value (progn (push :inner *mir-ltv-events*) 31)) nil)))
+                     (load-time-value (values 4 5))
+                     (load-time-value (values)))))))
+  (print (and (equal *mir-ltv-events* '(:outer :inner))
+              (equal (multiple-value-list (funcall function)) '((31) 4 nil))
+              (equal (multiple-value-list (funcall function)) '((31) 4 nil))
+              (equal *mir-ltv-events* '(:outer :inner)))))
+(setq *mir-ltv-events* nil)
+(let ((function (mir-test-compile
+                 '(lambda ()
+                    (declare (optimize (debug 0)))
+                    (if nil (load-time-value (push :dead *mir-ltv-events*)) :branch)))))
+  (print (and (equal *mir-ltv-events* '(:dead))
+              (eq (funcall function) :branch)
+              (equal *mir-ltv-events* '(:dead)))))
+(let* ((function (mir-test-compile
+                  '(lambda ()
+                     (declare (optimize (debug 0)))
+                     (load-time-value
+                      (let ((n 0))
+                        (lambda () (kiln.sys:%gc) (setq n (1+ n))))))))
+       (counter (funcall function)))
+  (kiln.sys:%gc)
+  (print (and (eq counter (funcall function))
+              (= 1 (funcall counter)) (= 2 (funcall counter)))))
+(print (handler-case
+           (progn
+             (mir-test-compile '(lambda () (load-time-value (error 'simple-error :format-control "MIR initializer" :format-arguments nil))))
+             nil)
+         (simple-error () t)))

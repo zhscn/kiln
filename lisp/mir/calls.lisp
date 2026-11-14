@@ -122,9 +122,10 @@
                   do (merge-set parameter (svref sets argument)))))))
     sets))
 
-(defun mir-external-functions (functions identities)
+(defun mir-external-functions (functions identities &optional (entries #()))
   "Find functions that may be invoked outside the known local call sites."
   (let ((external 1))
+    (loop for id across entries do (setf external (logior external (ash 1 id))))
     (loop for function across functions for known across identities
           for sets = (mir-contained-functions function)
           for reachable = (mir-reachable-blocks function) do
@@ -251,7 +252,7 @@
 (defun mir-compute-calls (unit)
   (let* ((functions (hir-vector (mir-unit-functions unit))) (count (length functions))
          (identities (map 'simple-vector #'mir-function-identities functions))
-         (external (mir-external-functions functions identities))
+         (external (mir-external-functions functions identities (mir-unit-load-time-functions unit)))
          (outgoing (make-array count :initial-element nil))
          (summaries (make-array count :initial-element :unseen))
          (changes (make-array count :initial-element 0))

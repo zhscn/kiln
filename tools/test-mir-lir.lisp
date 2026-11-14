@@ -733,3 +733,31 @@
                :output :string :error-output :string)))
     (assert (search "(70)" text) () "Unexpected lifted cell output: ~S" text)))
 (format t "Host MIR private cell prefixes preserve stack storage across direct and list calls.~%")
+
+(let* ((root (asdf:system-source-directory "kiln"))
+       (output (merge-pathnames "build/mir-test/load-time-values.lir" root))
+       (session (make-session))
+       (form '(let ((read (lambda ()
+                            (load-time-value
+                             (progn (print :init) (kiln.sys:%gc) (cons 7 nil))))))
+                (print (eq (funcall read) (funcall read)))
+                (kiln.sys:%gc)
+                (print (car (funcall read)))
+                (print (multiple-value-list (load-time-value (values))))
+                (print (load-time-value (list (load-time-value (progn (print :inner) 31)))))
+                (print (if nil (load-time-value (progn (print :dead) 41)) :branch))))
+       (module (compile-module (front-end-forms (list form) session)
+                               "mir-load-time-values" :session session :pipeline :mir)))
+  (assert (not (kiln.kir::kmodule-replayable-p module)))
+  (kiln::write-module module output)
+  (let* ((text (uiop:run-program
+                (mapcar #'namestring
+                        (list (merge-pathnames "target/debug/kiln-cg" root) #P"jit"
+                              (merge-pathnames "build/test/kernel.lir" root)
+                              (merge-pathnames "build/test/clos.lir" root) output))
+                :output :string :error-output :string))
+         (values (with-input-from-string (stream text)
+                   (loop for value = (read stream nil :eof) until (eq value :eof) collect value))))
+    (assert (equal values '(:init :inner :dead t 7 (nil) (31) :branch))
+            () "Unexpected load-time initialization output: ~S" values)))
+(format t "Host MIR load-time initialization order, rooted identity and primary values passed.~%")

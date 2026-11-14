@@ -4,6 +4,7 @@
   "Print indexed MIR for inspection; this is not a persistence format."
   (verify-mir unit)
   (let ((*print-circle* t) (*print-level* 8) (*print-length* 24))
+    (format stream "~&load-time-functions ~S~%" (mir-unit-load-time-functions unit))
     (loop for function across (hir-vector (mir-unit-functions unit))
           do (format stream "~&function ~D ~S required=~D optional=~D rest=~S key-p=~S keys=~S allow-other-keys=~S revision=~D~%"
                      (mir-function-id function) (mir-function-name function)
