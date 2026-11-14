@@ -1251,6 +1251,56 @@
               (= 1 (funcall counter)) (= 2 (funcall counter)))))
 (print (handler-case
            (progn
-             (mir-test-compile '(lambda () (load-time-value (error 'simple-error :format-control "MIR initializer" :format-arguments nil))))
+             (mir-test-compile '(lambda () (load-time-value (error "MIR initializer"))))
              nil)
          (simple-error () t)))
+
+(defvar *mir-special-value* :outer)
+(defun mir-special-read () *mir-special-value*)
+(defun mir-special-throw () (throw 'mir-special-tag *mir-special-value*))
+(let ((function (mir-test-compile
+                 '(lambda (flag)
+                    (declare (optimize (debug 0)))
+                    (block done
+                      (let ((*mir-special-value* (list 11)))
+                        (kiln.sys:%gc)
+                        (if flag (return-from done (values (mir-special-read) 12)))
+                        (let ((*mir-special-value* (list 21)))
+                          (kiln.sys:%gc) (rplacd *mir-special-value* (list 22)))
+                        (values (mir-special-read) 13)))))))
+  (print (and (equal (multiple-value-list (funcall function t)) '((11) 12))
+              (eq *mir-special-value* :outer)
+              (equal (multiple-value-list (funcall function nil)) '((11) 13))
+              (eq *mir-special-value* :outer))))
+(let ((function (mir-test-compile
+                 '(lambda (x &optional (y x yp) &rest tail &key (z y zp))
+                    (declare (special x y yp tail z zp) (optimize (debug 0)))
+                    (kiln.sys:%gc) (list x y yp tail z zp)))))
+  (print (and (equal (funcall function 11) '(11 11 nil nil 11 nil))
+              (equal (funcall function 12 nil :z 13) '(12 nil t (:z 13) 13 t)))))
+(let ((function (mir-test-compile
+                 '(lambda (*mir-special-value* &optional (y (error "MIR default"))) y))))
+  (print (and (handler-case (progn (funcall function :inner) nil) (simple-error () t))
+              (eq *mir-special-value* :outer))))
+(let ((function (mir-test-compile
+                 '(lambda ()
+                    (let ((*mir-special-value* (list 31)))
+                      (kiln.sys:%gc) (mir-special-throw))))))
+  (print (and (equal (catch 'mir-special-tag (funcall function)) '(31))
+              (eq *mir-special-value* :outer))))
+(let ((function (mir-test-compile
+                 '(lambda ()
+                    (let ((n 0))
+                      (tagbody again
+                        (let ((*mir-special-value* (list n)))
+                          (kiln.sys:%gc) (setq n (1+ n)) (if (< n 3) (go again))))
+                      (values n *mir-special-value*))))))
+  (print (equal (multiple-value-list (funcall function)) '(3 :outer))))
+(let ((function (mir-test-compile
+                 '(lambda ()
+                    (let ((*mir-special-value* :inner))
+                      (multiple-value-bind (a b) (values 41 42)
+                        (declare (special a b))
+                        (kiln.sys:%gc) (values a b *mir-special-value*)))))))
+  (print (and (equal (multiple-value-list (funcall function)) '(41 42 :inner))
+              (eq *mir-special-value* :outer))))

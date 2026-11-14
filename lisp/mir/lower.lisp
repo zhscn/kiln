@@ -10,6 +10,7 @@
 (defvar *mir-lir-types*)
 (defvar *mir-lir-value-facts*)
 (defvar *mir-lir-stack-slots*)
+(defvar *mir-lir-bindings*)
 (defvar *mir-lir-stack-regions*)
 (defvar *mir-lir-rest-slots*)
 
@@ -257,6 +258,11 @@
     (case kind
       (0 (emit `(:set ,out ,(constant-object data))))
       (26 (emit `(:set ,out (:cell-ref ,(svref *mir-lir-load-time-cells* data)))))
+      (27 (let* ((region (svref *mir-lir-bindings* (car data)))
+                 (symbol (constant-object (cdr data))) (index (emit-tls-index symbol)))
+            (emit `(:dynamic-enter ,(region-slot region) :bind ,symbol))
+            (emit `(:special-bind-index ,(region-slot region) ,index ,(first args)))))
+      (28 (let ((region (svref *mir-lir-bindings* data))) (emit-unbind region) (pop-entry region)))
       (1 (emit `(:set ,out ,(svref arguments data))))
       (2 (let ((symbol (constant-object data)))
            (emit `(:set ,out ,(emit-symbol-value symbol)))
@@ -370,6 +376,11 @@
 (defun mir-lir-function-body (function &optional unit)
   (let* ((*regions* *regions*)
          (*mir-lir-stack-regions* nil) (*mir-lir-rest-slots* nil)
+         (*mir-lir-bindings*
+           (map 'simple-vector
+                (lambda (instruction) (declare (ignore instruction))
+                  (make-region :kind :bind :slot (new-slot '(:dynamic-entry :bind))))
+                (mir-binding-analysis-entries (mir-binding-regions function))))
          (*mir-lir-stack-slots* (make-array (hir-buffer-count (mir-function-instructions function)) :initial-element nil))
          (storage (and unit (svref (mir-infer-storage unit) (mir-function-id function))))
          (*mir-lir-types* (mir-infer-types function unit))
