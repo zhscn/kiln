@@ -55,7 +55,7 @@
 (dolist (form '((catch 'tag (throw 'tag 3))
                 (unwind-protect (identity 1) (identity 2))
                 (let ((x (identity 1))) (lambda () x))
-                (function (lambda (&key x) x))))
+                (function (lambda (x) (declare (special x)) x))))
   (assert (handler-case (progn (mir-test-unit form) nil) (mir-unsupported () t))))
 
 (let* ((unit (mir-test-unit '(function (lambda (x) (declare (type nil x)) x))))
@@ -620,3 +620,53 @@
        (edge (svref (mir-terminator-edges (mir-block-terminator entry)) 0)))
   (setf (mir-edge-target edge) 0)
   (assert (handler-case (progn (verify-mir unit) nil) (mir-error () t))))
+
+(dolist (form '((funcall (lambda (&key (x 1 xp) (y x)) (values x xp y)) :x nil)
+                (funcall (lambda (a &optional (b a) &rest xs &key ((answer x) b xp) (y x))
+                           (values a b xs x xp y)) 1 2 'answer 3)
+                (funcall (lambda (&key &allow-other-keys) nil) :other 1)
+                (flet ((f (&key x) x)) (multiple-value-call #'f (values :x 2)))))
+  (verify-mir (mir-test-unit `(locally (declare (optimize (speed 0))) ,form))))
+(assert (= 1 (mir-test-storage
+              '(flet ((reader (p &key x) (declare (ignore x)) (car p)))
+                 (let ((x (cons 1 nil))) (reader x :x 2))))))
+(assert (zerop (mir-test-storage
+                '(flet ((reader (&key x) (car x)))
+                   (let ((x (cons 1 nil))) (reader :x x))))))
+(assert (zerop (mir-test-storage
+                '(flet ((reader (p &key x) (declare (ignore x)) (car p)))
+                   (let ((x (cons 1 nil))) (reader x :x x))))))
+(assert (zerop (mir-test-storage
+                '(flet ((reader (p &key (x (progn (setq mir-key-sink p) 1)))
+                          (declare (ignore x)) (car p)))
+                   (let ((x (cons 1 nil))) (reader x))))))
+(let* ((unit (mir-test-unit '(locally (declare (optimize (speed 0)))
+                             (function (lambda (&key x) x)))))
+       (function (mir-at (mir-unit-functions unit) 1)))
+  (assert (mir-function-key-p function))
+  (assert (null (mir-function-maximum function)))
+  (assert (equalp #(:x) (mir-function-keys function)))
+  (setf (mir-function-key-p function) nil)
+  (assert (handler-case (progn (verify-mir unit) nil) (mir-error () t))))
+(let* ((unit (mir-test-unit '(function (lambda (&key x) x))))
+       (function (mir-at (mir-unit-functions unit) 1))
+       (error (find 18 (hir-vector (mir-function-instructions function)) :key #'mir-instruction-kind)))
+  (assert error)
+  (setf (mir-instruction-data error) :other)
+  (assert (handler-case (progn (verify-mir unit) nil) (mir-error () t))))
+(format t "MIR keyword CFG, verification and positional borrowing passed.~%")
+(assert (equal '(t) (mir-test-call-checks
+                    '(flet ((f (a &key x) (declare (ignore x)) a))
+                       (the (integer 2 2) (f 2 :x 3))))))
+(assert (equal '(t) (mir-test-call-checks
+                    '(flet ((f (a &key x) (declare (ignore x)) a))
+                       (the (integer 2 2) (multiple-value-call #'f (values 2 :x 3)))))))
+(assert (equal '(t) (mir-test-call-checks
+                    '(flet ((f (&key (x 1)) (declare (type fixnum x)) x))
+                       (the fixnum (f))))))
+(assert (= 1 (mir-test-storage
+              '(flet ((reader (p &key (q p)) (car q)))
+                 (let ((x (cons 1 nil))) (reader x))))))
+(assert (zerop (mir-test-storage
+                '(flet ((reader (p &key (q p)) q))
+                   (let ((x (cons 1 nil))) (reader x))))))

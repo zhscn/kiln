@@ -100,7 +100,9 @@
       (12 (emit `(:set ,out ,argument-count)))
       (13 (emit-nargs-check (first args) (car data) (cdr data)))
       (16 (emit `(:set ,out ,(boolean-value `(:gt ,(first args) ,data)))))
-      (17 (emit `(:set ,out ,(emit-rest-list data)))))))
+      (17 (emit `(:set ,out ,(emit-rest-list data))))
+      (18 (emit-error (ecase data (:odd-keywords +err-odd-keywords+) (:unknown-keyword +err-unknown-keyword+))
+                      (first args))))))
 
 (defun mir-lir-edge-copies (function edge)
   "Snapshot every source before assigning block parameters, including copy cycles."

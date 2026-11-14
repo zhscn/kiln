@@ -5,9 +5,10 @@
   (verify-mir unit)
   (let ((*print-circle* t) (*print-level* 8) (*print-length* 24))
     (loop for function across (hir-vector (mir-unit-functions unit))
-          do (format stream "~&function ~D ~S required=~D optional=~D rest=~S revision=~D~%"
+          do (format stream "~&function ~D ~S required=~D optional=~D rest=~S key-p=~S keys=~S allow-other-keys=~S revision=~D~%"
                      (mir-function-id function) (mir-function-name function)
-                     (mir-function-required function) (mir-function-optional function) (mir-function-rest function) (mir-function-revision function))
+                     (mir-function-required function) (mir-function-optional function) (mir-function-rest function) (mir-function-key-p function) (coerce (mir-function-keys function) 'list)
+                     (mir-function-allow-other-keys function) (mir-function-revision function))
              (loop for block across (hir-vector (mir-function-blocks function))
                    do (format stream "  block ~D ~S~%" (mir-block-id block) (mir-block-parameters block))
                       (loop for id across (hir-vector (mir-block-instructions block))

@@ -175,3 +175,29 @@
     (assert (and (search "(1 1 NIL)" text) (search "(1 NIL (3 4 5 6))" text) (search "(7 8 9)" text))
             () "Unexpected MIR rest output: ~S" text)))
 (format t "Host MIR rest entry and GC execution passed.~%")
+
+(let* ((root (asdf:system-source-directory "kiln"))
+       (output (merge-pathnames "build/mir-test/keys.lir" root))
+       (session (make-session))
+       (form '(progn
+                (print (funcall (lambda (&key (x (progn (kiln.sys:%gc) 1) xp) (y x))
+                                  (declare (optimize (speed 0))) (list x xp y))))
+                (print (funcall (lambda (&key (x 1 xp))
+                                  (declare (optimize (speed 0))) (list x xp)) :x nil :x 9))
+                (print (funcall (lambda (&rest xs &key (a (progn (rplaca (cdr xs) 99) 1)) b)
+                                  (declare (optimize (speed 0))) (list a b xs)) :b 7 :b 8))
+                (print (funcall (lambda (&key &allow-other-keys)
+                                  (declare (optimize (speed 0))) :allowed) :other 1))))
+       (module (compile-module (front-end-forms (list form) session) "mir-keys" :session session :pipeline :mir)))
+  (ensure-directories-exist output)
+  (kiln::write-module module output)
+  (let ((text (uiop:run-program
+               (mapcar #'namestring
+                       (list (merge-pathnames "target/debug/kiln-cg" root) #P"jit"
+                             (merge-pathnames "build/test/kernel.lir" root)
+                             (merge-pathnames "build/test/clos.lir" root) output))
+               :output :string :error-output :string)))
+    (assert (and (search "(1 NIL 1)" text) (search "(NIL T)" text)
+                 (search "(1 7 (:B 99 :B 8))" text) (search ":ALLOWED" text))
+            () "Unexpected MIR keyword output: ~S" text)))
+(format t "Host MIR keyword entry and GC execution passed.~%")
