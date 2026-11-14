@@ -35,6 +35,39 @@
       (emit-slow-call 'kiln.kernel::%declared-type-error value (constant-object (hir-declaration-original type)))
       (jump done) (start-block done))))
 
+(defun mir-lir-double-call-p (instruction)
+  "Select arithmetic only when every operand has a MIR double-float proof."
+  (let ((name (mir-instruction-data instruction))
+        (operands (mir-instruction-operands instruction)))
+    (and (= (mir-instruction-kind instruction) 6)
+         (hir-policy-optimize-p (mir-instruction-policy instruction))
+         (not (mir-instruction-notinline instruction))
+         (or (and (= (length operands) 2) (member name '(+ - * /)))
+             (and (= (length operands) 1) (member name '(- abs 1+ 1-))))
+         (every (lambda (id) (eq (svref *mir-lir-types* id) 'double-float)) operands))))
+
+(defun mir-lir-double-call (name args)
+  (let* ((bits (mapcar (lambda (object)
+                        (copy-to-var `(:field-load ,kiln.kir::+packet-field-double-bits+ ,object) :f64))
+                      args))
+         (left (first bits)) (right (second bits)))
+    (when (and right (eq name '/))
+      (let ((zero (new-block)) (divide (new-block)))
+        (br `(:eq (:and ,right #x7fffffffffffffff) 0) zero divide)
+        (start-block zero)
+        (emit-error +err-division-by-zero+ (first args))
+        (jump divide) (start-block divide)))
+    (hir-box-double-bits
+     (copy-to-var
+      (if right
+          `(,(ecase name (+ :f64-add) (- :f64-sub) (* :f64-mul) (/ :f64-div)) ,left ,right)
+          (ecase name
+            (- `(:xor ,left ,(- #x8000000000000000)))
+            (abs `(:and ,left #x7fffffffffffffff))
+            (1+ `(:f64-add ,left #x3ff0000000000000))
+            (1- `(:f64-sub ,left #x3ff0000000000000))))
+      :f64))))
+
 (defun mir-lir-instruction (instruction arguments argument-count)
   (let* ((*call-source* (mir-instruction-source instruction)) (*hir-policy* (mir-instruction-policy instruction))
          (kind (mir-instruction-kind instruction)) (result (mir-instruction-result instruction))
@@ -53,7 +86,9 @@
            (emit `(:set ,out (:object-address ,object :general)))))
       ((6 7)
        (multiple-value-bind (value count)
-           (cond ((mir-borrow-call-p instruction)
+           (cond ((mir-lir-double-call-p instruction)
+                  (values (mir-lir-double-call data args) 1))
+                 ((mir-borrow-call-p instruction)
                   (let ((slot (svref *mir-lir-stack-slots* (mir-instruction-id instruction))))
                     (cond (slot (let ((value (new-var)))
                                   (emit `(:stack-cons ,value (:slot ,slot) ,(first args) ,(second args)))
