@@ -1207,6 +1207,22 @@ after a LIST call."
                      (t (push ast out)))))
     (nreverse out)))
 
+(defun emit-set-constant-fdefinition (name function)
+  "Install a checked function before the kernel's definition setter exists."
+  (emit-check-function function)
+  (multiple-value-bind (base field) (function-cell-place name)
+    (emit `(:field-store ,field ,base ,function)))
+  ;; Early kernel definitions precede the notification function.
+  (let* ((notify (function-cell-value 'kiln.kernel::note-function-change))
+         (changed (new-block))
+         (done (new-block)))
+    (br (undefined-function-test notify) done changed)
+    (start-block changed)
+    (emit-lisp-call notify (list (constant-object name)))
+    (jump done)
+    (start-block done))
+  function)
+
 (defun lower-global-call (name arg-asts)
   (when (eq name 'append)
     (let ((asts (simplify-append-asts arg-asts)))
@@ -1296,20 +1312,8 @@ after a LIST call."
           ((and constant-name (or (symbolp constant-name)
                                   (and (consp constant-name)
                                        (eq (first constant-name) 'setf))))
-           (let ((f (copy-to-var (lower (first arg-asts)))))
-             (emit-check-function f)
-             (multiple-value-bind (base field) (function-cell-place constant-name)
-               (emit `(:field-store ,field ,base ,f)))
-             ;; Early kernel definitions precede the notification function.
-             (let* ((notify (function-cell-value 'kiln.kernel::note-function-change))
-                    (changed (new-block))
-                    (done (new-block)))
-               (br (undefined-function-test notify) done changed)
-               (start-block changed)
-               (emit-lisp-call notify (list (constant-object constant-name)))
-               (jump done)
-               (start-block done))
-             f))
+           (emit-set-constant-fdefinition constant-name
+                                         (copy-to-var (lower (first arg-asts)))))
           ((and (> (length arg-asts) kiln.kir::+backend-argument-limit+)
                 (member name '(list list* vector nconc append)))
            ;; Calls are limited to +REG-ARGS+ + +VALUES-MAX+ arguments:
