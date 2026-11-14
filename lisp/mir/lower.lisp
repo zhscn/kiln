@@ -99,7 +99,8 @@
                                         `(:select (:gt ,count ,data) (:secondary-value-ref ,data) ,(nil-value)))))))))
       (12 (emit `(:set ,out ,argument-count)))
       (13 (emit-nargs-check (first args) (car data) (cdr data)))
-      (16 (emit `(:set ,out ,(boolean-value `(:gt ,(first args) ,data))))))))
+      (16 (emit `(:set ,out ,(boolean-value `(:gt ,(first args) ,data)))))
+      (17 (emit `(:set ,out ,(emit-rest-list data)))))))
 
 (defun mir-lir-edge-copies (function edge)
   "Snapshot every source before assigning block parameters, including copy cycles."

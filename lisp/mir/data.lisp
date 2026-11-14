@@ -11,11 +11,14 @@
 
 (defstruct mir-unit (functions (make-hir-buffer)) (analyses (make-hash-table :test 'eq)))
 (defstruct mir-function
-  (id 0) name source (policy 1023) (required 0) (optional 0) (bindings #())
+  (id 0) name source (policy 1023) (required 0) (optional 0) (rest nil) (bindings #())
   (blocks (make-hir-buffer)) (instructions (make-hir-buffer)) (values (make-hir-buffer))
   (revision 0) (analyses (make-hash-table :test 'eq)))
 (defun mir-function-positional-count (function)
   (+ (mir-function-required function) (mir-function-optional function)))
+
+(defun mir-function-maximum (function)
+  (unless (mir-function-rest function) (mir-function-positional-count function)))
 
 (defstruct mir-block (id 0) (parameters #()) (instructions (make-hir-buffer)) terminator)
 (defstruct mir-value (id 0) (representation :obj) (block 0) (position -1))
@@ -25,8 +28,8 @@
 
 ;;; Instruction kinds: constant, argument, global-read, global-write,
 ;;; global-function, function, global-call, call, primop, single, primary,
-;;; declaration-check, argument-count, arity-check, value-ref, multiple-value-call, argument-present.
-(defparameter *mir-instruction-effects* #(0 0 33 34 33 8 127 127 127 56 56 127 0 32 56 127 0))
+;;; declaration-check, argument-count, arity-check, value-ref, multiple-value-call, argument-present, rest-list.
+(defparameter *mir-instruction-effects* #(0 0 33 34 33 8 127 127 127 56 56 127 0 32 56 127 0 56))
 ;;; Effects: global read/write, dynamic environment, allocation, GC,
 ;;; possible exit, unknown call. No operation is deleted from this summary alone.
 

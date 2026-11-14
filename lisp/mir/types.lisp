@@ -109,6 +109,7 @@
                    (1 (if inputs (svref inputs (mir-instruction-data instruction)) t))
                    ((4 5) 'function)
                    (16 'boolean)
+                   (17 'list)
                    ;; A bundle carries only a primary-value fact here. Unknown
                    ;; calls include the zero-values case, whose primary is NIL.
                    ((3 9 10) (svref types (svref args 0)))

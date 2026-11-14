@@ -35,9 +35,11 @@
     (let ((target (svref identities (svref (mir-instruction-operands instruction) 0))))
       (when (integerp target)
         (let ((summary (svref borrows target)))
-          (when (<= (mir-parameter-summary-required summary)
-                    (1- (length (mir-instruction-operands instruction)))
-                    (mir-parameter-summary-maximum summary)) summary))))))
+          (when (and (<= (mir-parameter-summary-required summary)
+                         (1- (length (mir-instruction-operands instruction))))
+                     (or (null (mir-parameter-summary-maximum summary))
+                         (<= (1- (length (mir-instruction-operands instruction)))
+                             (mir-parameter-summary-maximum summary)))) summary))))))
 
 (defun mir-storage-field (fields receivers tail)
   (let ((result (logand receivers 1)))
@@ -306,7 +308,7 @@
          (summaries (map 'simple-vector
                          (lambda (function)
                            (make-mir-parameter-summary :required (mir-function-required function)
-                                                       :maximum (mir-function-positional-count function)
+                                                       :maximum (mir-function-maximum function)
                                                        :borrow (1- (ash 1 (mir-function-positional-count function))))) functions))
          (changed t))
     ;; Start with a borrow assumption, then remove it whenever a member's
@@ -338,7 +340,7 @@
                            (null (set-exclusive-or paths (mir-parameter-summary-returns old) :test #'equal))
                            (null (set-exclusive-or effects (mir-parameter-summary-effects old) :test #'equal)))
                 (setf (svref summaries id) (make-mir-parameter-summary :required (mir-function-required function)
-                                                                     :maximum (mir-function-positional-count function)
+                                                                     :maximum (mir-function-maximum function)
                                                                      :borrow borrow :returns paths :effects effects)
                       changed t)))))))
     summaries))

@@ -76,3 +76,12 @@ T
 (1 NIL)
 :OPTIONAL-TYPE
 (15)
+(1 1 NIL)
+(1 NIL (3 4 5 6 7 8 9))
+:REST-FEW
+NIL
+((20) (21) (22) (23))
+(24)
+(1 (2 3 4))
+:REST-TYPE
+(25)

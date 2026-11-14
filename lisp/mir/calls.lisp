@@ -154,7 +154,7 @@
   "Flatten call facts, or return :UNSEEN, :UNKNOWN or :WRONG-ARITY."
   (let ((args (mir-instruction-operands instruction)))
     (if (= (mir-instruction-kind instruction) 7)
-        (if (<= required (1- (length args)) maximum)
+        (if (and (<= required (1- (length args))) (or (null maximum) (<= (1- (length args)) maximum)))
             (map 'simple-vector (lambda (id) (svref facts id)) (subseq args 1))
             :wrong-arity)
         (let ((count 0) (unknown nil))
@@ -163,7 +163,7 @@
                    (if (mir-values-fact-count packet) (incf count (mir-values-fact-count packet))
                        (setf unknown t)))
           (when unknown (return-from mir-call-argument-types :unknown))
-          (unless (<= required count maximum) (return-from mir-call-argument-types :wrong-arity))
+          (unless (and (<= required count) (or (null maximum) (<= count maximum))) (return-from mir-call-argument-types :wrong-arity))
           (let ((result (make-array count)) (position 0))
             (loop for index from 1 below (length args) for packet = (svref packets (svref args index))
                   do (dotimes (slot (mir-values-fact-count packet))
@@ -212,7 +212,8 @@
                          (when (integerp target)
                            (let* ((row (svref inputs target)) (counts (svref input-changes target))
                                   (arguments (mir-call-argument-types instruction facts packets
-                                                                      (mir-function-required (svref functions target)) (length row))))
+                                                                      (mir-function-required (svref functions target))
+                                                                      (mir-function-maximum (svref functions target)))))
                              ;; Unknown counts may match this signature; every
                              ;; argument must then allow arbitrary object types.
                              (when (or (vectorp arguments) (eq arguments :unknown))
