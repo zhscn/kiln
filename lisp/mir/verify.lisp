@@ -372,8 +372,8 @@
             (mir-fail "Invalid MIR terminator policy"))
           (let ((kind (mir-terminator-kind term)) (args (mir-terminator-operands term))
                 (edges (mir-terminator-edges term)))
-            (unless (member kind '(0 1 2 3)) (mir-fail "Unknown MIR terminator"))
-            (expect-operands args (case kind (1 '(:obj)) (2 '(:bundle))))
+            (unless (member kind '(0 1 2 3 4)) (mir-fail "Unknown MIR terminator"))
+            (expect-operands args (case kind (1 '(:obj)) (2 '(:bundle)) (4 '(:obj :bundle))))
             (unless (= (length edges) (case kind (0 1) (1 2) (otherwise 0)))
               (mir-fail "Invalid MIR successor count"))
             (loop for edge across edges

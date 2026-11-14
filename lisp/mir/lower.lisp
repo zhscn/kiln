@@ -443,7 +443,11 @@
                         (mir-lir-restore (svref (mir-terminator-operands term) 0))
                       (dolist (region *mir-lir-stack-regions*) (pop-entry region))
                       (emit `(:return ,primary ,n))))
-                 (3 (emit '(:trap))))))
+                 (3 (emit '(:trap)))
+                 (4 (multiple-value-bind (primary n)
+                        (mir-lir-restore (svref (mir-terminator-operands term) 1))
+                      (emit-nonlocal-values :throw
+                        (mir-lir-value (svref (mir-terminator-operands term) 0)) primary n))))))
     (dolist (entry (nreverse edge-blocks))
       (start-block (car entry))
       (mir-lir-edge-copies function (cdr entry))

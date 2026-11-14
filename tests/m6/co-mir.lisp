@@ -1369,3 +1369,53 @@
                     (declare (optimize (debug 0)))
                     (if (integerp (cons 1 nil)) (progv 17 18 :bad) :good)))))
   (print (eq (funcall function) :good)))
+
+(let ((function (mir-test-compile
+                 '(lambda (tag callback)
+                    (declare (optimize (debug 0)))
+                    (let ((*mir-special-value* (list 81)))
+                      (progv '(*mir-progv-other*) '(82)
+                        (kiln.sys:%gc) (throw tag (funcall callback))))))))
+  (let ((valid t) (cleanups 0))
+    (dolist (values '(() (1) ((2) 3 4)))
+      (let ((observed
+              (multiple-value-list
+               (catch 'mir-throw-tag
+                 (unwind-protect
+                      (funcall function 'mir-throw-tag (lambda () (values-list values)))
+                   (kiln.sys:%gc) (setq cleanups (1+ cleanups)))))))
+        (unless (and (equal observed values) (eq *mir-special-value* :outer) (eq *mir-progv-other* :other))
+          (setq valid nil))))
+    (print (and valid (= cleanups 3)))))
+(let ((function (mir-test-compile
+                 '(lambda (tag)
+                    (declare (optimize (debug 0)))
+                    (flet ((exit (x) (throw tag x)))
+                      (declare (notinline exit)) (exit (cons 91 nil)))))))
+  (let ((result (catch 'mir-throw-tag (funcall function 'mir-throw-tag))))
+    (kiln.sys:%gc)
+    (print (equal result '(91)))))
+(let ((function (mir-test-compile
+                 '(lambda (tag)
+                    (declare (optimize (debug 0)))
+                    (let ((x 0))
+                      (flet ((counter () (kiln.sys:%gc) (setq x (1+ x))))
+                        (throw tag #'counter)))))))
+  (let ((counter (catch 'mir-throw-tag (funcall function 'mir-throw-tag))))
+    (kiln.sys:%gc)
+    (print (and (= 1 (funcall counter)) (= 2 (funcall counter))))))
+(let ((function (mir-test-compile
+                 '(lambda (tag a b)
+                    (declare (optimize (debug 0)) (type double-float a b))
+                    (throw tag (+ a b))))))
+  (let ((result (catch 'mir-throw-tag (funcall function 'mir-throw-tag 1.25d0 2.5d0))))
+    (kiln.sys:%gc) (print (= result 3.75d0))))
+(setq *mir-progv-events* nil)
+(let ((function (mir-test-compile
+                 '(lambda ()
+                    (throw (progn (push :tag *mir-progv-events*) 'mir-throw-tag)
+                      (progn (push :value *mir-progv-events*) (values 11 12)))))))
+  (print (and (equal (multiple-value-list (catch 'mir-throw-tag (funcall function))) '(11 12))
+              (equal *mir-progv-events* '(:value :tag)))))
+(let ((function (mir-test-compile '(lambda (tag) (throw tag (values 1 2))))))
+  (print (handler-case (progn (funcall function (gensym)) nil) (control-error () t))))

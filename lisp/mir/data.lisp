@@ -31,6 +31,7 @@
       (mir-instruction-data instruction) 0))
 
 (defstruct mir-edge (target 0) (arguments #()))
+;;; Terminators: jump, branch, return, trap, throw.
 (defstruct mir-terminator (kind 0) (operands #()) (edges #()) source origin (policy 1023))
 
 ;;; Instruction kinds: constant, argument, global-read, global-write,

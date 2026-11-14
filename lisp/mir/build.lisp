@@ -346,6 +346,10 @@
       (17 (let ((entry (assoc (hir-node-a node) *mir-exits* :test #'eq)))
             (unless entry (mir-unavailable "nonlocal GO"))
             (mir-leave-bindings (third entry)) (mir-jump (second entry))))
+      (19 (let ((tag (mir-primary (hir-node-a node))))
+            (when *mir-block*
+              (let ((values (mir-build-node (hir-node-b node))))
+                (when *mir-block* (mir-terminate 4 (vector tag values)))))))
       (21 (mir-build-mv-call node))
       (22 (let ((value (mir-build-node (hir-node-a node))))
             (when *mir-block* (mir-build-node (hir-node-b node)))

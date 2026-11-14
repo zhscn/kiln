@@ -827,3 +827,38 @@
     (assert (equal values '(((31) nil) (10 20) 42 10 10))
             () "Unexpected PROGV output: ~S" values)))
 (format t "Host MIR PROGV dynamic values, missing bindings, duplicate symbols and exits passed.~%")
+
+(let* ((root (asdf:system-source-directory "kiln"))
+       (producer-output (merge-pathnames "build/mir-test/throw.lir" root))
+       (driver-output (merge-pathnames "build/mir-test/throw-driver.lir" root))
+       (session (make-session))
+       (producer '(setq kiln.kernel::*mir-host-throw*
+                        (lambda (tag callback)
+                          (declare (optimize (debug 0)))
+                          (let ((kiln.kernel::*mir-host-dynamic* (list 71)))
+                            (declare (special kiln.kernel::*mir-host-dynamic*))
+                            (kiln.sys:%gc) (throw tag (funcall callback))))))
+       (driver '(let ((kiln.kernel::*mir-host-dynamic* :outer))
+                  (declare (special kiln.kernel::*mir-host-dynamic*))
+                  (let ((function kiln.kernel::*mir-host-throw*))
+                    (dolist (values '(() (1) (1 2 3)))
+                      (print (multiple-value-list
+                              (catch 'tag (funcall function 'tag (lambda () (values-list values)))))))
+                    (print kiln.kernel::*mir-host-dynamic*))))
+       (module (compile-module (front-end-forms (list producer) session)
+                               "mir-throw" :session session :pipeline :mir))
+       (driver-module (compile-module (front-end-forms (list driver) session)
+                                      "mir-throw-driver" :session session :pipeline :hir)))
+  (kiln::write-module module producer-output)
+  (kiln::write-module driver-module driver-output)
+  (let* ((text (uiop:run-program
+                (mapcar #'namestring
+                        (list (merge-pathnames "target/debug/kiln-cg" root) #P"jit"
+                              (merge-pathnames "build/test/kernel.lir" root)
+                              (merge-pathnames "build/test/clos.lir" root) producer-output driver-output))
+                :output :string :error-output :string))
+         (values (with-input-from-string (stream text)
+                   (loop for value = (read stream nil :eof) until (eq value :eof) collect value))))
+    (assert (equal values '(nil (1) (1 2 3) :outer))
+            () "Unexpected THROW output: ~S" values)))
+(format t "Host MIR THROW transports dynamic multiple values and restores bindings passed.~%")

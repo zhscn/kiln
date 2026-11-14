@@ -221,9 +221,11 @@
                        unless (mir-closure-use-p instruction index types)
                          do (setf escaped (logior escaped (logand closure-sites (svref points arg)))))))
         (let ((term (mir-block-terminator block)))
-          (when (= (mir-terminator-kind term) 2)
-            (let ((bits (svref points (svref (mir-terminator-operands term) 0))))
-              (setf escaped (logior escaped (logand bits (lognot parameter-mask))))))))
+          (case (mir-terminator-kind term)
+            (2 (let ((bits (svref points (svref (mir-terminator-operands term) 0))))
+                 (setf escaped (logior escaped (logand bits (lognot parameter-mask))))))
+            (4 (loop for argument across (mir-terminator-operands term)
+                     do (setf escaped (logior escaped (svref points argument))))))))
       ;; Non-single bundles use heap carriers, including conversions at joins.
       ;; Their contents cannot include a stack object even when never returned.
       (dotimes (id (length points))
