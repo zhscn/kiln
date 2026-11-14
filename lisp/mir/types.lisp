@@ -14,11 +14,16 @@
                             :initial-element :unseen))
          (blocks (hir-vector (mir-function-blocks function)))
          (reachable (mir-control-flow function))
+         (changes (make-array (length types) :initial-element 0))
          (changed t))
-    ;; Transfers only copy facts or introduce constants. Interval endpoints
-    ;; therefore come from a finite set; arithmetic will require widening.
+    ;; A loop can keep expanding an integer interval. After two expansions
+    ;; of a value, widen to INTEGER; later transfers cannot narrow it again.
     (labels ((merge-type (id type)
                (let ((joined (mir-type-join (svref types id) type)))
+                 (when (and (hir-range-p (svref types id)) (hir-range-p joined)
+                            (not (equal joined (svref types id))))
+                   (incf (svref changes id))
+                   (when (>= (svref changes id) 2) (setf joined 'integer)))
                  (unless (equal joined (svref types id))
                    (setf (svref types id) joined changed t))))
              (transfer (instruction)
@@ -29,6 +34,14 @@
                    ;; A bundle carries only a primary-value fact here. Unknown
                    ;; calls include the zero-values case, whose primary is NIL.
                    ((3 9 10) (svref types (svref args 0)))
+                   (6 (let ((name (mir-instruction-data instruction)))
+                        ;; CL function semantics are stable. Image-defined
+                        ;; globals need guards or dependency records first.
+                        (if (and (symbolp name) (eq (symbol-package name) (find-package :cl)))
+                            (let ((inputs (map 'simple-vector (lambda (id) (svref types id)) args)))
+                              (if (find :unseen inputs) :unseen
+                                  (inferred-call-type name inputs)))
+                            t)))
                    (otherwise t)))))
       (loop while changed do
         (setf changed nil)

@@ -44,3 +44,17 @@
                  '(lambda (p) (the fixnum (if p 1 'wrong))))))
   (print (funcall function t))
   (print (handler-case (progn (funcall function nil) :bad) (type-error () :type))))
+(let ((function (mir-test-compile
+                 '(lambda (p) (the (integer 5 6) (+ (if p 2 3) 3))))))
+  (print (list (funcall function t) (funcall function nil))))
+(let ((function (mir-test-compile
+                 '(lambda () (the fixnum (+ 4611686018427387903 1))))))
+  (print (handler-case (progn (funcall function) :bad) (type-error () :overflow))))
+(let ((function (mir-test-compile
+                 '(lambda ()
+                    (let ((x 0))
+                      (tagbody again (setq x (1+ x)) (if (< x 10) (go again)))
+                      (the fixnum x))))))
+  (print (funcall function)))
+(let ((function (mir-test-compile '(lambda () (the fixnum (values))))))
+  (print (handler-case (progn (funcall function) :bad) (type-error () :zero-values))))

@@ -43,6 +43,7 @@
                (:file "cross")
                (:file "hir/environment")
                (:file "hir/convert")
+               (:file "type-inference")
                (:file "hir/analyze")
                (:file "hir/types")
                (:file "hir/escape")

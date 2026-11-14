@@ -76,8 +76,8 @@
 
 (assert (equal '(t) (mir-test-checks '(the fixnum (if (identity t) 1 2)))))
 (assert (equal '(nil) (mir-test-checks '(the fixnum (if (identity t) 1 'bad)))))
-(assert (equal '(nil) (mir-test-checks '(the fixnum (identity 1)))))
-(assert (equal '(nil) (mir-test-checks '(the null (values)))))
+(assert (equal '(nil) (mir-test-checks '(the fixnum (mir-unknown 1)))))
+(assert (equal '(t) (mir-test-checks '(the null (values)))))
 (assert (equal '(nil) (mir-test-checks '(the nil 1))))
 (assert (equal '(nil) (mir-test-checks '(the (integer 0 1) 2))))
 (assert (equal '(t) (mir-test-checks
@@ -111,3 +111,31 @@
                        (the fixnum x)))))
 
 (format t "MIR type propagation and declaration proofs passed.~%")
+
+(dolist (form '((the (integer 5 5) (+ 2 3))
+                (the (integer -6 -6) (- 2 8))
+                (the (integer -12 -12) (* -3 4))
+                (the (integer 5 5) (1+ 4))
+                (the (integer 3 3) (1- 4))
+                (the double-float (+ 1d0 2d0))
+                (the (integer 0 7) (logand (mir-unknown) 7))
+                (the null (values))
+                (the (integer 8 8) (values 8 9))
+                (the fixnum (identity 2))))
+  (assert (equal '(t) (mir-test-checks form))))
+(dolist (form '((the fixnum (+ #.+hir-fixnum-max+ 1))
+                (the (integer 0 10) (+ 10 1))
+                (the fixnum (mir-unknown 2))
+                (the fixnum (funcall (mir-unknown) 2))))
+  (assert (equal '(nil) (mir-test-checks form))))
+;;; A growing cycle must reach a post-fixed point, rather than retaining the
+;;; finite prefix seen during the first few iterations.
+(assert (equal '(t) (mir-test-checks
+                    '(let ((x 0))
+                       (tagbody again (setq x (1+ x)) (if (mir-unknown) (go again)))
+                       (the integer x)))))
+(assert (equal '(nil) (mir-test-checks
+                      '(let ((x 0))
+                         (tagbody again (setq x (1+ x)) (if (mir-unknown) (go again)))
+                         (the fixnum x)))))
+(format t "MIR call types and interval widening passed.~%")
