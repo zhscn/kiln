@@ -1493,6 +1493,8 @@ Returns the module and the vector of its literals."
   (let ((*compiler-pipeline* pipeline)
         (*module* (make-kmodule module-name))
         (*hir-lowering-epoch* (list nil))
+        (*hir-consumer-state* (make-hir-consumer-state))
+        (*hir-consumer-owner* nil) (*hir-consumer-bindings* nil)
         (*hir-native-environments* nil)
         (*hir-lifted-environments* nil)
         (*image-literals* (and image (make-hash-table :test 'eq)))

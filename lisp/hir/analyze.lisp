@@ -39,7 +39,7 @@
             for var = (svref data index)
             do (setf (hir-var-owner var) caller
                      (hir-var-flags var) (logandc2 (hir-var-flags var) 6))
-               (hir-push var (hir-fun-vars caller)))
+               (hir-adopt-var var caller))
       (let* ((ll (hir-fun-lambda-list fun)) (required (hir-lambda-list-required ll))
              (rest (hir-lambda-list-rest ll)) (args (hir-node-b node)))
         (setf (hir-node-kind node) 11
@@ -80,10 +80,10 @@
           for i below (hir-buffer-count buffer)
           for var = (svref (hir-buffer-data buffer) i)
           for new = (copy-hir-var var)
-          do (setf (hir-var-owner new) copy (hir-var-lowering new) nil
+          do (setf (hir-var-owner new) copy
                    (hir-var-flags new) (logandc2 (hir-var-flags new) 6)
                    (gethash var variables) new)
-             (hir-push new (hir-fun-vars copy)))
+             (hir-adopt-var new copy))
     (labels ((variable (var)
                (or (gethash var variables)
                    (and (find var (hir-fun-free fun) :test #'eq) var)
@@ -965,7 +965,7 @@ Backward liveness preserves objects that a debugger could observe at a safepoint
                  (let ((budget 16))
                    (labels ((temporary ()
                               (let ((var (make-hir-var :name (gensym "LIST") :owner fun :refs 1)))
-                                (hir-push var (hir-fun-vars fun)) var))
+                                (hir-adopt-var var fun) var))
                             (reference (var source) (hir-node 1 source var))
                             (expand (init)
                               (when (and (hir-policy-optimize-p (hir-node-policy init))

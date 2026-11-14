@@ -29,6 +29,7 @@
                (:file "lir-stack")
                (:file "lir-regions")
                (:file "hir/data")
+               (:file "hir/consumer")
                (:file "lower")
                (:file "values")
                (:file "primitives")

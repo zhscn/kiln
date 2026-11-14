@@ -40,8 +40,8 @@
 
 ;;; Variable flags: assigned, captured, cell, ignorable, dynamic-extent.
 (defstruct hir-var
-  (name nil) (owner nil) (flags 0) (refs 0) (type t)
-  (lowering nil) (constant nil) (constant-p nil) (policy *hir-policy*))
+  (name nil) (owner nil) (id -1) (flags 0) (refs 0) (type t)
+  (constant nil) (constant-p nil) (policy *hir-policy*))
 
 (defstruct (hir-type-declaration (:constructor make-hir-type-declaration (original expanded)))
   original expanded)
@@ -50,9 +50,9 @@
 ;;; local definitions, static environment, function aliases.
 (defstruct hir-fun
   (name nil) (parent nil) (lambda-list nil) (body nil) (parameter-specials nil)
-  (free #()) (exits (make-hir-buffer)) (vars (make-hir-buffer))
+  (free #()) (exits (make-hir-buffer)) (vars (make-hir-buffer)) (binding-count 0)
   (flags 8) (calls 0) (value-refs 0) (caller nil) (call-site nil) (policy *hir-policy*)
-  (source nil) (binding nil) (label nil) (lowering-epoch nil)
+  (source nil) (binding nil)
   (input-types nil) (result-type t)
   (load-time-values (make-hir-buffer)))
 
@@ -66,7 +66,7 @@
 ;;; A parameter is #(variable init supplied-p keyword). Init forms see only
 ;;; earlier parameters. Special parameters use lexical argument temporaries.
 (defstruct hir-exit
-  (name nil) (owner nil) (group nil) (token nil) (flags 0) (index 0) (lowering nil))
+  (name nil) (owner nil) (group nil) (token nil) (flags 0) (index 0))
 
 (defstruct (hir-env (:constructor make-hir-env (parent base &key vars funcs blocks tags declarations)))
   (parent nil) (base nil) (vars nil) (funcs nil) (blocks nil) (tags nil) (declarations nil) (types nil))
@@ -144,9 +144,13 @@ found here.")
               while (cst:consp tail) collect (cst:first tail))
         raw)))
 
+(defun hir-adopt-var (var owner)
+  (setf (hir-var-owner var) owner (hir-var-id var) (hir-fun-binding-count owner))
+  (incf (hir-fun-binding-count owner))
+  (hir-push var (hir-fun-vars owner)))
+
 (defun hir-new-var (name &optional (owner *hir-function*))
-  (let ((var (make-hir-var :name name :owner owner)))
-    (hir-push var (hir-fun-vars owner))))
+  (hir-adopt-var (make-hir-var :name name) owner))
 
 (defun hir-new-exit (name &optional group (index 0))
   (let ((exit (make-hir-exit :name name :owner *hir-function* :group group :index index)))

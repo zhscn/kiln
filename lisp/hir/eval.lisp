@@ -454,7 +454,11 @@ supplied, in order, each special parameter bound around what follows it."
 
 (defun hir-eval-function (fun)
   "A function of an environment vector making a function object for FUN."
-  (let* ((*hir-eval-function* fun) (*hir-eval-tail* '())
+  (let* ((*hir-consumer-state* (if (and *hir-consumer-state*
+                                             (eq (hir-consumer-state-kind *hir-consumer-state*) :eval))
+                                        *hir-consumer-state* (make-hir-consumer-state :kind :eval)))
+         (*hir-consumer-owner* fun) (*hir-consumer-bindings* (hir-consumer-slots fun))
+         (*hir-eval-function* fun) (*hir-eval-tail* '())
          (size (hir-eval-assign-slots fun))
          (ll (hir-fun-lambda-list fun))
          (required (map 'list #'hir-eval-binder (hir-lambda-list-required ll)))
