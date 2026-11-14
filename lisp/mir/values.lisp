@@ -42,10 +42,17 @@
              (replace types before) (setf (svref types 0) primary)
              (make-mir-values-fact :count (mir-values-fact-count fact) :types types)))))
 
+(defun mir-standard-call-p (name)
+  (let ((symbol (if (and (consp name) (eq (car name) 'setf)
+                         (consp (cdr name)) (null (cddr name)))
+                    (second name) name)))
+    (and (symbolp symbol) (eq (symbol-package symbol) (find-package :cl)))))
+
 (defun mir-single-value-call-p (name)
   ;; Multiple-valued functions require their own contracts, even when a
   ;; primary-result type is known. Unknown library calls retain unknown count.
-  (or (hir-predicate-type name)
+  (or (member name '((setf aref) (setf svref) (setf elt) (setf char) (setf schar)) :test #'equal)
+      (hir-predicate-type name)
       (member name '(car cdr first rest rplaca rplacd identity + - * / abs 1+ 1- logand logior logxor
                      < > <= >= = /= eq eql equal equalp zerop plusp minusp
                      cons list vector make-array length char schar aref elt char-code))))

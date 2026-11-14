@@ -38,6 +38,41 @@
       (emit-slow-call 'kiln.kernel::%declared-type-error value (constant-object (hir-declaration-original type)))
       (jump done) (start-block done))))
 
+(defun mir-lir-container-call (instruction)
+  (when (and (= (mir-instruction-kind instruction) 6)
+             (hir-policy-optimize-p (mir-instruction-policy instruction))
+             (not (mir-instruction-notinline instruction)))
+    (let* ((name (mir-instruction-data instruction)) (operands (mir-instruction-operands instruction))
+           (count (length operands))
+           (store (and (= count 3) (member name '((setf aref) (setf svref) (setf elt) (setf char) (setf schar)) :test #'equal)))
+           (type (and (plusp count) (svref *mir-lir-types* (svref operands (if store 1 0))))))
+      (cond ((and (= count 1) (eq name 'length) (member type '(simple-vector :native-string))) :length)
+            ((and (= count 2) (member name '(aref svref elt)) (eq type 'simple-vector)) :vector-read)
+            ((and store (member name '((setf aref) (setf svref) (setf elt)) :test #'equal)
+                  (eq type 'simple-vector)) :vector-write)
+            ((and (= count 2) (member name '(aref char schar elt)) (eq type :native-string)) :string-read)
+            ((and store (member name '((setf aref) (setf char) (setf schar) (setf elt)) :test #'equal)
+                  (eq type :native-string)) :string-write)
+            ((and (= count 2) (eq name 'elt) (eq type :simple-array-vector)) :array-read)
+            ((and store (equal name '(setf elt)) (eq type :simple-array-vector)) :array-write)))))
+
+(defun mir-lir-container-value (operation name args)
+  (let* ((store (member operation '(:vector-write :string-write :array-write)))
+         (object (if store (second args) (first args)))
+         (index (if store (third args) (second args))) (value (and store (first args))))
+    (case operation
+      (:length (copy-to-var (vector-length object)))
+      ((:vector-read :vector-write)
+       (emit-svref-fast-path
+        object index
+        (lambda () (if store
+                       (progn (emit `(:vector-set ,object (:fixnum-untag ,index) ,value)) value)
+                       `(:vector-ref ,object (:fixnum-untag ,index))))
+        (lambda () (if store (emit-slow-call name value object index)
+                       (emit-slow-call name object index))) t))
+      ((:string-read :string-write) (emit-schar object index value name t))
+      ((:array-read :array-write) (emit-aref-1 object index value)))))
+
 (defun mir-lir-fixnum-call-p (instruction)
   (let ((name (mir-instruction-data instruction))
         (operands (mir-instruction-operands instruction)))
@@ -184,6 +219,10 @@
     (when (and result (not (svref *mir-lir-live* result))
                (mir-lir-double-forward-source instruction))
       (return-from mir-lir-instruction))
+    (let ((operation (mir-lir-container-call instruction)))
+      (when operation
+        (mir-lir-save result (mir-lir-container-value operation data args) 1)
+        (return-from mir-lir-instruction)))
     (when (mir-lir-fixnum-call-p instruction)
       (mir-lir-save result (mir-lir-fixnum-call instruction args) 1)
       (return-from mir-lir-instruction))
