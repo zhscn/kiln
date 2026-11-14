@@ -1,6 +1,6 @@
 (in-package #:kiln.compiler)
 
-(defstruct mir-storage-analysis points fields (escaped 0) (stack 0) (rest 0) (cyclic 0))
+(defstruct mir-storage-analysis points fields (escaped 0) (stack 0) (rest 0) (closures 0) (cells 0) (cyclic 0))
 
 (defun mir-cons-allocation-p (instruction)
   (and (= (mir-instruction-kind instruction) 6) (eq (mir-instruction-data instruction) 'cons)
@@ -12,8 +12,32 @@
        (let ((name (mir-instruction-data instruction)) (count (length (mir-instruction-operands instruction))))
          (or (eq name 'values)
              (and (zerop count) (member name '(kiln.sys:%gc kiln.sys:%gc-count)))
-             (and (= count 1) (member name '(identity car cdr first rest consp listp atom null not)))
+             (and (= count 1) (member name '(identity car cdr first rest consp listp atom null not functionp)))
              (and (= count 2) (member name '(cons rplaca rplacd eq eql)))))))
+
+(defun mir-closure-storage-policy-p (function)
+  (and (< (hir-policy-quality (mir-function-policy function) :debug) 2)
+       (every (lambda (instruction) (< (hir-policy-quality (mir-instruction-policy instruction) :debug) 2))
+              (hir-vector (mir-function-instructions function)))))
+
+(defun mir-closure-use-p (instruction index types)
+  "Allow forwarding and valid non-retaining uses of a function object."
+  (case (mir-instruction-kind instruction)
+    ((9 10 14) t)
+    (11 (mir-check-proven-p instruction types))
+    ((7 15 24) (zerop index))
+    (6 (and (mir-borrow-call-p instruction)
+            (member (mir-instruction-data instruction) '(identity values eq eql consp listp atom null not functionp))))
+    (otherwise nil)))
+
+(defun mir-frame-replacing-p (function)
+  (let ((reachable (mir-reachable-blocks function)))
+    (loop for block across (hir-vector (mir-function-blocks function))
+          thereis (and (logbitp (mir-block-id block) reachable)
+                       (loop for id across (hir-vector (mir-block-instructions block))
+                             for instruction = (mir-at (mir-function-instructions function) id)
+                             thereis (and (= 8 (mir-instruction-kind instruction))
+                                          (member (mir-instruction-data instruction) '(:tail-funcall :tail-funcall-function))))))))
 
 (defun mir-cyclic-blocks (function)
   (mir-analysis function :cyclic
@@ -56,8 +80,8 @@
               until (= before points))
         (setf points (mir-storage-field fields points (eq selector :cdr))))))
 
-(defun mir-compute-storage (function types packets &key borrows identities parameters)
-  "Track cons identities and rest spines whose references stay in this frame."
+(defun mir-compute-storage (function types packets &key borrows identities parameters functions)
+  "Track local cons and closure identities whose references stay in this frame."
   (let* ((instructions (hir-vector (mir-function-instructions function)))
          (blocks (hir-vector (mir-function-blocks function)))
          (points (make-array (hir-buffer-count (mir-function-values function)) :initial-element 0))
@@ -66,7 +90,7 @@
          (definitions (mir-value-definitions function))
          (parameter-mask 0)
          (reachable (mir-reachable-blocks function)) (cyclic (mir-cyclic-blocks function))
-         (sites 0) (rest-sites 0) (escaped 0) (changed t) (replaces-frame nil))
+         (sites 0) (rest-sites 0) (closure-sites 0) (escaped 0) (changed t) (replaces-frame (mir-frame-replacing-p function)))
     (when parameters
       (dotimes (index (mir-function-positional-count function))
         (let ((bit (ash 1 (+ 1 offset index))))
@@ -78,21 +102,21 @@
     (loop for block across blocks when (logbitp (mir-block-id block) reachable) do
       (loop for id across (hir-vector (mir-block-instructions block))
             for instruction = (svref instructions id) do
-        (when (and (= (mir-instruction-kind instruction) 8)
-                   (member (mir-instruction-data instruction) '(:tail-funcall :tail-funcall-function)))
-          (setf replaces-frame t))
-        (when (or (mir-cons-allocation-p instruction) (= (mir-instruction-kind instruction) 17))
+        (when (or (mir-cons-allocation-p instruction) (member (mir-instruction-kind instruction) '(17 23)))
           (let ((bit (ash 1 (1+ id))))
-            ;; Every tail shares this abstract site, not a runtime cons slot.
-            (if (= (mir-instruction-kind instruction) 17)
-                (setf rest-sites (logior rest-sites bit) (svref fields id) (cons 1 bit))
-                (setf (svref fields id) (cons 0 0) sites (logior sites bit))))
+            (case (mir-instruction-kind instruction)
+              (17 (setf rest-sites (logior rest-sites bit) (svref fields id) (cons 1 bit)))
+              (23 (setf closure-sites (logior closure-sites bit)))
+              (otherwise (setf (svref fields id) (cons 0 0) sites (logior sites bit)))))
           (when (or (and (= (mir-instruction-kind instruction) 17) (mir-function-key-p function))
+                    (and (= (mir-instruction-kind instruction) 23)
+                         (or (null functions) (not (mir-closure-storage-policy-p function))
+                             (not (mir-closure-storage-policy-p (svref functions (mir-instruction-data instruction))))))
                     (logbitp (mir-block-id block) cyclic)
                     (mir-instruction-notinline instruction)
                     (not (hir-policy-optimize-p (mir-instruction-policy instruction))))
             (setf escaped (logior escaped (ash 1 (1+ id))))))))
-    (when replaces-frame (setf escaped (logior escaped sites rest-sites)))
+    (when replaces-frame (setf escaped (logior escaped sites rest-sites closure-sites)))
     (labels ((merge-points (id bits)
                (let ((joined (logior (svref points id) bits)))
                  (unless (= joined (svref points id)) (setf (svref points id) joined changed t))))
@@ -130,7 +154,7 @@
                    (1 (if parameters (logior 1 (ash 1 (+ 1 offset name))) 1))
                    (2 1)
                    ((4 5 12 16) 0)
-                   (17 (ash 1 (1+ (mir-instruction-id instruction))))
+                   ((17 23) (ash 1 (1+ (mir-instruction-id instruction))))
                    ((3 9 10 11) (svref points (svref args 0)))
                    (14 (let ((fact (svref packets (svref args 0))))
                          (if (and (mir-values-fact-p fact) (mir-values-fact-count fact)
@@ -184,8 +208,18 @@
                          ((not (or (member kind '(0 1 2 4 5 9 10 12 13 14 16 17))
                                    (mir-cons-allocation-p instruction) (mir-borrow-call-p instruction)
                                    (and (= kind 11) (mir-check-proven-p instruction types))))
-                          (loop for arg across (mir-instruction-operands instruction)
-                                do (setf escaped (logior escaped (svref points arg))))))))
+                          (loop for arg across (mir-instruction-operands instruction) for index from 0
+                                unless (and (= kind 24) (zerop index)) do
+                                  (let ((bits (svref points arg)))
+                                    (when (and (member kind '(7 15)) (zerop index))
+                                      (setf bits (logand bits (lognot closure-sites))))
+                                    (setf escaped (logior escaped bits))))))
+                 ;; Cons-borrow summaries describe valid cons operations, not
+                 ;; arbitrary function arguments or invalid field accesses. An
+                 ;; invalid access can expose its receiver as a type-error datum.
+                 (loop for arg across (mir-instruction-operands instruction) for index from 0
+                       unless (mir-closure-use-p instruction index types)
+                         do (setf escaped (logior escaped (logand closure-sites (svref points arg)))))))
         (let ((term (mir-block-terminator block)))
           (when (= (mir-terminator-kind term) 2)
             (let ((bits (svref points (svref (mir-terminator-operands term) 0))))
@@ -206,19 +240,58 @@
           (setf changed (/= before escaped))))
       (make-mir-storage-analysis :points points :fields fields :escaped escaped
                                  :stack (logand sites (lognot escaped))
-                                 :rest (logand rest-sites (lognot escaped)) :cyclic cyclic))))
+                                 :rest (logand rest-sites (lognot escaped))
+                                 :closures (logand closure-sites (lognot escaped)) :cyclic cyclic))))
+
+(defun mir-select-stack-cells (unit plans aliases)
+  "A cell may live on its owner's stack only if every capturing closure does."
+  (let* ((functions (hir-vector (mir-unit-functions unit))) (escaped 0))
+    (loop for function across functions for id from 0
+          for points = (svref (mir-cell-aliases-points aliases) id)
+          for reachable = (mir-reachable-blocks function) do
+      (loop for block across (hir-vector (mir-function-blocks function))
+            when (logbitp (mir-block-id block) reachable) do
+        (loop for index across (hir-vector (mir-block-instructions block))
+              for instruction = (mir-at (mir-function-instructions function) index)
+              when (= (mir-instruction-kind instruction) 24) do
+          (let* ((args (mir-instruction-operands instruction))
+                 (stored (svref args 1)) (receiver (svref args 0)))
+            (when (eq (mir-value-representation (mir-at (mir-function-values function) stored)) :cell)
+              (let ((definition (svref (mir-value-definitions function) receiver)))
+                (unless (logbitp (1+ (mir-instruction-id definition))
+                                 (mir-storage-analysis-closures (svref plans id)))
+                  (setf escaped (logior escaped (svref points stored))))))))))
+    ;; An unknown captured handle may alias any of the unit's allocation sites.
+    (when (logbitp 0 escaped) (setf escaped (1- (ash 1 (1+ (mir-cell-aliases-count aliases))))))
+    (loop for function across functions for id from 0
+          for reachable = (mir-reachable-blocks function)
+          for cyclic = (mir-cyclic-blocks function)
+          when (and (mir-closure-storage-policy-p function)
+                    (not (mir-frame-replacing-p function))) do
+      (loop for block across (hir-vector (mir-function-blocks function))
+            when (and (logbitp (mir-block-id block) reachable) (not (logbitp (mir-block-id block) cyclic))) do
+        (loop for index across (hir-vector (mir-block-instructions block))
+              for instruction = (mir-at (mir-function-instructions function) index)
+              when (and (= 19 (mir-instruction-kind instruction))
+                        (hir-policy-optimize-p (mir-instruction-policy instruction))
+                        (not (logbitp (1+ (svref (svref (mir-cell-aliases-sites aliases) id) index)) escaped)))
+                do (setf (mir-storage-analysis-cells (svref plans id))
+                         (logior (mir-storage-analysis-cells (svref plans id)) (ash 1 (1+ index)))))))
+    plans))
 
 (defun mir-infer-storage (unit)
   (mir-unit-analysis unit :storage
     (lambda (unit)
-      (let ((calls (mir-infer-calls unit)) (borrows (mir-infer-borrows unit)))
-        (map 'simple-vector
-             (lambda (function)
-               (let ((id (mir-function-id function)))
-                 (mir-compute-storage function (svref (mir-call-analysis-types calls) id)
-                                      (svref (mir-call-analysis-packets calls) id)
-                                      :borrows borrows :identities (svref (mir-call-analysis-identities calls) id))))
-             (hir-vector (mir-unit-functions unit)))))))
+      (let* ((calls (mir-infer-calls unit)) (borrows (mir-infer-borrows unit))
+             (functions (hir-vector (mir-unit-functions unit)))
+             (plans (map 'simple-vector
+                         (lambda (function)
+                           (let ((id (mir-function-id function)))
+                             (mir-compute-storage function (svref (mir-call-analysis-types calls) id)
+                                                  (svref (mir-call-analysis-packets calls) id)
+                                                  :borrows borrows :identities (svref (mir-call-analysis-identities calls) id)
+                                                  :functions functions))) functions)))
+        (mir-select-stack-cells unit plans (mir-call-analysis-cell-aliases calls))))))
 
 (defconstant +mir-borrow-path-depth+ 4)
 
