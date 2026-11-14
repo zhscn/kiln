@@ -72,7 +72,7 @@
     size))
 
 (defun hir-copy-specialization (fun caller call)
-  (let ((copy (make-hir-fun :name (hir-fun-name fun) :source (hir-fun-source fun)
+  (let ((copy (make-hir-fun :name (hir-fun-name fun) :source (hir-fun-source fun) :origin (hir-fun-origin fun)
                            :parent caller :caller caller :call-site call :calls 1
                            :policy (hir-fun-policy fun)))
         (variables (make-hash-table :test #'eq)))

@@ -61,7 +61,6 @@
                (setf (gethash name *referenced-variables*) t)
                (warn 'undefined-variable-warning :name name))
              (cond ((typep description 'trucler:constant-variable-description)
-                    (note-dependency :constant name)
                     (hir-node 0 *hir-source* (trucler:value description)))
                    ((typep description 'trucler:symbol-macro-description)
                     (hir-convert (invoke-macro-expander :symbol-macro
@@ -106,6 +105,7 @@
 (defun hir-convert (input environment)
   (let* ((*hir-conversion-depth* (1+ *hir-conversion-depth*))
          (*environment* environment)
+         (*source-origin* (form-source-origin (hir-raw input)))
          (*hir-source* (hir-input-source input))
          (form (hir-raw input)))
     (when (> *hir-conversion-depth* 10000) (hir-error "Excessive form or macro expansion nesting"))

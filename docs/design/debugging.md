@@ -219,7 +219,7 @@ key 和 value 的 cons。未绑定槽和无法读取的 NIL 元素类型数组�
 源码 `load` 与 `eval` 使用相同的记录格式。
 
 每条记录包含 `:dspec`、`:name`、`:form`、`:package`、`:file`、`:source`、
-`:parent`、`:calls`、`:keys` 和 `:outputs`。dspec 采用 `(定义种类 主名字 . 限定)`，
+`:parent`、`:origin`、`:calls`、`:keys` 和 `:outputs`。dspec 采用 `(定义种类 主名字 . 限定)`，
 以 `equal` 比较；方法还包含限定符和特化列表。`defparameter` 与 `defvar` 共用
 `defvar` 种类。源码范围是 CST 给出的 `(起始偏移 . 结束偏移)`；宏新建的定义
 继承外层调用范围。`:calls` 保存前端识别出的全局调用，词法函数不混入全局调用关系。

@@ -1,6 +1,7 @@
 (in-package #:kiln.compiler)
 
 (defvar *source-file*)
+(defvar *source-origin* nil)
 
 ;;;; Tree edges live in node operands; references to variables, functions,
 ;;;; and exits are definition edges and are never traversed as children.
@@ -21,7 +22,7 @@
     (and (plusp speed) (>= speed (hir-policy-quality policy :compilation-speed)))))
 
 (defstruct (hir-node (:constructor hir-node (kind source &optional a b c d)))
-  (kind 0) (source nil) (a nil) (b nil) (c nil) (d nil) (type t) (mark 0) (policy *hir-policy*))
+  (kind 0) (source nil) (a nil) (b nil) (c nil) (d nil) (type t) (mark 0) (policy *hir-policy*) (origin *source-origin*))
 
 (defstruct (hir-buffer (:constructor make-hir-buffer (&optional (data (make-array 8)))))
   (data nil) (count 0))
@@ -52,7 +53,7 @@
   (name nil) (parent nil) (lambda-list nil) (body nil) (parameter-specials nil)
   (free #()) (exits (make-hir-buffer)) (vars (make-hir-buffer)) (binding-count 0)
   (flags 8) (calls 0) (value-refs 0) (caller nil) (call-site nil) (policy *hir-policy*)
-  (source nil) (binding nil)
+  (source nil) (origin *source-origin*) (binding nil)
   (input-types nil) (result-type t)
   (load-time-values (make-hir-buffer)))
 

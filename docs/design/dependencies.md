@@ -18,7 +18,7 @@
 
 | 键 | 记录的时机 | 失效的时机 |
 |---|---|---|
-| `(:macro m)` | 展开了全局宏 `m`；或者编译时 `m` 还没有定义（以后的 `defmacro` 会改变这个形式的含义） | `(setf macro-function)`，即每次 `defmacro` |
+| `(:macro m)` | 查询了全局名字 `m` 的函数种类，包括普通函数、宏及不存在的名字（后续 `defmacro` 会改变形式的含义） | `(setf macro-function)`，即每次 `defmacro` |
 | `(:compiler-macro f)` | 查询了可用于调用点的编译器宏，包括缺失及拒绝展开的定义 | `(setf compiler-macro-function)`，包括删除 |
 | `(:inline f)` | 内联展开了 `f` | `f` 有了新的内联展开，或者被声明为 `notinline` |
 | `(:setf f)` | 编译了位置 `(f ...)` 的 `setf` | `defsetf`、`define-setf-expander` |
@@ -31,7 +31,8 @@
 
 后五行（`(:class c)` 等）是 [specialization.md](specialization.md) 的假设：每次 `change-assumption` 都把键交给同一个重定义钩子，所以它们和宏、内联函数一样能成为在 image 里编译的定义的依赖。类型展开已经记录 `(:type name)`；其他键由相应的调用点特化、生成的判别函数等记录，但报告和 `kiln.sys:dependents` 已经认识它们。
 
-在哪里记录：
+环境查询通过 `with-environment-query` 记录结果，准备钩子先处理可能过时的定义，
+查询返回后才把使用的事实记入请求。查询失败不会留下一个成功使用的事实。主要入口：
 - 前端查询全局环境时（`lisp/target/compiler/client.lisp` 的 `run-time-environment`）：HIR 转换展开宏、宏用 `&environment` 调用 `macro-function`，都会经过这里。查到宏、查不到定义、查到常量时记下依赖。
 - `front.lisp`：内联展开时（`convert-maybe-inline`）。检查内联函数体里的名字是否被局部遮蔽，这些查询不算依赖。
 - image-client 的 `get-setf-expansion`。

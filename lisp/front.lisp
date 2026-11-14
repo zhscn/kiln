@@ -101,8 +101,7 @@ time only.")
   (when *dependency-query-hook*
     (funcall *dependency-query-hook* (list kind name))))
 
-(defun note-dependency (kind name)
-  (prepare-dependency kind name)
+(defun record-dependency (kind name)
   (let ((cell *dependencies*))
     (when (and cell
                (let ((symbol (if (consp name) (second name) name)))
@@ -112,6 +111,10 @@ time only.")
       (let ((key (list kind name)))
         (unless (member key (cdr cell) :test #'equal)
           (push key (cdr cell)))))))
+
+(defun note-dependency (kind name)
+  (prepare-dependency kind name)
+  (record-dependency kind name))
 
 (defgeneric compiles-into-image-p (client)
   (:documentation "True if CLIENT compiles code for the running image, whose
@@ -427,7 +430,6 @@ true; else NIL and NIL."
       (when (or (null description)
                 (and (typep description '(or trucler:global-function-description trucler:global-macro-description))
                      (not (eq (ignore-errors (trucler:inline description)) 'notinline))))
-        (note-dependency :compiler-macro name)
         (client-compiler-macro client environment name)))))
 
 (defun compiler-macro-expansion (client environment form)
@@ -443,6 +445,12 @@ macro. The second value distinguishes a NIL expansion from declining."
           (error (condition)
             (warn 'compiler-macro-expansion-warning :form form :cause condition)
             (values nil nil)))))))
+
+(defmethod client-type-expander :around ((client client) environment name)
+  (with-environment-query (expander :type name) (call-next-method)))
+
+(defmethod client-compiler-macro :around ((client client) environment name)
+  (with-environment-query (expander :compiler-macro name) (call-next-method)))
 
 ;;; Reading
 
@@ -593,7 +601,7 @@ the second value."
 (defun source-definition-record (form keys calls parent source)
   (list :dspec (definition-specifier form) :name (definition-name form)
         :form form :package (target-package-name *package*) :file *source-file*
-        :source source :parent parent :keys keys :calls calls
+        :source source :origin *source-origin* :parent parent :keys keys :calls calls
         :outputs (case (first form)
                    (defmacro (list (list :macro (second form))))
                    (define-compiler-macro (list (list :compiler-macro (second form))))
@@ -625,30 +633,31 @@ Trucler ENVIRONMENT, for CLIENT. Cross and image clients use the HIR evaluator."
 
 (defun invoke-macro-expander (kind expander form environment)
   (note-expander-function-dependencies kind form)
-  (flet ((expand ()
-           (let ((*source-definition-calls* nil))
-             (if (eq kind :compiler-macro)
-                 (funcall expander form environment)
-                 (funcall *macroexpand-hook* expander form environment)))))
-    (if (null kiln.sys:*macroexpansion-hook*)
-        (expand)
-        (let* ((id (incf *macroexpansion-sequence*))
-               (parent *macroexpansion-parent*)
-               (depth *macroexpansion-depth*)
-               (source (or (and (boundp '*hir-source*) (hir-source-range *hir-source*))
-                           (and (boundp '*macro-source*) *macro-source*))))
-          (labels ((event (phase &rest data)
-                     (funcall kiln.sys:*macroexpansion-hook*
-                              (append (list :phase phase :id id :parent parent :depth depth
-                                            :kind kind :input form :file *source-file*
-                                            :source source) data))))
-            (event :enter)
-            (let ((*macroexpansion-parent* id)
-                  (*macroexpansion-depth* (1+ depth)))
-              (handler-bind ((error (lambda (condition) (event :error :condition condition))))
-                (let ((output (expand)))
-                  (event :exit :output output :declined (eq output form))
-                  output))))))))
+  (let* ((source (or (and (boundp '*hir-source*) (hir-source-range *hir-source*))
+                     (and (boundp '*macro-source*) *macro-source*)))
+         (origin (source-origin kind (if (consp form) (car form) form) source))
+         (*source-origin* origin))
+    (flet ((expand ()
+             (let* ((*source-definition-calls* nil)
+                    (output (if (eq kind :compiler-macro) (funcall expander form environment)
+                                (funcall *macroexpand-hook* expander form environment))))
+               (note-expansion-origin form output kind origin)
+               output)))
+      (if (null kiln.sys:*macroexpansion-hook*)
+          (expand)
+          (let* ((id (incf *macroexpansion-sequence*)) (parent *macroexpansion-parent*)
+                 (depth *macroexpansion-depth*))
+            (labels ((event (phase &rest data)
+                       (funcall kiln.sys:*macroexpansion-hook*
+                                (append (list :phase phase :id id :parent parent :depth depth
+                                              :kind kind :input form :file *source-file*
+                                              :source source :origin origin) data))))
+              (event :enter)
+              (let ((*macroexpansion-parent* id) (*macroexpansion-depth* (1+ depth)))
+                (handler-bind ((error (lambda (condition) (event :error :condition condition))))
+                  (let ((output (expand)))
+                    (event :exit :output output :declined (eq output form))
+                    output)))))))))
 
 (defun kiln.sys:collect-macroexpansions (function)
   "Return the expansion events and all values produced by FUNCTION."
@@ -792,6 +801,7 @@ module).")
 (defun process-toplevel (cst compile-time-too)
   (when (consp (hir-raw cst)) (hir-parts cst))
   (let* ((form (hir-raw cst))
+         (*source-origin* (form-source-origin form))
          (dspec (definition-specifier form)))
     (if (and *source-definition-records* dspec)
         (let ((outer-dependencies *dependencies*)
@@ -987,6 +997,8 @@ created."
   ;; top-level form. COMPILE-MODULE names those in constants by their
   ;; order in the module (MODULE-SYMBOL-NAME).
   (let ((*gensym-counter* 0)
+        (*source-origin* (source-origin :form (and (consp (hir-raw cst)) (car (hir-raw cst)))
+                                       (cst-source-range (or *eval-source-cst* cst))))
         (*toplevel-source* (cst-source-range (or *eval-source-cst* cst)))
         (*macro-source* (cst-source-range (or *eval-source-cst* cst)))
         (*definition-name* *eval-definition*)

@@ -445,7 +445,7 @@ region; code inside it runs with the region pushed on *REGIONS*."
 of its file, its source range (START . END), the definition it belongs
 to, (NAME . FUNCTION-P) as DEFINITION-NAME returns them, or NIL, and the
 outermost form as written (before macro expansion)."
-  ast file source definition form (symbols nil))
+  ast file source definition form (origin *source-origin*) (symbols nil))
 
 (defun toplevel-symbols (toplevel)
   "The symbols that occur in TOPLEVEL's form, a hash table."

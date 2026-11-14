@@ -33,7 +33,7 @@
          (position (hir-buffer-count (mir-block-instructions *mir-block*)))
          (result (and representation (mir-add-value *mir-function* representation (mir-block-id *mir-block*) position))))
     (hir-push (make-mir-instruction :id id :kind kind :operands operands :result result :data data
-                                   :source *mir-source* :policy *mir-policy*
+                                   :source *mir-source* :origin *source-origin* :policy *mir-policy*
                                    :effects (svref *mir-instruction-effects* kind))
               (mir-function-instructions *mir-function*))
     (hir-push id (mir-block-instructions *mir-block*))
@@ -46,7 +46,7 @@
 
 (defun mir-terminate (kind &optional (operands #()) (edges #()))
   (setf (mir-block-terminator *mir-block*)
-        (make-mir-terminator :kind kind :operands operands :edges edges :source *mir-source* :policy *mir-policy*)
+        (make-mir-terminator :kind kind :operands operands :edges edges :source *mir-source* :origin *source-origin* :policy *mir-policy*)
         *mir-block* nil))
 
 (defun mir-jump (id &optional (result nil resultp))
@@ -148,7 +148,8 @@
 
 (defun mir-build-node (node)
   (unless *mir-block* (return-from mir-build-node nil))
-  (let ((*mir-source* (hir-node-source node)) (*mir-policy* (hir-node-policy node)))
+  (let ((*mir-source* (hir-node-source node)) (*mir-policy* (hir-node-policy node))
+        (*source-origin* (hir-node-origin node)))
     (case (hir-node-kind node)
       (0 (mir-single (mir-instruction 0 :obj #() (hir-node-a node))))
       (1 (let ((value (svref *mir-environment* (mir-binding-index (hir-node-a node)))))
@@ -198,7 +199,7 @@
                                            :bindings (map 'simple-vector #'hir-var-name bindings)))
          (*mir-bindings* (make-hash-table :test 'eq))
          (*mir-exits* nil) (*mir-block* nil) (*mir-environment* nil)
-         (*mir-policy* (hir-fun-policy hir)) (*mir-source* (hir-fun-source hir)))
+         (*mir-policy* (hir-fun-policy hir)) (*mir-source* (hir-fun-source hir)) (*source-origin* (hir-fun-origin hir)))
     (when (or (plusp (length (hir-fun-free hir))) (hir-fun-parameter-specials hir)
               (plusp (length (hir-lambda-list-optional ll))) (hir-lambda-list-rest ll)
               (hir-lambda-list-key-p ll) (plusp (hir-buffer-count (hir-fun-load-time-values hir))))

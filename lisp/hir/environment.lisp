@@ -64,7 +64,6 @@ Each named alias queried is a dependency, including currently undefined names."
                                     (not (eq (symbol-package name) (find-package '#:common-lisp)))))
                         (expander (and named
                                        (client-type-expander *client* environment name))))
-                   (when named (note-dependency :type name))
                    (cond (expander
                           (walk (funcall expander specifier environment) (cons specifier path)))
                          ((and (consp specifier) (member name '(and or not cons))

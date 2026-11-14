@@ -16,9 +16,9 @@
   (revision 0) (analyses (make-hash-table :test 'eq)))
 (defstruct mir-block (id 0) (parameters #()) (instructions (make-hir-buffer)) terminator)
 (defstruct mir-value (id 0) (representation :obj) (block 0) (position -1))
-(defstruct mir-instruction (id 0) (kind 0) (operands #()) result data source (policy 1023) (effects 0))
+(defstruct mir-instruction (id 0) (kind 0) (operands #()) result data source origin (policy 1023) (effects 0))
 (defstruct mir-edge (target 0) (arguments #()))
-(defstruct mir-terminator (kind 0) (operands #()) (edges #()) source (policy 1023))
+(defstruct mir-terminator (kind 0) (operands #()) (edges #()) source origin (policy 1023))
 
 ;;; Instruction kinds: constant, argument, global-read, global-write,
 ;;; global-function, function, global-call, call, primop, single, primary,

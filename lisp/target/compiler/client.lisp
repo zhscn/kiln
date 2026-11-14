@@ -65,18 +65,14 @@
 ;;; DEFMACRO may define.
 (defmethod trucler:describe-variable (client (environment run-time-environment) name)
   (declare (ignore client))
-  (let ((description (trucler:describe-variable kiln.eval::*global-client* nil name)))
-    (when (typep description 'trucler:constant-variable-description)
-      (note-dependency :constant name))
-    description))
+  (with-environment-query (description :constant name
+                          :record-if (typep description 'trucler:constant-variable-description))
+    (trucler:describe-variable kiln.eval::*global-client* nil name)))
 
 (defmethod trucler:describe-function (client (environment run-time-environment) name)
   (declare (ignore client))
-  (prepare-dependency :macro name)
-  (let ((description (trucler:describe-function kiln.eval::*global-client* nil name)))
-    (when (or (null description) (typep description 'trucler:global-macro-description))
-      (note-dependency :macro name))
-    description))
+  (with-environment-query (description :macro name :record-if (global-function-query-p description))
+    (trucler:describe-function kiln.eval::*global-client* nil name)))
 
 (defmethod trucler:describe-block (client (environment run-time-environment) name)
   (declare (ignore client name))

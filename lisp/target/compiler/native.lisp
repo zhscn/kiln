@@ -64,9 +64,11 @@ running image, in the null lexical environment."
 ;;; macro forms after their expansion; any other form is compiled as the
 ;;; body of a function of no arguments, which is called.
 (defun native-eval (form)
-  (call-with-compilation-request
-   :eval nil (lambda (request) (declare (ignore request)) (native-eval-request form))
-   :dependencies :fresh :calls :inherit :outputs :inherit :fingerprint :inherit :observers :inherit))
+  (let ((*source-origin* (source-origin :form (and (consp form) (first form))
+                                       (cst-source-range *eval-source-cst*))))
+    (call-with-compilation-request
+     :eval nil (lambda (request) (declare (ignore request)) (native-eval-request form))
+     :dependencies :fresh :calls :inherit :outputs :inherit :fingerprint :inherit :observers :inherit)))
 
 (defun native-eval-request (form)
   (let ((outermost (not *evaluating*)))
@@ -80,6 +82,7 @@ running image, in the null lexical environment."
         (update-dependents)))))
 
 (defun native-eval-1 (form)
+  (let ((*source-origin* (form-source-origin form)))
   (loop
     (case (toplevel-form-kind form)
       (:symbol
@@ -105,7 +108,8 @@ running image, in the null lexical environment."
                                     (let ((form form))
                                       (lambda () (native-eval-1 (macroexpand-1 form)))))))))
        (note-dependency :macro (first form))
-       (setf form (macroexpand-1 form))))))
+       (setf form (macroexpand-1 form)
+             *source-origin* (form-source-origin form)))))))
 
 (defvar *eval-values*)
 

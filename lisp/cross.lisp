@@ -440,10 +440,15 @@ at compile time (USE-HOST-MACROS).")
        (constantp name)))
 
 (defmethod trucler:describe-variable :around ((client cross-client) environment name)
-  (or (call-next-method)
-      (and (host-constant-p name)
-           (make-instance 'trucler:constant-variable-description
-             :name name :value (symbol-value name)))))
+  (with-environment-query (description :constant name
+                          :record-if (typep description 'trucler:constant-variable-description) :prepare nil)
+    (or (call-next-method)
+        (and (host-constant-p name)
+             (make-instance 'trucler:constant-variable-description :name name :value (symbol-value name))))))
+
+(defmethod trucler:describe-function :around ((client cross-client) environment name)
+  (with-environment-query (description :macro name :record-if (global-function-query-p description) :prepare nil)
+    (call-next-method)))
 
 (defvar *host-compiler-macros* (make-hash-table :test 'eq)
   "Function names -> the host's compiler macros, wrapped (USE-HOST-MACROS).")

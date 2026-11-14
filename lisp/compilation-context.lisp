@@ -12,6 +12,7 @@
 (defstruct compilation-request
   purpose session parent (children nil) source-origin (pipeline :hir)
   dependencies calls outputs fingerprint observer definition-parent
+  (expansion-origins (make-hash-table :test 'eq))
   (records (list :records)) (diagnostics nil) (results nil) (state :running))
 
 (defun request-collector (mode inherited marker)
@@ -56,3 +57,25 @@ Collector inheritance is explicit; source ancestry remains available to diagnost
             (nreverse (compilation-request-children request)))
       (unless (eq (compilation-request-state request) :complete)
         (setf (compilation-request-state request) :failed)))))
+
+(defun source-origin (kind &optional operator source)
+  (list :kind kind :operator operator :file *source-file* :source source :parent *source-origin*))
+
+(defun form-source-origin (form)
+  (loop for request = *compilation-request* then (compilation-request-parent request)
+        while request
+        for origin = (gethash form (compilation-request-expansion-origins request))
+        when origin return origin
+        finally (return *source-origin*)))
+
+(defun note-expansion-origin (input output kind &optional origin)
+  (let ((origin (or origin (source-origin kind (if (consp input) (car input) input)
+                                         (or (and (boundp '*hir-source*) (hir-source-range *hir-source*))
+                                             (and (boundp '*macro-source*) *macro-source*))))))
+    (when (and *compilation-request* (consp output) (not (eq input output)))
+      (let* ((table (compilation-request-expansion-origins *compilation-request*))
+             (existing (gethash output table)))
+        (unless (loop for parent = existing then (getf parent :parent)
+                      while parent thereis (eq parent origin))
+          (setf (gethash output table) origin))))
+    origin))
