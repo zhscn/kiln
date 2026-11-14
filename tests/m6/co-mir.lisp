@@ -1178,3 +1178,26 @@
                         (declare (notinline read))
                         (list (read) (read nil) (multiple-value-call #'read (values)))))))))
   (print (equal (funcall function) '((1 1 nil) (1 nil t) (2 2 nil)))))
+
+(let ((function (mir-test-compile
+                 '(lambda ()
+                    (declare (optimize (debug 0)))
+                    (let ((effects 0))
+                      (values
+                       (if (consp (progn (setq effects (1+ effects))
+                                         (kiln.sys:%gc) (cons 7 nil)))
+                           11
+                           (progn (setq effects 100) 22))
+                       effects))))))
+  (print (equal (multiple-value-list (funcall function)) '(11 1))))
+(let ((function (mir-test-compile
+                 '(lambda (x)
+                    (declare (optimize (debug 0)))
+                    (if (the fixnum x) 11 22)))))
+  (print (and (= 11 (funcall function 0))
+              (handler-case (progn (funcall function nil) nil) (type-error () t)))))
+(let ((function (mir-test-compile
+                 '(lambda (x)
+                    (declare (optimize (debug 0)) (type symbol x))
+                    (if x 11 22)))))
+  (print (and (= 22 (funcall function nil)) (= 11 (funcall function t)))))

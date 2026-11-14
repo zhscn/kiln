@@ -42,14 +42,45 @@
              (setf (mir-block-instructions block) rebuilt)))
   function)
 
+(defun mir-type-branch-folds (function unit)
+  "Select successors only when the test's MIR type proves its truth value."
+  (let ((types (mir-infer-types function unit))
+        (definitions (mir-value-definitions function))
+        (reachable (mir-reachable-blocks function)) (folds nil))
+    (loop for block across (hir-vector (mir-function-blocks function))
+          for term = (mir-block-terminator block)
+          when (and (logbitp (mir-block-id block) reachable)
+                    (= (mir-terminator-kind term) 1)
+                    (hir-policy-optimize-p (mir-terminator-policy term)))
+            do (let* ((test (svref (mir-terminator-operands term) 0))
+                      (definition (svref definitions (mir-primary-origin test definitions))))
+                 (multiple-value-bind (null-p known)
+                     (if (and definition (= (mir-instruction-kind definition) 0))
+                         (values (null (mir-instruction-data definition)) t)
+                         (hir-type-predicate 'null (svref types test)))
+                   (when known (push (cons (mir-block-id block) (if null-p 1 0)) folds)))))
+    folds))
+
+(defun mir-replace-type-branches (function folds)
+  (dolist (fold folds)
+    (let ((term (mir-block-terminator (mir-at (mir-function-blocks function) (car fold)))))
+      (setf (mir-terminator-edges term) (vector (svref (mir-terminator-edges term) (cdr fold)))
+            (mir-terminator-operands term) #()
+            (mir-terminator-kind term) 0)))
+  function)
+
 (defun mir-fold-type-predicates (unit)
-  ;; A callee's folded result can prove a caller predicate. Recompute unit
-  ;; summaries after each revision and stop once no predicate call changes.
+  ;; Predicates and selected edges can refine callee summaries and caller
+  ;; facts. Recompute after each revision until neither kind of rewrite applies.
   (loop with changed = t while changed
         do (setf changed nil)
            (loop for function across (hir-vector (mir-unit-functions unit))
                  for folds = (mir-type-predicate-folds function unit)
-                 when folds do (mir-run-pass unit function
-                                 (lambda (function) (mir-replace-type-predicates function folds)))
-                               (setf changed t)))
+                 for branches = (mir-type-branch-folds function unit)
+                 when (or folds branches)
+                   do (mir-run-pass unit function
+                        (lambda (function)
+                          (when folds (mir-replace-type-predicates function folds))
+                          (when branches (mir-replace-type-branches function branches))))
+                      (setf changed t)))
   unit)
