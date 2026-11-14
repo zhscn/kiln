@@ -1337,3 +1337,77 @@
   (assert (= 1 (mir-function-internal-prefix function)))
   (assert (= 1 (mir-function-argument-cells function))))
 (format t "MIR optional default assignments retain shared cell identity.~%")
+
+(dolist (mode '(:required :keys :captures :foreign))
+  (let* ((unit (if (eq mode :captures)
+                   (mir-test-predicate-unit '(let ((x 1)) (flet ((f () x)) (f))))
+                   (mir-test-unit (if (eq mode :keys) '(lambda (&key x) x) '(lambda (x) x)))))
+         (target (mir-at (mir-unit-functions unit) 1))
+         (owner (if (eq mode :foreign) (mir-at (mir-unit-functions unit) 0) target)))
+    (assert
+     (handler-case
+         (progn
+           (mir-run-pass unit owner
+             (lambda (function)
+               (declare (ignore function))
+               (ecase mode
+                 ((:required :foreign)
+                  (incf (mir-function-required target))
+                  (loop for instruction across (hir-vector (mir-function-instructions target))
+                        when (= (mir-instruction-kind instruction) 13)
+                          do (setf (mir-instruction-data instruction)
+                                   (cons (mir-function-required target) (mir-function-maximum target)))))
+                 (:keys (setf (svref (mir-function-keys target) 0) 'changed-key))
+                 (:captures (setf (svref (mir-function-captures target) 0) 'changed-capture)))))
+           nil)
+       (mir-error () t)))))
+(let* ((unit (mir-test-predicate-unit '(let ((x 1)) (flet ((f () x)) (setq x 2) (f)))))
+       (owner (mir-at (mir-unit-functions unit) 0)))
+  (mir-lift-local-functions unit)
+  (assert
+   (handler-case
+       (progn
+         (mir-run-pass unit owner
+           (lambda (function)
+             (let* ((call (find 7 (hir-vector (mir-function-instructions function)) :key #'mir-instruction-kind))
+                    (callee (svref (mir-instruction-operands call) 0)))
+               (setf (mir-instruction-kind call) 9 (mir-instruction-operands call) (vector callee)
+                     (mir-instruction-data call) nil))))
+         nil)
+     (mir-error () t))))
+(dolist (mode '(:mask :prefix :capture-vector))
+  (let* ((unit (mir-test-predicate-unit '(let ((x 1)) (flet ((f () x)) (setq x 2) (f)))))
+         (target (mir-at (mir-unit-functions unit) 1)))
+    (mir-lift-local-functions unit)
+    (ecase mode
+      (:mask (setf (mir-function-argument-cells target) :bad))
+      (:prefix (setf (mir-function-internal-prefix target) :bad))
+      (:capture-vector (setf (mir-function-captures target) 42)))
+    (assert (handler-case (progn (verify-mir unit) nil) (mir-error () t)))))
+(let* ((unit (mir-test-unit '(lambda (x) x)))
+       (target (mir-at (mir-unit-functions unit) 1)))
+  (mir-run-unit-pass unit
+    (lambda (unit)
+      (declare (ignore unit))
+      (incf (mir-function-required target))
+      (loop for instruction across (hir-vector (mir-function-instructions target))
+            when (= (mir-instruction-kind instruction) 13)
+              do (setf (mir-instruction-data instruction)
+                       (cons (mir-function-required target) (mir-function-maximum target)))))))
+(format t "MIR pass boundaries reject entry changes, private escapes and malformed callee layouts.~%")
+(dolist (mode '(:append :replace))
+  (let* ((unit (mir-test-unit '(lambda (x) x)))
+         (owner (mir-at (mir-unit-functions unit) 0))
+         (target (mir-at (mir-unit-functions unit) 1)))
+    (assert
+     (handler-case
+         (progn
+           (mir-run-pass unit owner
+             (lambda (function)
+               (declare (ignore function))
+               (let ((copy (copy-mir-function target)))
+                 (ecase mode
+                   (:append (setf (mir-function-id copy) 2) (hir-push copy (mir-unit-functions unit)))
+                   (:replace (setf (svref (hir-buffer-data (mir-unit-functions unit)) 1) copy))))))
+           nil)
+       (mir-error () t)))))
