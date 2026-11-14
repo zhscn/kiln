@@ -79,8 +79,8 @@
                                       :raw :obj))) copies)))
     (dolist (copy (nreverse copies)) (emit `(:set ,(car copy) ,(cdr copy))))))
 
-(defun mir-lir-function-body (function)
-  (let* ((*mir-lir-types* (mir-infer-types function))
+(defun mir-lir-function-body (function &optional unit)
+  (let* ((*mir-lir-types* (mir-infer-types function unit))
          (*mir-lir-values*
            (map 'simple-vector
                 (lambda (value)
@@ -130,7 +130,7 @@
                    (*function-name* (local-function-debug-name (or (mir-function-name function) 'lambda))))
                (with-function ((svref *mir-lir-labels* id))
                  (let ((*self* (copy-to-var :self)))
-                   (mir-lir-function-body function))
+                   (mir-lir-function-body function unit))
                  (set-function-debug *function-name* (hir-source-range (mir-function-source function))))))
     (loop for label across *mir-lir-labels*
           do (module-data (kiln.kir::kir-name label "_fobj") `(:static-function ,label)))

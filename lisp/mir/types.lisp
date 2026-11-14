@@ -56,7 +56,7 @@
                (t type))))
       (t type))))
 
-(defun mir-compute-types (function)
+(defun mir-compute-types (function &key summaries functions (finalize t))
   "Infer primary-value types. :UNSEEN is solver bottom; T is unknown."
   (let* ((types (make-array (hir-buffer-count (mir-function-values function))
                             :initial-element :unseen))
@@ -95,6 +95,10 @@
                               (if (find :unseen inputs) :unseen
                                   (inferred-call-type name inputs)))
                             t)))
+                   (7 (let ((target (and functions (svref functions (svref args 0)))))
+                        (cond ((eq target :unseen) :unseen)
+                              ((and summaries (integerp target)) (svref summaries target))
+                              (t t))))
                    (otherwise t)))))
       (loop while changed do
         (setf changed nil)
@@ -113,13 +117,16 @@
                            (mir-edge-type (mir-block-terminator block) (zerop index)
                                           argument input definitions types))))))))
     ;; Unreachable definitions and cyclic facts with no seed prove nothing.
-    (dotimes (id (length types))
-      (when (eq (svref types id) :unseen) (setf (svref types id) t)))
+    (when finalize
+      (dotimes (id (length types))
+        (when (eq (svref types id) :unseen) (setf (svref types id) t))))
     types))
 
-(defun mir-infer-types (function)
-  "Return revision-cached types indexed by SSA value ID."
-  (mir-analysis function :types #'mir-compute-types))
+(defun mir-infer-types (function &optional unit)
+  "Return SSA types, using local call summaries when UNIT is supplied."
+  (if unit
+      (svref (mir-call-analysis-types (mir-infer-calls unit)) (mir-function-id function))
+      (mir-analysis function :types #'mir-compute-types)))
 
 (defun mir-check-proven-p (instruction types)
   (and (= (mir-instruction-kind instruction) 11)

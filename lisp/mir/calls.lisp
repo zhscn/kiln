@@ -1,0 +1,122 @@
+(in-package #:kiln.compiler)
+
+(defstruct mir-call-analysis identities outgoing components summaries types)
+
+(defun mir-function-identity-join (old new)
+  (cond ((eq old :unseen) new) ((eq new :unseen) old)
+        ((eql old new) old) (t :unknown)))
+
+(defun mir-compute-function-identities (function)
+  "Track one local function ID, or :UNKNOWN, through primary values."
+  (let* ((identities (make-array (hir-buffer-count (mir-function-values function))
+                                 :initial-element :unseen))
+         (blocks (hir-vector (mir-function-blocks function)))
+         (reachable (mir-control-flow function)) (changed t))
+    (labels ((merge-identity (id identity)
+               (let ((joined (mir-function-identity-join (svref identities id) identity)))
+                 (unless (eql joined (svref identities id))
+                   (setf (svref identities id) joined changed t))))
+             (transfer (instruction)
+               (let ((args (mir-instruction-operands instruction)))
+                 (case (mir-instruction-kind instruction)
+                   (5 (mir-instruction-data instruction))
+                   ((3 9 10 11) (svref identities (svref args 0)))
+                   (6 (if (and (member (mir-instruction-data instruction) '(identity values))
+                               (plusp (length args)))
+                          (svref identities (svref args 0)) :unknown))
+                   (otherwise :unknown)))))
+      (loop while changed do
+        (setf changed nil)
+        (loop for block across blocks when (logbitp (mir-block-id block) reachable) do
+          (loop for id across (hir-vector (mir-block-instructions block))
+                for instruction = (mir-at (mir-function-instructions function) id)
+                for result = (mir-instruction-result instruction)
+                when result do (merge-identity result (transfer instruction)))
+          (loop for edge across (mir-terminator-edges (mir-block-terminator block)) do
+            (loop for parameter across (mir-block-parameters (svref blocks (mir-edge-target edge)))
+                  for argument across (mir-edge-arguments edge)
+                  do (merge-identity parameter (svref identities argument)))))))
+    (dotimes (id (length identities))
+      (when (eq (svref identities id) :unseen) (setf (svref identities id) :unknown)))
+    identities))
+
+(defun mir-function-identities (function)
+  (mir-analysis function :functions #'mir-compute-function-identities))
+
+(defun mir-call-components (outgoing)
+  "Return all call SCCs in callee-before-caller order."
+  (let* ((count (length outgoing)) (indices (make-array count :initial-element -1))
+         (low (make-array count :initial-element 0)) (active (make-array count :initial-element nil))
+         (stack nil) (next 0) (components nil))
+    (labels ((visit (id)
+               (setf (svref indices id) next (svref low id) next (svref active id) t)
+               (incf next) (push id stack)
+               (dolist (callee (svref outgoing id))
+                 (cond ((minusp (svref indices callee))
+                        (visit callee) (setf (svref low id) (min (svref low id) (svref low callee))))
+                       ((svref active callee)
+                        (setf (svref low id) (min (svref low id) (svref indices callee))))))
+               (when (= (svref low id) (svref indices id))
+                 (let ((component nil))
+                   (loop for member = (pop stack)
+                         do (setf (svref active member) nil) (push member component)
+                         until (= member id))
+                   (push component components)))))
+      (dotimes (id count) (when (minusp (svref indices id)) (visit id))))
+    (nreverse components)))
+
+(defun mir-return-type (function types)
+  (let ((result :unseen) (reachable (mir-control-flow function)))
+    (loop for block across (hir-vector (mir-function-blocks function))
+          for term = (mir-block-terminator block)
+          when (and (logbitp (mir-block-id block) reachable) (= (mir-terminator-kind term) 2))
+            do (setf result (mir-type-join result (svref types (svref (mir-terminator-operands term) 0)))))
+    result))
+
+(defun mir-compute-calls (unit)
+  (let* ((functions (hir-vector (mir-unit-functions unit))) (count (length functions))
+         (identities (map 'simple-vector #'mir-function-identities functions))
+         (outgoing (make-array count :initial-element nil))
+         (summaries (make-array count :initial-element :unseen))
+         (changes (make-array count :initial-element 0))
+         (types (make-array count)))
+    (loop for function across functions for id from 0
+          for known across identities for reachable = (mir-control-flow function) do
+      (loop for block across (hir-vector (mir-function-blocks function))
+            when (logbitp (mir-block-id block) reachable) do
+        (loop for index across (hir-vector (mir-block-instructions block))
+              for instruction = (mir-at (mir-function-instructions function) index)
+              when (= (mir-instruction-kind instruction) 7) do
+                (let ((target (svref known (svref (mir-instruction-operands instruction) 0))))
+                  (when (integerp target) (pushnew target (svref outgoing id)))))))
+    (let ((components (mir-call-components outgoing)))
+      (labels ((solve (component)
+                 (loop with changed = t while changed do
+                   (setf changed nil)
+                   (dolist (id component)
+                     (let* ((facts (mir-compute-types (svref functions id) :summaries summaries
+                                                     :functions (svref identities id) :finalize nil))
+                            (old (svref summaries id))
+                            (joined (mir-type-join old (mir-return-type (svref functions id) facts))))
+                       (when (and (hir-range-p old) (hir-range-p joined) (not (equal old joined)))
+                         (incf (svref changes id))
+                         (when (>= (svref changes id) 2) (setf joined 'integer)))
+                       (unless (equal old joined) (setf (svref summaries id) joined changed t)))))))
+        (dolist (component components)
+          (solve component)
+          ;; A cycle without a result seed cannot justify a finite return
+          ;; fact. Publish unknown and propagate it before using the SCC.
+          (let ((unresolved nil))
+            (dolist (id component)
+              (when (eq (svref summaries id) :unseen)
+                (setf (svref summaries id) t unresolved t)))
+            (when unresolved (solve component))))
+        (dotimes (id count)
+          (setf (svref types id)
+                (mir-compute-types (svref functions id) :summaries summaries
+                                   :functions (svref identities id))))
+        (make-mir-call-analysis :identities identities :outgoing outgoing :components components
+                                :summaries summaries :types types)))))
+
+(defun mir-infer-calls (unit)
+  (mir-unit-analysis unit :calls #'mir-compute-calls))

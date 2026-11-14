@@ -9,7 +9,7 @@
 (defun mir-fail (control &rest args)
   (error 'mir-error :message (apply #'format nil control args)))
 
-(defstruct mir-unit (functions (make-hir-buffer)))
+(defstruct mir-unit (functions (make-hir-buffer)) (analyses (make-hash-table :test 'eq)))
 (defstruct mir-function
   (id 0) name source (policy 1023) (required 0) (bindings #())
   (blocks (make-hir-buffer)) (instructions (make-hir-buffer)) (values (make-hir-buffer))
@@ -45,6 +45,16 @@
         (let ((result (funcall compute function)))
           (setf (gethash name (mir-function-analyses function))
                 (cons (mir-function-revision function) result))
+          result))))
+
+(defun mir-unit-analysis (unit name compute)
+  "Cache an analysis against every member function and its revision."
+  (let* ((revisions (loop for function across (hir-vector (mir-unit-functions unit))
+                          collect (cons function (mir-function-revision function))))
+         (entry (gethash name (mir-unit-analyses unit))))
+    (if (and entry (equal (car entry) revisions)) (cdr entry)
+        (let ((result (funcall compute unit)))
+          (setf (gethash name (mir-unit-analyses unit)) (cons revisions result))
           result))))
 
 (defun mir-run-pass (unit function transform &key preserves)

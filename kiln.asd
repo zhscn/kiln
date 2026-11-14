@@ -53,6 +53,7 @@
                (:file "mir/verify")
                (:file "mir/build")
                (:file "mir/types")
+               (:file "mir/calls")
                (:file "mir/lower")
                (:file "mir/dump")
                (:file "driver")))
