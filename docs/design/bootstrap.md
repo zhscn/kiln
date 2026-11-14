@@ -53,15 +53,50 @@ kiln0 ──运行构建程序──▶ stage1 ──kiln-cg──▶ kiln1 ─�
 
 ## 测试
 
-`tools/test.sh [FILE.lisp...]`：
+`tools/test.sh [FILE.lisp...]` 默认使用完整开发 image 测试文件编译和加载。
+基础系统包含五个模块，先通过 SBCL 交叉编译并链接成一个 AOT 可执行文件，
+完成初始化后保存 `build/test-fasl/base/base.img`。每个测试从同一份快照启动独立进程，
+用 `compile-file` 写出 FASL，再分别从快照启动正常堆和 64 MiB 堆的进程加载该文件，
+将输出与 `.expected` 逐字节比较。编译进程与加载进程相互隔离，测试之间也不共享定义。
+`ev-` 用例加载期间动态关闭原生 `eval` 和 `compile` 钩子，保留 HIR 求值路径的覆盖。
 
-- SBCL 在一个会话里编五个模块和 `tests/*/*.lisp`，每个测试按文件名前缀和需要的模块一起运行（[modules.md](modules.md)），走 JIT、GC 压力、AOT 三遍，和 `.expected` 比较。
-- `NAME.slow`（内容是堆大小）：慢测试，只在命令行点名时跑，只跑 JIT 一遍。`tests/m5/co-clos`、`co-frontend`、`co-eval`、`co-compiler` 是 kiln 交叉编译 kiln 的各个模块。
-- `NAME.same-kir`（内容是另一个测试名）：期望输出是同一个 SBCL 会话里编出的那个测试的 KIR，不必提交 KIR 文件。`co-kernel` 等用它验证 kiln 编出的 KIR 和 SBCL 的相同。
-- `NAME.image`、`NAME.image2`：堆快照测试（[heap-image.md](heap-image.md)）。
-- 测试源文件以绝对路径交给 SBCL，因为文件名写进了 KIR 的调试信息；比较 KIR 的测试在 kiln 上也用同样的名字。
+交叉测试的单参数 `print` 使用 runtime 诊断打印操作，image 模式默认使用标准流打印器。
+为保持同一份参考输出，测试驱动仅在文件编译进程安装 compiler macro，将单参数
+`print` 映射到 base 中的诊断打印函数。加载进程没有这个 compiler macro，
+运行期 `eval` 和显式指定流的 `print` 保持标准行为，输出比较不归一化空白。
 
-**由 kiln 编译测试**：测试脚本显式设置 `KILN_OUTPUT_FORMAT=kir`，供 `.same-kir` 比较；生产构建仍使用二进制。`KILN_COMPILER=build/boot/kiln1 tools/test.sh` 让 SBCL 只写清单（`kiln:write-manifest`：五个模块，测试文件作为程序模块排在后面），kiln 运行构建程序，在一个会话里编完五个模块再编各个测试，之后照常走三遍。第一次先编五个模块并存快照 `build/test/kiln-compiler.img`，旁边的 `.key` 是 kiln 可执行文件和五个模块全部源文件的哈希；键相同时直接从快照启动。
+FASL 保存 LIR 和字面量对象图，加载时仍由 Cranelift 生成测试自身的机器码。
+共享基础系统避免每个用例重新生成并保留完整系统的目标文件和静态可执行文件。
+完整环境会预先安装高层模块；需要验证最小模块环境的测试可用空的 `NAME.cross`
+标记选择交叉路径。
+
+base 可执行文件和快照必须配套使用。测试驱动按 Lisp、vendor、Rust、协议和构建工具
+的内容计算缓存键，变化后重新构建二者；测试 FASL 每次重新生成。
+首次构建和快照日志保存在 `build/test-fasl/base/`，各测试的编译及加载输出保存在
+`build/test-fasl/`。基础模块的 LIR 在成功生成快照后删除，需要重新构建时再生成。
+
+`tools/test.sh --cross [FILE.lisp...]` 选择独立 LIR 的完整交叉测试，
+也可直接调用 `tools/test-cross.sh`。该路径在 SBCL 的同一会话里编基础模块和测试，
+按文件名前缀选择依赖，分别验证 JIT、GC 压力和 AOT，并比较 `.expected`。
+它覆盖静态字面量、跨模块共享对象、重定位和初始化，不能由 image 模式的 FASL 测试替代。
+交叉驱动在链接完成后删除目标文件；用例的全部检查成功后删除可执行文件及测试快照，
+失败时保留可执行文件和快照供排查。LIR、诊断 KIR 和执行输出继续保留。
+
+没有 `clos-`、`fe-`、`ev-` 或 `co-` 前缀的早期测试依赖 kernel 最小环境，
+也交给交叉驱动；其中的简化打印器与完整 image 的标准打印器具有不同的输出格式。
+默认入口还将以下用例交给交叉驱动：
+
+- `NAME.same-kir`：内容是同会话参考测试或模块名，比较诊断 KIR；参考测试自动加入编译会话。
+- `NAME.image`、`NAME.image2`：验证保存和恢复快照及附带快照的可执行文件。
+- `NAME.slow`：内容是堆大小，只在命令行点名时运行一次 JIT。
+- `NAME.cross`：显式要求最小模块环境或交叉后端验证。
+
+`KILN_COMPILER=build/boot/kiln1 tools/test.sh --cross` 用 kiln 编译交叉测试。
+为保留已有命令的含义，设置 `KILN_COMPILER` 时省略 `--cross` 也选择完整交叉路径。
+SBCL 只写清单，kiln 在一个交叉编译会话中生成独立 LIR 和诊断 KIR，
+然后运行同样的 JIT、GC 压力和 AOT 检查。编完基础模块后的会话缓存于
+`build/test/kiln-compiler.img`；缓存键涵盖编译器可执行文件和模块源码。
+它用于恢复交叉编译工作，与供普通文件编译和加载使用的 base 快照分开。
 
 ## 仓库结构
 

@@ -50,7 +50,7 @@
 
 ## 测试
 
-`tools/test.sh` 里，`NAME.lisp` 旁边有 `NAME.image` 文件的测试，只跑 AOT，并且在构建目录里运行：
+`tools/test.sh` 将快照用例交给交叉驱动；其中 `NAME.lisp` 旁边有 `NAME.image` 文件的测试，只跑 AOT，并且在构建目录里运行：
 1. 程序运行时写出 `NAME.img`，也可以写出 `NAME.exe`，输出和 `.expected` 比较。
 2. 再用 `KILN_IMAGE` 从快照启动两次，一次用默认堆，一次用小堆做 GC 压力测试；`NAME.exe` 存在的话也运行它。三次的输出都和 `NAME.image` 比较。
 3. 如果从快照启动的进程又保存了 `NAME-2.img`，再从它启动一次，输出和 `NAME.image2` 比较。
@@ -63,7 +63,7 @@
 
 `tests/m6/co-image` 覆盖：从快照启动后原生 `compile` 和 `eval`；编过代码之后再保存快照，从新快照启动后调用这些代码、经过 GC、再编新的代码。
 
-`KILN_COMPILER=... tools/test.sh` 用快照跳过“kiln 编五个模块”这一步，见 [bootstrap.md](bootstrap.md) 的“测试”。这个快照约 360 MB，里面是编完五个模块后的整个编译会话，也有运行期编出的代码。
+`KILN_COMPILER=... tools/test.sh --cross` 用快照跳过“kiln 编五个模块”这一步，见 [bootstrap.md](bootstrap.md) 的“测试”。这个快照约 360 MB，里面是编完五个模块后的整个编译会话，也有运行期编出的代码。
 
 ## 限制
 

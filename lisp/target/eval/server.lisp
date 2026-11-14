@@ -122,7 +122,9 @@ values."
 
 (defparameter *evaluation-functions*
   '(evaluate-text eval kiln.compiler::native-eval kiln.compiler::native-eval-1
-    kiln.compiler::native-eval-body kiln.compiler::native-eval-toplevel)
+    kiln.compiler::native-eval-body kiln.compiler::native-eval-toplevel
+    kiln.compiler::native-eval-in-session kiln.compiler::call-with-image-session
+    kiln.compiler::native-eval-request kiln.compiler::call-with-compilation-request)
   "Functions whose frames are the server's evaluation of a task.")
 
 (defun task-frames ()

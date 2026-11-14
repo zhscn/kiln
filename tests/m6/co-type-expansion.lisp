@@ -1,3 +1,5 @@
+(declaim (special *frontend-array-schema*))
+
 (eval '(deftype frontend-domain () '(integer 0 10)))
 (eval '(deftype frontend-domain-alias () 'frontend-domain))
 (eval '(defun frontend-domain-user (x)

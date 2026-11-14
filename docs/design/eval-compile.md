@@ -174,6 +174,7 @@ symbol macro 与编译器宏。`:input` 保存输入，完成时的 `:output` �
 
 `tools/ansi-test.sh` 默认使用完整 image 的原生 `eval` 和 `compile`。设置
 `ANSI_EVAL=hir` 可独立验证 HIR 求值；两种模式都使用同一前端。原生文件编译
-仍需结合 FASL 加载验证，交叉 AOT 需要端到端测试覆盖静态字面量和模块初始化。
+由 `tools/test.sh` 通过共享 base image 的 FASL 编译和加载验证；
+`tools/test.sh --cross` 覆盖交叉 AOT 的静态字面量和模块初始化。
 解释执行、image 编译和交叉 AOT 的通过情况不能互相替代。任一测试组失败或
 进程异常时，ANSI 驱动完成其他组后返回非零状态。

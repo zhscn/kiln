@@ -1,0 +1,2 @@
+Checks exact macroexpansion text from the minimal eval module, including
+generated symbol names.
