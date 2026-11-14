@@ -77,6 +77,7 @@
                    (let* ((kind (mir-instruction-kind instruction)) (args (mir-instruction-operands instruction))
                           (result (mir-instruction-result instruction)) (data (mir-instruction-data instruction)))
                      (unless (and (integerp kind) (<= 0 kind) (< kind (length *mir-instruction-effects*))
+                                  (member (mir-instruction-notinline instruction) '(nil t))
                                   (integerp (mir-instruction-policy instruction))
                                   (<= 0 (mir-instruction-policy instruction) 1023))
                        (mir-fail "Invalid MIR instruction kind or policy"))

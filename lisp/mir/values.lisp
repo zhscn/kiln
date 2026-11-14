@@ -46,6 +46,6 @@
   ;; Multiple-valued functions require their own contracts, even when a
   ;; primary-result type is known. Unknown library calls retain unknown count.
   (or (hir-predicate-type name)
-      (member name '(identity + - * / abs 1+ 1- logand logior logxor
+      (member name '(car cdr first rest rplaca rplacd identity + - * / abs 1+ 1- logand logior logxor
                      < > <= >= = /= eq eql equal equalp zerop plusp minusp
                      cons list vector make-array length char schar aref elt char-code))))

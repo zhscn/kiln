@@ -419,3 +419,55 @@
                (mir-test-call-checks
                 '(flet ((f () (values)))
                    (multiple-value-bind (a) (multiple-value-call #'f) (the null a))))))
+
+(defun mir-test-storage (form &optional (optimize t))
+  (let ((unit (mir-test-unit `(locally (declare (optimize (speed 0))) ,form))))
+    ;; Isolate MIR selection from the production tree optimizer.
+    (when optimize
+      (loop for function across (hir-vector (mir-unit-functions unit)) do
+        (mir-run-pass unit function
+                      (lambda (function)
+                        (loop for instruction across (hir-vector (mir-function-instructions function))
+                              do (setf (mir-instruction-policy instruction) 1023))))))
+    (let ((analysis (svref (mir-infer-storage unit) 0)))
+      (values (logcount (mir-storage-analysis-stack analysis)) analysis unit))))
+
+(dolist (form '((let ((x (cons 1 2))) (car x))
+                (let* ((x (cons 1 nil)) (y (cons x nil))) (car (car y)))
+                (let ((x (cons 1 nil))) (rplacd x x) (eq x (cdr x)))
+                (let ((x (cons 1 2)))
+                  (tagbody again (if (mir-unknown) (go again))) (car x))))
+  (assert (plusp (mir-test-storage form))))
+(dolist (form '((cons 1 2)
+                (let ((x (cons 1 2))) (mir-unknown x) (car x))
+                (let ((x (cons 1 2))) (setq *mir-escaped-cons* x) nil)
+                (let ((x (cons 1 2))) (rplaca (mir-unknown) x) nil)
+                (let ((x (cons 1 2))) (list x) nil)
+                (let* ((x (cons 1 2)) (y (cons x nil))) y)
+                (let ((x nil)) (tagbody again (setq x (cons 1 x)) (if (mir-unknown) (go again))) (car x))
+                (let ((x (cons 1 2))) (multiple-value-bind (a b) (values x 3)
+                                         (declare (ignore b)) (car a)))
+                (let ((x (cons 1 2))) (let ((y (if (mir-unknown) (values x) (values x 3)))) (car y)))
+                (locally (declare (notinline car)) (let ((x (cons 1 2))) (car x)))
+                (locally (declare (notinline cons)) (let ((x (cons 1 2))) (car x)))))
+  (assert (zerop (mir-test-storage form))))
+(assert (= 2 (mir-test-storage '(let* ((x (cons 1 nil)) (y (cons x nil))) (eq x (car y))))))
+(assert (zerop (mir-test-storage '(let ((x (cons 1 2))) (car x)) nil)))
+(format t "MIR cons graph escape and storage proofs passed.~%")
+(assert (zerop (mir-test-storage
+                '(let ((x (cons 1 nil)))
+                   (tagbody again (cons x nil) (if (mir-unknown) (go again))) nil))))
+(assert (zerop (mir-test-storage
+                '(let ((x (cons 1 nil)) (y (cons 2 nil))) (rplaca y x) y))))
+(multiple-value-bind (count analysis unit) (mir-test-storage '(let ((x (cons 1 nil))) (car x)))
+  (assert (= count 1))
+  (let ((function (mir-at (mir-unit-functions unit) 0)))
+    (mir-run-pass unit function
+                  (lambda (function)
+                    (loop for instruction across (hir-vector (mir-function-instructions function))
+                          when (and (= 6 (mir-instruction-kind instruction))
+                                    (eq 'car (mir-instruction-data instruction)))
+                            do (setf (mir-instruction-data instruction) 'identity))))
+    (let ((updated (svref (mir-infer-storage unit) 0)))
+      (assert (not (eq analysis updated)))
+      (assert (zerop (mir-storage-analysis-stack updated))))))

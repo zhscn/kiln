@@ -55,6 +55,7 @@
                (:file "mir/values")
                (:file "mir/types")
                (:file "mir/calls")
+               (:file "mir/escape")
                (:file "mir/lower")
                (:file "mir/dump")
                (:file "driver")))

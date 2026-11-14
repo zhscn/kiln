@@ -45,8 +45,8 @@
 (defun mir-function-identities (function)
   (mir-analysis function :functions #'mir-compute-function-identities))
 
-(defun mir-call-components (outgoing)
-  "Return all call SCCs in callee-before-caller order."
+(defun mir-strong-components (outgoing)
+  "Return integer-indexed graph SCCs with successors before predecessors."
   (let* ((count (length outgoing)) (indices (make-array count :initial-element -1))
          (low (make-array count :initial-element 0)) (active (make-array count :initial-element nil))
          (stack nil) (next 0) (components nil))
@@ -199,7 +199,7 @@
               when (member (mir-instruction-kind instruction) '(7 15)) do
                 (let ((target (svref known (svref (mir-instruction-operands instruction) 0))))
                   (when (integerp target) (pushnew target (svref outgoing id)))))))
-    (let ((components (mir-call-components outgoing)) (changed t))
+    (let ((components (mir-strong-components outgoing)) (changed t))
       (labels ((merge-inputs (function facts packets known)
                  (let ((reachable (mir-reachable-blocks function)))
                    (loop for block across (hir-vector (mir-function-blocks function))

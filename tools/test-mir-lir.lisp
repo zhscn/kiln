@@ -75,3 +75,25 @@
     (assert (and (search "(1 2 3 4)" text) (search "NIL" text))
             () "Unexpected MIR multiple-value call output: ~S" text)))
 (format t "Host MIR multiple-value call execution passed.~%")
+
+(let* ((root (asdf:system-source-directory "kiln"))
+       (output (merge-pathnames "build/mir-test/storage.lir" root))
+       (session (make-session))
+       (form '(let ((x (cons (list 1 2) nil)))
+                (rplacd x x)
+                (kiln.sys:%gc)
+                (print (list :stack-gc (if (eq x (cdr x)) (car (car x)) 0))))))
+  (ensure-directories-exist output)
+  (kiln::write-module (compile-module (front-end-forms (list form) session) "mir-storage"
+                                     :session session :pipeline :mir) output)
+  (let ((dump (uiop:run-program (list (namestring (merge-pathnames "target/debug/kiln-cg" root))
+                                     "dump" (namestring output)) :output :string)))
+    (assert (search "(stack " dump) () "MIR did not select stack storage."))
+  (let ((text (uiop:run-program
+               (mapcar #'namestring
+                       (list (merge-pathnames "target/debug/kiln-cg" root) #P"jit"
+                             (merge-pathnames "build/test/kernel.lir" root)
+                             (merge-pathnames "build/test/clos.lir" root) output))
+               :output :string :error-output :string)))
+    (assert (search "(:STACK-GC 1)" text) () "Unexpected MIR stack storage output: ~S" text)))
+(format t "Host MIR stack cons GC execution passed.~%")

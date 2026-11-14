@@ -28,13 +28,13 @@
         *mir-environment* (subseq (mir-block-parameters *mir-block*) 0
                                  (length (mir-function-bindings *mir-function*)))))
 
-(defun mir-instruction (kind representation &optional (operands #()) data)
+(defun mir-instruction (kind representation &optional (operands #()) data notinline)
   (unless *mir-block* (mir-fail "Instruction after MIR terminator"))
   (let* ((id (hir-buffer-count (mir-function-instructions *mir-function*)))
          (position (hir-buffer-count (mir-block-instructions *mir-block*)))
          (result (and representation (mir-add-value *mir-function* representation (mir-block-id *mir-block*) position))))
     (hir-push (make-mir-instruction :id id :kind kind :operands operands :result result :data data
-                                   :source *mir-source* :origin *source-origin* :policy *mir-policy*
+                                   :source *mir-source* :origin *source-origin* :notinline notinline :policy *mir-policy*
                                    :effects (svref *mir-instruction-effects* kind))
               (mir-function-instructions *mir-function*))
     (hir-push id (mir-block-instructions *mir-block*))
@@ -150,7 +150,7 @@
     (when *mir-block*
       (mir-instruction (if global 6 7) :bundle
                        (coerce (if global (nreverse arguments) (cons object (nreverse arguments))) 'simple-vector)
-                       (when global callee)))))
+                       (when global callee) (eq (hir-node-d node) :notinline)))))
 
 (defun mir-build-mv-call (node)
   (let ((function (mir-primary (hir-node-a node))) (bundles nil))
