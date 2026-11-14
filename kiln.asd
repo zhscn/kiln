@@ -59,6 +59,7 @@
                (:file "mir/predicates")
                (:file "mir/lifting")
                (:file "mir/scalar")
+               (:file "mir/simplify")
                (:file "mir/lower")
                (:file "mir/dump")
                (:file "driver")))

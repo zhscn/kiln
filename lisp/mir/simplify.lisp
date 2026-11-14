@@ -1,0 +1,101 @@
+(in-package #:kiln.compiler)
+
+(defun mir-block-parameter-plan (function)
+  "Find dominating replacements and parameters needed by actual operations."
+  (let* ((blocks (hir-vector (mir-function-blocks function)))
+         (values (hir-vector (mir-function-values function)))
+         (aliases (map 'simple-vector #'mir-value-id values))
+         (incoming (make-array (length blocks) :initial-element nil))
+         (live (make-array (length values) :initial-element nil)))
+    (multiple-value-bind (reachable dominators) (mir-control-flow function)
+      (loop for block across blocks when (logbitp (mir-block-id block) reachable)
+            do (loop for edge across (mir-terminator-edges (mir-block-terminator block))
+                     do (push edge (svref incoming (mir-edge-target edge)))))
+      (labels ((root (id)
+                 (loop while (/= id (svref aliases id)) do (setf id (svref aliases id))
+                       finally (return id)))
+               (mark (id)
+                 (let ((id (root id)))
+                   (unless (svref live id) (setf (svref live id) t)))))
+        ;; A loop's self edge does not prevent a value from being invariant.
+        ;; Conflicting incoming values remain parameters, including swaps.
+        (loop with changed = t while changed do
+          (setf changed nil)
+          (loop for block across blocks for id = (mir-block-id block)
+                when (logbitp id reachable)
+                  do (loop for parameter across (mir-block-parameters block) for index from 0
+                           when (= parameter (root parameter))
+                             do (let ((candidate nil) (conflict nil))
+                                  (dolist (edge (svref incoming id))
+                                    (let ((argument (root (svref (mir-edge-arguments edge) index))))
+                                      (unless (= argument parameter)
+                                        (cond ((null candidate) (setf candidate argument))
+                                              ((/= argument candidate) (setf conflict t))))))
+                                  (when (and candidate (not conflict)
+                                             (logbitp (mir-value-block (svref values candidate))
+                                                      (svref dominators id)))
+                                    (setf (svref aliases parameter) candidate changed t))))))
+        (dotimes (id (length aliases)) (setf (svref aliases id) (root id)))
+        ;; Edge arguments count as uses only if their destination is needed.
+        ;; Instructions remain intact: effects and declaration checks are kept.
+        (loop for instruction across (hir-vector (mir-function-instructions function))
+              do (map nil #'mark (mir-instruction-operands instruction)))
+        (loop for block across blocks
+              do (map nil #'mark (mir-terminator-operands (mir-block-terminator block))))
+        (loop with changed = t while changed do
+          (setf changed nil)
+          (loop for block across blocks
+                do (loop for edge across (mir-terminator-edges (mir-block-terminator block))
+                         for parameters = (mir-block-parameters (svref blocks (mir-edge-target edge)))
+                         do (loop for parameter across parameters for argument across (mir-edge-arguments edge)
+                                  when (and (= parameter (svref aliases parameter))
+                                            (svref live parameter) (mark argument))
+                                    do (setf changed t)))))))
+    (values aliases live)))
+
+(defun mir-rewrite-block-parameters (function aliases live)
+  "Remove redundant parameters and densely renumber the remaining SSA values."
+  (let* ((blocks (hir-vector (mir-function-blocks function)))
+         (old-values (hir-vector (mir-function-values function)))
+         (parameters (map 'simple-vector #'mir-block-parameters blocks))
+         (keep (make-array (length old-values) :initial-element nil))
+         (numbers (make-array (length old-values) :initial-element nil))
+         (values (make-hir-buffer)))
+    (loop for value across old-values for id from 0
+          when (or (>= (mir-value-position value) 0)
+                   (and (= id (svref aliases id)) (svref live id)))
+            do (setf (svref keep id) t
+                     (svref numbers id) (hir-buffer-count values))
+               (hir-push value values))
+    (labels ((number (id)
+               (or (svref numbers (svref aliases id))
+                   (mir-fail "Removed MIR parameter ~D still has a use" id)))
+             (rewrite (ids) (map 'simple-vector #'number ids)))
+      (loop for value across (hir-vector values) for id from 0 do (setf (mir-value-id value) id))
+      (loop for instruction across (hir-vector (mir-function-instructions function))
+            do (setf (mir-instruction-operands instruction) (rewrite (mir-instruction-operands instruction)))
+               (when (mir-instruction-result instruction)
+                 (setf (mir-instruction-result instruction) (number (mir-instruction-result instruction)))))
+      (loop for block across blocks for term = (mir-block-terminator block)
+            do (setf (mir-block-parameters block)
+                     (rewrite (remove-if-not (lambda (id) (svref keep id))
+                                             (svref parameters (mir-block-id block))))
+                     (mir-terminator-operands term) (rewrite (mir-terminator-operands term)))
+               (loop for edge across (mir-terminator-edges term)
+                     do (setf (mir-edge-arguments edge)
+                              (map 'simple-vector #'number
+                                   (loop for parameter across (svref parameters (mir-edge-target edge))
+                                         for argument across (mir-edge-arguments edge)
+                                         when (svref keep parameter) collect argument)))))
+      (setf (mir-function-values function) values))
+    function))
+
+(defun mir-simplify-block-parameters (unit)
+  (loop for function across (hir-vector (mir-unit-functions unit))
+        do (multiple-value-bind (aliases live) (mir-block-parameter-plan function)
+             (when (loop for value across (hir-vector (mir-function-values function)) for id from 0
+                         thereis (and (= -1 (mir-value-position value))
+                                      (or (/= id (svref aliases id)) (not (svref live id)))))
+               (mir-run-pass unit function
+                 (lambda (function) (mir-rewrite-block-parameters function aliases live))))))
+  unit)

@@ -9,11 +9,20 @@ MIR（mid-level IR）由 Lisp 从 HIR 构造，是控制流图加 SSA。它负�
 树上的绑定读写不能直接作为 SSA 使用，循环回边和条件合流必须给每条进入边
 提供变量的当前版本。当前构造器为每个函数单独编号绑定，在非入口块上为全部
 局部绑定建立参数；需要表达式结果的合流块再带一个多值 bundle 参数。每条边
-显式传入完整绑定状态，因此回边和交换赋值也服从同一规则。尚未删除冗余块参数，
-这使初始构造简单、可验证，代价是图和边的实参数量较大。
+显式传入完整绑定状态，因此回边和交换赋值也服从同一规则。这使构造器不必在
+导入树形控制流时同时判断每个绑定的用途。构造结束先验证完整绑定前缀；后续
+SSA 变换只要求参数与入边实参的数量和表示匹配，不再依赖这个前缀。
+
+完整状态会让未改变的绑定在每个合流点和回边上重复传递。`mir-simplify-block-parameters`
+在表示选择前消除这些冗余参数：若所有可达入边在忽略自身回传后都提供同一个值，
+且该值的定义支配当前块，就用它替换参数；交换赋值及不同来源的合流继续保留参数。
+随后从指令和终结点的实际操作数反向追踪用途，只有目标参数被使用时才追踪对应
+边实参，删除仅在边上循环转发的无用状态。指令、副作用和声明检查保持原样。
+改写同步收缩所有入边，重新连续编号 SSA 值，并通过 pass 接口失效分析、验证
+支配关系及函数和捕获布局。cell 句柄和多值 bundle 按原表示处理。
 
 实现分为 `lisp/mir/data.lisp`、`verify.lisp`、`build.lisp`、`lower.lisp`、
-`values.lisp`、`types.lisp`、`calls.lisp`、`escape.lisp`、`predicates.lisp`、`lifting.lisp`、`scalar.lisp` 和 `dump.lisp`。编号索引复用可增长向量容器，语义值表示为 `obj`、`bundle`、参数计数 `count` 和内部 cell 句柄 `cell`。返回个数已知为 1 的 bundle 直接保存对象；其他 bundle 使用
+`values.lisp`、`types.lisp`、`calls.lisp`、`escape.lisp`、`predicates.lisp`、`lifting.lisp`、`scalar.lisp`、`simplify.lisp` 和 `dump.lisp`。编号索引复用可增长向量容器，语义值表示为 `obj`、`bundle`、参数计数 `count` 和内部 cell 句柄 `cell`。返回个数已知为 1 的 bundle 直接保存对象；其他 bundle 使用
 保存载体和个数，跨调用后恢复，避免借用的多值区被后续调用覆盖。合流处可能
 改变这两种表示，边复制先转换并保存所有来源，再写入目标；这也覆盖复制环。
 

@@ -691,5 +691,7 @@
                (hir-vector *mir-load-time-nodes*)))
     (when (plusp (length (mir-function-captures (mir-at (mir-unit-functions *mir-unit*) 0))))
       (mir-unavailable "root function requires an environment"))
+    (loop for function across (hir-vector (mir-unit-functions *mir-unit*))
+          do (mir-verify-construction-bindings function))
     (verify-mir *mir-unit*)
     *mir-unit*))
