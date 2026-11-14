@@ -56,3 +56,22 @@
     (assert (and (search "(1 :GOOD NIL)" text) (search "(NIL NIL)" text))
             () "Unexpected MIR multiple-value output: ~S" text)))
 (format t "Host MIR multiple-value binding execution passed.~%")
+
+(let* ((root (asdf:system-source-directory "kiln"))
+       (output (merge-pathnames "build/mir-test/value-call.lir" root))
+       (session (make-session))
+       (form '(locally (declare (optimize (speed 0)))
+                (print (multiple-value-call #'list (values 1 2) (values) (values 3 4)))
+                (print (multiple-value-call #'list)))))
+  (ensure-directories-exist output)
+  (kiln::write-module (compile-module (front-end-forms (list form) session) "mir-value-call"
+                                     :session session :pipeline :mir) output)
+  (let ((text (uiop:run-program
+               (mapcar #'namestring
+                       (list (merge-pathnames "target/debug/kiln-cg" root) #P"jit"
+                             (merge-pathnames "build/test/kernel.lir" root)
+                             (merge-pathnames "build/test/clos.lir" root) output))
+               :output :string :error-output :string)))
+    (assert (and (search "(1 2 3 4)" text) (search "NIL" text))
+            () "Unexpected MIR multiple-value call output: ~S" text)))
+(format t "Host MIR multiple-value call execution passed.~%")

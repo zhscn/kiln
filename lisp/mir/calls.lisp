@@ -136,7 +136,7 @@
           (unless (or (member kind '(0 1 2 4 5 9 10 12 13 14))
                       (and (= kind 6) (member (mir-instruction-data instruction) '(identity values))))
             (loop for arg across args for index from 0
-                  unless (and (= kind 7) (zerop index) (integerp (svref known arg)))
+                  unless (and (member kind '(7 15)) (zerop index) (integerp (svref known arg)))
                     do (setf external (logior external (svref sets arg))))))
         (let ((term (mir-block-terminator block)))
           (when (= (mir-terminator-kind term) 2)
@@ -149,6 +149,26 @@
       (incf expansions)
       (when (>= expansions 2) (setf joined 'integer)))
     (values joined expansions)))
+
+(defun mir-call-argument-types (instruction facts packets required)
+  "Flatten call facts, or return :UNSEEN, :UNKNOWN or :WRONG-ARITY."
+  (let ((args (mir-instruction-operands instruction)))
+    (if (= (mir-instruction-kind instruction) 7)
+        (if (= (1- (length args)) required)
+            (map 'simple-vector (lambda (id) (svref facts id)) (subseq args 1))
+            :wrong-arity)
+        (let ((count 0) (unknown nil))
+          (loop for index from 1 below (length args) for packet = (svref packets (svref args index))
+                do (when (eq packet :unseen) (return-from mir-call-argument-types :unseen))
+                   (if (mir-values-fact-count packet) (incf count (mir-values-fact-count packet))
+                       (setf unknown t)))
+          (when unknown (return-from mir-call-argument-types :unknown))
+          (unless (= count required) (return-from mir-call-argument-types :wrong-arity))
+          (let ((result (make-array required)) (position 0))
+            (loop for index from 1 below (length args) for packet = (svref packets (svref args index))
+                  do (dotimes (slot (mir-values-fact-count packet))
+                       (setf (svref result position) (mir-values-ref-type packet slot)) (incf position)))
+            result)))))
 
 (defun mir-compute-calls (unit)
   (let* ((functions (hir-vector (mir-unit-functions unit))) (count (length functions))
@@ -176,30 +196,33 @@
             when (logbitp (mir-block-id block) reachable) do
         (loop for index across (hir-vector (mir-block-instructions block))
               for instruction = (mir-at (mir-function-instructions function) index)
-              when (= (mir-instruction-kind instruction) 7) do
+              when (member (mir-instruction-kind instruction) '(7 15)) do
                 (let ((target (svref known (svref (mir-instruction-operands instruction) 0))))
                   (when (integerp target) (pushnew target (svref outgoing id)))))))
     (let ((components (mir-call-components outgoing)) (changed t))
-      (labels ((merge-inputs (function facts known)
+      (labels ((merge-inputs (function facts packets known)
                  (let ((reachable (mir-reachable-blocks function)))
                    (loop for block across (hir-vector (mir-function-blocks function))
                          when (logbitp (mir-block-id block) reachable) do
                      (loop for index across (hir-vector (mir-block-instructions block))
                            for instruction = (mir-at (mir-function-instructions function) index)
                            for args = (mir-instruction-operands instruction)
-                           when (= (mir-instruction-kind instruction) 7) do
+                           when (member (mir-instruction-kind instruction) '(7 15)) do
                        (let ((target (svref known (svref args 0))))
-                         ;; Invalid arity exits before any parameter read.
-                         (when (and (integerp target)
-                                    (= (1- (length args)) (length (svref inputs target))))
-                           (loop for argument across (subseq args 1) for position from 0 do
-                             (let* ((row (svref inputs target)) (counts (svref input-changes target))
-                                    (old (svref row position)))
-                               (multiple-value-bind (joined expansions)
-                                   (mir-widen-summary old (svref facts argument) (svref counts position))
-                                 (setf (svref counts position) expansions)
-                                 (unless (equal old joined)
-                                   (setf (svref row position) joined changed t)))))))))))
+                         (when (integerp target)
+                           (let* ((row (svref inputs target)) (counts (svref input-changes target))
+                                  (arguments (mir-call-argument-types instruction facts packets (length row))))
+                             ;; Unknown counts may match this signature; every
+                             ;; argument must then allow arbitrary object types.
+                             (when (or (vectorp arguments) (eq arguments :unknown))
+                               (dotimes (position (length row))
+                                 (let ((old (svref row position))
+                                       (candidate (if (eq arguments :unknown) t (svref arguments position))))
+                                   (multiple-value-bind (joined expansions)
+                                       (mir-widen-summary old candidate (svref counts position))
+                                     (setf (svref counts position) expansions)
+                                     (unless (equal old joined)
+                                       (setf (svref row position) joined changed t)))))))))))))
                (solve ()
                  ;; Inputs flow from caller to callee, results in the reverse
                  ;; direction. Repeat SCC sweeps until both have stabilized.
@@ -222,7 +245,7 @@
                                                            (svref value-changes id))))
                              (unless (equalp old joined)
                                (setf (svref value-summaries id) joined changed t)))
-                           (merge-inputs function facts (svref identities id)))))))))
+                           (merge-inputs function facts packet-facts (svref identities id)))))))))
         (solve)
         ;; Uncalled functions and cycles without seeds must still have safe
         ;; code. Replace unresolved inputs/results with unknown and close the

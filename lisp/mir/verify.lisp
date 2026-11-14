@@ -88,7 +88,7 @@
                        (mir-fail "MIR operation understates its effects"))
                      (when result (definition result i position))
                      (let ((expected (case kind
-                                       ((6 7 8 9) :bundle)
+                                       ((6 7 8 9 15) :bundle)
                                        (12 :count)
                                        (11 (and (= (length args) 1) (representation (svref args 0))))
                                        (13 nil)
@@ -105,6 +105,8 @@
                        ((10 14) (expect-operands args '(:bundle)))
                        (13 (expect-operands args '(:count)))
                        ((6 8) (objects args))
+                       (15 (when (zerop (length args)) (mir-fail "MIR multiple-value call lacks a callee"))
+                           (expect-operands args (cons :obj (make-list (1- (length args)) :initial-element :bundle))))
                        (7 (when (zerop (length args)) (mir-fail "MIR indirect call lacks a callee")) (objects args)))
                      (case kind
                        (1 (unless (and (integerp data) (<= 0 data) (< data (mir-function-required function)))

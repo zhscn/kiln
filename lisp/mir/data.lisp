@@ -22,8 +22,8 @@
 
 ;;; Instruction kinds: constant, argument, global-read, global-write,
 ;;; global-function, function, global-call, call, primop, single, primary,
-;;; declaration-check, argument-count, arity-check, value-ref.
-(defparameter *mir-instruction-effects* #(0 0 33 34 33 8 127 127 127 56 56 127 0 32 56))
+;;; declaration-check, argument-count, arity-check, value-ref, multiple-value-call.
+(defparameter *mir-instruction-effects* #(0 0 33 34 33 8 127 127 127 56 56 127 0 32 56 127))
 ;;; Effects: global read/write, dynamic environment, allocation, GC,
 ;;; possible exit, unknown call. No operation is deleted from this summary alone.
 

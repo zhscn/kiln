@@ -173,3 +173,49 @@
                         (declare (ignore a)) (f 2) (values 'ok g)))))))
   (let ((escaped (nth-value 1 (funcall function))))
     (print (handler-case (progn (funcall escaped 'wrong) :bad) (type-error () :mv-function)))))
+(let ((function (mir-test-compile
+                 '(lambda ()
+                    (declare (optimize (speed 0)))
+                    (multiple-value-call #'list (values 1 2) (values) (values 3 4))))))
+  (print (funcall function)))
+(let ((function (mir-test-compile
+                 '(lambda ()
+                    (declare (optimize (speed 0)))
+                    (flet ((f (a b c) (values (+ a b) c)))
+                      (multiple-value-call #'f (values 1 2) (values 3)))))))
+  (print (multiple-value-list (funcall function))))
+(let ((function (mir-test-compile
+                 '(lambda (p)
+                    (declare (optimize (speed 0)))
+                    (multiple-value-call #'list (if p (values 1 2) (values)) (values 3))))))
+  (print (funcall function t))
+  (print (funcall function nil)))
+(let ((function (mir-test-compile
+                 '(lambda ()
+                    (declare (optimize (speed 0)))
+                    (let ((n 0))
+                      (let ((result
+                              (multiple-value-call (progn (setq n 1) #'list)
+                                (progn (setq n (1+ n)) (values n))
+                                (progn (identity 99) (setq n (1+ n)) (values n)))))
+                        (list result n)))))))
+  (print (funcall function)))
+(let ((function (mir-test-compile
+                 '(lambda ()
+                    (declare (optimize (speed 0)))
+                    (block done
+                      (multiple-value-call #'list (return-from done (values 7 8)) (print :bad)))))))
+  (print (multiple-value-list (funcall function))))
+(let ((function (mir-test-compile
+                 '(lambda ()
+                    (declare (optimize (speed 0)))
+                    (flet ((f (a b c) (list a b c)))
+                      (multiple-value-call #'f (values 1 2)))))))
+  (print (handler-case (progn (funcall function) :bad) (program-error () :mv-call-arity))))
+(defparameter *mir-mvc-order* nil)
+(let ((function (mir-test-compile
+                 '(lambda ()
+                    (declare (optimize (speed 0)))
+                    (multiple-value-call 17 (progn (setq *mir-mvc-order* :arguments) (values)))))))
+  (print (handler-case (progn (funcall function) :bad) (type-error () :mv-call-designator)))
+  (print *mir-mvc-order*))

@@ -16,13 +16,14 @@
     result))
 
 (defun emit-nreverse (list)
-  "Reverses the proper list LIST in place. No allocation."
+  "Reverse the proper list LIST in place, polling on each loop iteration."
   (let ((prev (copy-to-var (nil-value))) (cur (copy-to-var list)) (next (new-var))
         (head (new-block)) (body (new-block)) (done (new-block)))
     (jump head)
     (start-block head)
     (br `(:eq ,cur ,(nil-value)) done body)
     (start-block body)
+    (emit-poll)
     (emit `(:set ,next (:field-load ,kiln.kir::+packet-field-cons-cdr+ ,cur)))
     (emit `(:field-store ,kiln.kir::+packet-field-cons-cdr+ ,cur ,prev))
     (emit `(:set ,prev ,cur))

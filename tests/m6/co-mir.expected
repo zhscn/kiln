@@ -40,3 +40,12 @@ NIL
 (4 5)
 (0 5)
 :MV-FUNCTION
+(1 2 3 4)
+(3 3)
+(1 2 3)
+(3)
+((2 3) 3)
+(7 8)
+:MV-CALL-ARITY
+:MV-CALL-DESIGNATOR
+:ARGUMENTS

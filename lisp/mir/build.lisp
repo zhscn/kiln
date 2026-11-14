@@ -152,6 +152,13 @@
                        (coerce (if global (nreverse arguments) (cons object (nreverse arguments))) 'simple-vector)
                        (when global callee)))))
 
+(defun mir-build-mv-call (node)
+  (let ((function (mir-primary (hir-node-a node))) (bundles nil))
+    (loop for form across (hir-node-b node) while *mir-block*
+          do (push (mir-build-node form) bundles))
+    (when *mir-block*
+      (mir-instruction 15 :bundle (coerce (cons function (nreverse bundles)) 'simple-vector)))))
+
 (defun mir-build-node (node)
   (unless *mir-block* (return-from mir-build-node nil))
   (let ((*mir-source* (hir-node-source node)) (*mir-policy* (hir-node-policy node))
@@ -189,6 +196,7 @@
       (16 (mir-build-tagbody node))
       (17 (let ((entry (assoc (hir-node-a node) *mir-exits* :test #'eq)))
             (unless entry (mir-unavailable "nonlocal GO")) (mir-jump (cdr entry))))
+      (21 (mir-build-mv-call node))
       (22 (let ((value (mir-build-node (hir-node-a node))))
             (when *mir-block* (mir-build-node (hir-node-b node)))
             (when *mir-block* value)))

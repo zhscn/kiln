@@ -97,7 +97,7 @@
                                (mir-fixed-values (vector (svref types result))))
                               ((eq (svref types result) :unseen) :unseen)
                               (t (mir-unknown-values (svref types result))))))
-                   (7 (let ((target (and functions (svref functions (svref args 0)))))
+                   ((7 15) (let ((target (and functions (svref functions (svref args 0)))))
                         (if (and value-summaries (integerp target)) (svref value-summaries target)
                             (if (eq (svref types result) :unseen) :unseen
                                 (mir-unknown-values (svref types result))))))
@@ -123,7 +123,7 @@
                               (if (find :unseen inputs) :unseen
                                   (inferred-call-type name inputs)))
                             t)))
-                   (7 (let ((target (and functions (svref functions (svref args 0)))))
+                   ((7 15) (let ((target (and functions (svref functions (svref args 0)))))
                         (cond ((eq target :unseen) :unseen)
                               ((and summaries (integerp target)) (svref summaries target))
                               (t t))))
