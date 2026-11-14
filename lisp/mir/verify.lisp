@@ -15,7 +15,8 @@
                  (mir-at blocks (mir-edge-target edge))
                  (pushnew i (svref predecessors (mir-edge-target edge))))))
     (hir-push 0 work)
-    (loop for index from 0 below (hir-buffer-count work)
+    (loop for index from 0
+          while (< index (hir-buffer-count work))
           for id = (mir-at work index)
           unless (logbitp id reachable)
             do (setf reachable (logior reachable (ash 1 id)))

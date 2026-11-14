@@ -37,3 +37,10 @@
       (compile 'mir-kept-definition '(lambda () (unwind-protect 99 (identity 1)))))
   (kiln.compiler::mir-unsupported () nil))
 (print (mir-kept-definition))
+(let ((function (mir-test-compile
+                 '(lambda (p) (the fixnum (if p 1 2))))))
+  (print (list (funcall function t) (funcall function nil))))
+(let ((function (mir-test-compile
+                 '(lambda (p) (the fixnum (if p 1 'wrong))))))
+  (print (funcall function t))
+  (print (handler-case (progn (funcall function nil) :bad) (type-error () :type))))

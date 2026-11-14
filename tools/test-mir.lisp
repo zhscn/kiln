@@ -63,3 +63,51 @@
   (assert (find 11 (hir-vector (mir-function-instructions function)) :key #'mir-instruction-kind)))
 
 (format t "MIR graph, SSA validation and analysis invalidation passed.~%")
+
+;;; MIR facts are derived from SSA, independently of HIR annotations.
+(defun mir-test-checks (form)
+  (let* ((unit (mir-test-unit form))
+         (function (mir-at (mir-unit-functions unit) 0))
+         (types (mir-infer-types function)))
+    (values (loop for instruction across (hir-vector (mir-function-instructions function))
+                  when (= 11 (mir-instruction-kind instruction))
+                    collect (not (null (mir-check-proven-p instruction types))))
+            function unit)))
+
+(assert (equal '(t) (mir-test-checks '(the fixnum (if (identity t) 1 2)))))
+(assert (equal '(nil) (mir-test-checks '(the fixnum (if (identity t) 1 'bad)))))
+(assert (equal '(nil) (mir-test-checks '(the fixnum (identity 1)))))
+(assert (equal '(nil) (mir-test-checks '(the null (values)))))
+(assert (equal '(nil) (mir-test-checks '(the nil 1))))
+(assert (equal '(nil) (mir-test-checks '(the (integer 0 1) 2))))
+(assert (equal '(t) (mir-test-checks
+                    '(let ((x 1))
+                       (tagbody again (if (identity t) (go done)) (setq x 2) (go again) done)
+                       (the fixnum x)))))
+(assert (equal '(nil) (mir-test-checks
+                      '(let ((x 1))
+                         (tagbody again (if (identity t) (go done)) (setq x 'bad) (go again) done)
+                         (the fixnum x)))))
+(multiple-value-bind (checks function unit) (mir-test-checks '(the fixnum 1))
+  (declare (ignore checks))
+  (let ((types (mir-infer-types function)))
+    (assert (eq types (mir-infer-types function)))
+    (mir-run-pass unit function
+                  (lambda (f)
+                    (loop for instruction across (hir-vector (mir-function-instructions f))
+                          when (and (= 0 (mir-instruction-kind instruction))
+                                    (eql 1 (mir-instruction-data instruction)))
+                            do (setf (mir-instruction-data instruction) 'bad))))
+    (assert (not (eq types (mir-infer-types function))))
+    (assert (loop for instruction across (hir-vector (mir-function-instructions function))
+                  always (not (mir-check-proven-p instruction (mir-infer-types function)))))))
+(let* ((unit (mir-test-unit '(if (identity t) 1 2)))
+       (function (mir-at (mir-unit-functions unit) 0)))
+  (assert (= (1- (ash 1 (hir-buffer-count (mir-function-blocks function))))
+             (mir-control-flow function))))
+(assert (equal '(t) (mir-test-checks
+                    '(let ((x 1))
+                       (tagbody (go done) skipped (setq x 'bad) done)
+                       (the fixnum x)))))
+
+(format t "MIR type propagation and declaration proofs passed.~%")

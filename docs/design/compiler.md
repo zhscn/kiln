@@ -1,6 +1,6 @@
 # 编译器架构
 
-状态：**LIR 分层与 MIR 实验框架已接入**。文件模块、运行期编译、缓存和 FASL 使用独立 LIR。Lisp 从 HIR 生成布局无关的语义操作和控制流，规范化器建立类型化的 LIR 程序；kiln-cg 验证程序后展开布局、调用约定、动态区域、精确根和 poll，构造内部 KIR 并交给 Cranelift。结构化协议提供文件与内存入口，兼容 KIR 仍可作为诊断输入。HIR 分析及其存储、调用优化仍在 Lisp 中，MIR 的 CFG、SSA 验证及装箱值降级已有显式实验入口，后续扩展动态区域并迁移分析（见 [hir.md](hir.md)、[lowering.md](lowering.md)）。
+状态：**LIR 分层与 MIR 实验框架已接入**。文件模块、运行期编译、缓存和 FASL 使用独立 LIR。Lisp 从 HIR 生成布局无关的语义操作和控制流，规范化器建立类型化的 LIR 程序；kiln-cg 验证程序后展开布局、调用约定、动态区域、精确根和 poll，构造内部 KIR 并交给 Cranelift。结构化协议提供文件与内存入口，兼容 KIR 仍可作为诊断输入。HIR 分析及其存储、调用优化仍在 Lisp 中，MIR 的 CFG、SSA 验证、基础类型传播、声明检查证明及装箱值降级已有显式实验入口，后续扩展动态区域并迁移其余分析（见 [hir.md](hir.md)、[lowering.md](lowering.md)）。
 
 ## 分层
 

@@ -2,6 +2,7 @@
 
 (defvar *mir-lir-values*)
 (defvar *mir-lir-labels*)
+(defvar *mir-lir-types*)
 
 (defun mir-lir-value (id) (svref *mir-lir-values* id))
 
@@ -47,7 +48,8 @@
       (9 (mir-lir-save result (first args) 1))
       (10 (multiple-value-bind (value count) (mir-lir-restore (svref (mir-instruction-operands instruction) 0))
             (declare (ignore count)) (emit `(:set ,out ,value))))
-      (11 (mir-lir-check (first args) data))
+      (11 (unless (mir-check-proven-p instruction *mir-lir-types*)
+            (mir-lir-check (first args) data)))
       (12 (emit `(:set ,out ,argument-count)))
       (13 (emit-nargs-check (first args) data data)))))
 
@@ -66,7 +68,8 @@
     (dolist (copy (nreverse copies)) (emit `(:set ,(car copy) ,(cdr copy))))))
 
 (defun mir-lir-function-body (function)
-  (let* ((*mir-lir-values*
+  (let* ((*mir-lir-types* (mir-infer-types function))
+         (*mir-lir-values*
            (map 'simple-vector
                 (lambda (value)
                   (case (mir-value-representation value)
