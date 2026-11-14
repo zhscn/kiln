@@ -892,3 +892,38 @@
     (assert (equal values '(nil (11 12 13) 21 (31 32) 43 41))
             () "Unexpected CATCH output: ~S" values)))
 (format t "Host MIR CATCH nested dispatch, mutable locals, multiple values and bindings passed.~%")
+
+(let* ((root (asdf:system-source-directory "kiln"))
+       (output (merge-pathnames "build/mir-test/unwind-protect.lir" root))
+       (session (make-session))
+       (form '(let ((events nil))
+                (declare (optimize (debug 0)))
+                (print (multiple-value-list
+                        (unwind-protect (values 1 2 3)
+                          (kiln.sys:%gc) (push :normal events) (values 91 92))))
+                (print (multiple-value-list
+                        (catch 'tag
+                          (unwind-protect (throw 'tag (values (list 11) 12))
+                            (kiln.sys:%gc) (push :throw events)))))
+                (print (block done (unwind-protect (return-from done 21) (push :local events))))
+                (print (catch 'tag (unwind-protect (throw 'tag 31) (throw 'tag 32))))
+                (print (catch 'tag
+                         (unwind-protect (throw 'tag 41)
+                           (catch 'inner (throw 'inner 42)) (kiln.sys:%gc))))
+                (print (block done
+                         (catch 'tag (unwind-protect (throw 'tag 51) (return-from done 52)))))
+                (print events)))
+       (module (compile-module (front-end-forms (list form) session)
+                               "mir-unwind-protect" :session session :pipeline :mir)))
+  (kiln::write-module module output)
+  (let* ((text (uiop:run-program
+                (mapcar #'namestring
+                        (list (merge-pathnames "target/debug/kiln-cg" root) #P"jit"
+                              (merge-pathnames "build/test/kernel.lir" root)
+                              (merge-pathnames "build/test/clos.lir" root) output))
+                :output :string :error-output :string))
+         (values (with-input-from-string (stream text)
+                   (loop for value = (read stream nil :eof) until (eq value :eof) collect value))))
+    (assert (equal values '((1 2 3) ((11) 12) 21 32 41 52 (:local :throw :normal)))
+            () "Unexpected UNWIND-PROTECT output: ~S" values)))
+(format t "Host MIR cleanup values, pending GC roots and overriding exits passed.~%")

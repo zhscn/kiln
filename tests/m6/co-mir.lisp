@@ -33,7 +33,7 @@
 (defun mir-kept-definition () 17)
 (handler-case
     (let ((kiln.compiler::*compiler-pipeline* :mir))
-      (compile 'mir-kept-definition '(lambda () (unwind-protect 99 (identity 1)))))
+      (compile 'mir-kept-definition '(lambda () (the (values fixnum fixnum) (values 99 100)))))
   (kiln.compiler::mir-unsupported () nil))
 (print (mir-kept-definition))
 (let ((function (mir-test-compile
@@ -1482,3 +1482,86 @@
                     (return-from done (values n *mir-special-value*))))))))))
   (print (and (equal (multiple-value-list (funcall function)) '(3 :inner))
               (eq *mir-special-value* :outer))))
+
+(let ((function (mir-test-compile
+                 '(lambda (callback)
+  (unwind-protect (funcall callback)
+    (push :cleanup *mir-progv-events*) (kiln.sys:%gc) (values 91 92))))))
+  (let ((valid t))
+    (setq *mir-progv-events* nil)
+    (dolist (values '(() (1) ((2) 3 4)))
+      (unless (equal (multiple-value-list (funcall function (lambda () (values-list values)))) values)
+        (setq valid nil)))
+    (print (and valid
+                (handler-case (progn (funcall function (lambda () (car 1))) nil) (type-error () t))
+                (= 4 (length *mir-progv-events*))))))
+
+(let ((function (mir-test-compile
+                 '(lambda ()
+  (declare (optimize (debug 0)))
+  (let ((x 0))
+    (let ((result (catch 'tag (unwind-protect (throw 'tag x) (setq x 1) (kiln.sys:%gc)))))
+      (list result x)))))))
+  (print (equal (funcall function) '(0 1))))
+
+(let ((function (mir-test-compile
+                 '(lambda ()
+  (let ((events nil))
+    (let ((result (block done
+                    (unwind-protect
+                         (unwind-protect (return-from done (list 11))
+                           (push :inner events) (kiln.sys:%gc))
+                      (push :outer events) (kiln.sys:%gc)))))
+      (list result events)))))))
+  (print (equal (funcall function) '((11) (:outer :inner)))))
+
+(let ((function (mir-test-compile
+                 '(lambda () (catch 'tag (unwind-protect (throw 'tag 21) (throw 'tag 22)))))))
+  (print (= 22 (funcall function))))
+
+(let ((function (mir-test-compile
+                 '(lambda ()
+  (block done (catch 'tag (unwind-protect (throw 'tag 31) (return-from done 32))))))))
+  (print (= 32 (funcall function))))
+
+(let ((function (mir-test-compile
+                 '(lambda ()
+  (catch 'tag
+    (unwind-protect (throw 'tag (values (list 41) 42))
+      (catch 'inner (throw 'inner (values (list 43) 44))) (kiln.sys:%gc)))))))
+  (print (equal (multiple-value-list (funcall function)) '((41) 42))))
+
+(let ((function (mir-test-compile
+                 '(lambda ()
+  (let ((*mir-special-value* :inner))
+    (catch 'tag
+      (unwind-protect (throw 'tag (list 51))
+        (push :cleanup *mir-progv-events*) (kiln.sys:%gc) (car 1))))))))
+  (setq *mir-progv-events* nil)
+  (print (and (handler-case (progn (funcall function) nil) (type-error () t))
+              (equal *mir-progv-events* '(:cleanup)) (eq *mir-special-value* :outer))))
+
+(let ((function (mir-test-compile
+                 '(lambda ()
+  (declare (optimize (debug 0)))
+  (let ((n 0) (events nil))
+    (tagbody again
+      (unwind-protect (progn (setq n (1+ n)) (if (< n 3) (go again)))
+        (push n events) (kiln.sys:%gc)))
+    (list n (reverse events)))))))
+  (print (equal (funcall function) '(3 (1 2 3)))))
+
+(let ((function (mir-test-compile
+                 '(lambda (*mir-special-value*
+         &optional (y (unwind-protect (list *mir-special-value*)
+                        (setq *mir-special-value* :changed) (kiln.sys:%gc)) supplied))
+  (list y supplied *mir-special-value*)))))
+  (print (and (equal (funcall function :initial) '((:initial) nil :changed))
+              (equal (funcall function :initial nil) '(nil t :initial))
+              (eq *mir-special-value* :outer))))
+
+(let ((function (mir-test-compile
+                 '(lambda (a)
+  (declare (optimize (debug 0)) (type double-float a))
+  (unwind-protect (+ a 1.0d0) (kiln.sys:%gc))))))
+  (print (= 2.25d0 (funcall function 1.25d0))))
