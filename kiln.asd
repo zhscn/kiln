@@ -57,6 +57,7 @@
                (:file "mir/calls")
                (:file "mir/escape")
                (:file "mir/predicates")
+               (:file "mir/lifting")
                (:file "mir/scalar")
                (:file "mir/lower")
                (:file "mir/dump")

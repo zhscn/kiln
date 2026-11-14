@@ -81,3 +81,12 @@
   (funcall transform function)
   (verify-mir-function unit function)
   function)
+
+(defun mir-run-unit-pass (unit transform)
+  "Invalidate the whole unit before a coordinated signature and caller rewrite."
+  (loop for function across (hir-vector (mir-unit-functions unit))
+        do (incf (mir-function-revision function)) (clrhash (mir-function-analyses function)))
+  (clrhash (mir-unit-analyses unit))
+  (funcall transform unit)
+  (verify-mir unit)
+  unit)

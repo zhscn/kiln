@@ -497,7 +497,7 @@ those whose names are in EXCLUDE."
      ;; kiln's compiler (M5.3): its packages are the host's.
      (mapcar (lambda (name) (asdf:system-relative-pathname "kiln" (format nil "lisp/~A.lisp" name)))
              '("abi" "kir" "lir-schema" "backend-target" "backend-packet" "lir" "lir-function" "lir-values" "lir-closures" "lir-stack" "lir-regions" "hir/data" "hir/consumer" "lower" "values" "primitives" "structures" "source-forms" "compilation-context" "environment-query" "toplevel" "front" "cross"
-               "hir/environment" "hir/convert" "type-inference" "hir/analyze" "hir/types" "hir/escape" "hir/eval" "hir/lower" "mir/data" "mir/verify" "mir/build" "mir/values" "mir/types" "mir/calls" "mir/escape" "mir/predicates" "mir/scalar" "mir/lower" "mir/dump"
+               "hir/environment" "hir/convert" "type-inference" "hir/analyze" "hir/types" "hir/escape" "hir/eval" "hir/lower" "mir/data" "mir/verify" "mir/build" "mir/values" "mir/types" "mir/calls" "mir/escape" "mir/predicates" "mir/lifting" "mir/scalar" "mir/lower" "mir/dump"
                "target/compiler/client" "target/eval/interpreter"))))
 
 (defparameter *eval-files*
