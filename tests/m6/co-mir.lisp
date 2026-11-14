@@ -29,8 +29,7 @@
 (let ((function (mir-test-compile
                  '(lambda (f) (funcall f 21)))))
   (print (funcall function #'1+)))
-(print (handler-case (progn (mir-test-compile '(lambda () (catch 'tag (throw 'tag 3)))) :bad)
-         (kiln.compiler::mir-unsupported () :unsupported)))
+(print (funcall (mir-test-compile '(lambda () (catch 'tag (throw 'tag 3))))))
 (defun mir-kept-definition () 17)
 (handler-case
     (let ((kiln.compiler::*compiler-pipeline* :mir))
@@ -1419,3 +1418,67 @@
               (equal *mir-progv-events* '(:value :tag)))))
 (let ((function (mir-test-compile '(lambda (tag) (throw tag (values 1 2))))))
   (print (handler-case (progn (funcall function (gensym)) nil) (control-error () t))))
+
+(let ((function (mir-test-compile
+                 '(lambda (callback)
+                    (declare (optimize (debug 0)))
+                    (let ((x 0) (pair (cons 1 nil)))
+                      (let ((result (multiple-value-list
+                                     (catch 'mir-catch-tag
+                                       (setq x 11) (rplaca pair 12) (kiln.sys:%gc)
+                                       (funcall callback)))))
+                        (kiln.sys:%gc) (list x (car pair) result)))))))
+  (print (equal (funcall function (lambda () (throw 'mir-catch-tag (values 21 22 23))))
+                '(11 12 (21 22 23))))
+  (print (equal (funcall function (lambda () (values 31 32))) '(11 12 (31 32)))))
+(let ((function (mir-test-compile
+                 '(lambda (callback)
+                    (declare (optimize (debug 0)))
+                    (catch 'outer (catch 'inner (funcall callback)))))))
+  (print (equal (multiple-value-list
+                 (funcall function (lambda () (kiln.sys:%gc) (throw 'outer (values 41 42))))) '(41 42)))
+  (print (null (multiple-value-list (funcall function (lambda () (throw 'inner (values))))))))
+(let ((function (mir-test-compile
+                 '(lambda ()
+                    (declare (optimize (debug 0)))
+                    (let ((x 0))
+                      (flet ((put () (setq x (cons 51 nil))))
+                        (declare (notinline put))
+                        (catch 'tag (put) (throw 'tag nil))
+                        (kiln.sys:%gc) x))))))
+  (print (equal (funcall function) '(51))))
+(let ((function (mir-test-compile
+                 '(lambda ()
+                    (let ((*mir-special-value* :catch-outer))
+                      (let ((result (multiple-value-list
+                                     (catch 'tag
+                                       (let ((*mir-special-value* (list 61)))
+                                         (progv '(*mir-progv-other*) '(62)
+                                           (kiln.sys:%gc) (throw 'tag (values *mir-special-value* *mir-progv-other*))))))))
+                        (list result *mir-special-value* *mir-progv-other*)))))))
+  (print (and (equal (funcall function) '(((61) 62) :catch-outer :other))
+              (eq *mir-special-value* :outer) (eq *mir-progv-other* :other))))
+(let ((function (mir-test-compile
+                 '(lambda ()
+                    (catch 'outer (catch (throw 'outer (values 71 72)) (error "Not reached")))))))
+  (print (equal (multiple-value-list (funcall function)) '(71 72))))
+(let ((function (mir-test-compile
+                 '(lambda (tag a)
+                    (declare (optimize (debug 0)) (type double-float a))
+                    (let ((result (catch tag (throw tag (+ a 1.0d0)))))
+                      (kiln.sys:%gc) (+ a result))))))
+  (print (= 5.0d0 (funcall function (cons nil nil) 2.0d0))))
+(let ((function
+        (mir-test-compile
+         '(lambda ()
+            (let ((n 0))
+              (tagbody again
+                (catch 'tag
+                  (let ((*mir-special-value* :loop))
+                    (setq n (1+ n)) (if (< n 3) (go again)))))
+              (block done
+                (catch 'tag
+                  (let ((*mir-special-value* :inner))
+                    (return-from done (values n *mir-special-value*))))))))))
+  (print (and (equal (multiple-value-list (funcall function)) '(3 :inner))
+              (eq *mir-special-value* :outer))))
