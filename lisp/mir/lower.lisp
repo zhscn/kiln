@@ -1,6 +1,9 @@
 (in-package #:kiln.compiler)
 
 (defvar *mir-lir-values*)
+(defvar *mir-lir-doubles*)
+(defvar *mir-lir-boxed*)
+(defvar *mir-lir-live*)
 (defvar *mir-lir-labels*)
 (defvar *mir-lir-functions*)
 (defvar *mir-lir-types*)
@@ -46,33 +49,130 @@
              (and (= (length operands) 1) (member name '(- abs 1+ 1-))))
          (every (lambda (id) (eq (svref *mir-lir-types* id) 'double-float)) operands))))
 
-(defun mir-lir-double-call (name args)
-  (let* ((bits (mapcar (lambda (object)
-                        (copy-to-var `(:field-load ,kiln.kir::+packet-field-double-bits+ ,object) :f64))
-                      args))
+(defun mir-lir-double-forward-source (instruction)
+  (let ((operands (mir-instruction-operands instruction)))
+    (when (and (plusp (length operands))
+               (or (member (mir-instruction-kind instruction) '(9 10))
+                   (and (= (mir-instruction-kind instruction) 14) (zerop (mir-instruction-data instruction)))
+                   (and (= (mir-instruction-kind instruction) 11)
+                        (mir-check-proven-p instruction *mir-lir-types*))))
+      (svref operands 0))))
+
+(defun mir-lir-live-values (function)
+  "Drop unused copy chains and block arguments before choosing representations."
+  (let ((live (make-array (hir-buffer-count (mir-function-values function)) :initial-element nil))
+        (instructions (hir-vector (mir-function-instructions function)))
+        (blocks (hir-vector (mir-function-blocks function))))
+    (labels ((mark (id) (unless (svref live id) (setf (svref live id) t))))
+      (loop for instruction across instructions
+            unless (mir-lir-double-forward-source instruction)
+              do (map nil #'mark (mir-instruction-operands instruction)))
+      (loop for block across blocks
+            do (map nil #'mark (mir-terminator-operands (mir-block-terminator block))))
+      (loop with changed = t while changed
+            do (setf changed nil)
+               (loop for instruction across instructions
+                     for source = (mir-lir-double-forward-source instruction)
+                     for result = (mir-instruction-result instruction)
+                     when (and source result (svref live result) (mark source)) do (setf changed t))
+               (loop for block across blocks
+                     do (loop for edge across (mir-terminator-edges (mir-block-terminator block))
+                              for parameters = (mir-block-parameters (mir-at (mir-function-blocks function) (mir-edge-target edge)))
+                              do (loop for source across (mir-edge-arguments edge) for target across parameters
+                                       when (and (svref live target) (mark source)) do (setf changed t))))))
+    live))
+
+(defun mir-lir-double-plan (function)
+  "Keep raw SSA doubles and request boxed companions only at object uses."
+  (let* ((values (hir-vector (mir-function-values function)))
+         (doubles (make-array (length values) :initial-element nil))
+         (boxed (make-array (length values) :initial-element nil))
+         (instructions (hir-vector (mir-function-instructions function)))
+         (blocks (hir-vector (mir-function-blocks function))))
+    (when (and (< (hir-policy-quality (mir-function-policy function) :debug) 2)
+               (every (lambda (instruction)
+                        (and (hir-policy-optimize-p (mir-instruction-policy instruction))
+                             (< (hir-policy-quality (mir-instruction-policy instruction) :debug) 2))) instructions))
+      (loop for value across values for id = (mir-value-id value)
+            when (and (svref *mir-lir-live* id) (eq (svref *mir-lir-types* id) 'double-float)
+                      (or (eq (mir-value-representation value) :obj)
+                          (and (eq (mir-value-representation value) :bundle) (mir-lir-single-p id))))
+              do (setf (svref doubles id) (new-var :f64))))
+    (labels ((require-object (id)
+               (when (and (svref doubles id) (not (svref boxed id)))
+                 (setf (svref boxed id) t)))
+             (forward-p (instruction)
+               (let ((source (mir-lir-double-forward-source instruction))
+                     (result (mir-instruction-result instruction)))
+                 (and source result (svref doubles source) (svref doubles result) source))))
+      (loop for instruction across instructions
+            unless (or (mir-lir-double-call-p instruction) (forward-p instruction)
+                       (and (mir-lir-double-forward-source instruction)
+                            (not (svref *mir-lir-live* (mir-instruction-result instruction)))))
+              do (map nil #'require-object (mir-instruction-operands instruction)))
+      (loop for block across blocks
+            do (map nil #'require-object (mir-terminator-operands (mir-block-terminator block))))
+      ;; Object requirements follow the same copies as raw bits. Iterate for
+      ;; loop-carried bindings, including cycles with several block parameters.
+      (loop with changed = t while changed
+            do (setf changed nil)
+               (flet ((propagate (source target)
+                        (when (and (svref *mir-lir-live* target)
+                                   (or (not (svref doubles target)) (svref boxed target))
+                                   (require-object source))
+                          (setf changed t))))
+                 (loop for instruction across instructions for source = (forward-p instruction)
+                       when source do (propagate source (mir-instruction-result instruction)))
+                 (loop for block across blocks
+                       do (loop for edge across (mir-terminator-edges (mir-block-terminator block))
+                                for parameters = (mir-block-parameters (mir-at (mir-function-blocks function) (mir-edge-target edge)))
+                                do (loop for source across (mir-edge-arguments edge) for target across parameters
+                                         do (propagate source target)))))))
+    (values doubles boxed)))
+
+(defun mir-lir-double-bits (id)
+  (or (svref *mir-lir-doubles* id)
+      (let ((value (mir-lir-value id)))
+        (copy-to-var `(:field-load ,kiln.kir::+packet-field-double-bits+ ,(if (consp value) (car value) value)) :f64))))
+
+(defun mir-lir-double-call (name operands)
+  (let* ((bits (map 'list #'mir-lir-double-bits operands))
          (left (first bits)) (right (second bits)))
     (when (and right (eq name '/))
       (let ((zero (new-block)) (divide (new-block)))
         (br `(:eq (:and ,right #x7fffffffffffffff) 0) zero divide)
         (start-block zero)
-        (emit-error +err-division-by-zero+ (first args))
+        (emit-error +err-division-by-zero+ (hir-box-double-bits left))
         (jump divide) (start-block divide)))
-    (hir-box-double-bits
-     (copy-to-var
-      (if right
-          `(,(ecase name (+ :f64-add) (- :f64-sub) (* :f64-mul) (/ :f64-div)) ,left ,right)
-          (ecase name
-            (- `(:xor ,left ,(- #x8000000000000000)))
-            (abs `(:and ,left #x7fffffffffffffff))
-            (1+ `(:f64-add ,left #x3ff0000000000000))
-            (1- `(:f64-sub ,left #x3ff0000000000000))))
-      :f64))))
+    (copy-to-var
+     (if right
+         `(,(ecase name (+ :f64-add) (- :f64-sub) (* :f64-mul) (/ :f64-div)) ,left ,right)
+         (ecase name
+           (- `(:xor ,left ,(- #x8000000000000000)))
+           (abs `(:and ,left #x7fffffffffffffff))
+           (1+ `(:f64-add ,left #x3ff0000000000000))
+           (1- `(:f64-sub ,left #x3ff0000000000000))))
+     :f64)))
 
 (defun mir-lir-instruction (instruction arguments argument-count)
   (let* ((*call-source* (mir-instruction-source instruction)) (*hir-policy* (mir-instruction-policy instruction))
          (kind (mir-instruction-kind instruction)) (result (mir-instruction-result instruction))
          (out (and result (mir-lir-value result))) (data (mir-instruction-data instruction))
          (args (map 'list #'mir-lir-value (mir-instruction-operands instruction))))
+    (when (and result (not (svref *mir-lir-live* result))
+               (mir-lir-double-forward-source instruction))
+      (return-from mir-lir-instruction))
+    (when (mir-lir-double-call-p instruction)
+      (let ((bits (mir-lir-double-call data (mir-instruction-operands instruction)))
+            (raw (svref *mir-lir-doubles* result)))
+        (when raw (emit `(:set ,raw ,bits)))
+        (when (or (not raw) (svref *mir-lir-boxed* result))
+          (mir-lir-save result (hir-box-double-bits bits) 1)))
+      (return-from mir-lir-instruction))
+    (let ((source (mir-lir-double-forward-source instruction)))
+      (when (and result source (svref *mir-lir-doubles* result) (svref *mir-lir-doubles* source))
+        (emit `(:set ,(svref *mir-lir-doubles* result) ,(svref *mir-lir-doubles* source)))
+        (unless (svref *mir-lir-boxed* result) (return-from mir-lir-instruction))))
     (case kind
       (0 (emit `(:set ,out ,(constant-object data))))
       (1 (emit `(:set ,out ,(svref arguments data))))
@@ -86,9 +186,7 @@
            (emit `(:set ,out (:object-address ,object :general)))))
       ((6 7)
        (multiple-value-bind (value count)
-           (cond ((mir-lir-double-call-p instruction)
-                  (values (mir-lir-double-call data args) 1))
-                 ((mir-borrow-call-p instruction)
+           (cond ((mir-borrow-call-p instruction)
                   (let ((slot (svref *mir-lir-stack-slots* (mir-instruction-id instruction))))
                     (cond (slot (let ((value (new-var)))
                                   (emit `(:stack-cons ,value (:slot ,slot) ,(first args) ,(second args)))
@@ -152,7 +250,10 @@
       (16 (emit `(:set ,out ,(boolean-value `(:gt ,(first args) ,data)))))
       (17 (emit `(:set ,out ,(emit-rest-list data *mir-lir-rest-slots*))))
       (18 (emit-error (ecase data (:odd-keywords +err-odd-keywords+) (:unknown-keyword +err-unknown-keyword+))
-                      (first args))))))
+                      (first args))))
+    (when (and result (svref *mir-lir-doubles* result))
+      (emit `(:set ,(svref *mir-lir-doubles* result)
+                   (:field-load ,kiln.kir::+packet-field-double-bits+ ,(if (consp out) (car out) out)))))))
 
 (defun mir-lir-edge-copies (function edge)
   "Snapshot every source before assigning block parameters, including copy cycles."
@@ -160,7 +261,12 @@
         (parameters (mir-block-parameters (mir-at (mir-function-blocks function) (mir-edge-target edge)))))
     (loop for target across parameters for source across (mir-edge-arguments edge)
           for from = (mir-lir-value source) for to = (mir-lir-value target)
-          do (if (consp to)
+          when (svref *mir-lir-live* target)
+          do (when (svref *mir-lir-doubles* target)
+               (push (cons (svref *mir-lir-doubles* target)
+                           (copy-to-var (mir-lir-double-bits source) :f64)) copies))
+             (when (or (not (svref *mir-lir-doubles* target)) (svref *mir-lir-boxed* target))
+               (if (consp to)
                  (cond ((eq (mir-lir-single-p target) (mir-lir-single-p source))
                         (push (cons (car to) (copy-to-var (car from))) copies)
                         (push (cons (cdr to) (copy-to-var (cdr from) :raw)) copies))
@@ -175,7 +281,7 @@
                             (push (cons (cdr to) 1) copies))))
                  (push (cons to (copy-to-var from
                                   (if (eq (mir-value-representation (mir-at (mir-function-values function) target)) :count)
-                                      :raw :obj))) copies)))
+                                      :raw :obj))) copies))))
     (dolist (copy (nreverse copies)) (emit `(:set ,(car copy) ,(cdr copy))))))
 
 (defun mir-lir-function-body (function &optional unit)
@@ -185,6 +291,8 @@
          (storage (and unit (svref (mir-infer-storage unit) (mir-function-id function))))
          (*mir-lir-types* (mir-infer-types function unit))
          (*mir-lir-value-facts* (mir-infer-value-facts function unit))
+         (*mir-lir-live* (mir-lir-live-values function))
+         (*mir-lir-doubles* nil) (*mir-lir-boxed* nil)
          (*mir-lir-values*
            (map 'simple-vector
                 (lambda (value)
@@ -196,6 +304,7 @@
          (labels (map 'simple-vector (lambda (block) (declare (ignore block)) (new-block)) blocks))
          (edge-blocks nil)
          (arguments (make-array (mir-function-positional-count function))) (count (new-var :raw)))
+    (multiple-value-setq (*mir-lir-doubles* *mir-lir-boxed*) (mir-lir-double-plan function))
     (dotimes (i (length arguments)) (setf (svref arguments i) (new-var)))
     (emit `(:receive-prefix ,(coerce arguments 'list) ,count))
     (when (and storage (not (zerop (mir-storage-analysis-rest storage))))
