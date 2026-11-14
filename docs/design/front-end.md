@@ -23,6 +23,17 @@ KIR
 
 HIR 的词法绑定、自由变量、赋值、退出点和闭包布局直接记录在结构中；宏展开结果直接转换，不重建 CST，源码位置按顶层形式 CST 里记下的位置取。编译期求值按 client 分派（`evaluate-at-compile-time`）：cross-client 和 image-client 共用 HIR 求值器（`lisp/hir/eval.lisp`）。数据结构、源码位置和分析规则见 [hir.md](hir.md)。
 
+## 顶层处理协议
+
+文件编译、image 求值和 HIR 求值共用 `lisp/toplevel.lisp` 的语法分类与
+`eval-when` 阶段规则。分类先检查列表形状及固定参数数量；阶段分析返回执行、
+编译、发射或忽略动作，并保留传入 CST 的主体节点。
+
+文件驱动处理读入包状态、编译期环境及模块发射，原生求值驱动处理 image 里的
+即时执行。它们依据同一协议选择动作：文件中的 compile/load situations 按
+顶层编译规则组合，直接 `eval` 和 HIR 求值只执行 execute situation。
+宏查询和编译期求值继续由各自 client 提供，因此交叉环境不会被 image 的定义替代。
+
 ## 编译 client 与会话
 
 | 文件 | 在哪里 | 内容 |

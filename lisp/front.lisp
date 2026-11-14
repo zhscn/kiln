@@ -701,25 +701,12 @@ Trucler ENVIRONMENT, for CLIENT. Cross and image clients use the HIR evaluator."
         (values form nil))))
 
 (defun process-eval-when (cst compile-time-too)
-  (let* ((parts (rest (hir-parts cst)))
-         (situations (progn
-                       (hir-arity 'eval-when parts 1 nil)
-                       (let ((values (mapcar #'hir-raw (hir-parts (first parts)))))
-                         (unless (every (lambda (value)
-                                          (member value '(:compile-toplevel :load-toplevel :execute compile load eval)))
-                                        values)
-                           (hir-error "Invalid EVAL-WHEN situations ~S" values))
-                         values)))
-         (body (rest parts))
-         (ct (intersection situations '(:compile-toplevel compile)))
-         (lt (intersection situations '(:load-toplevel load)))
-         (ex (intersection situations '(:execute eval))))
-    (cond ((and lt (or ct (and ex compile-time-too)))
-           (dolist (c body) (process-toplevel c t)))
-          (lt
-           (dolist (c body) (process-toplevel c nil)))
-          ((or ct (and ex compile-time-too))
-           (dolist (c body) (compile-time-eval c))))))
+  (multiple-value-bind (action body) (toplevel-eval-when cst :file compile-time-too)
+    (ecase action
+      (:compile-and-emit (dolist (c body) (process-toplevel c t)))
+      (:emit (dolist (c body) (process-toplevel c nil)))
+      (:compile (dolist (c body) (compile-time-eval c)))
+      (:ignore nil))))
 
 (defun declaration-cst-p (cst)
   (let ((raw (hir-raw cst)))
@@ -835,57 +822,37 @@ module).")
          (*macro-source* (or (cst-source-range cst) *macro-source*))
          (*definition-name* (multiple-value-bind (name function-p) (definition-name form)
                               (if name (cons name function-p) *definition-name*))))
-    (when (and (consp form) (eq (first form) 'defclass))
-      (note-class-accessors form))
+    (when (and (consp form) (eq (first form) 'defclass)) (note-class-accessors form))
     (when (and (consp form) (eq (first form) 'defun) (consp (rest form)) (consp (cddr form)))
       (note-inline-definition form))
-    (if (and (consp form) (symbolp (first form)))
-        (case (first form)
-          (progn
-            (dolist (c (rest (hir-parts cst)))
-              (process-toplevel c compile-time-too)))
-          (eval-when
-           (process-eval-when cst compile-time-too))
-          ;; The host reader reads the rest of the file in the package.
-          ;; Once the package system exists at run time, *PACKAGE* is
-          ;; set at load time too, as LOAD would (code run at load time
-          ;; uses it), and reset to CL-USER at the end
-          ;; of the file (FRONT-END).
-          (in-package
-           (setf *package* (or (find-package (renamed-package-name (second form)))
-                               (error "IN-PACKAGE: no package named ~S" (second form))))
-           (when (run-time-packages-p *client*)
-             (setf *file-sets-package* t)
-             (let ((*macro-source* nil))
-               (compile-toplevel-form
-                `(setq *package* (,(find-package-function)
-                                  ',(package-name *package*)))
-                nil))))
-          ;; Cross compilation creates the package in the host, so that the rest
-          ;; of the sources can be read. Nothing is compiled: the run-time
-          ;; package is built from the module's symbol table, which
-          ;; mirrors the host package. A package that
-          ;; exists already (a host system such as Ecclesia) is left
-          ;; alone, but it is a package of the module too: its external
-          ;; symbols are in the module whichever host compiles it (on
-          ;; kiln, every package of kiln's sources exists).
-          (defpackage
-           (if *file-compilation-p*
-               (multiple-value-bind (expansion expandedp) (macroexpand-toplevel form)
-                 (unless expandedp (error "No DEFPACKAGE expander is available."))
-                 (process-toplevel expansion compile-time-too))
-               (let ((name (renamed-package-name (second form))))
-                 (pushnew (or (find-package name)
-                              (eval `(defpackage ,name ,@(cddr form))))
-                          *defined-packages*))))
-          ((locally macrolet symbol-macrolet)
-           (process-toplevel-body cst compile-time-too))
-          (t
+    (case (toplevel-form-kind cst)
+      (:progn (dolist (child (rest (hir-parts cst))) (process-toplevel child compile-time-too)))
+      (:eval-when (process-eval-when cst compile-time-too))
+      (:in-package
+       ;; Reader state changes immediately. Generated load code changes the
+       ;; target package too; FRONT-END restores it at the end of the file.
+       (setf *package* (or (find-package (renamed-package-name (second form)))
+                          (error "IN-PACKAGE: no package named ~S" (second form))))
+       (when (run-time-packages-p *client*)
+         (setf *file-sets-package* t)
+         (let ((*macro-source* nil))
+           (compile-toplevel-form `(setq *package* (,(find-package-function) ',(package-name *package*))) nil))))
+      (:defpackage
+       ;; Cross modules construct packages from symbol tables. File compilation
+       ;; emits the definition so later readers and loaded code see the package.
+       (if *file-compilation-p*
+           (multiple-value-bind (expansion expandedp) (macroexpand-toplevel form)
+             (unless expandedp (error "No DEFPACKAGE expander is available."))
+             (process-toplevel expansion compile-time-too))
+           (let ((name (renamed-package-name (second form))))
+             (pushnew (or (find-package name) (eval `(defpackage ,name ,@(cddr form)))) *defined-packages*))))
+      (:scope (process-toplevel-body cst compile-time-too))
+      (otherwise
+       (if (and (consp form) (symbolp (first form)))
            (multiple-value-bind (expansion macrop) (macroexpand-toplevel form)
-             (if macrop
-                 (process-toplevel expansion compile-time-too)
-                 (compile-toplevel-form cst compile-time-too)))))
-        (compile-toplevel-form cst compile-time-too))))
+             (if macrop (process-toplevel expansion compile-time-too)
+                 (compile-toplevel-form cst compile-time-too)))
+           (compile-toplevel-form cst compile-time-too))))))
 
 (defstruct (session (:constructor %make-session))
   "Compile-time state shared by the files compiled one after another into

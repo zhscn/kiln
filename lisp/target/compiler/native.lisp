@@ -81,38 +81,31 @@ running image, in the null lexical environment."
 
 (defun native-eval-1 (form)
   (loop
-    (cond ((symbolp form)
-           (multiple-value-bind (expansion macrop) (macroexpand-1 form)
-             (if macrop
-                 (setf form expansion)
-                 (return (symbol-value form)))))
-          ((atom form)
-           (return form))
-          ((eq (first form) 'quote)
-           (return (second form)))
-          ((and (eq (first form) 'function) (symbolp (second form)))
-           (return (fdefinition (second form))))
-          ((eq (first form) 'progn)
-           (return (native-eval-body (rest form))))
-          ((eq (first form) 'eval-when)
-           (return (when (or (member :execute (second form))
-                             (member 'eval (second form)))
-                     (native-eval-body (cddr form)))))
-          ((and (symbolp (first form)) (macro-function (first form)))
-           ;; The functions a definition defines are named after it
-           ;;, although its expansion is compiled; its
-           ;; dependencies are recorded.
-           (multiple-value-bind (name function-p) (definition-name form)
-             (when name
-               (return
-                 (let ((*eval-definition* (cons name function-p)))
-                   (evaluate-definition name form
-                                        (let ((form form))
-                                          (lambda () (native-eval-1 (macroexpand-1 form)))))))))
-           (note-dependency :macro (first form))
-           (setf form (macroexpand-1 form)))
-          (t
-           (return (native-eval-toplevel form))))))
+    (case (toplevel-form-kind form)
+      (:symbol
+       (multiple-value-bind (expansion macrop) (macroexpand-1 form)
+         (if macrop (setf form expansion) (return (symbol-value form)))))
+      (:literal (return form))
+      (:quote (return (second form)))
+      (:function
+       (return (if (symbolp (second form)) (fdefinition (second form))
+                   (native-eval-toplevel form))))
+      (:progn (return (native-eval-body (rest form))))
+      (:eval-when
+       (multiple-value-bind (action body) (toplevel-eval-when form :eval)
+         (return (when (eq action :execute) (native-eval-body body)))))
+      (otherwise
+       (unless (and (symbolp (first form)) (macro-function (first form)))
+         (return (native-eval-toplevel form)))
+       (multiple-value-bind (name function-p) (definition-name form)
+         (when name
+           (return
+             (let ((*eval-definition* (cons name function-p)))
+               (evaluate-definition name form
+                                    (let ((form form))
+                                      (lambda () (native-eval-1 (macroexpand-1 form)))))))))
+       (note-dependency :macro (first form))
+       (setf form (macroexpand-1 form))))))
 
 (defvar *eval-values*)
 
