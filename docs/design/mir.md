@@ -13,7 +13,7 @@ MIR（mid-level IR）由 Lisp 从 HIR 构造，是控制流图加 SSA。它负�
 这使初始构造简单、可验证，代价是图和边的实参数量较大。
 
 实现分为 `lisp/mir/data.lisp`、`verify.lisp`、`build.lisp`、`lower.lisp`、
-`values.lisp`、`types.lisp`、`calls.lisp`、`escape.lisp`、`scalar.lisp` 和 `dump.lisp`。编号索引复用可增长向量容器，语义值表示为 `obj`、`bundle`、参数计数 `count` 和内部 cell 句柄 `cell`。返回个数已知为 1 的 bundle 直接保存对象；其他 bundle 使用
+`values.lisp`、`types.lisp`、`calls.lisp`、`escape.lisp`、`predicates.lisp`、`scalar.lisp` 和 `dump.lisp`。编号索引复用可增长向量容器，语义值表示为 `obj`、`bundle`、参数计数 `count` 和内部 cell 句柄 `cell`。返回个数已知为 1 的 bundle 直接保存对象；其他 bundle 使用
 保存载体和个数，跨调用后恢复，避免借用的多值区被后续调用覆盖。合流处可能
 改变这两种表示，边复制先转换并保存所有来源，再写入目标；这也覆盖复制环。
 
@@ -62,6 +62,17 @@ HIR 与 MIR 共用这部分 LIR 发射器，各自提供结果范围证明。
 一个值；这些事实由 MIR 重新生成并跨 SSA 和调用摘要传播。标准容器 setter 的
 单值结果是所写入的值，类型与多值摘要均使用这一契约。类型未知、`notinline`
 和低优化策略保留通用调用。
+
+类型谓词的结果已知后，仍只在 LIR 发射时折叠，会让 MIR 的后续分析继续把
+原调用当作对象使用。`predicates.lisp` 根据 MIR 类型事实，把可证明真假的具名
+一元类型谓词改为布尔常量和单值构造；原有实参求值指令保留，包含错误和回调的
+实参仍按原顺序执行。NIL 同时属于 symbol 和 list，因此仅凭其中一种宽类型
+不能把另一类谓词折叠为假。未知类型、`notinline` 及低优化策略保留调用。
+
+改写通过 pass 接口推进函数版本、失效分析缓存并验证 SSA。局部函数返回类型
+可能随常量结果变得更精确，因此重新计算单元摘要，直到没有可折叠的谓词调用。
+随后运行标量替换，使只供已折叠谓词使用的 cons 也能消除存储，同时保留其字段
+表达式的副作用。这个顺序让类型结论参与后续存储证明，而不只是减少运行期调用。
 
 类型声明重新生成检查，再由 MIR 的类型事实证明是否可以省略；
 HIR 的区间、逃逸、栈存储和拆箱证明不导入 MIR。

@@ -951,3 +951,32 @@
                       (kiln.sys:%gc) (list (length v) (svref v 1)))))))
   (let* ((value (list 51)) (result (funcall function value)))
     (print (and (= (first result) 2) (eq (second result) value)))))
+(let ((function (mir-test-compile
+                 '(lambda (x) (declare (fixnum x))
+                    (list (integerp x) (rationalp x) (realp x) (numberp x) (floatp x)
+                          (consp x) (symbolp x) (characterp x) (vectorp x) (arrayp x)
+                          (functionp x) (listp x) (null x) (not x))))))
+  (print (equal (funcall function 7) '(t t t t nil nil nil nil nil nil nil nil nil nil)))
+  (print (handler-case (progn (funcall function "bad") nil) (type-error () t))))
+(let ((function (mir-test-compile
+                 '(lambda (x callback) (integerp (progn (funcall callback) (logand x 255)))))))
+  (let ((count 0))
+    (print (and (funcall function 3 (lambda () (incf count))) (= count 1)))
+    (print (and (handler-case (progn (funcall function "bad" (lambda () (incf count))) nil)
+                  (type-error () t)) (= count 2)))))
+(let ((function (mir-test-compile
+                 '(lambda (callback)
+                    (declare (optimize (debug 0)))
+                    (consp (cons (funcall callback) nil))))))
+  (let ((count 0))
+    (print (and (funcall function (lambda () (incf count))) (= count 1))))
+  (print (handler-case (progn (funcall function (lambda () (error "predicate argument"))) nil)
+           (error () t))))
+(let ((function (mir-test-compile
+                 '(lambda (x) (declare (symbol x)) (list (listp x) (null x) (not x))))))
+  (print (equal (funcall function nil) '(t t t)))
+  (print (equal (funcall function :other) '(nil nil nil))))
+(let ((function (mir-test-compile
+                 '(lambda (x) (declare (list x)) (list (consp x) (symbolp x))))))
+  (print (equal (funcall function nil) '(nil t)))
+  (print (equal (funcall function (list 1)) '(t nil))))
