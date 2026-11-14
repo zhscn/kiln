@@ -8,7 +8,7 @@
               (hir-vector (mir-function-instructions function)))))
 
 (defun mir-lifting-widths (unit calls)
-  "Prove that captured entries have no observable function objects or bad calls."
+  "Prove private captured entries and source argument counts safe for lifting."
   (let* ((functions (hir-vector (mir-unit-functions unit)))
          (widths (make-array (length functions) :initial-element nil))
          (constructors (make-array (length functions) :initial-element 0))
@@ -17,8 +17,7 @@
           for width = (length (mir-function-captures function))
           when (and (plusp width) (zerop (mir-function-capture-cells function))
                     (every #'null (mir-function-capture-functions function))
-                    (zerop (mir-function-optional function)) (not (mir-function-tail-p function))
-                    (<= (+ width (mir-function-required function)) kiln.kir::+backend-argument-limit+)
+                    (<= (+ width (mir-function-positional-count function)) kiln.kir::+backend-argument-limit+)
                     (not (logbitp id (mir-call-analysis-external calls)))
                     (mir-lifting-policy-p function))
             do (setf (svref widths id) width))
@@ -36,7 +35,11 @@
                               when (and (integerp target) (svref widths target))
                                 do (cond ((not (mir-lifting-policy-p function)) (setf (svref widths target) nil))
                                          ((= kind 23) (incf (svref constructors target)))
-                                         ((and (= kind 7) (= (1- (length args)) (mir-function-required (svref functions target))))
+                                         ((and (= kind 7)
+                                               (<= (mir-function-required (svref functions target)) (1- (length args)))
+                                               (or (null (mir-function-maximum (svref functions target)))
+                                                   (<= (1- (length args)) (mir-function-maximum (svref functions target))))
+                                               (<= (+ (1- (length args)) (svref widths target)) kiln.kir::+backend-argument-limit+))
                                           (incf (svref uses target)))
                                          (t (setf (svref widths target) nil))))))
     (dotimes (id (length widths))
@@ -121,7 +124,7 @@
                 unless (and (= kind 24) (svref widths (car data))) do
                   (when own-width
                     (case kind
-                      (1 (incf (mir-instruction-data instruction) own-width))
+                      ((1 16 17) (incf (mir-instruction-data instruction) own-width))
                       (22 (setf (mir-instruction-kind instruction) 1
                                 (mir-instruction-effects instruction) (svref *mir-instruction-effects* 1)))
                       (13 (setf (mir-instruction-data instruction)
