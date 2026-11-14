@@ -116,3 +116,22 @@
 (let ((function (mir-test-compile '(lambda () (the integer (mir-global-source))))))
   (setf (symbol-function 'mir-global-source) (lambda () 'wrong))
   (print (handler-case (progn (funcall function) :bad) (type-error () :global-call))))
+(let ((function (mir-test-compile
+                 '(lambda ()
+                    (declare (optimize (speed 0)))
+                    (flet ((f (x) (the fixnum x)))
+                      (list (f 2) (f 4)))))))
+  (print (funcall function)))
+(let ((function (mir-test-compile
+                 '(lambda ()
+                    (declare (optimize (speed 0)))
+                    (flet ((f (x) (the fixnum x)))
+                      (f 2) (f 'wrong))))))
+  (print (handler-case (progn (funcall function) :bad) (type-error () :input-join))))
+(let ((function (mir-test-compile
+                 '(lambda ()
+                    (declare (optimize (speed 0)))
+                    (flet ((f (x) (the fixnum x)))
+                      (values (f 2) #'f))))))
+  (let ((escaped (nth-value 1 (funcall function))))
+    (print (handler-case (progn (funcall escaped 'wrong) :bad) (type-error () :escaped-input)))))

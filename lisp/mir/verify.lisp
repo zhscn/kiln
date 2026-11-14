@@ -35,6 +35,10 @@
                           (setf (svref dominators i) value changed t)))))
     (values reachable dominators)))
 
+(defun mir-reachable-blocks (function)
+  "Cache the reachable block bitset at the function's current revision."
+  (mir-analysis function :reachable #'mir-control-flow))
+
 (defun verify-mir-function (unit function)
   (let* ((blocks (mir-function-blocks function)) (instructions (mir-function-instructions function))
          (values (mir-function-values function))

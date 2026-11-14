@@ -56,12 +56,12 @@
                (t type))))
       (t type))))
 
-(defun mir-compute-types (function &key summaries functions (finalize t))
+(defun mir-compute-types (function &key summaries functions inputs (finalize t))
   "Infer primary-value types. :UNSEEN is solver bottom; T is unknown."
   (let* ((types (make-array (hir-buffer-count (mir-function-values function))
                             :initial-element :unseen))
          (blocks (hir-vector (mir-function-blocks function)))
-         (reachable (mir-control-flow function))
+         (reachable (mir-reachable-blocks function))
          (definitions (mir-value-definitions function))
          (changes (make-array (length types) :initial-element 0))
          (changed t))
@@ -79,6 +79,7 @@
                (let ((args (mir-instruction-operands instruction)))
                  (case (mir-instruction-kind instruction)
                    (0 (hir-constant-type (mir-instruction-data instruction)))
+                   (1 (if inputs (svref inputs (mir-instruction-data instruction)) t))
                    ((4 5) 'function)
                    ;; A bundle carries only a primary-value fact here. Unknown
                    ;; calls include the zero-values case, whose primary is NIL.
