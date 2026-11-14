@@ -108,3 +108,38 @@
       (member name '(car cdr first rest rplaca rplacd identity + - * / abs 1+ 1- logand logior logxor
                      < > <= >= = /= eq eql equal equalp zerop plusp minusp
                      cons list vector make-array length char schar aref elt char-code))))
+
+(defun mir-compute-bundle-carriers (function)
+  "Mark bundles whose secondary values must survive later operations."
+  (let* ((values (hir-vector (mir-function-values function)))
+         (blocks (hir-vector (mir-function-blocks function)))
+         (carriers (make-array (length values) :initial-element nil)))
+    (labels ((mark (id)
+               (when (and (eq (mir-value-representation (svref values id)) :bundle)
+                          (not (svref carriers id)))
+                 (setf (svref carriers id) t))))
+      (loop for instruction across (hir-vector (mir-function-instructions function))
+            for kind = (mir-instruction-kind instruction)
+            unless (or (member kind '(10 11 37 39))
+                       (and (= kind 14) (zerop (mir-instruction-data instruction))))
+              do (map nil #'mark (mir-instruction-operands instruction)))
+      (loop for block across blocks
+            do (map nil #'mark (mir-terminator-operands (mir-block-terminator block))))
+      (loop with changed = t while changed do
+        (setf changed nil)
+        (loop for instruction across (hir-vector (mir-function-instructions function))
+              for result = (mir-instruction-result instruction)
+              when (and (member (mir-instruction-kind instruction) '(11 39))
+                        result (svref carriers result)
+                        (mark (svref (mir-instruction-operands instruction) 0)))
+                do (setf changed t))
+        (loop for block across blocks
+              do (loop for edge across (mir-terminator-edges (mir-block-terminator block))
+                       for parameters = (mir-block-parameters (svref blocks (mir-edge-target edge)))
+                       do (loop for parameter across parameters for argument across (mir-edge-arguments edge)
+                                when (and (svref carriers parameter) (mark argument))
+                                  do (setf changed t))))))
+    carriers))
+
+(defun mir-bundle-carriers (function)
+  (mir-analysis function :bundle-carriers #'mir-compute-bundle-carriers))

@@ -22,9 +22,18 @@ SSA 变换只要求参数与入边实参的数量和表示匹配，不再依赖�
 支配关系及函数和捕获布局。cell 句柄和多值 bundle 按原表示处理。
 
 实现分为 `lisp/mir/data.lisp`、`verify.lisp`、`build.lisp`、`lower.lisp`、
-`values.lisp`、`types.lisp`、`calls.lisp`、`escape.lisp`、`predicates.lisp`、`lifting.lisp`、`scalar.lisp`、`simplify.lisp` 和 `dump.lisp`。编号索引复用可增长向量容器，语义值表示为 `obj`、`bundle`、参数计数 `count` 和内部 cell 句柄 `cell`。返回个数已知为 1 的 bundle 直接保存对象；其他 bundle 使用
-保存载体和个数，跨调用后恢复，避免借用的多值区被后续调用覆盖。合流处可能
-改变这两种表示，边复制先转换并保存所有来源，再写入目标；这也覆盖复制环。
+`values.lisp`、`types.lisp`、`calls.lisp`、`escape.lisp`、`predicates.lisp`、`lifting.lisp`、`scalar.lisp`、`simplify.lisp` 和 `dump.lisp`。编号索引复用可增长向量容器，语义值表示为 `obj`、`bundle`、参数计数 `count` 和内部 cell 句柄 `cell`。返回个数已知为 1 的 bundle 直接保存对象；需要保留次值的其他 bundle 使用
+保存载体和个数，跨调用后恢复，避免借用的多值区被后续调用覆盖。
+
+只读取主值或返回个数时，保存全部次值会构造一个随后无人读取的载体。
+`mir-bundle-carriers` 从次值读取、多值调用、完整返回及非局部退出的用途反向传播，
+沿声明转发和块参数求固定点；主值读取和存在性测试只需要主值与个数。
+降级为这些 bundle 保存独立的主值和实际个数，跨调用及 GC 后仍可使用。
+只有确实需要次值且不能证明恰好返回一个值时才保存载体。已证明的返回个数
+直接使用常量，未知个数才分配计数变量。合流或声明检查的输出可能只需要主值，
+其输入却因其他用途保存了完整载体，降级会提取主值和个数而非复制载体指针。
+反方向的转换只允许来自已证明的单值；其他来源的完整用途必须反向传播到生产者。
+边复制先转换并保存所有来源，再写入目标，因此交换赋值和复制环也保持正确。
 
 已支持常量、局部绑定与赋值、全局变量和函数 cell、词法闭包及局部函数组、普通调用、
 原语调用、`if`、顺序形式、`block`/`return-from` 与 `tagbody`/`go` 的函数内及跨函数退出、
