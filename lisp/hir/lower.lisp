@@ -594,28 +594,6 @@ predicate inside it is branched on, not made into T or NIL and compared."
     (start-block join)
     (if consumer (values (nil-value) 1) (values r n))))
 
-(defun hir-lower-fixnum-arithmetic (name a b bounded &optional error-on-overflow)
-  (if bounded
-      (copy-to-var (case name
-                     (+ `(:fixnum-add ,a ,b)) (- `(:fixnum-sub ,a ,b))
-                     (* `(:fixnum-mul ,a ,b))))
-      ;; Input types do not prove that the result fits. Keep the overflow
-      ;; edge and its arbitrary-precision result.
-      (let ((r (new-var)) (ovf (new-var :raw)) (slow (new-block)) (done (new-block)))
-        (emit (case name
-                (+ `(:fixnum-add-ovf ,r ,ovf ,a ,b))
-                (- `(:fixnum-sub-ovf ,r ,ovf ,a ,b))
-                (* `(:fixnum-mul-ovf ,r ,ovf ,a ,b))))
-        (br ovf slow done)
-        (start-block slow)
-        (emit `(:set ,r ,(emit-slow-call
-                         (case name (+ 'kiln.kernel::two-arg-+)
-                                    (- 'kiln.kernel::two-arg--)
-                                    (* 'kiln.kernel::two-arg-*)) a b)))
-        (when error-on-overflow
-          (emit-slow-call 'kiln.kernel::%declared-type-error r (constant-object 'fixnum)))
-        (jump done) (start-block done) r)))
-
 (defun hir-lower-small-search (node)
   (let* ((args (hir-node-b node)) (pattern nil))
     (unless (and (eq (hir-node-a node) 'search) (= (length args) 2)
@@ -821,7 +799,7 @@ unsupported call. Arguments retain their evaluation order and effects."
                (hir-fixnum-type-p (hir-node-type (svref args 0))))
       (let ((value (copy-to-var (hir-lower (svref args 0)))))
         (return-from hir-lower-typed-call
-          (values (hir-lower-fixnum-arithmetic
+          (values (emit-fixnum-arithmetic
                    (if (eq name '1+) '+ '-) value '(:fixnum-tag 1)
                    (hir-fixnum-type-p (hir-node-type node))) t))))
     (when (and (= count 2) (not (eq (hir-node-d node) :notinline))
@@ -846,7 +824,7 @@ unsupported call. Arguments retain their evaluation order and effects."
           (values
            (cond
              ((member name '(+ - *))
-              (hir-lower-fixnum-arithmetic name a b (hir-fixnum-type-p (hir-node-type node))))
+              (emit-fixnum-arithmetic name a b (hir-fixnum-type-p (hir-node-type node))))
              ((member name '(logand logior logxor))
               (copy-to-var `(,(case name (logand :and) (logior :or) (logxor :xor)) ,a ,b)))
              (t (boolean-value `(,(case name (< :lt) (> :gt) (<= :le) (>= :ge) (= :eq) (/= :ne))
@@ -962,7 +940,7 @@ unsupported call. Arguments retain their evaluation order and effects."
           (let* ((values (lower-args (coerce args 'list)))
                  (a (first values)) (b (if (= count 1) '(:fixnum-tag 1) (second values)))
                  (op (case name (1+ '+) (1- '-) (otherwise name)))
-                 (value (hir-lower-fixnum-arithmetic op a b
+                 (value (emit-fixnum-arithmetic op a b
                                                   (hir-fixnum-type-p (hir-node-type init)) t)))
             (return-from hir-lower-assignment (hir-set-variable var value 'fixnum))))))
     (hir-set-variable var (copy-to-var (hir-lower init)) (hir-node-type init))))

@@ -673,6 +673,30 @@ if needed (not a safepoint)."
   (emit `(:progv-restore ,(region-slot region))))
 
 
+;;; Integer arithmetic
+
+(defun emit-fixnum-arithmetic (name a b bounded &optional error-on-overflow)
+  (if bounded
+      (copy-to-var (case name
+                     (+ `(:fixnum-add ,a ,b)) (- `(:fixnum-sub ,a ,b))
+                     (* `(:fixnum-mul ,a ,b))))
+      ;; Input types do not prove that the result fits. Keep the overflow
+      ;; edge and its arbitrary-precision result.
+      (let ((r (new-var)) (ovf (new-var :raw)) (slow (new-block)) (done (new-block)))
+        (emit (case name
+                (+ `(:fixnum-add-ovf ,r ,ovf ,a ,b))
+                (- `(:fixnum-sub-ovf ,r ,ovf ,a ,b))
+                (* `(:fixnum-mul-ovf ,r ,ovf ,a ,b))))
+        (br ovf slow done)
+        (start-block slow)
+        (emit `(:set ,r ,(emit-slow-call
+                         (case name (+ 'kiln.kernel::two-arg-+)
+                                    (- 'kiln.kernel::two-arg--)
+                                    (* 'kiln.kernel::two-arg-*)) a b)))
+        (when error-on-overflow
+          (emit-slow-call 'kiln.kernel::%declared-type-error r (constant-object 'fixnum)))
+        (jump done) (start-block done) r)))
+
 ;;; Allocation
 
 (defun emit-fixed-object (class fields)
