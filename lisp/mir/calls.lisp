@@ -154,7 +154,8 @@
     (values joined expansions)))
 
 (defun mir-call-argument-types (instruction facts packets required &optional (maximum required))
-  "Flatten call facts, or return :UNSEEN, :UNKNOWN or :WRONG-ARITY."
+  "Flatten call facts, or return :UNSEEN, :UNKNOWN or :WRONG-ARITY.
+:UNKNOWN also returns the fixed leading argument types as a second value."
   (let ((args (mir-instruction-operands instruction)))
     (if (= (mir-instruction-kind instruction) 7)
         (if (and (<= required (1- (length args))) (or (null maximum) (<= (1- (length args)) maximum)))
@@ -165,7 +166,12 @@
                 do (when (eq packet :unseen) (return-from mir-call-argument-types :unseen))
                    (if (mir-values-fact-count packet) (incf count (mir-values-fact-count packet))
                        (setf unknown t)))
-          (when unknown (return-from mir-call-argument-types :unknown))
+          (when unknown
+            (let ((prefix nil))
+              (loop for index from 1 below (length args) for packet = (svref packets (svref args index))
+                    for count = (mir-values-fact-count packet)
+                    while count do (dotimes (slot count) (push (mir-values-ref-type packet slot) prefix)))
+              (return-from mir-call-argument-types (values :unknown (coerce (nreverse prefix) 'simple-vector)))))
           (unless (and (<= required count) (or (null maximum) (<= count maximum))) (return-from mir-call-argument-types :wrong-arity))
           (let ((result (make-array count)) (position 0))
             (loop for index from 1 below (length args) for packet = (svref packets (svref args index))
@@ -284,16 +290,18 @@
                          ((7 15)
                           (let ((target (svref known (svref args 0))))
                             (when (integerp target)
-                              (let* ((row (svref inputs target)) (counts (svref input-changes target))
-                                     (arguments (mir-call-argument-types instruction facts packets
-                                                                         (mir-function-required (svref functions target))
-                                                                         (mir-function-maximum (svref functions target)))))
-                                (when (or (vectorp arguments) (eq arguments :unknown))
-                                  (dotimes (position (length row))
-                                    (merge-fact row counts position
-                                                (cond ((eq arguments :unknown) t)
-                                                      ((< position (length arguments)) (svref arguments position))
-                                                      (t 'null)))))))))
+                              (let ((row (svref inputs target)) (counts (svref input-changes target)))
+                                (multiple-value-bind (arguments prefix)
+                                    (mir-call-argument-types instruction facts packets
+                                                             (mir-function-required (svref functions target))
+                                                             (mir-function-maximum (svref functions target)))
+                                  (when (or (vectorp arguments) (eq arguments :unknown))
+                                    (dotimes (position (length row))
+                                      (merge-fact row counts position
+                                                  (cond ((eq arguments :unknown)
+                                                         (if (< position (length prefix)) (svref prefix position) t))
+                                                        ((< position (length arguments)) (svref arguments position))
+                                                        (t 'null))))))))))
                          (24 (let* ((data (mir-instruction-data instruction)) (target (car data)) (slot (cdr data)))
                                (unless (logbitp slot (mir-function-capture-cells (svref functions target)))
                                  (merge-fact (svref capture-inputs target) (svref capture-changes target) slot

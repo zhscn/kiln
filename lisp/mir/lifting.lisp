@@ -7,6 +7,18 @@
                      (< (hir-policy-quality (mir-instruction-policy instruction) :debug) 2)))
               (hir-vector (mir-function-instructions function)))))
 
+(defun mir-lifting-call-range (instruction packets)
+  "Bound the user argument count before inserting hidden environment values."
+  (let ((args (mir-instruction-operands instruction)))
+    (if (= (mir-instruction-kind instruction) 7)
+        (values (1- (length args)) (1- (length args)))
+        (let ((low 0) (high 0))
+          (loop for index from 1 below (length args)
+                for packet = (svref packets (svref args index))
+                for count = (and (mir-values-fact-p packet) (mir-values-fact-count packet))
+                do (incf low (or count 0)) (incf high (or count kiln.kir::+backend-value-limit+)))
+          (values low high)))))
+
 (defun mir-lifting-widths (unit calls)
   "Prove private captured entries and source argument counts safe for lifting."
   (let* ((functions (hir-vector (mir-unit-functions unit)))
@@ -23,6 +35,7 @@
             do (setf (svref widths id) width))
     (loop for function across functions
           for identities across (mir-call-analysis-identities calls)
+          for packets across (mir-call-analysis-packets calls)
           for reachable = (mir-reachable-blocks function)
           do (loop for block across (hir-vector (mir-function-blocks function))
                    when (logbitp (mir-block-id block) reachable)
@@ -35,13 +48,14 @@
                               when (and (integerp target) (svref widths target))
                                 do (cond ((not (mir-lifting-policy-p function)) (setf (svref widths target) nil))
                                          ((= kind 23) (incf (svref constructors target)))
-                                         ((and (= kind 7)
-                                               (<= (mir-function-required (svref functions target)) (1- (length args)))
-                                               (or (null (mir-function-maximum (svref functions target)))
-                                                   (<= (1- (length args)) (mir-function-maximum (svref functions target))))
-                                               (<= (+ (1- (length args)) (svref widths target)) kiln.kir::+backend-argument-limit+))
-                                          (incf (svref uses target)))
-                                         (t (setf (svref widths target) nil))))))
+                                         (t
+                                          (multiple-value-bind (low high) (mir-lifting-call-range instruction packets)
+                                            (if (and (<= (mir-function-required (svref functions target)) low)
+                                                     (or (null (mir-function-maximum (svref functions target)))
+                                                         (<= high (mir-function-maximum (svref functions target))))
+                                                     (<= (+ high (svref widths target)) kiln.kir::+backend-argument-limit+))
+                                                (incf (svref uses target))
+                                                (setf (svref widths target) nil))))))))
     (dotimes (id (length widths))
       (unless (and (plusp (svref constructors id)) (plusp (svref uses id)))
         (setf (svref widths id) nil)))
@@ -132,11 +146,23 @@
                   (when (and (= kind 23) (svref widths data))
                     (setf (mir-instruction-kind instruction) 5
                           (mir-instruction-effects instruction) (svref *mir-instruction-effects* 5)))
-                  (when (and (= kind 7) (width (svref args 0)))
+                  (when (and (member kind '(7 15)) (width (svref args 0)))
                     (let ((fields (environment (svref args 0))))
                       (unless (and fields (every #'integerp fields)) (mir-fail "Lifted call lacks its environment"))
-                      (setf (mir-instruction-operands instruction)
-                            (concatenate 'simple-vector (subseq args 0 1) fields (subseq args 1)))))
+                      (let ((prefix
+                              (if (= kind 7) fields
+                                  (map 'simple-vector
+                                       (lambda (field)
+                                         (let ((bundle (mir-add-value function :bundle (mir-block-id block) (hir-buffer-count rebuilt))))
+                                           (append-instruction
+                                            (make-mir-instruction :kind 9 :result bundle :operands (vector field)
+                                                                  :source (mir-instruction-source instruction)
+                                                                  :origin (mir-instruction-origin instruction)
+                                                                  :policy (mir-instruction-policy instruction)
+                                                                  :effects (svref *mir-instruction-effects* 9)))
+                                           bundle)) fields))))
+                        (setf (mir-instruction-operands instruction)
+                              (concatenate 'simple-vector (subseq args 0 1) prefix (subseq args 1))))))
                   (append-instruction instruction)))
         (setf (mir-block-instructions block) rebuilt)
         (loop for edge across (mir-terminator-edges (mir-block-terminator block)) do
