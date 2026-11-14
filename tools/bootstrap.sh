@@ -11,7 +11,23 @@
 # stage1 and kiln0 and only builds kiln1 and stage2.)
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
-boot=$root/build/boot
+boot=$(realpath -m "${KILN_BOOT_DIR:-$root/build/boot}")
+case "$boot" in
+  "$root/build/"*) ;;
+  *) echo "KILN_BOOT_DIR must name a directory below $root/build" >&2; exit 2 ;;
+esac
+pipeline=${KILN_BUILD_PIPELINE:-hir}
+case "$pipeline" in
+  hir|mir) ;;
+  *) echo "KILN_BUILD_PIPELINE must be hir or mir" >&2; exit 2 ;;
+esac
+if [ "${1:-}" = --from-stage1 ]; then
+  previous=$(cat "$boot/pipeline" 2>/dev/null || echo hir)
+  if [ "$previous" != "$pipeline" ]; then
+    echo "Bootstrap pipeline differs from stage0; rebuild without --from-stage1" >&2
+    exit 2
+  fi
+fi
 cd "$root"
 cargo build -q
 cg=$root/target/debug/kiln-cg
@@ -56,11 +72,12 @@ compare() { # compare STAGE-DIR STAGE-DIR
 if [ "${1:-}" != --from-stage1 ]; then
   rm -rf "$boot"
   mkdir -p "$boot/stage0"
+  printf '%s\n' "$pipeline" >"$boot/pipeline"
   echo "stage0 (SBCL)"
-  sbcl --dynamic-space-size 4GB --noinform --non-interactive \
+  KILN_STAGE0_DIR="$boot/stage0/" sbcl --dynamic-space-size 4GB --noinform --non-interactive \
     --load "$root/tools/env.lisp" \
     --eval '(ql:quickload "kiln" :silent t)' \
-    --eval "(kiln:bootstrap-stage0 \"$boot/stage0/\")" \
+    --eval "(kiln:bootstrap-stage0 (uiop:getenv \"KILN_STAGE0_DIR\") :pipeline :$pipeline)" \
     >"$boot/stage0.log" 2>&1 || { cat "$boot/stage0.log"; exit 1; }
   echo "kiln0"
   link "$boot/stage0" "$boot/kiln0"

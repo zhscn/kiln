@@ -274,6 +274,8 @@ special 变量的引用必须读取当前动态环境，词法 SSA 参数不能�
 - `verify-mir` 检查编号所有权、边参数、表示、效果下界、入口数量检查及 SSA 支配关系。
 - `print-mir` 输出编号、块参数、操作、效果、源码和策略，供调试查看。
 - `compile-module` 的 `:pipeline :mir` 为显式文件模块入口；默认是 `:hir`。
+  `bootstrap-stage0` 的 `:pipeline :mir` 及构建脚本的 `KILN_BUILD_PIPELINE=mir`
+  选择整模块 MIR 构建；各阶段与产物比较见 [bootstrap.md](bootstrap.md)。
   允许优化且未指定 `notinline` 的全局内建函数与生产路径共享原语发射器；
   参数是否逃逸仍由 MIR 的调用和存储
   分析决定。常量函数名的 `(setf fdefinition)` 检查函数对象后直接写函数 cell，

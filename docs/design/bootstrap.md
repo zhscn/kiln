@@ -38,6 +38,18 @@ kiln0 ──运行构建程序──▶ stage1 ──kiln-cg──▶ kiln1 ─�
 
 `tools/stage0-kiln.sh [DIR]` 只做 stage0 和 kiln0，用来试编译器或 CLOS 的改动；配合只含部分模块的清单单独计时。
 
+`KILN_BUILD_PIPELINE=hir|mir` 选择模块的编译路径，默认是 `hir`。两个构建脚本在
+SBCL 阶段把选择交给 `bootstrap-stage0` 的 `:pipeline` 参数；kiln 构建程序从同一
+环境变量读取选择，并在前端转换及模块降级期间绑定对应策略。这样各阶段的
+清单和源文件不变，MIR 验证可以沿同一条路径比较产物。
+
+完整自举默认写入 `build/boot/`，`KILN_BOOT_DIR` 可选择 `build/` 下的另一个子目录。
+例如 `KILN_BUILD_PIPELINE=mir KILN_BOOT_DIR=build/boot-mir tools/bootstrap.sh` 使用
+独立的 MIR 构建目录。构建目录记录 stage0 的路径选择，`--from-stage1` 会拒绝
+不一致的选择，避免用另一条路径的产物继续验证。直接调用 SBCL 的
+`bootstrap-stage0 :pipeline :mir` 后，运行生成的构建程序时也需设置
+`KILN_BUILD_PIPELINE=mir`。
+
 ## 构建程序和清单
 
 构建程序 `lisp/target/build.lisp` 是一个普通的程序模块（名字是 `build`），在 compiler 模块之后，由 SBCL 在 stage0 里用同一个会话编译，所以 kiln1 完全由 kiln 编出。它在 kiln 上做的事和 SBCL 一样：一个 `cross-client` 会话，kernel 带上 CL 的全部外部符号，编 eval 和 compiler 模块之前调用 `prepare-compiler-session`（宿主宏、`defrule` 和 `define-syntax` 只在加载时定义、`host-inline-functions`，`lisp/cross.lisp`），按 `muffle-warning` 处理警告。它不依赖 SBCL 才有的东西：
@@ -61,7 +73,11 @@ kiln0 ──运行构建程序──▶ stage1 ──kiln-cg──▶ kiln1 ─�
 - `NAME.image`、`NAME.image2`：堆快照测试（[heap-image.md](heap-image.md)）。
 - 测试源文件以绝对路径交给 SBCL，因为文件名写进了 KIR 的调试信息；比较 KIR 的测试在 kiln 上也用同样的名字。
 
-**由 kiln 编译测试**：测试脚本显式设置 `KILN_OUTPUT_FORMAT=kir`，供 `.same-kir` 比较；生产构建仍使用二进制。`KILN_COMPILER=build/boot/kiln1 tools/test.sh` 让 SBCL 只写清单（`kiln:write-manifest`：五个模块，测试文件作为程序模块排在后面），kiln 运行构建程序，在一个会话里编完五个模块再编各个测试，之后照常走三遍。第一次先编五个模块并存快照 `build/test/kiln-compiler.img`，旁边的 `.key` 是 kiln 可执行文件和五个模块全部源文件的哈希；键相同时直接从快照启动。
+`tools/test.sh` 同样接受 `KILN_BUILD_PIPELINE`，用于选择测试模块及其依赖模块的编译路径。
+`.same-kir` 用例内的模块重编译也显式采用这个选择，保证比较的是同一条路径。
+`tools/test-build-pipeline.lisp` 验证宿主入口的路径选择、显式覆盖和无效配置。
+
+**由 kiln 编译测试**：测试脚本写二进制 LIR，并附带诊断 KIR，供 `.same-kir` 比较。`KILN_COMPILER=build/boot/kiln1 tools/test.sh` 让 SBCL 只写清单（`kiln:write-manifest`：五个模块，测试文件作为程序模块排在后面），kiln 运行构建程序，在一个会话里编完五个模块再编各个测试，之后照常走三遍。第一次先编五个模块并存快照 `build/test/kiln-compiler.img`，旁边的 `.key` 包含编译路径、kiln 可执行文件和五个模块全部源文件的哈希；键相同时直接从快照启动。
 
 ## 仓库结构
 

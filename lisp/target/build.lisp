@@ -23,7 +23,8 @@
         (extra-symbols '())
         (phase-start (get-internal-real-time))
         (front-end-end nil)
-        (lower-end nil))
+        (lower-end nil)
+        (kiln.compiler::*compiler-pipeline* (build-pipeline)))
     ;; As kiln:compile-kernel, kiln:compile-clos and kiln:compile-compiler.
     (when (string= name "kernel")
       (do-external-symbols (s '#:common-lisp) (push s extra-symbols)))
@@ -53,7 +54,8 @@
                 (setf front-end-end (get-internal-real-time))
                 (prog1 (kiln.compiler:compile-module asts name :session session
                                                         :defined-packages packages
-                                                        :extra-symbols extra-symbols)
+                                                        :extra-symbols extra-symbols
+                                                        :pipeline kiln.compiler::*compiler-pipeline*)
                   (setf lower-end (get-internal-real-time)))))))
       (let ((text (equal (getenv "KILN_OUTPUT_FORMAT") "kir")))
         (with-open-file (out (concatenate 'string name (if text ".kir" ".lir"))
@@ -90,6 +92,11 @@ SESSION has compiled."
 (defun getenv (name)
   (let ((value (kiln.kernel::sys-string 10 (kiln.kernel::string-octets name))))
     (and (stringp value) (plusp (length value)) value)))
+
+(defun build-pipeline (&optional (name (getenv "KILN_BUILD_PIPELINE")))
+  (cond ((or (null name) (equal name "") (equal name "hir")) :hir)
+        ((equal name "mir") :mir)
+        (t (error "KILN_BUILD_PIPELINE must be hir or mir, got ~S" name))))
 
 ;;; With KILN_SERVE set, the program serves the back-end protocol on its
 ;;; standard input and output instead.

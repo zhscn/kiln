@@ -9,6 +9,11 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 build=$root/build/test
 mkdir -p "$build"
 cd "$root"
+pipeline=${KILN_BUILD_PIPELINE:-hir}
+case "$pipeline" in
+  hir|mir) ;;
+  *) echo "KILN_BUILD_PIPELINE must be hir or mir" >&2; exit 2 ;;
+esac
 cargo build -q
 cg=$root/target/debug/kiln-cg
 launcher=$root/target/debug/libkiln_launcher.a
@@ -45,7 +50,8 @@ done
 
 # One SBCL session: the kernel is compiled once, then every test in the
 # same compile-time environment.
-args=(--eval "(setf kiln::*write-diagnostic-kir* t)"
+args=(--eval "(setf kiln.compiler::*compiler-pipeline* :$pipeline)"
+      --eval "(setf kiln::*write-diagnostic-kir* t)"
       --eval "(defvar *session* (kiln.compiler:make-session))"
       --eval "(kiln:compile-kernel \"$build/kernel.lir\" :session *session*)")
 # Tests named clos-*.lisp run with the CLOS module loaded after the kernel,
@@ -96,7 +102,7 @@ if [ -n "${KILN_COMPILER:-}" ]; then
   # The five modules compiled are saved as a heap image,
   # reused while the compiler and module sources match.
   image=$build/kiln-compiler.img
-  key=$( { printf 'independent-lir-with-diagnostic-kir\n'
+  key=$( { printf 'independent-lir-with-diagnostic-kir\npipeline=%s\n' "$pipeline"
            sha256sum "$compiler"
            sbcl --noinform --non-interactive --eval '(require :sb-md5)' --eval "
              (with-open-file (in \"$build/modules.lisp-expr\")

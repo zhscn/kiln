@@ -356,12 +356,16 @@
         (kiln.kir:print-module module out)))
   output)
 
-(defun compile-files (files session module-name &key extra-symbols)
-  (multiple-value-bind (asts defined-packages) (kiln.compiler:front-end files session)
-    (kiln.compiler:compile-module asts module-name
-                                  :session session
-                                  :defined-packages defined-packages
-                                  :extra-symbols extra-symbols)))
+(defun compile-files (files session module-name &key extra-symbols
+                          (pipeline kiln.compiler::*compiler-pipeline*))
+  (unless (member pipeline '(:hir :mir))
+    (kiln.compiler::fail "Unknown compiler pipeline ~S" pipeline))
+  (let ((kiln.compiler::*compiler-pipeline* pipeline))
+    (multiple-value-bind (asts defined-packages) (kiln.compiler:front-end files session)
+      (kiln.compiler:compile-module asts module-name
+                                    :session session :pipeline pipeline
+                                    :defined-packages defined-packages
+                                    :extra-symbols extra-symbols))))
 
 (defun compile-kernel (output &key (session (kiln.compiler:make-session)))
   "Compiles the kernel to the KIR module OUTPUT. Programs compiled later
@@ -542,14 +546,17 @@ namestrings for pathnames."
                   (namestring file)))
             files)))
 
-(defun bootstrap-stage0 (directory &key (output-format :lir))
+(defun bootstrap-stage0 (directory &key (output-format :lir) (pipeline :hir))
   "Stage 0 of the bootstrap: compiles the five modules and the
 build program (lisp/target/build.lisp) to binary NAME.lir in DIRECTORY, in one
 session, and writes the build program's manifest there, modules.lisp-expr:
 for each module, its name and source files. kiln0, linked from these
 modules, runs the build program, which compiles the same modules and
-itself as here."
-  (let* ((dir (uiop:ensure-directory-pathname directory))
+itself as here. PIPELINE selects the stage0 module compiler."
+  (unless (member pipeline '(:hir :mir))
+    (kiln.compiler::fail "Unknown compiler pipeline ~S" pipeline))
+  (let* ((kiln.compiler::*compiler-pipeline* pipeline)
+         (dir (uiop:ensure-directory-pathname directory))
          (session (kiln.compiler:make-session))
          (build (asdf:system-relative-pathname "kiln" "lisp/target/build.lisp")))
     (flet ((out (name) (merge-pathnames (format nil "~A.~A" name
