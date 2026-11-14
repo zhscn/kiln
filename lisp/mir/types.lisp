@@ -8,12 +8,61 @@
         ((eq new :unseen) old)
         (t (hir-type-join old new))))
 
+(defun mir-value-definitions (function)
+  "Map SSA value IDs to defining instructions; block parameters map to NIL."
+  (mir-analysis function :definitions
+    (lambda (function)
+      (let ((definitions (make-array (hir-buffer-count (mir-function-values function))
+                                     :initial-element nil)))
+        (loop for instruction across (hir-vector (mir-function-instructions function))
+              for result = (mir-instruction-result instruction)
+              when result do (setf (svref definitions result) instruction))
+        definitions))))
+
+(defun mir-primary-origin (id definitions)
+  "Follow operations that preserve a value's primary identity."
+  (loop for instruction = (svref definitions id)
+        while (and instruction (member (mir-instruction-kind instruction) '(9 10 11)))
+        do (setf id (svref (mir-instruction-operands instruction) 0))
+        finally (return id)))
+
+(defun mir-edge-type (terminator positive argument type definitions types)
+  "Refine only the actual SSA value tested on this conditional edge."
+  (unless (= (mir-terminator-kind terminator) 1) (return-from mir-edge-type type))
+  (let* ((test (mir-primary-origin (svref (mir-terminator-operands terminator) 0) definitions))
+         (source (mir-primary-origin argument definitions))
+         (instruction (svref definitions test)))
+    (cond
+      ((and (= source test) (not positive)) (hir-type-intersection type 'null))
+      ((and instruction (= (mir-instruction-kind instruction) 6)
+            (= (length (mir-instruction-operands instruction)) 1)
+            (= source (mir-primary-origin (svref (mir-instruction-operands instruction) 0) definitions)))
+       (let* ((name (mir-instruction-data instruction))
+              (predicate (and (symbolp name) (eq (symbol-package name) (find-package :cl))
+                              (hir-predicate-type name))))
+         (if (and predicate positive) (hir-type-intersection type predicate) type)))
+      ((and instruction (= (mir-instruction-kind instruction) 6)
+            (= (length (mir-instruction-operands instruction)) 2)
+            (member (mir-instruction-data instruction) '(< <= > >= =)))
+       (let* ((name (mir-instruction-data instruction))
+              (arguments (mir-instruction-operands instruction))
+              (left (svref arguments 0)) (right (svref arguments 1)))
+         (cond ((= source (mir-primary-origin left definitions))
+                (inferred-comparison-range name type (svref types right) positive))
+               ((= source (mir-primary-origin right definitions))
+                (inferred-comparison-range
+                 (case name (< '>) (<= '>=) (> '<) (>= '<=) (= '=))
+                 type (svref types left) positive))
+               (t type))))
+      (t type))))
+
 (defun mir-compute-types (function)
   "Infer primary-value types. :UNSEEN is solver bottom; T is unknown."
   (let* ((types (make-array (hir-buffer-count (mir-function-values function))
                             :initial-element :unseen))
          (blocks (hir-vector (mir-function-blocks function)))
          (reachable (mir-control-flow function))
+         (definitions (mir-value-definitions function))
          (changes (make-array (length types) :initial-element 0))
          (changed t))
     ;; A loop can keep expanding an integer interval. After two expansions
@@ -54,10 +103,15 @@
                 for instruction = (mir-at (mir-function-instructions function) id)
                 for result = (mir-instruction-result instruction)
                 when result do (merge-type result (transfer instruction)))
-          (loop for edge across (mir-terminator-edges (mir-block-terminator block)) do
+          (loop for edge across (mir-terminator-edges (mir-block-terminator block))
+                for index from 0 do
             (loop for parameter across (mir-block-parameters (svref blocks (mir-edge-target edge)))
                   for argument across (mir-edge-arguments edge)
-                  do (merge-type parameter (svref types argument)))))))
+                  for input = (svref types argument)
+                  do (merge-type parameter
+                       (if (eq input :unseen) :unseen
+                           (mir-edge-type (mir-block-terminator block) (zerop index)
+                                          argument input definitions types))))))))
     ;; Unreachable definitions and cyclic facts with no seed prove nothing.
     (dotimes (id (length types))
       (when (eq (svref types id) :unseen) (setf (svref types id) t)))

@@ -162,3 +162,62 @@
     (setf (mir-value-representation value) :obj)
     (assert (handler-case (progn (verify-mir unit) nil) (mir-error () t)))))
 (format t "MIR declaration result types passed.~%")
+
+(assert (equal '(t nil) (mir-test-checks
+                        '(let ((x (mir-unknown)))
+                           (if (integerp x) (the integer x) (the integer x))))))
+(assert (equal '(nil t) (mir-test-checks
+                        '(let ((x (mir-unknown)))
+                           (if x (the null x) (the null x))))))
+(assert (equal '(t nil) (mir-test-checks
+                        '(let ((x (mir-unknown)))
+                           (if (null x) (the null x) (the null x))))))
+(assert (equal '(t) (mir-test-checks
+                    '(let ((x (mir-unknown)))
+                       (if (consp x) (the cons x) nil)))))
+(assert (equal '(nil) (mir-test-checks
+                      '(let ((x (mir-unknown)))
+                         (if (integerp x) (setq x 'changed))
+                         (the integer x)))))
+(assert (equal '(nil) (mir-test-checks
+                      '(let ((x (mir-unknown)))
+                         (if (integerp x) (progn (setq x 'changed) (the integer x)) nil)))))
+(assert (equal '(nil) (mir-test-checks
+                      '(let ((x (mir-unknown)))
+                         (if (mir-unknown x) (the integer x) nil)))))
+(format t "MIR conditional edge types passed.~%")
+
+(dolist (form '((let ((x (the fixnum (mir-unknown))))
+                 (if (< x 10) (the (integer #.+hir-fixnum-min+ 9) x)
+                     (the (integer 10 #.+hir-fixnum-max+) x)))
+                (let ((x (the fixnum (mir-unknown))))
+                  (if (< 10 x) (the (integer 11 #.+hir-fixnum-max+) x)
+                      (the (integer #.+hir-fixnum-min+ 10) x)))
+                (let ((x (the fixnum (mir-unknown))))
+                  (if (<= x 10) (the (integer #.+hir-fixnum-min+ 10) x)
+                      (the (integer 11 #.+hir-fixnum-max+) x)))
+                (let ((x (the fixnum (mir-unknown))))
+                  (if (= x 10) (the (integer 10 10) x) (the fixnum x)))))
+  (assert (equal '(nil t t) (mir-test-checks form))))
+(assert (equal '(nil nil) (mir-test-checks
+                          '(let ((x (the fixnum (mir-unknown))))
+                             (if (< x (progn (setq x 99) 10))
+                                 (the (integer #.+hir-fixnum-min+ 9) x) nil)))))
+(format t "MIR comparison edge ranges passed.~%")
+
+;;; Check the abstract bounds against concrete comparisons, including both
+;;; truth values and intervals that overlap or have no satisfying pair.
+(dolist (name '(< <= > >= =))
+  (loop for low from -3 to 3 do
+    (loop for high from low to 3 do
+      (loop for other-low from -3 to 3 do
+        (loop for other-high from other-low to 3 do
+          (dolist (positive '(t nil))
+            (let ((type (inferred-comparison-range
+                         name (hir-integer-range low high)
+                         (hir-integer-range other-low other-high) positive)))
+              (loop for x from low to high do
+                (loop for y from other-low to other-high
+                      when (eq (not (null (funcall name x y))) positive)
+                        do (assert (hir-known-subtype-p (hir-integer-range x x) type)))))))))))
+(format t "Integer comparison range soundness passed.~%")

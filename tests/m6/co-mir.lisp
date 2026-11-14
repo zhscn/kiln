@@ -68,3 +68,17 @@
 (let ((function (mir-test-compile
                  '(lambda (x) (declare (type fixnum x)) (the integer (+ x 1))))))
   (print (funcall function 20)))
+(let ((function (mir-test-compile
+                 '(lambda (x) (if (integerp x) (the integer x) (the integer x))))))
+  (print (funcall function 7))
+  (print (handler-case (progn (funcall function 'wrong) :bad) (type-error () :edge-type))))
+(let ((function (mir-test-compile
+                 '(lambda (x)
+                    (if (integerp x) (progn (setq x 'changed) (the integer x)) nil)))))
+  (print (handler-case (progn (funcall function 7) :bad) (type-error () :edge-assignment))))
+(let ((function (mir-test-compile
+                 '(lambda (x)
+                    (declare (type fixnum x))
+                    (if (< x 10) (the (integer -4611686018427387904 9) x)
+                        (the (integer 10 4611686018427387903) x))))))
+  (print (list (funcall function 9) (funcall function 10))))

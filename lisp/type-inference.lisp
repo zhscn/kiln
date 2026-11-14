@@ -248,3 +248,23 @@
         (t (let ((required (hir-declaration-type specifier)))
              (and (not (eq required t)) (hir-known-subtype-p actual required))))))
 
+
+(defun inferred-comparison-range (name actual other positive)
+  "Bound an integer operand on an edge where NAME has the given truth value."
+  (let ((left (hir-type-range actual)) (right (hir-type-range other)))
+    (unless (and left right) (return-from inferred-comparison-range actual))
+    (let ((low (second left)) (high (third left)))
+      (case name
+        (< (if positive (setf high (min high (1- (third right))))
+               (setf low (max low (second right)))))
+        (<= (if positive (setf high (min high (third right)))
+                (setf low (max low (1+ (second right))))))
+        (> (if positive (setf low (max low (1+ (second right))))
+               (setf high (min high (third right)))))
+        (>= (if positive (setf low (max low (second right)))
+                (setf high (min high (1- (third right))))))
+        (= (when positive
+             (setf low (max low (second right)) high (min high (third right))))))
+      ;; An impossible edge has no normal execution. Keep its input fact
+      ;; until the domain can represent unreachable edges explicitly.
+      (if (<= low high) (hir-integer-range low high) actual))))
