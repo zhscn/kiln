@@ -97,3 +97,25 @@
                :output :string :error-output :string)))
     (assert (search "(:STACK-GC 1)" text) () "Unexpected MIR stack storage output: ~S" text)))
 (format t "Host MIR stack cons GC execution passed.~%")
+
+(let* ((root (asdf:system-source-directory "kiln"))
+       (output (merge-pathnames "build/mir-test/borrow.lir" root))
+       (session (make-session))
+       (form '(flet ((reader (p) (kiln.sys:%gc) (car p)))
+                (declare (notinline reader))
+                (let ((x (cons (list 8) nil)))
+                  (print (list :borrow-gc (if (eq x x) (reader x) nil)))))))
+  (ensure-directories-exist output)
+  (kiln::write-module (compile-module (front-end-forms (list form) session) "mir-borrow"
+                                     :session session :pipeline :mir) output)
+  (let ((dump (uiop:run-program (list (namestring (merge-pathnames "target/debug/kiln-cg" root))
+                                     "dump" (namestring output)) :output :string)))
+    (assert (search "(stack " dump) () "MIR did not select stack storage across the borrower."))
+  (let ((text (uiop:run-program
+               (mapcar #'namestring
+                       (list (merge-pathnames "target/debug/kiln-cg" root) #P"jit"
+                             (merge-pathnames "build/test/kernel.lir" root)
+                             (merge-pathnames "build/test/clos.lir" root) output))
+               :output :string :error-output :string)))
+    (assert (search "(:BORROW-GC (8))" text) () "Unexpected MIR borrower output: ~S" text)))
+(format t "Host MIR borrower stack GC execution passed.~%")
