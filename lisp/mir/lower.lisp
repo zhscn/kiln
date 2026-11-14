@@ -39,14 +39,14 @@
       (jump done) (start-block done))))
 
 (defun mir-lir-double-call-p (instruction)
-  "Select arithmetic only when every operand has a MIR double-float proof."
+  "Select numeric operations only with a MIR double-float proof for every operand."
   (let ((name (mir-instruction-data instruction))
         (operands (mir-instruction-operands instruction)))
     (and (= (mir-instruction-kind instruction) 6)
          (hir-policy-optimize-p (mir-instruction-policy instruction))
          (not (mir-instruction-notinline instruction))
-         (or (and (= (length operands) 2) (member name '(+ - * /)))
-             (and (= (length operands) 1) (member name '(- abs 1+ 1-))))
+         (or (and (= (length operands) 2) (member name '(+ - * / < > <= >= = /=)))
+             (and (= (length operands) 1) (member name '(- abs 1+ 1- zerop plusp minusp))))
          (every (lambda (id) (eq (svref *mir-lir-types* id) 'double-float)) operands))))
 
 (defun mir-lir-double-forward-source (instruction)
@@ -161,6 +161,22 @@
          (args (map 'list #'mir-lir-value (mir-instruction-operands instruction))))
     (when (and result (not (svref *mir-lir-live* result))
                (mir-lir-double-forward-source instruction))
+      (return-from mir-lir-instruction))
+    (when (and (mir-lir-double-call-p instruction) (member data '(< > <= >= = /= zerop plusp minusp)))
+      (let* ((operands (mir-instruction-operands instruction))
+             (left (mir-lir-double-bits (svref operands 0)))
+             (unary (= (length operands) 1))
+             (right (if unary 0 (mir-lir-double-bits (svref operands 1))))
+             ;; Unary predicates compare against integer zero. Keep the
+             ;; runtime's mixed-number comparison for non-finite doubles.
+             (comparison (copy-to-var
+                          (if unary
+                              `(:select (:eq (:and ,left #x7ff0000000000000) #x7ff0000000000000)
+                                        0 (:f64-compare ,left ,right))
+                              `(:f64-compare ,left ,right)) :raw)))
+        (mir-lir-save result
+                      (boolean-value `(,(ecase data ((< minusp) :lt) ((> plusp) :gt) (<= :le) (>= :ge) ((= zerop) :eq) (/= :ne))
+                                       ,comparison 0)) 1))
       (return-from mir-lir-instruction))
     (when (mir-lir-double-call-p instruction)
       (let ((bits (mir-lir-double-call data (mir-instruction-operands instruction)))
