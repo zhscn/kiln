@@ -48,8 +48,20 @@
       (9 (mir-lir-save result (first args) 1))
       (10 (multiple-value-bind (value count) (mir-lir-restore (svref (mir-instruction-operands instruction) 0))
             (declare (ignore count)) (emit `(:set ,out ,value))))
-      (11 (unless (mir-check-proven-p instruction *mir-lir-types*)
-            (mir-lir-check (first args) data)))
+      (11 (let ((input (first args)))
+            (unless (mir-check-proven-p instruction *mir-lir-types*)
+              (if (consp input)
+                  (multiple-value-bind (primary count)
+                      (mir-lir-restore (svref (mir-instruction-operands instruction) 0))
+                    (declare (ignore count))
+                    (mir-lir-check primary data))
+                  (mir-lir-check input data)))
+            ;; The saved carrier is stable across the TYPEP call. Copy it
+            ;; rather than relying on the borrowed multiple-value area.
+            (if (consp input)
+                (progn (emit `(:set ,(car out) ,(car input)))
+                       (emit `(:set ,(cdr out) ,(cdr input))))
+                (emit `(:set ,out ,input)))))
       (12 (emit `(:set ,out ,argument-count)))
       (13 (emit-nargs-check (first args) data data)))))
 

@@ -61,13 +61,12 @@
   (multiple-value-bind (id found) (gethash variable *mir-bindings*)
     (unless found (mir-unavailable "captured or foreign binding")) id))
 
-(defun mir-check (value type)
+(defun mir-check (value type &optional (representation :obj))
   (when (and (consp (hir-declaration-expanded type))
              (eq (car (hir-declaration-expanded type)) 'values))
     (mir-unavailable "VALUES type declaration"))
-  (unless (eq type t)
-    (mir-instruction 11 nil (vector value) type))
-  value)
+  (if (eq type t) value
+      (mir-instruction 11 representation (vector value) type)))
 
 (defun mir-build-sequence (nodes)
   (let ((result nil))
@@ -100,7 +99,7 @@
     (loop for variable across variables for init across inits while *mir-block*
           for value = (mir-primary init)
           do (when *mir-block*
-               (mir-check value (hir-var-type variable))
+               (setf value (mir-check value (hir-var-type variable)))
                (if sequential (setf (svref *mir-environment* (mir-binding-index variable)) value)
                    (push value values))))
     (when *mir-block*
@@ -153,11 +152,11 @@
     (case (hir-node-kind node)
       (0 (mir-single (mir-instruction 0 :obj #() (hir-node-a node))))
       (1 (let ((value (svref *mir-environment* (mir-binding-index (hir-node-a node)))))
-           (when (hir-node-c node) (mir-check value (hir-node-b node)))
+           (when (hir-node-c node) (setf value (mir-check value (hir-node-b node))))
            (mir-single value)))
       (2 (let ((value (mir-primary (hir-node-b node))))
            (when *mir-block*
-             (mir-check value (hir-var-type (hir-node-a node)))
+             (setf value (mir-check value (hir-var-type (hir-node-a node))))
              (setf (svref *mir-environment* (mir-binding-index (hir-node-a node))) value)
              (mir-single value))))
       (3 (mir-single (mir-instruction 2 :obj #() (hir-node-a node))))
@@ -184,8 +183,7 @@
             (when *mir-block* value)))
       (23 (let ((value (mir-build-node (hir-node-b node))))
             (when *mir-block*
-              (mir-check (mir-instruction 10 :obj (vector value)) (hir-node-a node))
-              value)))
+              (mir-check value (hir-node-a node) :bundle))))
       (otherwise (mir-unavailable (format nil "HIR kind ~D" (hir-node-kind node)))))))
 
 (defun mir-import-function (hir)
@@ -217,7 +215,7 @@
       (mir-instruction 13 nil (vector (mir-instruction 12 :count)) (mir-function-required *mir-function*))
       (loop for variable across (hir-lambda-list-required ll) for index from 0
             for value = (mir-instruction 1 :obj #() index)
-            do (mir-check value (hir-var-type variable))
+            do (setf value (mir-check value (hir-var-type variable)))
                (setf (svref *mir-environment* (mir-binding-index variable)) value))
       (let ((value (mir-build-node (hir-fun-body hir))))
         (when *mir-block* (mir-terminate 2 (vector value))))

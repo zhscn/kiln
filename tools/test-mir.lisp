@@ -139,3 +139,26 @@
                          (tagbody again (setq x (1+ x)) (if (mir-unknown) (go again)))
                          (the fixnum x)))))
 (format t "MIR call types and interval widening passed.~%")
+
+(assert (equal '(nil t) (mir-test-checks
+                        '(the integer (the fixnum (mir-unknown))))))
+(assert (equal '(nil nil t) (mir-test-checks
+                            '(let ((x (mir-unknown)))
+                               (the integer x)
+                               (let ((y (the fixnum x))) (the integer y))))))
+(let* ((unit (mir-test-unit
+              '(function (lambda (x)
+                           (declare (type fixnum x))
+                           (the integer (+ x 1))))))
+       (function (mir-at (mir-unit-functions unit) 1))
+       (types (mir-infer-types function))
+       (checks (remove-if-not (lambda (instruction) (= 11 (mir-instruction-kind instruction)))
+                              (hir-vector (mir-function-instructions function)))))
+  (assert (= 2 (length checks)))
+  (assert (not (mir-check-proven-p (svref checks 0) types)))
+  (assert (mir-check-proven-p (svref checks 1) types))
+  (let ((value (mir-at (mir-function-values function)
+                       (mir-instruction-result (svref checks 1)))))
+    (setf (mir-value-representation value) :obj)
+    (assert (handler-case (progn (verify-mir unit) nil) (mir-error () t)))))
+(format t "MIR declaration result types passed.~%")

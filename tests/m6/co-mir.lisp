@@ -58,3 +58,13 @@
   (print (funcall function)))
 (let ((function (mir-test-compile '(lambda () (the fixnum (values))))))
   (print (handler-case (progn (funcall function) :bad) (type-error () :zero-values))))
+(let ((function (mir-test-compile
+                 '(lambda (x) (the integer (the fixnum (values x 20 30)))))))
+  (print (multiple-value-list (funcall function 10)))
+  (print (handler-case (progn (funcall function 'wrong) :bad) (type-error () :checked-values))))
+(let ((function (mir-test-compile
+                 '(lambda (f) (the null (funcall f))))))
+  (print (multiple-value-list (funcall function (lambda () (values))))))
+(let ((function (mir-test-compile
+                 '(lambda (x) (declare (type fixnum x)) (the integer (+ x 1))))))
+  (print (funcall function 20)))

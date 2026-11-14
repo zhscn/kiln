@@ -34,6 +34,10 @@
                    ;; A bundle carries only a primary-value fact here. Unknown
                    ;; calls include the zero-values case, whose primary is NIL.
                    ((3 9 10) (svref types (svref args 0)))
+                   (11 (let ((input (svref types (svref args 0))))
+                         (if (eq input :unseen) :unseen
+                             (hir-type-intersection input
+                               (hir-declaration-type (mir-instruction-data instruction))))))
                    (6 (let ((name (mir-instruction-data instruction)))
                         ;; CL function semantics are stable. Image-defined
                         ;; globals need guards or dependency records first.
