@@ -79,3 +79,23 @@ Collector inheritance is explicit; source ancestry remains available to diagnost
                       while parent thereis (eq parent origin))
           (setf (gethash output table) origin))))
     origin))
+
+(defstruct definition-compilation-result
+  record records dependencies calls outputs fingerprint diagnostics)
+
+(defun collect-request-diagnostics (request)
+  (append (if (eq (compilation-request-state request) :running)
+              (reverse (compilation-request-diagnostics request))
+              (compilation-request-diagnostics request))
+          (mapcan #'collect-request-diagnostics (compilation-request-children request))))
+
+(defun finish-definition-compilation (record)
+  "Detach durable definition metadata from the active request's collectors."
+  (let ((request *compilation-request*))
+    (make-definition-compilation-result
+     :record record :records (reverse (cdr (compilation-request-records request)))
+     :dependencies (reverse (cdr *dependencies*))
+     :calls (reverse (cdr *source-definition-calls*))
+     :outputs (reverse (cdr *unit-outputs*))
+     :fingerprint (reverse (cdr *unit-fingerprint*))
+     :diagnostics (collect-request-diagnostics request))))

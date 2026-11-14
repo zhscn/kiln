@@ -9,7 +9,8 @@
 
 (define-condition source-redefinition-warning (style-warning simple-condition) ())
 
-(defun record-source-definition (record)
+(defun prepare-source-definition (record)
+  "Normalize and diagnose a source record before changing the definition tables."
   (when (getf record :file)
     (setf (getf record :file) (namestring (merge-pathnames (getf record :file)))))
   (let* ((dspec (getf record :dspec))
@@ -19,6 +20,11 @@
                (not (equal (getf old :file) (getf record :file))))
       (warn 'source-redefinition-warning :format-control "~S from ~A redefined in ~A"
             :format-arguments (list dspec (getf old :file) (getf record :file))))
+    record))
+
+(defun record-source-definition (record &key (prepared nil) (notify t))
+  (unless prepared (prepare-source-definition record))
+  (let ((dspec (getf record :dspec)))
     (let ((aliases (case (first dspec)
                      ((defun defgeneric defmacro) '(defun defgeneric defmacro))
                      ((defsetf define-setf-expander) '(defsetf define-setf-expander))
@@ -33,7 +39,7 @@
               (when (fboundp 'remove-definition-unit)
                 (remove-definition-unit (getf previous :name))))))))
     (setf (gethash dspec *source-definitions*) record)
-    (when *source-definition-record-observer*
+    (when (and notify *source-definition-record-observer*)
       (funcall *source-definition-record-observer* record))))
 
 (defun import-source-definitions ()

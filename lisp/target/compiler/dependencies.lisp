@@ -158,22 +158,43 @@ gensyms of a macro expansion)?"
               (remhash key *dependents*)))))
     old))
 
+(defun prepare-definition-unit (name form keys outputs fingerprint)
+  (when keys
+    (let* ((old (gethash name *definition-units*))
+           (unit (make-definition-unit name form *package* keys outputs fingerprint
+                                      (if old (definition-unit-order old)
+                                          (1+ *definition-order*))
+                                      *source-file* *eval-source-cst*)))
+      (setf (definition-unit-source-range unit) (cst-source-range *eval-source-cst*))
+      unit)))
+
+(defun install-definition-unit (name unit)
+  (remove-definition-unit name)
+  (when unit
+    (setf *definition-order* (max *definition-order* (definition-unit-order unit))
+          (gethash name *definition-units*) unit)
+    (dolist (key (definition-unit-keys unit))
+      (setf (gethash key *dependents*)
+            (merge 'list (list unit) (gethash key *dependents*) #'<
+                   :key #'definition-unit-order)))))
+
 (defun register-definition-unit (name form keys outputs fingerprint)
-  "The definition FORM, named NAME, has been evaluated: its dependencies
-are KEYS (replacing those of its previous evaluation)."
-  (let ((old (remove-definition-unit name)))
-    (when keys
-      (let ((unit (make-definition-unit name form *package* keys outputs fingerprint
-                                        (if old
-                                            (definition-unit-order old)
-                                            (incf *definition-order*))
-                                        *source-file* *eval-source-cst*)))
-        (setf (definition-unit-source-range unit) (cst-source-range *eval-source-cst*)
-              (gethash name *definition-units*) unit)
-        (dolist (key keys)
-          (setf (gethash key *dependents*)
-                (merge 'list (list unit) (gethash key *dependents*) #'<
-                       :key #'definition-unit-order)))))))
+  (install-definition-unit name (prepare-definition-unit name form keys outputs fingerprint)))
+
+(defun install-definition-compilation (name form result)
+  "Prepare records and the dependency unit before publishing their metadata.
+Observers run after both indexes describe the completed definition."
+  (let* ((records (append (definition-compilation-result-records result)
+                          (list (definition-compilation-result-record result))))
+         (unit (prepare-definition-unit
+                name form (definition-compilation-result-dependencies result)
+                (definition-compilation-result-outputs result)
+                (definition-compilation-result-fingerprint result))))
+    (dolist (record records) (prepare-source-definition record))
+    (dolist (record records) (record-source-definition record :prepared t :notify nil))
+    (install-definition-unit name unit)
+    (when *source-definition-record-observer*
+      (dolist (record records) (funcall *source-definition-record-observer* record)))))
 
 (defun evaluate-definition (name form evaluate)
   (call-with-compilation-request
@@ -194,16 +215,14 @@ values. A definition within FORM's expansion is a unit of its own."
         (let ((*source-record-observer* (lambda (record) (push record (cdr records)))))
           (setf (compilation-request-observer *compilation-request*) *source-record-observer*)
           (funcall evaluate))
-      (dolist (record (reverse (cdr records))) (record-source-definition record))
-      (let ((fingerprint (reverse (rest *unit-fingerprint*))))
+      (let* ((result (finish-definition-compilation
+                      (source-definition-record form (reverse (cdr *dependencies*))
+                                                (reverse (cdr *source-definition-calls*)) parent
+                                                (cst-source-range *eval-source-cst*))))
+             (fingerprint (definition-compilation-result-fingerprint result)))
+        (install-definition-compilation name form result)
         (when (and *captured-fingerprint* (equal name (car *captured-fingerprint*)))
-          (setf (cdr *captured-fingerprint*) fingerprint))
-        (record-source-definition
-         (source-definition-record form (reverse (cdr *dependencies*))
-                                   (reverse (cdr *source-definition-calls*)) parent
-                                   (cst-source-range *eval-source-cst*)))
-        (register-definition-unit name form (reverse (rest *dependencies*))
-                                  (reverse (rest *unit-outputs*)) fingerprint)))))
+          (setf (cdr *captured-fingerprint*) fingerprint))))))
 
 ;;; Redefinitions
 

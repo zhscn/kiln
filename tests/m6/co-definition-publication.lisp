@@ -1,0 +1,23 @@
+(eval '(defmacro publication-macro () 1))
+(eval '(defun publication-user () (publication-macro)))
+(let* ((observed nil)
+      (kiln.compiler::*source-definition-record-observer*
+        (lambda (record)
+          (when (equal (getf record :dspec) '(defun publication-user))
+            (setf observed t)
+            (let ((unit (gethash 'publication-user kiln.compiler::*definition-units*)))
+              (assert (member '(:macro publication-macro)
+                              (kiln.compiler::definition-unit-keys unit) :test #'equal)))))))
+  (eval '(defun publication-user () (+ 1 (publication-macro))))
+  (assert observed))
+(print (publication-user))
+(let ((old (first (kiln.sys:find-definitions 'publication-user)))
+      (unit (gethash 'publication-user kiln.compiler::*definition-units*)))
+  (handler-case
+      (kiln.compiler::evaluate-definition
+       'publication-user '(defun publication-user () 9)
+       (lambda () (error "Expected evaluation failure")))
+    (error () nil))
+  (assert (eq unit (gethash 'publication-user kiln.compiler::*definition-units*)))
+  (print (equal old (first (kiln.sys:find-definitions 'publication-user)))))
+(print (publication-user))

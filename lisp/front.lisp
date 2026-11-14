@@ -805,26 +805,33 @@ module).")
          (dspec (definition-specifier form)))
     (if (and *source-definition-records* dspec)
         (let ((outer-dependencies *dependencies*)
-              (*dependencies* (list :dependencies))
-              (*source-definition-calls* (list :calls))
-              (*source-definition-parent* dspec)
-              (parent *source-definition-parent*)
-              (outer-calls *source-definition-calls*))
-          (note-dependency :macro (first form))
-          (multiple-value-prog1 (process-toplevel-1 cst compile-time-too)
-            (when outer-dependencies
-              (dolist (key (cdr *dependencies*))
-                (pushnew key (cdr outer-dependencies) :test #'equal)))
-            (when outer-calls
-              (dolist (callee (cdr *source-definition-calls*))
-                (pushnew callee (cdr outer-calls) :test #'equal)))
-            (let ((record (source-definition-record form (reverse (cdr *dependencies*))
-                                                   (reverse (cdr *source-definition-calls*)) parent
-                                                   (or (cst-source-range cst) *macro-source*))))
-              (when *source-definition-index*
-                (setf (gethash dspec *source-definition-index*) record))
-              (push record (cdr *source-definition-records*))
-              (when *source-record-observer* (funcall *source-record-observer* record)))))
+              (outer-calls *source-definition-calls*)
+              (parent *source-definition-parent*))
+          (call-with-compilation-request
+           :definition-conversion nil
+           (lambda (request)
+             (declare (ignore request))
+             (let ((*source-definition-parent* dspec))
+               (note-dependency :macro (first form))
+               (multiple-value-prog1 (process-toplevel-1 cst compile-time-too)
+                 (let* ((result (finish-definition-compilation
+                                 (source-definition-record
+                                  form (reverse (cdr *dependencies*))
+                                  (reverse (cdr *source-definition-calls*)) parent
+                                  (or (cst-source-range cst) *macro-source*))))
+                        (record (definition-compilation-result-record result)))
+                   (when outer-dependencies
+                     (dolist (key (definition-compilation-result-dependencies result))
+                       (pushnew key (cdr outer-dependencies) :test #'equal)))
+                   (when outer-calls
+                     (dolist (callee (definition-compilation-result-calls result))
+                       (pushnew callee (cdr outer-calls) :test #'equal)))
+                   (when *source-definition-index*
+                     (setf (gethash dspec *source-definition-index*) record))
+                   (push record (cdr *source-definition-records*))
+                   (when *source-record-observer* (funcall *source-record-observer* record))))))
+           :dependencies :fresh :calls :fresh :outputs :inherit :fingerprint :inherit
+           :observers :inherit))
         (process-toplevel-1 cst compile-time-too))))
 
 (defun process-toplevel-1 (cst compile-time-too)
