@@ -188,7 +188,7 @@
       (jump (svref labels (mir-edge-target (cdr entry)))))))
 
 (defun mir-lower-toplevel (hir)
-  (let* ((unit (hir-to-mir hir)) (functions (hir-vector (mir-unit-functions unit)))
+  (let* ((unit (mir-scalar-replace (hir-to-mir hir))) (functions (hir-vector (mir-unit-functions unit)))
          (*mir-lir-labels* (map 'simple-vector (lambda (function) (declare (ignore function))
                                                 (fresh-label "kiln_mir_")) functions)))
     (verify-mir unit)
