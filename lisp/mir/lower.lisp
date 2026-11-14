@@ -6,6 +6,7 @@
 (defvar *mir-lir-value-facts*)
 (defvar *mir-lir-stack-slots*)
 (defvar *mir-lir-stack-regions*)
+(defvar *mir-lir-rest-slots*)
 
 (defun mir-lir-value (id) (svref *mir-lir-values* id))
 
@@ -100,7 +101,7 @@
       (12 (emit `(:set ,out ,argument-count)))
       (13 (emit-nargs-check (first args) (car data) (cdr data)))
       (16 (emit `(:set ,out ,(boolean-value `(:gt ,(first args) ,data)))))
-      (17 (emit `(:set ,out ,(emit-rest-list data))))
+      (17 (emit `(:set ,out ,(emit-rest-list data *mir-lir-rest-slots*))))
       (18 (emit-error (ecase data (:odd-keywords +err-odd-keywords+) (:unknown-keyword +err-unknown-keyword+))
                       (first args))))))
 
@@ -130,7 +131,7 @@
 
 (defun mir-lir-function-body (function &optional unit)
   (let* ((*regions* *regions*)
-         (*mir-lir-stack-regions* nil)
+         (*mir-lir-stack-regions* nil) (*mir-lir-rest-slots* nil)
          (*mir-lir-stack-slots* (make-array (hir-buffer-count (mir-function-instructions function)) :initial-element nil))
          (storage (and unit (svref (mir-infer-storage unit) (mir-function-id function))))
          (*mir-lir-types* (mir-infer-types function unit))
@@ -148,6 +149,11 @@
          (arguments (make-array (mir-function-positional-count function))) (count (new-var :raw)))
     (dotimes (i (length arguments)) (setf (svref arguments i) (new-var)))
     (emit `(:receive-prefix ,(coerce arguments 'list) ,count))
+    (when (and storage (not (zerop (mir-storage-analysis-rest storage))))
+      (dotimes (index 8)
+        (multiple-value-bind (slot region) (hir-establish-stack-object kiln.kir::+packet-class-cons+ 2)
+          (push slot *mir-lir-rest-slots*)
+          (push region *mir-lir-stack-regions*) (push region *regions*))))
     (when storage
       (dotimes (id (length *mir-lir-stack-slots*))
         (when (logbitp (1+ id) (mir-storage-analysis-stack storage))

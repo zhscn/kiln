@@ -1,6 +1,6 @@
 (in-package #:kiln.compiler)
 
-(defstruct mir-storage-analysis points fields (escaped 0) (stack 0) (cyclic 0))
+(defstruct mir-storage-analysis points fields (escaped 0) (stack 0) (rest 0) (cyclic 0))
 
 (defun mir-cons-allocation-p (instruction)
   (and (= (mir-instruction-kind instruction) 6) (eq (mir-instruction-data instruction) 'cons)
@@ -57,7 +57,7 @@
         (setf points (mir-storage-field fields points (eq selector :cdr))))))
 
 (defun mir-compute-storage (function types packets &key borrows identities parameters)
-  "Prove acyclic cons sites whose identities never enter heap storage."
+  "Track cons identities and rest spines whose references stay in this frame."
   (let* ((instructions (hir-vector (mir-function-instructions function)))
          (blocks (hir-vector (mir-function-blocks function)))
          (points (make-array (hir-buffer-count (mir-function-values function)) :initial-element 0))
@@ -66,7 +66,7 @@
          (definitions (mir-value-definitions function))
          (parameter-mask 0)
          (reachable (mir-reachable-blocks function)) (cyclic (mir-cyclic-blocks function))
-         (sites 0) (escaped 0) (changed t))
+         (sites 0) (rest-sites 0) (escaped 0) (changed t) (replaces-frame nil))
     (when parameters
       (dotimes (index (mir-function-positional-count function))
         (let ((bit (ash 1 (+ 1 offset index))))
@@ -77,18 +77,31 @@
     ;; a union of known local objects when checking field stores.
     (loop for block across blocks when (logbitp (mir-block-id block) reachable) do
       (loop for id across (hir-vector (mir-block-instructions block))
-            for instruction = (svref instructions id) when (mir-cons-allocation-p instruction) do
-        (setf (svref fields id) (cons 0 0) sites (logior sites (ash 1 (1+ id))))
-        (when (or (logbitp (mir-block-id block) cyclic)
-                  (mir-instruction-notinline instruction)
-                  (not (hir-policy-optimize-p (mir-instruction-policy instruction))))
-          (setf escaped (logior escaped (ash 1 (1+ id)))))))
+            for instruction = (svref instructions id) do
+        (when (and (= (mir-instruction-kind instruction) 8)
+                   (member (mir-instruction-data instruction) '(:tail-funcall :tail-funcall-function)))
+          (setf replaces-frame t))
+        (when (or (mir-cons-allocation-p instruction) (= (mir-instruction-kind instruction) 17))
+          (let ((bit (ash 1 (1+ id))))
+            ;; Every tail shares this abstract site, not a runtime cons slot.
+            (if (= (mir-instruction-kind instruction) 17)
+                (setf rest-sites (logior rest-sites bit) (svref fields id) (cons 1 bit))
+                (setf (svref fields id) (cons 0 0) sites (logior sites bit))))
+          (when (or (and (= (mir-instruction-kind instruction) 17) (mir-function-key-p function))
+                    (logbitp (mir-block-id block) cyclic)
+                    (mir-instruction-notinline instruction)
+                    (not (hir-policy-optimize-p (mir-instruction-policy instruction))))
+            (setf escaped (logior escaped (ash 1 (1+ id))))))))
+    (when replaces-frame (setf escaped (logior escaped sites rest-sites)))
     (labels ((merge-points (id bits)
                (let ((joined (logior (svref points id) bits)))
                  (unless (= joined (svref points id)) (setf (svref points id) joined changed t))))
              (field-value (receivers tail) (mir-storage-field fields receivers tail))
              (store-field (receivers value tail &optional self)
-               (when (and (not self) (logbitp 0 receivers)) (setf escaped (logior escaped value)))
+               ;; A rest spine may use heap fallback at runtime. Its fields cannot
+               ;; receive other stack objects even when its own extent is local.
+               (when (and (not self) (or (logbitp 0 receivers) (not (zerop (logand receivers rest-sites)))))
+                 (setf escaped (logior escaped value)))
                (dotimes (id (length fields))
                  (when (and (svref fields id) (logbitp (1+ id) receivers))
                    (let* ((pair (svref fields id)) (old (if tail (cdr pair) (car pair)))
@@ -117,6 +130,7 @@
                    (1 (if parameters (logior 1 (ash 1 (+ 1 offset name))) 1))
                    (2 1)
                    ((4 5 12 16) 0)
+                   (17 (ash 1 (1+ (mir-instruction-id instruction))))
                    ((3 9 10 11) (svref points (svref args 0)))
                    (14 (let ((fact (svref packets (svref args 0))))
                          (if (and (mir-values-fact-p fact) (mir-values-fact-count fact)
@@ -167,7 +181,7 @@
                                 unless (logbitp (1- index) (mir-parameter-summary-borrow summary))
                                   do (setf escaped (logior escaped
                                                     (svref points (svref (mir-instruction-operands instruction) index))))))
-                         ((not (or (member kind '(0 1 2 4 5 9 10 12 13 14 16))
+                         ((not (or (member kind '(0 1 2 4 5 9 10 12 13 14 16 17))
                                    (mir-cons-allocation-p instruction) (mir-borrow-call-p instruction)
                                    (and (= kind 11) (mir-check-proven-p instruction types))))
                           (loop for arg across (mir-instruction-operands instruction)
@@ -191,7 +205,8 @@
               (setf escaped (logior escaped (car (svref fields id)) (cdr (svref fields id))))))
           (setf changed (/= before escaped))))
       (make-mir-storage-analysis :points points :fields fields :escaped escaped
-                                 :stack (logand sites (lognot escaped)) :cyclic cyclic))))
+                                 :stack (logand sites (lognot escaped))
+                                 :rest (logand rest-sites (lognot escaped)) :cyclic cyclic))))
 
 (defun mir-infer-storage (unit)
   (mir-unit-analysis unit :storage
