@@ -52,6 +52,7 @@
                (:file "mir/data")
                (:file "mir/verify")
                (:file "mir/build")
+               (:file "mir/values")
                (:file "mir/types")
                (:file "mir/calls")
                (:file "mir/lower")

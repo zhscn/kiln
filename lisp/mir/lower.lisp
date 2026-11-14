@@ -3,6 +3,7 @@
 (defvar *mir-lir-values*)
 (defvar *mir-lir-labels*)
 (defvar *mir-lir-types*)
+(defvar *mir-lir-value-facts*)
 
 (defun mir-lir-value (id) (svref *mir-lir-values* id))
 
@@ -62,6 +63,15 @@
                 (progn (emit `(:set ,(car out) ,(car input)))
                        (emit `(:set ,(cdr out) ,(cdr input))))
                 (emit `(:set ,out ,input)))))
+      (14 (let* ((source (svref (mir-instruction-operands instruction) 0))
+                 (fact (svref *mir-lir-value-facts* source))
+                 (known-count (and (mir-values-fact-p fact) (mir-values-fact-count fact))))
+            (if (or (>= data kiln.kir::+backend-value-limit+)
+                    (and known-count (>= data known-count)))
+                (emit `(:set ,out ,(nil-value)))
+                (multiple-value-bind (primary count) (mir-lir-restore source)
+                  (emit `(:set ,out ,(if (zerop data) primary
+                                        `(:select (:gt ,count ,data) (:secondary-value-ref ,data) ,(nil-value)))))))))
       (12 (emit `(:set ,out ,argument-count)))
       (13 (emit-nargs-check (first args) data data)))))
 
@@ -81,6 +91,7 @@
 
 (defun mir-lir-function-body (function &optional unit)
   (let* ((*mir-lir-types* (mir-infer-types function unit))
+         (*mir-lir-value-facts* (mir-infer-value-facts function unit))
          (*mir-lir-values*
            (map 'simple-vector
                 (lambda (value)

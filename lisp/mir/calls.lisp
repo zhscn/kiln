@@ -1,6 +1,6 @@
 (in-package #:kiln.compiler)
 
-(defstruct mir-call-analysis identities outgoing components external inputs summaries types)
+(defstruct mir-call-analysis identities outgoing components external inputs summaries value-summaries types packets)
 
 (defun mir-function-identity-join (old new)
   (cond ((eq old :unseen) new) ((eq new :unseen) old)
@@ -21,6 +21,8 @@
                  (case (mir-instruction-kind instruction)
                    (5 (mir-instruction-data instruction))
                    ((3 9 10 11) (svref identities (svref args 0)))
+                   (14 (if (zerop (mir-instruction-data instruction))
+                           (svref identities (svref args 0)) :unknown))
                    (6 (if (and (member (mir-instruction-data instruction) '(identity values))
                                (plusp (length args)))
                           (svref identities (svref args 0)) :unknown))
@@ -73,6 +75,16 @@
             do (setf result (mir-type-join result (svref types (svref (mir-terminator-operands term) 0)))))
     result))
 
+(defun mir-return-values (function packets)
+  (let ((result :unseen) (reachable (mir-reachable-blocks function))
+        (expansions (make-array +mir-values-prefix-limit+ :initial-element 0)))
+    (loop for block across (hir-vector (mir-function-blocks function))
+          for term = (mir-block-terminator block)
+          when (and (logbitp (mir-block-id block) reachable) (= (mir-terminator-kind term) 2))
+            do (setf result (mir-join-values result
+                             (svref packets (svref (mir-terminator-operands term) 0)) expansions)))
+    result))
+
 (defun mir-contained-functions (function)
   "Overapproximate local functions carried by each scalar or saved bundle."
   (let* ((sets (make-array (hir-buffer-count (mir-function-values function)) :initial-element 0))
@@ -86,7 +98,7 @@
                (let ((args (mir-instruction-operands instruction)))
                  (case (mir-instruction-kind instruction)
                    (5 (ash 1 (mir-instruction-data instruction)))
-                   ((3 9 10 11) (svref sets (svref args 0)))
+                   ((3 9 10 11 14) (svref sets (svref args 0)))
                    (6 (case (mir-instruction-data instruction)
                         (identity (if (plusp (length args)) (svref sets (svref args 0)) 0))
                         (values (loop for arg across args for bits = (svref sets arg)
@@ -121,7 +133,7 @@
               for args = (mir-instruction-operands instruction) do
           ;; Parameter identities and heap contents are not yet tracked across
           ;; calls. Passing a function to any callee therefore exposes it.
-          (unless (or (member kind '(0 1 2 4 5 9 10 12 13))
+          (unless (or (member kind '(0 1 2 4 5 9 10 12 13 14))
                       (and (= kind 6) (member (mir-instruction-data instruction) '(identity values))))
             (loop for arg across args for index from 0
                   unless (and (= kind 7) (zerop index) (integerp (svref known arg)))
@@ -145,6 +157,10 @@
          (outgoing (make-array count :initial-element nil))
          (summaries (make-array count :initial-element :unseen))
          (changes (make-array count :initial-element 0))
+         (value-summaries (make-array count :initial-element :unseen))
+         (value-changes (map 'simple-vector
+                             (lambda (function) (declare (ignore function))
+                               (make-array +mir-values-prefix-limit+ :initial-element 0)) functions))
          (inputs (map 'simple-vector
                       (lambda (function)
                         (make-array (mir-function-required function)
@@ -153,7 +169,7 @@
          (input-changes (map 'simple-vector
                              (lambda (function) (make-array (mir-function-required function) :initial-element 0))
                              functions))
-         (types (make-array count)))
+         (types (make-array count)) (packets (make-array count)))
     (loop for function across functions for id from 0
           for known across identities for reachable = (mir-reachable-blocks function) do
       (loop for block across (hir-vector (mir-function-blocks function))
@@ -191,32 +207,42 @@
                    (setf changed nil)
                    (dolist (component components)
                      (dolist (id component)
-                       (let* ((function (svref functions id))
-                              (facts (mir-compute-types function :summaries summaries
-                                                        :functions (svref identities id)
-                                                        :inputs (svref inputs id) :finalize nil))
-                              (old (svref summaries id)))
-                         (multiple-value-bind (joined expansions)
-                             (mir-widen-summary old (mir-return-type function facts) (svref changes id))
-                           (setf (svref changes id) expansions)
-                           (unless (equal old joined) (setf (svref summaries id) joined changed t)))
-                         (merge-inputs function facts (svref identities id))))))))
+                       (let ((function (svref functions id)))
+                         (multiple-value-bind (facts packet-facts)
+                             (mir-compute-types function :summaries summaries :value-summaries value-summaries
+                                                :functions (svref identities id)
+                                                :inputs (svref inputs id) :finalize nil)
+                           (let ((old (svref summaries id)))
+                             (multiple-value-bind (joined expansions)
+                                 (mir-widen-summary old (mir-return-type function facts) (svref changes id))
+                               (setf (svref changes id) expansions)
+                               (unless (equal old joined) (setf (svref summaries id) joined changed t))))
+                           (let* ((old (svref value-summaries id))
+                                  (joined (mir-join-values old (mir-return-values function packet-facts)
+                                                           (svref value-changes id))))
+                             (unless (equalp old joined)
+                               (setf (svref value-summaries id) joined changed t)))
+                           (merge-inputs function facts (svref identities id)))))))))
         (solve)
         ;; Uncalled functions and cycles without seeds must still have safe
         ;; code. Replace unresolved inputs/results with unknown and close the
         ;; fixed point again before publishing any optimization facts.
         (dotimes (id count)
           (when (eq (svref summaries id) :unseen) (setf (svref summaries id) t changed t))
+          (when (eq (svref value-summaries id) :unseen)
+            (setf (svref value-summaries id) (mir-unknown-values (svref summaries id)) changed t))
           (dotimes (position (length (svref inputs id)))
             (when (eq (svref (svref inputs id) position) :unseen)
               (setf (svref (svref inputs id) position) t changed t))))
         (solve)
         (dotimes (id count)
-          (setf (svref types id)
-                (mir-compute-types (svref functions id) :summaries summaries
-                                   :functions (svref identities id) :inputs (svref inputs id))))
+          (multiple-value-bind (facts packet-facts)
+              (mir-compute-types (svref functions id) :summaries summaries :value-summaries value-summaries
+                                 :functions (svref identities id) :inputs (svref inputs id))
+            (setf (svref types id) facts (svref packets id) packet-facts)))
         (make-mir-call-analysis :identities identities :outgoing outgoing :components components
-                                :external external :inputs inputs :summaries summaries :types types)))))
+                                :external external :inputs inputs :summaries summaries :value-summaries value-summaries
+                                :types types :packets packets)))))
 
 (defun mir-infer-calls (unit)
   (mir-unit-analysis unit :calls #'mir-compute-calls))

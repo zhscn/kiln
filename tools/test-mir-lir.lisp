@@ -36,3 +36,23 @@
     (assert (and (search "(22 11 3)" text) (search "(:UNREACHABLE 5)" text))
             () "Unexpected host MIR execution output: ~S" text)))
 (format t "Host MIR to binary LIR execution passed.~%")
+
+(let* ((root (asdf:system-source-directory "kiln"))
+       (output (merge-pathnames "build/mir-test/values.lir" root))
+       (session (make-session))
+       (form '(locally (declare (optimize (speed 0)))
+                (print (multiple-value-bind (a b c) (values 1 :good)
+                         (identity 99) (list a b c)))
+                (print (multiple-value-bind (a b) (values) (list a b))))))
+  (ensure-directories-exist output)
+  (kiln::write-module (compile-module (front-end-forms (list form) session) "mir-values"
+                                     :session session :pipeline :mir) output)
+  (let ((text (uiop:run-program
+               (mapcar #'namestring
+                       (list (merge-pathnames "target/debug/kiln-cg" root) #P"jit"
+                             (merge-pathnames "build/test/kernel.lir" root)
+                             (merge-pathnames "build/test/clos.lir" root) output))
+               :output :string :error-output :string)))
+    (assert (and (search "(1 :GOOD NIL)" text) (search "(NIL NIL)" text))
+            () "Unexpected MIR multiple-value output: ~S" text)))
+(format t "Host MIR multiple-value binding execution passed.~%")

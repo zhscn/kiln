@@ -56,10 +56,12 @@
                (t type))))
       (t type))))
 
-(defun mir-compute-types (function &key summaries functions inputs (finalize t))
+(defun mir-compute-types (function &key summaries value-summaries functions inputs (finalize t))
   "Infer primary-value types. :UNSEEN is solver bottom; T is unknown."
   (let* ((types (make-array (hir-buffer-count (mir-function-values function))
                             :initial-element :unseen))
+         (packets (make-array (length types) :initial-element :unseen))
+         (packet-changes (make-array (length types) :initial-element nil))
          (blocks (hir-vector (mir-function-blocks function)))
          (reachable (mir-reachable-blocks function))
          (definitions (mir-value-definitions function))
@@ -75,6 +77,31 @@
                    (when (>= (svref changes id) 2) (setf joined 'integer)))
                  (unless (equal joined (svref types id))
                    (setf (svref types id) joined changed t))))
+             (merge-packet (id packet)
+               (unless (svref packet-changes id)
+                 (setf (svref packet-changes id) (make-array +mir-values-prefix-limit+ :initial-element 0)))
+               (let ((joined (mir-join-values (svref packets id) packet (svref packet-changes id))))
+                 (unless (equalp joined (svref packets id))
+                   (setf (svref packets id) joined changed t))))
+             (transfer-packet (instruction)
+               (let ((args (mir-instruction-operands instruction))
+                     (result (mir-instruction-result instruction)))
+                 (case (mir-instruction-kind instruction)
+                   (9 (mir-fixed-values (vector (svref types (svref args 0)))))
+                   (11 (mir-check-values (svref packets (svref args 0)) (svref types result)))
+                   (6 (let ((name (mir-instruction-data instruction)))
+                        (cond ((eq name 'values)
+                               (mir-fixed-values (map 'simple-vector (lambda (id) (svref types id)) args)))
+                              ((and (symbolp name) (eq (symbol-package name) (find-package :cl))
+                                    (mir-single-value-call-p name))
+                               (mir-fixed-values (vector (svref types result))))
+                              ((eq (svref types result) :unseen) :unseen)
+                              (t (mir-unknown-values (svref types result))))))
+                   (7 (let ((target (and functions (svref functions (svref args 0)))))
+                        (if (and value-summaries (integerp target)) (svref value-summaries target)
+                            (if (eq (svref types result) :unseen) :unseen
+                                (mir-unknown-values (svref types result))))))
+                   (otherwise (mir-unknown-values (svref types result))))))
              (transfer (instruction)
                (let ((args (mir-instruction-operands instruction)))
                  (case (mir-instruction-kind instruction)
@@ -100,6 +127,9 @@
                         (cond ((eq target :unseen) :unseen)
                               ((and summaries (integerp target)) (svref summaries target))
                               (t t))))
+                   (14 (if (zerop (mir-instruction-data instruction)) (svref types (svref args 0))
+                           (mir-values-ref-type (svref packets (svref args 0))
+                                                (mir-instruction-data instruction))))
                    (otherwise t)))))
       (loop while changed do
         (setf changed nil)
@@ -107,7 +137,9 @@
           (loop for id across (hir-vector (mir-block-instructions block))
                 for instruction = (mir-at (mir-function-instructions function) id)
                 for result = (mir-instruction-result instruction)
-                when result do (merge-type result (transfer instruction)))
+                when result do (merge-type result (transfer instruction))
+                               (when (eq (mir-value-representation (mir-at (mir-function-values function) result)) :bundle)
+                                 (merge-packet result (transfer-packet instruction))))
           (loop for edge across (mir-terminator-edges (mir-block-terminator block))
                 for index from 0 do
             (loop for parameter across (mir-block-parameters (svref blocks (mir-edge-target edge)))
@@ -116,18 +148,26 @@
                   do (merge-type parameter
                        (if (eq input :unseen) :unseen
                            (mir-edge-type (mir-block-terminator block) (zerop index)
-                                          argument input definitions types))))))))
+                                          argument input definitions types)))
+                     (when (eq (mir-value-representation (mir-at (mir-function-values function) parameter)) :bundle)
+                       (merge-packet parameter (svref packets argument))))))))
     ;; Unreachable definitions and cyclic facts with no seed prove nothing.
     (when finalize
       (dotimes (id (length types))
         (when (eq (svref types id) :unseen) (setf (svref types id) t))))
-    types))
+    (values types packets)))
 
 (defun mir-infer-types (function &optional unit)
   "Return SSA types, using local call summaries when UNIT is supplied."
   (if unit
       (svref (mir-call-analysis-types (mir-infer-calls unit)) (mir-function-id function))
       (mir-analysis function :types #'mir-compute-types)))
+
+(defun mir-infer-value-facts (function &optional unit)
+  "Return bundle facts indexed by SSA value ID."
+  (if unit
+      (svref (mir-call-analysis-packets (mir-infer-calls unit)) (mir-function-id function))
+      (mir-analysis function :values (lambda (function) (nth-value 1 (mir-compute-types function))))))
 
 (defun mir-check-proven-p (instruction types)
   (and (= (mir-instruction-kind instruction) 11)

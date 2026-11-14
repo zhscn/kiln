@@ -92,21 +92,27 @@
         (mir-start join)
         (svref (mir-block-parameters *mir-block*) (length *mir-environment*))))))
 
+(defun mir-build-mv-let (node)
+  (let* ((variables (hir-node-a node))
+         (bundle (mir-build-node (svref (hir-node-b node) 0))))
+    (when *mir-block*
+      (let ((values (make-array (length variables))))
+        (dotimes (index (length variables))
+          (setf (svref values index) (mir-instruction 14 :obj (vector bundle) index)))
+        (loop for variable across variables for value across values
+              do (setf (svref *mir-environment* (mir-binding-index variable))
+                       (mir-check value (hir-var-type variable))))
+        (mir-build-node (hir-node-c node))))))
+
 (defun mir-build-let (node)
-  (let ((variables (hir-node-a node)) (inits (hir-node-b node))
-        (values nil) (sequential (hir-node-d node)))
-    ;; Multi-value LET nodes use a different initialization protocol.
-    (when (/= (length variables) (length inits)) (mir-unavailable "multiple-value binding"))
+  (when (hir-node-d node) (return-from mir-build-let (mir-build-mv-let node)))
+  (let ((variables (hir-node-a node)) (inits (hir-node-b node)) (values nil))
     (loop for variable across variables for init across inits while *mir-block*
           for value = (mir-primary init)
-          do (when *mir-block*
-               (setf value (mir-check value (hir-var-type variable)))
-               (if sequential (setf (svref *mir-environment* (mir-binding-index variable)) value)
-                   (push value values))))
+          do (when *mir-block* (push (mir-check value (hir-var-type variable)) values)))
     (when *mir-block*
-      (unless sequential
-        (loop for variable across variables for value in (nreverse values)
-              do (setf (svref *mir-environment* (mir-binding-index variable)) value)))
+      (loop for variable across variables for value in (nreverse values)
+            do (setf (svref *mir-environment* (mir-binding-index variable)) value))
       (mir-build-node (hir-node-c node)))))
 
 (defun mir-build-block (node)
