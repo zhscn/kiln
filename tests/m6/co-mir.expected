@@ -63,3 +63,16 @@ T
 ((3))
 T
 14
+(10 10 NIL 10)
+(20 NIL T 7)
+(30 31 T 32)
+:OPTIONAL-FEW
+:OPTIONAL-MANY
+1
+(1 2 3 3 6 NIL)
+(1 2 3 4 5 T)
+(2 3)
+(1 4)
+(1 NIL)
+:OPTIONAL-TYPE
+(15)

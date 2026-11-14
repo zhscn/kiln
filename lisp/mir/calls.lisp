@@ -133,7 +133,7 @@
               for args = (mir-instruction-operands instruction) do
           ;; Parameter identities and heap contents are not yet tracked across
           ;; calls. Passing a function to any callee therefore exposes it.
-          (unless (or (member kind '(0 1 2 4 5 9 10 12 13 14))
+          (unless (or (member kind '(0 1 2 4 5 9 10 12 13 14 16))
                       (and (= kind 6) (member (mir-instruction-data instruction) '(identity values))))
             (loop for arg across args for index from 0
                   unless (and (member kind '(7 15)) (zerop index) (integerp (svref known arg)))
@@ -150,11 +150,11 @@
       (when (>= expansions 2) (setf joined 'integer)))
     (values joined expansions)))
 
-(defun mir-call-argument-types (instruction facts packets required)
+(defun mir-call-argument-types (instruction facts packets required &optional (maximum required))
   "Flatten call facts, or return :UNSEEN, :UNKNOWN or :WRONG-ARITY."
   (let ((args (mir-instruction-operands instruction)))
     (if (= (mir-instruction-kind instruction) 7)
-        (if (= (1- (length args)) required)
+        (if (<= required (1- (length args)) maximum)
             (map 'simple-vector (lambda (id) (svref facts id)) (subseq args 1))
             :wrong-arity)
         (let ((count 0) (unknown nil))
@@ -163,8 +163,8 @@
                    (if (mir-values-fact-count packet) (incf count (mir-values-fact-count packet))
                        (setf unknown t)))
           (when unknown (return-from mir-call-argument-types :unknown))
-          (unless (= count required) (return-from mir-call-argument-types :wrong-arity))
-          (let ((result (make-array required)) (position 0))
+          (unless (<= required count maximum) (return-from mir-call-argument-types :wrong-arity))
+          (let ((result (make-array count)) (position 0))
             (loop for index from 1 below (length args) for packet = (svref packets (svref args index))
                   do (dotimes (slot (mir-values-fact-count packet))
                        (setf (svref result position) (mir-values-ref-type packet slot)) (incf position)))
@@ -183,11 +183,11 @@
                                (make-array +mir-values-prefix-limit+ :initial-element 0)) functions))
          (inputs (map 'simple-vector
                       (lambda (function)
-                        (make-array (mir-function-required function)
+                        (make-array (mir-function-positional-count function)
                                     :initial-element (if (logbitp (mir-function-id function) external) t :unseen)))
                       functions))
          (input-changes (map 'simple-vector
-                             (lambda (function) (make-array (mir-function-required function) :initial-element 0))
+                             (lambda (function) (make-array (mir-function-positional-count function) :initial-element 0))
                              functions))
          (types (make-array count)) (packets (make-array count)))
     (loop for function across functions for id from 0
@@ -211,13 +211,16 @@
                        (let ((target (svref known (svref args 0))))
                          (when (integerp target)
                            (let* ((row (svref inputs target)) (counts (svref input-changes target))
-                                  (arguments (mir-call-argument-types instruction facts packets (length row))))
+                                  (arguments (mir-call-argument-types instruction facts packets
+                                                                      (mir-function-required (svref functions target)) (length row))))
                              ;; Unknown counts may match this signature; every
                              ;; argument must then allow arbitrary object types.
                              (when (or (vectorp arguments) (eq arguments :unknown))
                                (dotimes (position (length row))
                                  (let ((old (svref row position))
-                                       (candidate (if (eq arguments :unknown) t (svref arguments position))))
+                                       (candidate (cond ((eq arguments :unknown) t)
+                                                        ((< position (length arguments)) (svref arguments position))
+                                                        (t 'null))))
                                    (multiple-value-bind (joined expansions)
                                        (mir-widen-summary old candidate (svref counts position))
                                      (setf (svref counts position) expansions)

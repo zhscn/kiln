@@ -98,7 +98,8 @@
                   (emit `(:set ,out ,(if (zerop data) primary
                                         `(:select (:gt ,count ,data) (:secondary-value-ref ,data) ,(nil-value)))))))))
       (12 (emit `(:set ,out ,argument-count)))
-      (13 (emit-nargs-check (first args) data data)))))
+      (13 (emit-nargs-check (first args) (car data) (cdr data)))
+      (16 (emit `(:set ,out ,(boolean-value `(:gt ,(first args) ,data))))))))
 
 (defun mir-lir-edge-copies (function edge)
   "Snapshot every source before assigning block parameters, including copy cycles."
@@ -141,7 +142,7 @@
          (blocks (hir-vector (mir-function-blocks function)))
          (labels (map 'simple-vector (lambda (block) (declare (ignore block)) (new-block)) blocks))
          (edge-blocks nil)
-         (arguments (make-array (mir-function-required function))) (count (new-var :raw)))
+         (arguments (make-array (mir-function-positional-count function))) (count (new-var :raw)))
     (dotimes (i (length arguments)) (setf (svref arguments i) (new-var)))
     (emit `(:receive-prefix ,(coerce arguments 'list) ,count))
     (when storage
@@ -153,7 +154,7 @@
     (jump (svref labels 0))
     (loop for block across blocks for label across labels
           do (start-block label)
-             (emit-poll :stack t)
+             (emit-poll :stack (zerop (mir-block-id block)))
              (loop for id across (hir-vector (mir-block-instructions block))
                    do (mir-lir-instruction (mir-at (mir-function-instructions function) id) arguments count))
              (let* ((term (mir-block-terminator block))
