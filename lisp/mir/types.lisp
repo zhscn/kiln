@@ -107,7 +107,8 @@
                  (case (mir-instruction-kind instruction)
                    (0 (hir-constant-type (mir-instruction-data instruction)))
                    (1 (if inputs (svref inputs (mir-instruction-data instruction)) t))
-                   ((4 5) 'function)
+                   ((4 5 23) 'function)
+                   (22 (if (svref (mir-function-capture-functions function) (mir-instruction-data instruction)) 'function t))
                    (16 'boolean)
                    (17 'list)
                    ;; A bundle carries only a primary-value fact here. Unknown

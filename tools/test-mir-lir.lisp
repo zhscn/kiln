@@ -277,3 +277,31 @@
                      (loop for value = (read stream nil :eof) until (eq value :eof) collect value)))
             () "Unexpected MIR scalar output: ~S" text)))
 (format t "Host MIR scalar field SSA, evaluation order and GC execution passed.~%")
+
+(let* ((root (asdf:system-source-directory "kiln"))
+       (output (merge-pathnames "build/mir-test/captures.lir" root))
+       (session (make-session))
+       (form '(progn
+                (print (let ((x (list 30))) (funcall (lambda () (kiln.sys:%gc) (car x)))))
+                (let ((x 0))
+                  (flet ((inc () (kiln.sys:%gc) (setq x (1+ x))) (peek () x))
+                    (declare (notinline inc peek))
+                    (inc) (inc) (print (peek))))
+                (let ((x 0))
+                  (labels ((f (n) (if (zerop n) x (g (1- n))))
+                           (g (n) (kiln.sys:%gc) (setq x (1+ x)) (f n)))
+                    (declare (notinline f g)) (print (f 3))))))
+       (module (compile-module (front-end-forms (list form) session) "mir-captures" :session session :pipeline :mir)))
+  (ensure-directories-exist output)
+  (kiln::write-module module output)
+  (let ((text (uiop:run-program
+               (mapcar #'namestring
+                       (list (merge-pathnames "target/debug/kiln-cg" root) #P"jit"
+                             (merge-pathnames "build/test/kernel.lir" root)
+                             (merge-pathnames "build/test/clos.lir" root) output))
+               :output :string :error-output :string)))
+    (assert (equal '(30 2 3)
+                   (with-input-from-string (stream text)
+                     (loop for value = (read stream nil :eof) until (eq value :eof) collect value)))
+            () "Unexpected MIR capture output: ~S" text)))
+(format t "Host MIR closures, shared cells and recursive GC execution passed.~%")

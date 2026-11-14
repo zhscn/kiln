@@ -11,7 +11,7 @@
 
 (defstruct mir-unit (functions (make-hir-buffer)) (analyses (make-hash-table :test 'eq)))
 (defstruct mir-function
-  (id 0) name source (policy 1023) (required 0) (optional 0) (rest nil) (key-p nil) (keys #()) (allow-other-keys nil) (bindings #())
+  (id 0) name source (policy 1023) (required 0) (optional 0) (rest nil) (key-p nil) (keys #()) (allow-other-keys nil) (bindings #()) (binding-cells 0) (captures #()) (capture-cells 0) (capture-functions #())
   (blocks (make-hir-buffer)) (instructions (make-hir-buffer)) (values (make-hir-buffer))
   (revision 0) (analyses (make-hash-table :test 'eq)))
 (defun mir-function-positional-count (function)
@@ -31,9 +31,11 @@
 
 ;;; Instruction kinds: constant, argument, global-read, global-write,
 ;;; global-function, function, global-call, call, primop, single, primary,
-;;; declaration-check, argument-count, arity-check, value-ref, multiple-value-call, argument-present, rest-list, argument-error.
-(defparameter *mir-instruction-effects* #(0 0 33 34 33 8 127 127 127 56 56 127 0 32 56 127 0 56 127))
-;;; Effects: global read/write, dynamic environment, allocation, GC,
+;;; declaration-check, argument-count, arity-check, value-ref, multiple-value-call,
+;;; argument-present, rest-list, argument-error, cell, cell-read, cell-write,
+;;; capture, closure, closure-set, unbound-cell.
+(defparameter *mir-instruction-effects* #(0 0 33 34 33 8 127 127 127 56 56 127 0 32 56 127 0 56 127 56 1 2 1 56 2 0))
+;;; Effects: heap/global read/write, dynamic environment, allocation, GC,
 ;;; possible exit, unknown call. No operation is deleted from this summary alone.
 
 (defun mir-at (buffer id)

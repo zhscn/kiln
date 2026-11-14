@@ -2,6 +2,7 @@
 
 (defvar *mir-lir-values*)
 (defvar *mir-lir-labels*)
+(defvar *mir-lir-functions*)
 (defvar *mir-lir-types*)
 (defvar *mir-lir-value-facts*)
 (defvar *mir-lir-stack-slots*)
@@ -98,6 +99,14 @@
                 (multiple-value-bind (primary count) (mir-lir-restore source)
                   (emit `(:set ,out ,(if (zerop data) primary
                                         `(:select (:gt ,count ,data) (:secondary-value-ref ,data) ,(nil-value)))))))))
+      (19 (emit `(:set ,out ,(emit-cons (first args) (nil-value)))))
+      (20 (emit `(:set ,out (:field-load ,kiln.kir::+packet-field-cons-car+ ,(first args)))))
+      (21 (emit `(:field-store ,kiln.kir::+packet-field-cons-car+ ,(first args) ,(second args))))
+      (22 (emit `(:set ,out (:closure-ref ,*self* ,data))))
+      (23 (emit `(:alloc-closure ,out ,(svref *mir-lir-labels* data)
+                                ,(length (mir-function-captures (svref *mir-lir-functions* data))) ,(handler))))
+      (24 (emit `(:closure-set ,(first args) ,(cdr data) ,(second args))))
+      (25 (emit `(:set ,out ,(nil-value))))
       (12 (emit `(:set ,out ,argument-count)))
       (13 (emit-nargs-check (first args) (car data) (cdr data)))
       (16 (emit `(:set ,out ,(boolean-value `(:gt ,(first args) ,data)))))
@@ -188,7 +197,8 @@
       (jump (svref labels (mir-edge-target (cdr entry)))))))
 
 (defun mir-lower-toplevel (hir)
-  (let* ((unit (mir-scalar-replace (hir-to-mir hir))) (functions (hir-vector (mir-unit-functions unit)))
+  (let* ((unit (mir-scalar-replace (hir-to-mir hir))) (*mir-lir-functions* (hir-vector (mir-unit-functions unit)))
+         (functions *mir-lir-functions*)
          (*mir-lir-labels* (map 'simple-vector (lambda (function) (declare (ignore function))
                                                 (fresh-label "kiln_mir_")) functions)))
     (verify-mir unit)
@@ -199,6 +209,7 @@
                  (let ((*self* (copy-to-var :self)))
                    (mir-lir-function-body function unit))
                  (set-function-debug *function-name* (hir-source-range (mir-function-source function))))))
-    (loop for label across *mir-lir-labels*
+    (loop for label across *mir-lir-labels* for function across functions
+          when (zerop (length (mir-function-captures function)))
           do (module-data (kiln.kir::kir-name label "_fobj") `(:static-function ,label)))
     (emit-lisp-call (copy-to-var `(:object-address ,(kiln.kir::kir-name (svref *mir-lir-labels* 0) "_fobj") :general)) nil)))
