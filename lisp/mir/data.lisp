@@ -37,10 +37,14 @@
 ;;; global-function, function, global-call, call, primop, single, primary,
 ;;; declaration-check, argument-count, arity-check, value-ref, multiple-value-call,
 ;;; argument-present, rest-list, argument-error, cell, cell-read, cell-write,
-;;; capture, closure, closure-set, unbound-cell, load-time-value, special-bind, special-unbind.
-(defparameter *mir-instruction-effects* #(0 0 33 34 33 8 127 127 127 56 56 127 0 32 56 127 0 56 127 56 1 2 1 56 2 0 1 7 7))
+;;; capture, closure, closure-set, unbound-cell, load-time-value, special-bind, special-unbind, progv-enter.
+(defparameter *mir-instruction-effects* #(0 0 33 34 33 8 127 127 127 56 56 127 0 32 56 127 0 56 127 56 1 2 1 56 2 0 1 7 7 63))
 ;;; Effects: heap/global read/write, dynamic environment, allocation, GC,
 ;;; possible exit, unknown call. No operation is deleted from this summary alone.
+
+(defun mir-binding-entry-id (instruction)
+  (if (= 27 (mir-instruction-kind instruction))
+      (car (mir-instruction-data instruction)) (mir-instruction-data instruction)))
 
 (defun mir-at (buffer id)
   (unless (and (integerp id) (<= 0 id) (< id (hir-buffer-count buffer)))

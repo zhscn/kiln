@@ -174,6 +174,49 @@
           (let ((result (mir-build-node (hir-node-c node))))
             (when *mir-block* (mir-leave-bindings outer) result)))))))
 
+(defun mir-validate-progv-list (list symbols-p)
+  (let* ((head (mir-new-block)) (body (mir-new-block)) (nonempty (mir-new-block))
+         (bad (mir-new-block)) (done (mir-new-block))
+         (cursor (mir-add-value *mir-function* :obj head -1)))
+    (setf (mir-block-parameters (mir-at (mir-function-blocks *mir-function*) head))
+          (concatenate 'simple-vector
+                       (mir-block-parameters (mir-at (mir-function-blocks *mir-function*) head)) (vector cursor)))
+    (labels ((next (value)
+               (mir-terminate 0 #() (vector (make-mir-edge :target head
+                                              :arguments (concatenate 'simple-vector *mir-environment* (vector value)))))))
+      (next list)
+      (mir-start head)
+      (mir-branch cursor nonempty done)
+      (mir-start nonempty)
+      (mir-branch (mir-call-primary 'consp cursor) body bad)
+      (mir-start bad)
+      (mir-argument-error :progv-list cursor)
+      (mir-start body)
+      (when symbols-p
+        (let ((symbol (mir-call-primary 'car cursor)) (valid (mir-new-block)) (invalid (mir-new-block)))
+          (mir-branch (mir-call-primary 'symbolp symbol) valid invalid)
+          (mir-start invalid)
+          (mir-argument-error :progv-symbol symbol)
+          (mir-start valid)))
+      (next (mir-call-primary 'cdr cursor)))
+    (mir-start done)))
+
+(defun mir-build-progv (node)
+  (let ((symbols (mir-primary (hir-node-a node))))
+    (when *mir-block*
+      (let ((values (mir-primary (hir-node-b node))))
+        (when *mir-block*
+          (mir-validate-progv-list symbols nil)
+          (mir-validate-progv-list values nil)
+          (mir-validate-progv-list symbols t)
+          (let ((*mir-dynamic-bindings* *mir-dynamic-bindings*) (outer *mir-dynamic-bindings*)
+                (id *mir-next-binding*))
+            (incf *mir-next-binding*)
+            (mir-instruction 29 nil (vector symbols values) id)
+            (push id *mir-dynamic-bindings*)
+            (let ((result (mir-build-node (hir-node-c node))))
+              (when *mir-block* (mir-leave-bindings outer) result))))))))
+
 (defun mir-build-sequence (nodes)
   (let ((result nil))
     (loop for node across nodes while *mir-block* do (setf result (mir-build-node node)))
@@ -311,6 +354,7 @@
             (when *mir-block*
               (mir-check value (hir-node-a node) :bundle))))
       (24 (mir-single (mir-instruction 26 :obj #() (gethash node *mir-load-time-indices*))))
+      (25 (mir-build-progv node))
       (otherwise (mir-unavailable (format nil "HIR kind ~D" (hir-node-kind node)))))))
 
 (defun mir-bind-parameter (variable value)

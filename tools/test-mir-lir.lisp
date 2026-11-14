@@ -795,3 +795,35 @@
     (assert (equal values '((11 11 nil nil 11 nil) (12 nil t (:z 13) 13 t) (20) 10))
             () "Unexpected special binding output: ~S" values)))
 (format t "Host MIR special parameters, shared dynamic values, local exits and GC passed.~%")
+
+(let* ((root (asdf:system-source-directory "kiln"))
+       (output (merge-pathnames "build/mir-test/progv.lir" root))
+       (session (make-session))
+       (form '(let ((x 10) (y 20))
+                (declare (special x y))
+                (print (multiple-value-list
+                        (progv '(x y) (list (list 31))
+                          (kiln.sys:%gc) (values x (boundp 'y)))))
+                (print (list x y))
+                (print (block done (progv '(x x) '(41 42)
+                                     (kiln.sys:%gc) (return-from done x))))
+                (print x)
+                (let ((n 0))
+                  (tagbody again
+                    (progv '(x) (list n)
+                      (kiln.sys:%gc) (setq n (1+ n)) (if (< n 3) (go again)))))
+                (print x)))
+       (module (compile-module (front-end-forms (list form) session)
+                               "mir-progv" :session session :pipeline :mir)))
+  (kiln::write-module module output)
+  (let* ((text (uiop:run-program
+                (mapcar #'namestring
+                        (list (merge-pathnames "target/debug/kiln-cg" root) #P"jit"
+                              (merge-pathnames "build/test/kernel.lir" root)
+                              (merge-pathnames "build/test/clos.lir" root) output))
+                :output :string :error-output :string))
+         (values (with-input-from-string (stream text)
+                   (loop for value = (read stream nil :eof) until (eq value :eof) collect value))))
+    (assert (equal values '(((31) nil) (10 20) 42 10 10))
+            () "Unexpected PROGV output: ~S" values)))
+(format t "Host MIR PROGV dynamic values, missing bindings, duplicate symbols and exits passed.~%")
