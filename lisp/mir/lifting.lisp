@@ -12,8 +12,8 @@
   (let ((args (mir-instruction-operands instruction)))
     (if (= (mir-instruction-kind instruction) 7)
         (values (1- (length args)) (1- (length args)))
-        (let ((low 0) (high 0))
-          (loop for index from 1 below (length args)
+        (let* ((prefix (mir-call-prefix-count instruction)) (low prefix) (high prefix))
+          (loop for index from (1+ prefix) below (length args)
                 for packet = (svref packets (svref args index))
                 for count = (and (mir-values-fact-p packet) (mir-values-fact-count packet))
                 do (incf low (or count 0)) (incf high (or count kiln.kir::+backend-value-limit+)))
@@ -27,7 +27,7 @@
          (uses (make-array (length functions) :initial-element 0)))
     (loop for function across functions for id from 0
           for width = (length (mir-function-captures function))
-          when (and (plusp width) (zerop (mir-function-capture-cells function))
+          when (and (plusp width)
                     (every #'null (mir-function-capture-functions function))
                     (<= (+ width (mir-function-positional-count function)) kiln.kir::+backend-argument-limit+)
                     (not (logbitp id (mir-call-analysis-external calls)))
@@ -61,7 +61,7 @@
         (setf (svref widths id) nil)))
     widths))
 
-(defun mir-lift-function (function widths identities)
+(defun mir-lift-function (function widths identities cell-masks)
   "Thread each lifted function value's environment through its SSA copies."
   (let* ((blocks (hir-vector (mir-function-blocks function)))
          (instructions (mir-function-instructions function))
@@ -69,7 +69,7 @@
          (environments (make-array (length identities) :initial-element nil))
          (own-width (svref widths (mir-function-id function)))
          (rebuilt-instructions (make-hir-buffer))
-         (nil-value nil) (nil-instruction nil))
+         (nil-value nil) (nil-instruction nil) (unbound-value nil) (unbound-instruction nil))
     (labels ((width (value)
                (let ((target (svref identities value)))
                  (and (integerp target) (svref widths target))))
@@ -81,12 +81,10 @@
                  (loop for parameter across (mir-block-parameters block) for count = (width parameter)
                        when count do
                          (setf (svref environments parameter)
-                               (map 'simple-vector
-                                    (lambda (unused)
-                                      (declare (ignore unused))
-                                      (let ((id (mir-add-value function :obj (mir-block-id block) -1)))
-                                        (push id extra) id))
-                                    (make-array count))))
+                               (coerce (loop for slot below count
+                                             for representation = (if (logbitp slot (svref cell-masks (svref identities parameter))) :cell :obj)
+                                             collect (let ((id (mir-add-value function representation (mir-block-id block) -1)))
+                                                       (push id extra) id)) 'simple-vector)))
                  (setf (mir-block-parameters block)
                        (concatenate 'simple-vector (mir-block-parameters block) (nreverse extra)))))
       (loop for instruction across (hir-vector instructions)
@@ -117,7 +115,15 @@
                   thereis (> (length (mir-block-parameters block)) (length original)))
         (setf nil-value (mir-add-value function :obj 0 0)
               nil-instruction (make-mir-instruction :kind 0 :result nil-value :policy (mir-function-policy function))))
+      (when (loop for block across blocks for original across original-parameters
+                  thereis (loop for index from (length original) below (length (mir-block-parameters block))
+                                thereis (eq (mir-value-representation
+                                             (mir-at (mir-function-values function) (svref (mir-block-parameters block) index))) :cell)))
+        (setf unbound-value (mir-add-value function :cell 0 0)
+              unbound-instruction (make-mir-instruction :kind 25 :result unbound-value :policy (mir-function-policy function))))
       (when own-width
+        (setf (mir-function-internal-prefix function) own-width
+              (mir-function-argument-cells function) (svref cell-masks (mir-function-id function)))
         (incf (mir-function-required function) own-width)
         (setf (mir-function-captures function) #() (mir-function-capture-cells function) 0
               (mir-function-capture-functions function) #()))
@@ -129,7 +135,9 @@
                            (hir-buffer-count rebuilt)))
                    (hir-push (mir-instruction-id instruction) rebuilt)
                    (hir-push instruction rebuilt-instructions)))
-          (when (and (zerop (mir-block-id block)) nil-instruction) (append-instruction nil-instruction))
+          (when (zerop (mir-block-id block))
+            (when nil-instruction (append-instruction nil-instruction))
+            (when unbound-instruction (append-instruction unbound-instruction)))
           (loop for id across (hir-vector (mir-block-instructions block))
                 for instruction = (mir-at instructions id)
                 for kind = (mir-instruction-kind instruction)
@@ -149,20 +157,9 @@
                   (when (and (member kind '(7 15)) (width (svref args 0)))
                     (let ((fields (environment (svref args 0))))
                       (unless (and fields (every #'integerp fields)) (mir-fail "Lifted call lacks its environment"))
-                      (let ((prefix
-                              (if (= kind 7) fields
-                                  (map 'simple-vector
-                                       (lambda (field)
-                                         (let ((bundle (mir-add-value function :bundle (mir-block-id block) (hir-buffer-count rebuilt))))
-                                           (append-instruction
-                                            (make-mir-instruction :kind 9 :result bundle :operands (vector field)
-                                                                  :source (mir-instruction-source instruction)
-                                                                  :origin (mir-instruction-origin instruction)
-                                                                  :policy (mir-instruction-policy instruction)
-                                                                  :effects (svref *mir-instruction-effects* 9)))
-                                           bundle)) fields))))
-                        (setf (mir-instruction-operands instruction)
-                              (concatenate 'simple-vector (subseq args 0 1) prefix (subseq args 1))))))
+                      (when (= kind 15) (setf (mir-instruction-data instruction) (length fields)))
+                      (setf (mir-instruction-operands instruction)
+                            (concatenate 'simple-vector (subseq args 0 1) fields (subseq args 1)))))
                   (append-instruction instruction)))
         (setf (mir-block-instructions block) rebuilt)
         (loop for edge across (mir-terminator-edges (mir-block-terminator block)) do
@@ -174,14 +171,17 @@
                     (let ((fields (environment source)))
                       (unless (or fields (not (logbitp (mir-block-id block) (mir-reachable-blocks function))))
                         (mir-fail "Lifted edge lacks its environment"))
-                      (dotimes (slot count) (push (if fields (svref fields slot) nil-value) extra))))
+                      (dotimes (slot count)
+                        (push (if fields (svref fields slot)
+                                  (if (logbitp slot (svref cell-masks (svref identities parameter))) unbound-value nil-value)) extra))))
             (setf (mir-edge-arguments edge) (concatenate 'simple-vector (mir-edge-arguments edge) (nreverse extra))))))
       (setf (mir-function-instructions function) rebuilt-instructions)))
   function)
 
 (defun mir-lift-local-functions (unit &key (parameter-budget 4096))
   (let* ((calls (mir-infer-calls unit)) (widths (mir-lifting-widths unit calls))
-         (identities (mir-call-analysis-identities calls)))
+         (identities (mir-call-analysis-identities calls))
+         (cell-masks (map 'simple-vector #'mir-function-capture-cells (hir-vector (mir-unit-functions unit)))))
     (unless (find-if #'identity widths) (return-from mir-lift-local-functions unit))
     (loop for function across (hir-vector (mir-unit-functions unit)) for known across identities
           for extra = (loop for block across (hir-vector (mir-function-blocks function))
@@ -192,5 +192,5 @@
     (mir-run-unit-pass unit
       (lambda (unit)
         (loop for function across (hir-vector (mir-unit-functions unit)) for known across identities
-              do (mir-lift-function function widths known)))))
+              do (mir-lift-function function widths known cell-masks)))))
   unit)

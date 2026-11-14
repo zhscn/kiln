@@ -9,6 +9,8 @@
                      (mir-function-id function) (mir-function-name function)
                      (mir-function-required function) (mir-function-optional function) (mir-function-rest function) (mir-function-key-p function) (coerce (mir-function-keys function) 'list)
                      (mir-function-allow-other-keys function) (mir-function-revision function))
+             (format stream "  private-prefix ~D cell-arguments=~S~%" (mir-function-internal-prefix function)
+                     (mir-function-argument-cells function))
              (format stream "  captures ~S cells=~S function-targets=~S~%" (mir-function-captures function)
                      (mir-function-capture-cells function) (mir-function-capture-functions function))
              (loop for block across (hir-vector (mir-function-blocks function))

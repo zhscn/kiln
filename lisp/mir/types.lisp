@@ -114,7 +114,8 @@
                (let ((args (mir-instruction-operands instruction)))
                  (case (mir-instruction-kind instruction)
                    (0 (hir-constant-type (mir-instruction-data instruction)))
-                   (1 (if inputs (svref inputs (mir-instruction-data instruction)) t))
+                   (1 (if (logbitp (mir-instruction-data instruction) (mir-function-argument-cells function)) t
+                          (if inputs (svref inputs (mir-instruction-data instruction)) t)))
                    (8 (case (mir-instruction-data instruction)
                         (:make-simple-vector 'simple-vector) (:make-string :native-string) (otherwise t)))
                    ((4 5 23) 'function)
