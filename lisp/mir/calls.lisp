@@ -143,7 +143,7 @@
                   unless (and (zerop index) (or (= kind 24) (and (member kind '(7 15)) (integerp (svref known arg)))))
                     do (setf external (logior external (svref sets arg))))))
         (let ((term (mir-block-terminator block)))
-          (when (member (mir-terminator-kind term) '(2 4))
+          (when (member (mir-terminator-kind term) '(2 4 7))
             (loop for argument across (mir-terminator-operands term)
                   do (setf external (logior external (svref sets argument))))))))
     external))

@@ -1565,3 +1565,81 @@
   (declare (optimize (debug 0)) (type double-float a))
   (unwind-protect (+ a 1.0d0) (kiln.sys:%gc))))))
   (print (= 2.25d0 (funcall function 1.25d0))))
+
+(let ((function (mir-test-compile
+                 '(lambda (callback)
+                    (block done
+                      (flet ((exit () (return-from done (funcall callback))))
+                        (declare (notinline exit))
+                        (let ((*mir-special-value* :inner))
+                          (unwind-protect (exit) (push :exit *mir-progv-events*) (kiln.sys:%gc)))))))))
+  (let ((valid t))
+    (setq *mir-progv-events* nil)
+    (dolist (values '(() (1) ((2) 3 4)))
+      (unless (equal (multiple-value-list (funcall function (lambda () (values-list values)))) values)
+        (setq valid nil)))
+    (print (and valid (= 3 (length *mir-progv-events*)) (eq *mir-special-value* :outer)))))
+
+(let ((function (mir-test-compile
+                 '(lambda ()
+                    (declare (optimize (debug 0)))
+                    (let ((n 0) (jump nil))
+                      (tagbody
+                        (setq jump (lambda () (go again)))
+                       again
+                        (setq n (1+ n))
+                        (if (< n 4) (unwind-protect (funcall jump) (kiln.sys:%gc))))
+                      (values n jump))))))
+  (multiple-value-bind (n jump) (funcall function)
+    (kiln.sys:%gc)
+    (print (and (= n 4) (handler-case (progn (funcall jump) nil) (control-error () t))))))
+
+(let ((function (mir-test-compile
+                 '(lambda () (block done (lambda () (return-from done (values 11 12))))))))
+  (let ((exit (funcall function)))
+    (kiln.sys:%gc)
+    (print (handler-case (progn (funcall exit) nil) (control-error () t)))))
+
+(let ((function (mir-test-compile
+                 '(lambda (probe)
+                    (let ((old nil) (verdict nil))
+                      (dotimes (i 2)
+                        (block done
+                          (flet ((exit () (return-from done :escaped)))
+                            (if old (setq verdict (funcall probe old)) (setq old #'exit)))))
+                      verdict)))))
+  (print (eq (funcall function
+                      (lambda (exit) (handler-case (progn (funcall exit) :bad) (control-error () :expired))))
+             :expired)))
+
+(let ((function (mir-test-compile
+                 '(lambda ()
+                    (let ((n 0))
+                      (tagbody
+                        (flet ((out () (go done)))
+                          (declare (notinline out))
+                          (tagbody again
+                            (flet ((in () (go again)))
+                              (declare (notinline in))
+                              (setq n (1+ n)) (if (< n 2) (in) (out)))))
+                       done)
+                      n)))))
+  (print (= 2 (funcall function))))
+
+(let ((function (mir-test-compile
+                 '(lambda ()
+                    (declare (optimize (debug 0)))
+                    (block done
+                      (flet ((exit () (return-from done (values (list 61) 62))))
+                        (declare (notinline exit))
+                        (catch 'tag (unwind-protect (throw 'tag 0) (kiln.sys:%gc) (exit)))))))))
+  (print (equal (multiple-value-list (funcall function)) '((61) 62))))
+
+(let ((function (mir-test-compile
+                 '(lambda ()
+                    (declare (optimize (debug 0)))
+                    (block done
+                      (flet ((exit (x) (return-from done x)))
+                        (declare (notinline exit)) (exit (cons 71 nil))))))))
+  (let ((object (funcall function)))
+    (kiln.sys:%gc) (print (equal object '(71)))))

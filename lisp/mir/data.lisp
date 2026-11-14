@@ -31,15 +31,15 @@
       (mir-instruction-data instruction) 0))
 
 (defstruct mir-edge (target 0) (arguments #()))
-;;; Terminators: jump, branch, return, trap, throw, region-entry, continue-unwind.
+;;; Terminators: jump, branch, return, trap, throw, region-entry, continue-unwind, exit-to.
 (defstruct mir-terminator (kind 0) (operands #()) (edges #()) region source origin (policy 1023))
 
 ;;; Instruction kinds: constant, argument, global-read, global-write,
 ;;; global-function, function, global-call, call, primop, single, primary,
 ;;; declaration-check, argument-count, arity-check, value-ref, multiple-value-call,
 ;;; argument-present, rest-list, argument-error, cell, cell-read, cell-write,
-;;; capture, closure, closure-set, unbound-cell, load-time-value, special-bind, special-unbind, progv-enter, catch-enter, landed-values, protect-enter, cleanup-landing.
-(defparameter *mir-instruction-effects* #(0 0 33 34 33 8 127 127 127 56 56 127 0 32 56 127 0 56 127 56 1 2 1 56 2 0 1 7 7 63 7 57 7 4))
+;;; capture, closure, closure-set, unbound-cell, load-time-value, special-bind, special-unbind, progv-enter, catch-enter, landed-values, protect-enter, cleanup-landing, block-enter, tagbody-enter, go-landing.
+(defparameter *mir-instruction-effects* #(0 0 33 34 33 8 127 127 127 56 56 127 0 32 56 127 0 56 127 56 1 2 1 56 2 0 1 7 7 63 7 57 7 4 7 7 7))
 ;;; Effects: heap/global read/write, dynamic environment, allocation, GC,
 ;;; possible exit, unknown call. No operation is deleted from this summary alone.
 

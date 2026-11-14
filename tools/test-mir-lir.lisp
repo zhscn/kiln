@@ -927,3 +927,36 @@
     (assert (equal values '((1 2 3) ((11) 12) 21 32 41 52 (:local :throw :normal)))
             () "Unexpected UNWIND-PROTECT output: ~S" values)))
 (format t "Host MIR cleanup values, pending GC roots and overriding exits passed.~%")
+
+(let* ((root (asdf:system-source-directory "kiln"))
+       (output (merge-pathnames "build/mir-test/lexical-exits.lir" root))
+       (session (make-session))
+       (form '(let ((events nil))
+                (declare (optimize (debug 0)))
+                (print (multiple-value-list
+                        (block done
+                          (flet ((exit () (return-from done (values (list 11) 12))))
+                            (declare (notinline exit))
+                            (unwind-protect (exit) (push :block events) (kiln.sys:%gc))))))
+                (let ((n 0))
+                  (tagbody again
+                    (flet ((jump () (go again)))
+                      (declare (notinline jump))
+                      (setq n (1+ n))
+                      (if (< n 3) (unwind-protect (jump) (push n events) (kiln.sys:%gc)))))
+                  (print n))
+                (print events)))
+       (module (compile-module (front-end-forms (list form) session)
+                               "mir-lexical-exits" :session session :pipeline :mir)))
+  (kiln::write-module module output)
+  (let* ((text (uiop:run-program
+                (mapcar #'namestring
+                        (list (merge-pathnames "target/debug/kiln-cg" root) #P"jit"
+                              (merge-pathnames "build/test/kernel.lir" root)
+                              (merge-pathnames "build/test/clos.lir" root) output))
+                :output :string :error-output :string))
+         (values (with-input-from-string (stream text)
+                   (loop for value = (read stream nil :eof) until (eq value :eof) collect value))))
+    (assert (equal values '(((11) 12) 3 (2 1 :block)))
+            () "Unexpected lexical exit output: ~S" values)))
+(format t "Host MIR lexical returns, repeated closure GO and cleanup GC passed.~%")

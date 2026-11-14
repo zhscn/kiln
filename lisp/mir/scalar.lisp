@@ -48,7 +48,7 @@
 (defun mir-scalar-candidates (function proof origins types packets)
   "Require every use to forward a virtual object or access its definite fields."
   (unless (and (mir-scalar-policy-p function)
-               (not (find-if (lambda (instruction) (member (mir-instruction-kind instruction) '(30 32)))
+               (not (find-if (lambda (instruction) (member (mir-instruction-kind instruction) '(30 32 34 35)))
                              (hir-vector (mir-function-instructions function)))))
     (return-from mir-scalar-candidates nil))
   (let ((candidates (mir-storage-analysis-stack proof))
