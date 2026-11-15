@@ -593,6 +593,7 @@
   (mir-fold-type-predicates unit)
   (mir-lift-local-functions unit)
   (mir-inline-local-functions unit)
+  (mir-expand-list-calls unit)
   (mir-fold-type-predicates unit)
   (mir-scalar-replace unit)
   (mir-simplify-block-parameters unit))

@@ -1966,3 +1966,46 @@
                                      (flet ((probe (a &optional b)
                                               (list a b)))
                                        (list (probe x) (probe x nil))))) 3))
+
+(print
+ (multiple-value-list
+  (funcall
+   (mir-test-compile
+    '(lambda ()
+       (let ((n 0))
+         (multiple-value-prog1 (values (list (incf n) (incf n)) n)
+           (kiln.sys:%gc))))))))
+
+(print
+ (funcall
+  (mir-test-compile
+   '(lambda ()
+      (let ((tail (cons 9 nil)))
+        (let ((pair (progn (kiln.sys:%gc) (list* 1 2 tail))))
+          (rplaca tail 7) (kiln.sys:%gc)
+          (list pair (eq (cddr pair) tail))))))))
+
+(print
+ (funcall
+  (mir-test-compile
+   '(lambda ()
+      (let ((x (cons :token nil))) (list (eq (list* x) x) (list)))))))
+
+(print
+ (funcall
+  (mir-test-compile
+   '(lambda ()
+      (let ((first (progn (kiln.sys:%gc) (list 1 2)))
+            (second (progn (kiln.sys:%gc) (list 1 2))))
+        (rplaca first 9) (kiln.sys:%gc)
+        (list first second (eq first second)))))))
+
+(print
+ (funcall
+  (mir-test-compile
+   '(lambda () (declare (notinline list)) (list 3 4)))))
+
+(print
+ (funcall
+  (mir-test-compile
+   '(lambda () (length (list 1 2 3 4 5 6 7 8 9))))))

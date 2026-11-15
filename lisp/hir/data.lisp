@@ -47,7 +47,7 @@
 (defstruct (hir-type-declaration (:constructor make-hir-type-declaration (original expanded)))
   original expanded)
 
-;;; Function flags: escapes, closure, single call, direct calls, inlined, analyzed,
+;;; Function flags: escapes, closure, single call, direct calls, inlined, native-prepared,
 ;;; local definitions, static environment, function aliases, HIR-native facts ready.
 (defstruct hir-fun
   (name nil) (parent nil) (lambda-list nil) (body nil) (parameter-specials nil)
