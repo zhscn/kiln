@@ -62,6 +62,34 @@
     (dotimes (index (length cells) result)
       (when (logbitp (1+ index) bits) (setf result (mir-type-join result (svref cells index)))))))
 
+(defun mir-type-use-blocks (function)
+  "Index blocks that read each SSA type or bundle fact at this revision."
+  (mir-analysis function :type-use-blocks
+    (lambda (function)
+      (let* ((definitions (mir-value-definitions function))
+             (users (make-array (length definitions) :initial-element nil))
+             (seen (make-array (length definitions) :initial-element 0))
+             (reachable (mir-reachable-blocks function)))
+        (loop for block across (hir-vector (mir-function-blocks function))
+              for block-id = (mir-block-id block)
+              when (logbitp block-id reachable) do
+          (labels ((note-value (id)
+                     (unless (= (svref seen id) (1+ block-id))
+                       (setf (svref seen id) (1+ block-id))
+                       (push block-id (svref users id))))
+                   (note-vector (ids) (map nil #'note-value ids)))
+            (loop for id across (hir-vector (mir-block-instructions block)) do
+              (note-vector (mir-instruction-operands (mir-at (mir-function-instructions function) id))))
+            (let ((term (mir-block-terminator block)))
+              (loop for edge across (mir-terminator-edges term) do (note-vector (mir-edge-arguments edge)))
+              ;; Edge refinement reads comparison operands independently of
+              ;; the Boolean result, which may already have a stable type.
+              (when (= (mir-terminator-kind term) 1)
+                (let ((predicate (svref definitions
+                                        (mir-primary-origin (svref (mir-terminator-operands term) 0) definitions))))
+                  (when predicate (note-vector (mir-instruction-operands predicate))))))))
+        users))))
+
 (defun mir-compute-types (function &key summaries value-summaries functions inputs captures cell-types cell-points (finalize t))
   "Infer primary-value types. :UNSEEN is solver bottom; T is unknown."
   (let* ((types (make-array (hir-buffer-count (mir-function-values function))
@@ -72,23 +100,31 @@
          (reachable (mir-reachable-blocks function))
          (definitions (mir-value-definitions function))
          (changes (make-array (length types) :initial-element 0))
-         (changed t))
+         (users (mir-type-use-blocks function))
+         (queued (make-array (length blocks) :initial-element nil))
+         (work (make-hir-buffer)))
     ;; A loop can keep expanding an integer interval. After two expansions
     ;; of a value, widen to INTEGER; later transfers cannot narrow it again.
-    (labels ((merge-type (id type)
+    (labels ((enqueue (block)
+               (unless (svref queued block)
+                 (setf (svref queued block) t)
+                 (hir-push block work)))
+             (enqueue-users (id)
+               (dolist (block (svref users id)) (enqueue block)))
+             (merge-type (id type)
                (let ((joined (mir-type-join (svref types id) type)))
                  (when (and (hir-range-p (svref types id)) (hir-range-p joined)
                             (not (equal joined (svref types id))))
                    (incf (svref changes id))
                    (when (>= (svref changes id) 2) (setf joined 'integer)))
                  (unless (equal joined (svref types id))
-                   (setf (svref types id) joined changed t))))
+                   (setf (svref types id) joined) (enqueue-users id))))
              (merge-packet (id packet)
                (unless (svref packet-changes id)
                  (setf (svref packet-changes id) (make-array +mir-values-prefix-limit+ :initial-element 0)))
                (let ((joined (mir-join-values (svref packets id) packet (svref packet-changes id))))
                  (unless (equalp joined (svref packets id))
-                   (setf (svref packets id) joined changed t))))
+                   (setf (svref packets id) joined) (enqueue-users id))))
              (transfer-packet (instruction)
                (let ((args (mir-instruction-operands instruction))
                      (result (mir-instruction-result instruction)))
@@ -152,26 +188,29 @@
                            (mir-values-ref-type (svref packets (svref args 0))
                                                 (mir-instruction-data instruction))))
                    (otherwise t)))))
-      (loop while changed do
-        (setf changed nil)
-        (loop for block across blocks when (logbitp (mir-block-id block) reachable) do
-          (loop for id across (hir-vector (mir-block-instructions block))
-                for instruction = (mir-at (mir-function-instructions function) id)
-                for result = (mir-instruction-result instruction)
-                when result do (merge-type result (transfer instruction))
-                               (when (eq (mir-value-representation (mir-at (mir-function-values function) result)) :bundle)
-                                 (merge-packet result (transfer-packet instruction))))
-          (loop for edge across (mir-terminator-edges (mir-block-terminator block))
-                for index from 0 do
-            (loop for parameter across (mir-block-parameters (svref blocks (mir-edge-target edge)))
-                  for argument across (mir-edge-arguments edge)
-                  for input = (svref types argument)
-                  do (merge-type parameter
-                       (if (eq input :unseen) :unseen
-                           (mir-edge-type (mir-block-terminator block) (zerop index)
-                                          argument input definitions types)))
-                     (when (eq (mir-value-representation (mir-at (mir-function-values function) parameter)) :bundle)
-                       (merge-packet parameter (svref packets argument))))))))
+      (loop for block across blocks when (logbitp (mir-block-id block) reachable)
+            do (enqueue (mir-block-id block)))
+      (loop for cursor from 0 while (< cursor (hir-buffer-count work))
+            for block-id = (mir-at work cursor)
+            for block = (svref blocks block-id)
+            do (setf (svref queued block-id) nil)
+               (loop for id across (hir-vector (mir-block-instructions block))
+                     for instruction = (mir-at (mir-function-instructions function) id)
+                     for result = (mir-instruction-result instruction)
+                     when result do (merge-type result (transfer instruction))
+                                    (when (eq (mir-value-representation (mir-at (mir-function-values function) result)) :bundle)
+                                      (merge-packet result (transfer-packet instruction))))
+               (loop for edge across (mir-terminator-edges (mir-block-terminator block))
+                     for index from 0 do
+                 (loop for parameter across (mir-block-parameters (svref blocks (mir-edge-target edge)))
+                       for argument across (mir-edge-arguments edge)
+                       for input = (svref types argument)
+                       do (merge-type parameter
+                            (if (eq input :unseen) :unseen
+                                (mir-edge-type (mir-block-terminator block) (zerop index)
+                                               argument input definitions types)))
+                          (when (eq (mir-value-representation (mir-at (mir-function-values function) parameter)) :bundle)
+                            (merge-packet parameter (svref packets argument)))))))
     ;; Unreachable definitions and cyclic facts with no seed prove nothing.
     (when finalize
       (dotimes (id (length types))

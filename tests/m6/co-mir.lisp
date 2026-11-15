@@ -2009,3 +2009,18 @@
  (funcall
   (mir-test-compile
    '(lambda () (length (list 1 2 3 4 5 6 7 8 9))))))
+
+(let ((test
+        (mir-test-compile
+         '(lambda (n)
+            (declare (type (integer 0 100) n)
+                     (optimize (speed 3) (debug 0) (compilation-speed 0)))
+            (the (integer 1 100)
+              (let ((i 0))
+                (block done
+                  (tagbody again
+                    (if (< i n) (return-from done n))
+                    (setq i (- n 1))
+                    (go again)))))))))
+  (print (list (handler-case (funcall test 0) (type-error () :type))
+               (funcall test 1) (funcall test 100))))
