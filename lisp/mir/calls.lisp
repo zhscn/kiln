@@ -142,8 +142,8 @@
               for instruction = (mir-at (mir-function-instructions function) id)
               for kind = (mir-instruction-kind instruction)
               for args = (mir-instruction-operands instruction) do
-          ;; Parameter identities and heap contents are not yet tracked across
-          ;; calls. Passing a function to any callee therefore exposes it.
+          ;; A known code identity does not carry the actual closure environment
+          ;; needed by a private entry. Passed function values retain public entries.
           (unless (or (member kind '(0 1 2 4 5 9 10 12 13 14 16 22 23 25 37 39))
                       (and (= kind 6) (member (mir-instruction-data instruction) '(identity values))))
             (loop for arg across args for index from 0

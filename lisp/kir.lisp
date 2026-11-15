@@ -21,7 +21,8 @@
   (funcs '())
   (roots '())
   (shared '())
-  (defined (make-hash-table :test 'equal)))
+  (defined (make-hash-table :test 'equal))
+  (function-captures (make-hash-table :test 'equal)))
 
 (defun make-kmodule (name)
   (%make-kmodule name))

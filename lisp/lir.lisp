@@ -88,6 +88,8 @@
   (setf (gethash entry (lir-data-function-captures data)) count))
 
 (defun lir-collect-capture-shapes (data module)
+  (maphash (lambda (entry count) (lir-register-capture-shape data entry count))
+           (kmodule-function-captures module))
   (maphash (lambda (name object)
              (declare (ignore name))
              (when (eq (first object) :static-function)

@@ -624,7 +624,9 @@
       (loop for cell across *mir-lir-load-time-cells*
             do (kiln.kir::module-object-cell cell (nil-word))))
     (loop for function across functions for id from 0
-          do (let ((*regions* nil) (*debug-vars* nil) (*debug-var-count* 0)
+          do (setf (gethash (svref *mir-lir-labels* id) (kiln.kir::kmodule-function-captures *module*))
+                   (length (mir-function-captures function)))
+             (let ((*regions* nil) (*debug-vars* nil) (*debug-var-count* 0)
                    (*function-name* (or (mir-function-debug-name function)
                                        (local-function-debug-name (or (mir-function-name function) '#:lambda)))))
                (with-function ((svref *mir-lir-labels* id))

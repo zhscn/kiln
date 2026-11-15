@@ -28,7 +28,6 @@
     (loop for function across functions for id from 0
           for width = (length (mir-function-captures function))
           when (and (plusp width)
-                    (every #'null (mir-function-capture-functions function))
                     (<= (+ width (mir-function-positional-count function)) kiln.kir::+backend-argument-limit+)
                     (not (logbitp id (mir-call-analysis-external calls)))
                     (mir-lifting-policy-p function))
