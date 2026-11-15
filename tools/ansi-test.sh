@@ -8,6 +8,8 @@
 #   KILN_COMPILER   kiln executable (default: build/boot/kiln1, or build/stage0/kiln0)
 #   ANSI_TEST_DIR   path to ansi-test checkout (default: ~/package/ansi-test)
 #   ANSI_EVAL       "native" (default) or "hir" (shared HIR evaluator)
+#   KILN_BUILD_PIPELINE  "hir" or "mir" for runtime compilation (default: image setting)
+#   ANSI_OUTPUT_DIR output directory (default: build/ansi-test)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -16,6 +18,10 @@ cd "$ROOT"
 case "${ANSI_EVAL:-native}" in
   native|hir) ;;
   *) echo "ANSI_EVAL must be native or hir" >&2; exit 1 ;;
+esac
+case "${KILN_BUILD_PIPELINE:-}" in
+  ""|hir|mir) ;;
+  *) echo "KILN_BUILD_PIPELINE must be hir or mir" >&2; exit 1 ;;
 esac
 
 ANSI_TEST_DIR="${ANSI_TEST_DIR:-$HOME/package/ansi-test}"
@@ -35,7 +41,7 @@ if [[ -z "${KILN_COMPILER:-}" ]]; then
   fi
 fi
 
-OUT_DIR="$ROOT/build/ansi-test"
+OUT_DIR="$(realpath -m "${ANSI_OUTPUT_DIR:-$ROOT/build/ansi-test}")"
 SANDBOX_DIR="$OUT_DIR/sandbox/"
 IMAGE="$OUT_DIR/prelude.img"
 PRELUDE_LISP="$OUT_DIR/make-prelude.lisp"
@@ -88,7 +94,16 @@ if [[ ! -f "$IMAGE" || "$KILN_COMPILER" -nt "$IMAGE" || "$0" -nt "$IMAGE" ]]; th
 (defun run-ansi-group ()
   (let ((group (ansi-getenv "ANSI_GROUP"))
         (eval-mode (ansi-getenv "ANSI_EVAL"))
+        (pipeline (ansi-getenv "KILN_BUILD_PIPELINE"))
         (sandbox (ansi-getenv "ANSI_SANDBOX")))
+    ;; Set the path at image entry, outside EVAL's request-local binding.
+    (when pipeline
+      (setf kiln.compiler::*compiler-pipeline*
+            (cond ((string= pipeline "hir") :hir)
+                  ((string= pipeline "mir") :mir)
+                  (t (error "Unknown compiler pipeline ~S." pipeline)))))
+    (format t "~&ANSI-PIPELINE ~A~%"
+            (ecase kiln.compiler::*compiler-pipeline* (:hir "hir") (:mir "mir")))
     (when sandbox
       (setf regression-test::*sandbox-path* (pathname sandbox))
       (let ((target (merge-pathnames "**/*.*" (pathname sandbox))))

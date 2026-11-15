@@ -76,4 +76,10 @@ LIR 阶段保留 HIR → KIR 与 HIR → LIR → KIR 两条路径；MIR 阶段�
 
 默认路径切换要求语义差分不扩大 SBCL 已知基线，项目回归与自举确定性成立，编译延迟及运行期基准满足 [性能预算](compiler-performance.md#小函数与切换预算)。实验路径允许性能回退，但不能凭保守 MIR 已能运行就替换生产路径；缺少的类型、存储和调用优化必须先补齐。旧分析与降级相互耦合，删除按依赖消除进行，不按 pass 写完的顺序进行。
 
+ANSI 验收通过 `KILN_BUILD_PIPELINE=mir tools/ansi-test.sh` 选择运行期编译路径；
+`KILN_COMPILER` 指定被测可执行文件，`ANSI_OUTPUT_DIR` 可将不同版本的日志和
+prelude image 隔离保存。每个测试组从 image 入口设置路径，并输出
+`ANSI-PIPELINE mir` 供验收检查。编译请求会动态绑定路径变量，因此独立一次
+`eval` 中的赋值不能选择后续请求的路径；模块由 MIR 构建也不能替代此设置。
+
 迁移涉及 HIR 分析、原语和降级代码的数千行重构，需要分阶段实施；精确范围以调用关系为准。Rust 后端仍由 Cargo 构建，各自举阶段共用：LIR 和二进制闭合验证 Lisp 编译器及其导出稳定性，不证明 Rust 后端能自举。Rust 降级另以旧 KIR 对照、独立协议样本和端到端执行验证。
