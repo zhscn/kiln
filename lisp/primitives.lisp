@@ -869,6 +869,15 @@ current function's. Nothing after it in the block is reached."
     (emit `(:tail-invoke ,callee ,arguments))
     (nil-value)))
 
+;;; Inlined tail dispatch must return to the surrounding continuation while
+;;; preserving the original requirement that F is a function object.
+(setf (gethash :call-function *primops*)
+      (lambda (vals)
+        (when (null vals) (hir-error "primop :CALL-FUNCTION needs a function"))
+        (let ((f (copy-to-var (first vals))))
+          (emit-check-function f)
+          (emit-lisp-call f (rest vals)))))
+
 ;;; (%PRIMOP :TAIL-FUNCALL F ARG...): calls the function F, leaving no
 ;;; frame of the caller. For the dispatch code of CLOS only: it must be in
 ;;; tail position, in a function with no special binding, CATCH or

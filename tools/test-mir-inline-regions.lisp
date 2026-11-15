@@ -1,0 +1,42 @@
+;;;; Run after tools/env.lisp and (ql:quickload "kiln").
+(in-package #:kiln.compiler)
+
+(defun mir-inline-region-test-unit (body)
+  (let* ((*source-file* "mir-inline-region-model") (*toplevel-source* nil)
+         (forms (front-end-forms (list `(lambda (n) (declare (optimize (debug 0))) ,body))))
+         (*toplevel* (first forms)))
+    (hir-to-mir (toplevel-form-ast *toplevel*))))
+
+(defun mir-inline-region-call-count (unit)
+  (loop for function across (hir-vector (mir-unit-functions unit))
+        sum (count 7 (hir-vector (mir-function-instructions function)) :key #'mir-instruction-kind)))
+
+(dolist (body
+         '((flet ((f (x) (let ((*region-test* x)) (declare (special *region-test*)) *region-test*)))
+             (let ((*region-test* 10)) (declare (special *region-test*)) (list (f n) (f 2) *region-test*)))
+           (flet ((f (x) (progv '(mir-region-value) (list x) (symbol-value 'mir-region-value)))) (list (f n) (f 2)))
+           (flet ((f (*region-test* &optional (y (+ *region-test* 1)))
+                    (declare (special *region-test*)) (list *region-test* y)))
+             (let ((*region-test* :outer)) (declare (special *region-test*))
+               (list (f n) (f 2 nil) *region-test*)))
+           (flet ((f (x) (catch 'done (throw 'done (values x 2))))) (list (f n) (f 2)))
+           (flet ((f (x) (unwind-protect x (identity x)))) (list (f n) (f 2)))
+           (flet ((f (x) (unwind-protect (throw 'out x) (identity x)))) (catch 'out (f n)))
+           (flet ((f (x) (block out (flet ((g () (return-from out x))) (g))))) (list (f n) (f 2)))))
+  (let* ((unit (mir-inline-region-test-unit body)) (before (mir-inline-region-call-count unit)))
+    (mir-lift-local-functions unit)
+    (mir-inline-local-functions unit :body-budget 1024 :growth-budget 4096)
+    (verify-mir unit)
+    (assert (> before (mir-inline-region-call-count unit)))
+    (format t "Region inline model verified: ~D -> ~D~%" before (mir-inline-region-call-count unit))))
+
+(dolist (operation '(:tail-funcall :tail-funcall-function))
+  (let* ((unit (mir-inline-region-test-unit
+                `(flet ((f (x) (kiln.kernel::%primop ,operation #'identity x)))
+                   (let ((*region-test* n)) (declare (special *region-test*)) (+ 1 (f n))))))
+         (caller (mir-at (mir-unit-functions unit) 1)))
+    (mir-inline-local-functions unit :body-budget 128)
+    (verify-mir unit)
+    (assert (find :call-function (hir-vector (mir-function-instructions caller)) :key #'mir-instruction-data))
+    (assert (not (find operation (hir-vector (mir-function-instructions caller)) :key #'mir-instruction-data)))))
+(format t "Inlined tail dispatch preserves the caller continuation and binding regions.~%")
