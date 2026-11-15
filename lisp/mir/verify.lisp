@@ -97,19 +97,32 @@
           (mir-fail "MIR function capture disagrees with its fixed target"))))))
 
 (defun mir-verify-cells (function)
-  (let ((unbound 0) (changed t) (reachable (mir-reachable-blocks function))
-        (blocks (hir-vector (mir-function-blocks function))))
+  "Reject placeholder cell uses after propagating reachable SSA edges."
+  (unless (find 25 (hir-vector (mir-function-instructions function)) :key #'mir-instruction-kind)
+    (return-from mir-verify-cells nil))
+  (let* ((values (mir-function-values function)) (count (hir-buffer-count values))
+         (unbound (make-array count :initial-element nil))
+         (successors (make-array count :initial-element nil))
+         (work (make-hir-buffer)) (reachable (mir-reachable-blocks function))
+         (blocks (hir-vector (mir-function-blocks function))))
     (loop for instruction across (hir-vector (mir-function-instructions function))
           when (= (mir-instruction-kind instruction) 25)
-            do (setf unbound (logior unbound (ash 1 (mir-instruction-result instruction)))))
-    (loop while changed do
-      (setf changed nil)
-      (loop for block across blocks when (logbitp (mir-block-id block) reachable) do
-        (loop for edge across (mir-terminator-edges (mir-block-terminator block)) do
-          (loop for parameter across (mir-block-parameters (svref blocks (mir-edge-target edge)))
-                for arg across (mir-edge-arguments edge)
-                when (and (logbitp arg unbound) (not (logbitp parameter unbound)))
-                  do (setf unbound (logior unbound (ash 1 parameter)) changed t)))))
+            do (let ((id (mir-instruction-result instruction)))
+                 (setf (svref unbound id) t)
+                 (hir-push id work)))
+    ;; A cell parameter may inherit a placeholder from any reachable predecessor.
+    (loop for block across blocks when (logbitp (mir-block-id block) reachable) do
+      (loop for edge across (mir-terminator-edges (mir-block-terminator block)) do
+        (loop for parameter across (mir-block-parameters (svref blocks (mir-edge-target edge)))
+              for argument across (mir-edge-arguments edge)
+              when (eq (mir-value-representation (mir-at values parameter)) :cell)
+                do (push parameter (svref successors argument)))))
+    (loop for index from 0 while (< index (hir-buffer-count work))
+          for id = (mir-at work index)
+          do (dolist (target (svref successors id))
+               (unless (svref unbound target)
+                 (setf (svref unbound target) t)
+                 (hir-push target work))))
     (loop for block across blocks when (logbitp (mir-block-id block) reachable) do
       (loop for id across (hir-vector (mir-block-instructions block))
             for instruction = (mir-at (mir-function-instructions function) id)
@@ -118,7 +131,7 @@
         (let* ((args (mir-instruction-operands instruction))
                (uses (if (member kind '(7 15)) args (vector (svref args (if (= kind 24) 1 0))))))
           (loop for id across uses
-                when (and (eq (mir-value-representation (mir-at (mir-function-values function) id)) :cell) (logbitp id unbound))
+                when (and (eq (mir-value-representation (mir-at values id)) :cell) (svref unbound id))
                   do (mir-fail "MIR cell is used before its binding is initialized")))))))
 
 (defun mir-verify-function-layout (unit function)
