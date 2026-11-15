@@ -187,18 +187,14 @@
   caller)
 
 (defun mir-inline-local-functions (unit &key (body-budget 48) (growth-budget 256))
-  (let* ((functions (hir-vector (mir-unit-functions unit)))
-         (outgoing (mir-known-call-graph functions (map 'simple-vector #'mir-function-identities functions)))
-         (recursive 0))
-    (dolist (component (mir-strong-components outgoing))
-      (when (or (cdr component)
-                (member (first component) (svref outgoing (first component))))
-        (dolist (id component) (setf recursive (logior recursive (ash 1 id))))))
+  (let ((functions (hir-vector (mir-unit-functions unit))))
     (loop for caller across functions do
       (let ((growth 0))
         (loop
-          (let ((known (mir-function-identities caller))
-                (reachable (mir-reachable-blocks caller)) (selected nil))
+          (let* ((flow (mir-infer-function-flow unit))
+                 (known (svref (mir-function-flow-identities flow) (mir-function-id caller)))
+                 (recursive (mir-function-flow-recursive flow))
+                 (reachable (mir-reachable-blocks caller)) (selected nil))
             (loop for block across (hir-vector (mir-function-blocks caller))
                   when (logbitp (mir-block-id block) reachable) do
                     (loop for id across (hir-vector (mir-block-instructions block))

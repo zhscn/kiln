@@ -6,7 +6,7 @@
   (cond ((eq old :unseen) new) ((eq new :unseen) old)
         ((eql old new) old) (t :unknown)))
 
-(defun mir-compute-function-identities (function)
+(defun mir-compute-function-identities (function &key inputs summaries (finalize t))
   "Track one local function ID, or :UNKNOWN, through primary values."
   (let* ((identities (make-array (hir-buffer-count (mir-function-values function))
                                  :initial-element :unseen))
@@ -20,6 +20,12 @@
                (let ((args (mir-instruction-operands instruction)))
                  (case (mir-instruction-kind instruction)
                    ((5 23) (mir-instruction-data instruction))
+                   (1 (let ((index (mir-instruction-data instruction)))
+                        (if (and inputs (< index (length inputs))) (svref inputs index) :unknown)))
+                   ((7 15) (let ((target (svref identities (svref args 0))))
+                             (cond ((eq target :unseen) :unseen)
+                                   ((and summaries (integerp target)) (svref summaries target))
+                                   (t :unknown))))
                    (22 (or (svref (mir-function-capture-functions function) (mir-instruction-data instruction)) :unknown))
                    ((3 9 10 11 39) (svref identities (svref args 0)))
                    (14 (if (zerop (mir-instruction-data instruction))
@@ -39,8 +45,9 @@
             (loop for parameter across (mir-block-parameters (svref blocks (mir-edge-target edge)))
                   for argument across (mir-edge-arguments edge)
                   do (merge-identity parameter (svref identities argument)))))))
-    (dotimes (id (length identities))
-      (when (eq (svref identities id) :unseen) (setf (svref identities id) :unknown)))
+    (when finalize
+      (dotimes (id (length identities))
+        (when (eq (svref identities id) :unseen) (setf (svref identities id) :unknown))))
     identities))
 
 (defun mir-function-identities (function)
@@ -147,6 +154,80 @@
             (loop for argument across (mir-terminator-operands term)
                   do (setf external (logior external (svref sets argument))))))))
     external))
+
+(defstruct mir-function-flow identities external inputs summaries outgoing recursive)
+
+(defun mir-compute-function-flow (unit)
+  "Propagate local code identities through closed positional inputs and primary returns."
+  ;; Preserve the local escape analysis as an independent upper bound. In
+  ;; particular, passing a function object still exposes its public entry.
+  (let* ((functions (hir-vector (mir-unit-functions unit)))
+         (count (length functions))
+         (external (mir-external-functions functions (map 'simple-vector #'mir-function-identities functions)
+                                           (mir-unit-load-time-functions unit)))
+         (inputs (map 'simple-vector (lambda (function)
+                                      (make-array (mir-function-positional-count function)
+                                                  :initial-element (if (logbitp (mir-function-id function) external)
+                                                                       :unknown :unseen))) functions))
+         (summaries (make-array count :initial-element :unseen))
+         (identities (make-array count)) (changed t))
+    (labels ((merge-identity (row index value)
+               (let ((joined (mir-function-identity-join (svref row index) value)))
+                 (unless (eql joined (svref row index))
+                   (setf (svref row index) joined changed t))))
+             (solve ()
+               (loop while changed do
+                 (setf changed nil)
+                 (loop for function across functions for id from 0
+                       for known = (mir-compute-function-identities function :inputs (svref inputs id)
+                                                                    :summaries summaries :finalize nil)
+                       for reachable = (mir-reachable-blocks function) do
+                   (setf (svref identities id) known)
+                   (loop for block across (hir-vector (mir-function-blocks function))
+                         when (logbitp (mir-block-id block) reachable) do
+                     (loop for index across (hir-vector (mir-block-instructions block))
+                           for instruction = (mir-at (mir-function-instructions function) index)
+                           for kind = (mir-instruction-kind instruction)
+                           for args = (mir-instruction-operands instruction)
+                           when (member kind '(7 15)) do
+                       (let* ((target (svref known (svref args 0)))
+                              (callee (and (integerp target) (svref functions target)))
+                              (argc (1- (length args))))
+                         (when (and callee (or (= kind 15)
+                                              (and (<= (mir-function-required callee) argc)
+                                                   (or (null (mir-function-maximum callee))
+                                                       (<= argc (mir-function-maximum callee))))))
+                           (let ((row (svref inputs target)))
+                             (dotimes (slot (length row))
+                               (merge-identity row slot
+                                               (if (and (= kind 7) (< slot argc))
+                                                   (svref known (svref args (1+ slot))) :unknown)))))))
+                     (let ((term (mir-block-terminator block)))
+                       (when (= (mir-terminator-kind term) 2)
+                         (merge-identity summaries id (svref known (svref (mir-terminator-operands term) 0))))))))))
+      (solve)
+      ;; Uncalled functions and unseeded recursive groups need public-safe
+      ;; code too. Close the fixed point again after replacing bottom by top.
+      (loop for row across inputs do
+        (dotimes (index (length row))
+          (when (eq (svref row index) :unseen) (setf (svref row index) :unknown changed t))))
+      (dotimes (id count)
+        (when (eq (svref summaries id) :unseen) (setf (svref summaries id) :unknown changed t)))
+      (solve)
+      (loop for row across identities do
+        (dotimes (index (length row))
+          (when (eq (svref row index) :unseen) (setf (svref row index) :unknown))))
+      (let ((outgoing (mir-known-call-graph functions identities)) (recursive 0))
+        (dolist (component (mir-strong-components outgoing))
+          (when (or (cdr component)
+                    (member (first component) (svref outgoing (first component))))
+            (dolist (id component) (setf recursive (logior recursive (ash 1 id))))))
+        (make-mir-function-flow :identities identities :external external :inputs inputs
+                                :summaries summaries :outgoing outgoing :recursive recursive)))))
+
+(defun mir-infer-function-flow (unit)
+  (mir-unit-analysis unit :function-flow #'mir-compute-function-flow))
+
 
 (defun mir-widen-summary (old candidate expansions)
   (let ((joined (mir-type-join old candidate)))
@@ -266,8 +347,9 @@
 
 (defun mir-compute-calls (unit)
   (let* ((functions (hir-vector (mir-unit-functions unit))) (count (length functions))
-         (identities (map 'simple-vector #'mir-function-identities functions))
-         (external (mir-external-functions functions identities (mir-unit-load-time-functions unit)))
+         (flow (mir-infer-function-flow unit))
+         (identities (mir-function-flow-identities flow))
+         (external (mir-function-flow-external flow))
          (outgoing (make-array count :initial-element nil))
          (summaries (make-array count :initial-element :unseen))
          (changes (make-array count :initial-element 0))
@@ -296,7 +378,7 @@
          (cell-types (make-array (mir-cell-aliases-count cell-aliases) :initial-element :unseen))
          (cell-changes (make-array (length cell-types) :initial-element 0))
          (types (make-array count)) (packets (make-array count)))
-    (setf outgoing (mir-known-call-graph functions identities))
+    (setf outgoing (mir-function-flow-outgoing flow))
     (let ((components (mir-strong-components outgoing)) (changed t))
       (labels ((merge-fact (row counts position candidate)
                  (let ((old (svref row position)))
