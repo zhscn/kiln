@@ -1914,3 +1914,55 @@
                 (type-error (condition)
                   (and (eq (type-error-datum condition) object)
                        (eq (type-error-expected-type condition) 'mir-typep-left)))))))
+
+(print (funcall (mir-test-compile '(lambda (x)
+                                     (declare (optimize (speed 3) (debug 0) (compilation-speed 0)))
+                                     (flet ((choose (a &optional (b (+ a 1) bp))
+                                              (values a b bp)))
+                                       (list (multiple-value-list (choose x))
+                                             (multiple-value-list (choose x nil))
+                                             (multiple-value-list (choose x 9)))))) 3))
+
+(print (funcall (mir-test-compile '(lambda (x)
+                                     (declare (optimize (speed 3) (debug 0) (compilation-speed 0)))
+                                     (flet ((collect (a &rest tail)
+                                              (list a tail)))
+                                       (list (collect x) (collect x 1 nil 2))))) 3))
+
+(print (funcall (mir-test-compile '(lambda (x)
+                                     (declare (optimize (speed 3) (debug 0) (compilation-speed 0)))
+                                     (flet ((collect (&key (a 1) (b (+ a 1)))
+                                              (list a b)))
+                                       (list (collect) (collect :a x) (collect :b nil :a 2))))) 3))
+
+(print (funcall (mir-test-compile '(lambda (x)
+                                     (declare (ignore x)
+                                              (optimize (speed 3) (debug 0) (compilation-speed 0)))
+                                     (flet ((probe
+                                                (
+                                                 &rest tail
+                                                 &key (a (progn (rplaca (cdr tail) :changed) 9))
+                                                 (b nil bp))
+                                              (list a b bp tail)))
+                                       (list (probe :b 3) (probe :a 1 :b 2))))) 3))
+
+(print (funcall (mir-test-compile '(lambda (x)
+                                     (declare (optimize (speed 3) (debug 0) (compilation-speed 0)))
+                                     (let ((n x))
+                                       (flet ((probe (&optional (a (incf n) ap) &rest tail)
+                                                (list a ap tail n)))
+                                         (list (probe) (probe nil 4 5)))))) 3))
+
+(print (funcall (mir-test-compile '(lambda (x)
+                                     (declare (ignore x)
+                                              (optimize (speed 3) (debug 0) (compilation-speed 0)))
+                                     (flet ((probe (&key a)
+                                              (list a)))
+                                       (list (probe :unknown 1 :allow-other-keys t)
+                                             (probe :a 1 :a 2))))) 3))
+
+(print (funcall (mir-test-compile '(lambda (x)
+                                     (declare (optimize (speed 3) (debug 0) (compilation-speed 0)))
+                                     (flet ((probe (a &optional b)
+                                              (list a b)))
+                                       (list (probe x) (probe x nil))))) 3))
