@@ -601,6 +601,7 @@
         (jump (svref labels (mir-edge-target (second entry))))))))
 
 (defun mir-optimize-unit (unit)
+  (mir-simplify-block-parameters unit :preserve-refinements t)
   (mir-fold-type-predicates unit)
   (mir-lift-local-functions unit)
   (mir-inline-local-functions unit)

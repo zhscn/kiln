@@ -1,6 +1,30 @@
 (in-package #:kiln.compiler)
 
-(defun mir-block-parameter-plan (function)
+(defun mir-refinement-parameters (function aliases reachable)
+  "Protect parameters carrying a tested value or its predicate operands."
+  (let* ((blocks (hir-vector (mir-function-blocks function)))
+         (definitions (mir-value-definitions function))
+         (origins (make-array (length aliases) :initial-element nil))
+         (protected (make-array (length aliases) :initial-element nil)))
+    (labels ((origin (id)
+               (or (svref origins id)
+                   (setf (svref origins id)
+                         (loop for value = id then next
+                               for next = (svref aliases (mir-primary-origin value definitions))
+                               when (= value next) return value)))))
+      (loop for block across blocks for term = (mir-block-terminator block)
+            when (and (logbitp (mir-block-id block) reachable) (= 1 (mir-terminator-kind term))) do
+        (let* ((test (origin (svref (mir-terminator-operands term) 0)))
+               (predicate (svref definitions test))
+               (sources (cons test (and predicate (map 'list #'origin (mir-instruction-operands predicate))))))
+          (loop for edge across (mir-terminator-edges term) do
+            (loop for parameter across (mir-block-parameters (svref blocks (mir-edge-target edge)))
+                  for argument across (mir-edge-arguments edge)
+                  when (member (origin argument) sources)
+                    do (setf (svref protected parameter) t))))))
+    protected))
+
+(defun mir-block-parameter-plan (function &key preserve-refinements)
   "Find dominating replacements and parameters needed by actual operations."
   (let* ((blocks (hir-vector (mir-function-blocks function)))
          (values (hir-vector (mir-function-values function)))
@@ -16,26 +40,34 @@
                        finally (return id)))
                (mark (id)
                  (let ((id (root id)))
-                   (unless (svref live id) (setf (svref live id) t)))))
-        ;; A loop's self edge does not prevent a value from being invariant.
-        ;; Conflicting incoming values remain parameters, including swaps.
-        (loop with changed = t while changed do
-          (setf changed nil)
-          (loop for block across blocks for id = (mir-block-id block)
-                when (logbitp id reachable)
-                  do (loop for parameter across (mir-block-parameters block) for index from 0
-                           when (= parameter (root parameter))
-                             do (let ((candidate nil) (conflict nil))
-                                  (dolist (edge (svref incoming id))
-                                    (let ((argument (root (svref (mir-edge-arguments edge) index))))
-                                      (unless (= argument parameter)
-                                        (cond ((null candidate) (setf candidate argument))
-                                              ((/= argument candidate) (setf conflict t))))))
-                                  (when (and candidate (not conflict)
-                                             (logbitp (mir-value-block (svref values candidate))
-                                                      (svref dominators id)))
-                                    (setf (svref aliases parameter) candidate changed t))))))
-        (dotimes (id (length aliases)) (setf (svref aliases id) (root id)))
+                   (unless (svref live id) (setf (svref live id) t))))
+               (find-aliases (protected)
+                 ;; Ignore loop self edges, but retain conflicting incoming
+                 ;; values, including parallel swaps.
+                 (loop with changed = t while changed do
+                   (setf changed nil)
+                   (loop for block across blocks for id = (mir-block-id block)
+                         when (logbitp id reachable) do
+                     (loop for parameter across (mir-block-parameters block) for index from 0
+                           when (and (= parameter (root parameter))
+                                     (not (and protected (svref protected parameter)))) do
+                       (let ((candidate nil) (conflict nil))
+                         (dolist (edge (svref incoming id))
+                           (let ((argument (root (svref (mir-edge-arguments edge) index))))
+                             (unless (= argument parameter)
+                               (cond ((null candidate) (setf candidate argument))
+                                     ((/= argument candidate) (setf conflict t))))))
+                         (when (and candidate (not conflict)
+                                    (logbitp (mir-value-block (svref values candidate)) (svref dominators id)))
+                           (setf (svref aliases parameter) candidate changed t))))))
+                 (dotimes (id (length aliases)) (setf (svref aliases id) (root id)))))
+        (find-aliases nil)
+        (when preserve-refinements
+          ;; Resolve copies first so predicates defined in an earlier block
+          ;; still protect the corresponding values on a later branch.
+          (let ((protected (mir-refinement-parameters function aliases reachable)))
+            (dotimes (id (length aliases)) (setf (svref aliases id) id))
+            (find-aliases protected)))
         ;; Edge arguments count as uses only if their destination is needed.
         ;; Instructions remain intact: effects and declaration checks are kept.
         (loop for instruction across (hir-vector (mir-function-instructions function))
@@ -90,9 +122,9 @@
       (setf (mir-function-values function) values))
     function))
 
-(defun mir-simplify-block-parameters (unit)
+(defun mir-simplify-block-parameters (unit &key preserve-refinements)
   (loop for function across (hir-vector (mir-unit-functions unit))
-        do (multiple-value-bind (aliases live) (mir-block-parameter-plan function)
+        do (multiple-value-bind (aliases live) (mir-block-parameter-plan function :preserve-refinements preserve-refinements)
              (when (loop for value across (hir-vector (mir-function-values function)) for id from 0
                          thereis (and (= -1 (mir-value-position value))
                                       (or (/= id (svref aliases id)) (not (svref live id)))))
