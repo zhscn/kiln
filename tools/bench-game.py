@@ -48,10 +48,11 @@ def checked(command, log, root, env):
                        stderr=subprocess.STDOUT, check=True)
 
 
-def build_case(root, directory, env):
+def build_case(root, directory, env, pipeline):
     source = directory / 'program.lisp'
     forms = [
         '(ql:quickload "kiln" :silent t)',
+        f'(setf kiln.compiler::*compiler-pipeline* :{pipeline})',
         '(defvar *session* (kiln.compiler:make-session))',
         f'(kiln:compile-kernel {lisp_string(directory / "kernel.lir")} :session *session*)',
         f'(kiln:compile-clos {lisp_string(directory / "clos.lir")} :session *session*)',
@@ -104,11 +105,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('cases', nargs='*', help='names from ' + ', '.join([*CASES, *UNSUPPORTED]))
     parser.add_argument('--no-build', action='store_true')
+    parser.add_argument('--pipeline', choices=('hir', 'mir'),
+                        default=os.environ.get('KILN_BUILD_PIPELINE', 'hir'))
     parser.add_argument('--runs', type=int, default=3)
     parser.add_argument('--warmup', type=int, default=1)
     parser.add_argument('--timeout', type=float, default=30)
     parser.add_argument('--output', type=Path, default=root / 'build/bench-game')
     args = parser.parse_args()
+    if args.pipeline not in ('hir', 'mir'):
+        parser.error('KILN_BUILD_PIPELINE must be hir or mir')
     if args.runs < 1 or args.warmup < 0 or args.timeout <= 0:
         parser.error('runs and timeout must be positive; warmup must be nonnegative')
     if any(name not in CASES and name not in UNSUPPORTED for name in args.cases):
@@ -142,13 +147,24 @@ def main():
         if not args.no_build:
             (directory / 'program.lisp').write_text(source_for(source.read_text(), size))
         print(f'{"using" if args.no_build else "building"} {name}', flush=True)
+        stamp = directory / 'pipeline'
+        if args.no_build:
+            previous = stamp.read_text().strip() if stamp.exists() else 'hir'
+            if previous != args.pipeline:
+                results[name] = {'status': 'BUILD-ERROR', 'pipeline': args.pipeline,
+                                 'source': filename, 'size': size}
+                print(f'{name}: BUILD-ERROR (pipeline differs; rebuild without --no-build)',
+                      flush=True)
+                continue
         if not args.no_build:
+            stamp.write_text('building\n')
             try:
-                build_case(root, directory, env)
+                build_case(root, directory, env, args.pipeline)
             except subprocess.CalledProcessError:
                 results[name] = {'status': 'BUILD-ERROR', 'source': filename, 'size': size}
                 print(f'{name}: BUILD-ERROR (see {directory})', flush=True)
                 continue
+            stamp.write_text(args.pipeline + '\n')
         if args.no_build and not all((directory / file).is_file()
                                      for file in ('kiln', 'program.fasl')):
             results[name] = {'status': 'BUILD-ERROR', 'source': filename, 'size': size}
@@ -183,7 +199,8 @@ def main():
                     (directory / f'sbcl-{index}.out').read_bytes()):
                 status = 'OUTPUT-MISMATCH'
                 break
-        record = {'status': status, 'samples': samples, 'source': filename, 'size': size}
+        record = {'status': status, 'samples': samples, 'source': filename, 'size': size,
+                  'pipeline': args.pipeline}
         if status == 'OK':
             record.update({impl: statistics.median(values) for impl, values in samples.items()})
             record['ratio'] = record['kiln'] / record['sbcl']

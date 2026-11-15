@@ -13,10 +13,17 @@
 # benchmark runs in a process of its own, ended after BENCH_TIMEOUT
 # seconds (default 120: TIMEOUT in the table), and a crash does not stop
 # the others (CRASH). --no-build runs the executable built last.
+# KILN_BUILD_PIPELINE selects hir (default) or mir for building and runtime
+# compilation. KILN_BENCH_DIR isolates executable and result files.
 # Results: build/bench/kiln.txt, sbcl.txt, table.txt.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
-build=$root/build/bench
+pipeline=${KILN_BUILD_PIPELINE:-hir}
+case "$pipeline" in
+  hir|mir) ;;
+  *) echo "KILN_BUILD_PIPELINE must be hir or mir" >&2; exit 2 ;;
+esac
+build=$(realpath -m "${KILN_BENCH_DIR:-$root/build/bench}")
 mkdir -p "$build"
 cd "$root"
 
@@ -32,9 +39,20 @@ while [ $# -gt 0 ]; do
 done
 export BENCH_SELECT="$*"
 
+if [ "$run_kiln" = 1 ] && [ "$build_exe" = 0 ]; then
+  previous=$(cat "$build/pipeline" 2>/dev/null || echo hir)
+  if [ "$previous" != "$pipeline" ]; then
+    echo "Benchmark pipeline differs from executable; rebuild without --no-build" >&2
+    exit 2
+  fi
+fi
+
 # The program: the harness around cl-bench's files, in its ASDF order.
 src=$build/co-cl-bench.lisp
 {
+  # This form runs at program entry, outside compilation-request bindings.
+  # The same generated harness can also run in SBCL.
+  printf '(let* ((package (find-package "KILN.COMPILER")) (symbol (and package (find-symbol "*COMPILER-PIPELINE*" package)))) (when symbol (setf (symbol-value symbol) :%s)))\n' "$pipeline"
   sed "s|@MISC-DIR@|$root/bench/cl-bench/misc/|" bench/cl-bench-prelude.lisp
   for f in arrays bignum boehm-gc clos crc40 deflate gabriel hash math ratios richards misc; do
     printf '\n;;;; bench/cl-bench/files/%s.lisp\n' "$f"
@@ -47,10 +65,12 @@ src=$build/co-cl-bench.lisp
 } >"$src"
 
 if [ $run_kiln = 1 ] && [ $build_exe = 1 ]; then
+  printf 'building\n' >"$build/pipeline"
   cargo build -q --release
   sbcl --dynamic-space-size 4GB --noinform --non-interactive \
     --load "$root/tools/env.lisp" \
     --eval '(ql:quickload "kiln" :silent t)' \
+    --eval "(setf kiln.compiler::*compiler-pipeline* :$pipeline)" \
     --eval "(defvar *session* (kiln.compiler:make-session))" \
     --eval "(kiln:compile-kernel \"$build/kernel.lir\" :session *session*)" \
     --eval "(kiln:compile-clos \"$build/clos.lir\" :session *session*)" \
@@ -63,11 +83,13 @@ if [ $run_kiln = 1 ] && [ $build_exe = 1 ]; then
     -o "$build/co-cl-bench.o"
   cc "$build/co-cl-bench.o" target/release/libkiln_launcher.a -o "$build/co-cl-bench" \
     -lpthread -ldl -lm
+  printf '%s\n' "$pipeline" >"$build/pipeline"
 fi
 
 if [ $run_kiln = 1 ]; then
   echo "kiln:" >&2
   : >"$build/kiln.txt"
+  (cd "$build" && BENCH_SELECT= BENCH_LIST=1 ./co-cl-bench) >"$build/kiln-all.txt"
   (cd "$build" && BENCH_LIST=1 ./co-cl-bench) >"$build/kiln-list.txt"
   while read -r name group; do
     # walk-list/mess recurses deeply (SBCL skips it).
@@ -78,7 +100,7 @@ if [ $run_kiln = 1 ]; then
     select=$name
     case $name in
       CLOS/*) select=$(awk -v n="$name" '$1 ~ /^CLOS\// { s = s " " $1 } $1 == n { print s; exit }' \
-                         "$build/kiln-list.txt") ;;
+                         "$build/kiln-all.txt") ;;
     esac
     out=$(cd "$build" && BENCH_SELECT="$select" KILN_STACK_SIZE=${KILN_STACK_SIZE:-1073741824} \
             timeout "${BENCH_TIMEOUT:-120}" ./co-cl-bench 2>&1) || status=$?

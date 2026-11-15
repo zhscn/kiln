@@ -14,6 +14,12 @@ Pass `--pipeline hir` or `--pipeline mir` to select the runtime compiler indepen
 
 `tools/bench.sh [--no-build] [--kiln-only | --sbcl-only] [NAME|GROUP ...]` runs cl-bench on kiln (an AOT executable with the five modules, each benchmark in a process of its own with a timeout) and on SBCL (`sbcl --script`, default optimization), and prints a table of milliseconds per run and the ratio. The harness is `cl-bench-prelude.lisp` (DEFBENCH, `*misc-dir*`) and `cl-bench-driver.lisp` (selection, timing, errors), around cl-bench's `files/` and `tests.lisp`, which are used unchanged; they replace cl-bench's `support.lisp` and `cl-bench.lisp` (ASDF, trivial-garbage, report files).
 
+`KILN_BUILD_PIPELINE=hir|mir` selects both module construction and runtime compilation, including the CLOS benchmarks' calls to `compile`. The default is HIR. Set `KILN_BENCH_DIR` to keep separate executables and results for each configuration. `--no-build` checks the selected pipeline against the last completed build and rejects a different pipeline or an interrupted build. Executables predating the pipeline stamp are treated as HIR builds.
+
+The CLOS cases share class, method and instance definitions. Each selected CLOS
+case runs its preceding CLOS cases in the same process, including when selecting
+a single case by name.
+
 `python3 tools/bench-game.py [NAME ...]` compares the portable, single-threaded
 Benchmarks Game submissions listed below. It builds kiln with the release runtime,
 compiles each submission with both kiln and SBCL, and checks the complete output
@@ -23,6 +29,13 @@ pair, and 30 seconds per process. Results and
 per-process output are kept under `build/bench-game/`; `--output` selects another
 directory. Build or runtime failures produce a nonzero exit status after the
 remaining cases have run.
+
+`--pipeline hir|mir` selects the compiler used for the modules and benchmark
+source; its default follows `KILN_BUILD_PIPELINE`, falling back to HIR. Use
+separate output directories for comparisons. `--no-build` rejects a pipeline
+that differs from the completed build or a build marked as interrupted; older
+outputs without a pipeline stamp are treated as HIR. Successful result records
+include the selected pipeline.
 
 | Name | Source under `benchmarksgame/` | Input |
 |---|---|---|
