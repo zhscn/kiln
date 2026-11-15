@@ -6,11 +6,16 @@
 (load "lisp/backend-packet.lisp")
 
 (defun write-packet-fixture (path)
-  (let ((bytes (kiln.kir::encode-backend-packet
-                `(:module "λ\"\\" (:init "init")
-                  (:data "init" (:words ,(- (ash 1 63)) ,(1- (ash 1 63))))
-                  (:func "f" (:vars (,#(#\v 12 :obj nil) :obj)) (:slots)
-                   (:block ,#(#\b 3) (:return ,#(#\v 12 :obj nil) 1)))))))
+  (let* ((program `(:module "λ\"\\" (:init "init")
+                    (:data "init" (:words ,(- (ash 1 63)) ,(1- (ash 1 63))))
+                    (:func "f" (:vars (,#(#\v 12 :obj nil) :obj)) (:slots)
+                     (:block ,#(#\b 3) (:return ,#(#\v 12 :obj nil) 1)))))
+         (bytes (kiln.kir::encode-backend-packet program)))
     (with-open-file (out path :direction :output :if-exists :supersede
                              :element-type '(unsigned-byte 8))
-      (map nil (lambda (byte) (write-byte byte out)) bytes))))
+      (kiln.kir::portable-backend-packet program kiln.kir::+packet-kir-payload+ out)
+      (assert (= (length bytes) (file-position out))))
+    (with-open-file (in path :element-type '(unsigned-byte 8))
+      (let ((actual (make-array (file-length in) :element-type '(unsigned-byte 8))))
+        (read-sequence actual in)
+        (assert (equalp bytes actual))))))

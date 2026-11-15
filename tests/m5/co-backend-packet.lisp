@@ -4,7 +4,9 @@
               '(:module "λ\"\\" (:init "i") (:data "i" (:words 2 (:func "f"))))
               (list :words (- (ash 1 63)) (1- (ash 1 63)))
               (list :vars (list (vector #\v 12 :obj nil) :obj) (vector #\b 3))
-              '(:Λ :é cl:car cl:t nil "λ")))
+              '(:Λ :é cl:car cl:t nil "λ")
+              (loop for i below 1000 collect
+                (list :node i (format nil "wire-~D-λ" i)))))
   (show (equalp (kiln.kir::encode-backend-packet form)
                 (kiln.kir::portable-backend-packet form))))
 (let* ((literal (list 1 2))
