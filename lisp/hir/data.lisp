@@ -48,7 +48,7 @@
   original expanded)
 
 ;;; Function flags: escapes, closure, single call, direct calls, inlined, analyzed,
-;;; local definitions, static environment, function aliases.
+;;; local definitions, static environment, function aliases, HIR-native facts ready.
 (defstruct hir-fun
   (name nil) (parent nil) (lambda-list nil) (body nil) (parameter-specials nil)
   (free #()) (exits (make-hir-buffer)) (vars (make-hir-buffer)) (binding-count 0)

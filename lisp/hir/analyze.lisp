@@ -1007,8 +1007,9 @@ Backward liveness preserves objects that a debugger could observe at a safepoint
       (function-tree root))))
 
 (defun analyze-hir (root &optional (specialize t))
-  "Compute captures and exits, then specialize calls using inferred facts.
+  "Prepare lexical bindings, captures and exits.
 Moved bodies are analyzed again against their final lexical owners."
+  (setf (hir-fun-flags root) (logandc2 (hir-fun-flags root) 512))
   (when (and (logtest 256 (hir-fun-flags root)) (not (logtest 32 (hir-fun-flags root))))
     (resolve-hir-function-aliases root))
   (when (and (logtest 64 (hir-fun-flags root)) (not (logtest 32 (hir-fun-flags root))))
@@ -1091,9 +1092,20 @@ Moved bodies are analyzed again against their final lexical owners."
                    do (setf (hir-var-flags var) (logior 4 (hir-var-flags var)))))))
     (analyze root))
   (when specialize (expand-hir-list-bindings root))
-  (when (logtest 64 (hir-fun-flags root)) (classify-hir-function-environments root))
-  (multiple-value-bind (typed local-calls conses) (infer-hir-types root)
-    (declare (ignore typed))
-    (when (and specialize local-calls (specialize-hir-calls root)) (analyze-hir root nil))
-    (when (and specialize conses (scalar-replace-hir-conses root)) (analyze-hir root nil)))
+  root)
+
+(defun analyze-hir-native (root &optional (specialize t))
+  "Compute HIR lowering facts after lexical preparation."
+  (let ((*hir-function* root) (*hir-policy* (hir-fun-policy root))
+        (*source-origin* (hir-fun-origin root)) (*gensym-counter* 0))
+    (when (logtest 64 (hir-fun-flags root)) (classify-hir-function-environments root))
+    (multiple-value-bind (typed local-calls conses) (infer-hir-types root)
+      (declare (ignore typed))
+      (when (and specialize local-calls (specialize-hir-calls root))
+        (analyze-hir root nil)
+        (analyze-hir-native root nil))
+      (when (and specialize conses (scalar-replace-hir-conses root))
+        (analyze-hir root nil)
+        (analyze-hir-native root nil)))
+    (setf (hir-fun-flags root) (logior (hir-fun-flags root) 512)))
   root)

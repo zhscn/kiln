@@ -1195,6 +1195,7 @@ unsupported call. Arguments retain their evaluation order and effects."
     (nil-value)))
 
 (defun hir-lower-toplevel (fun)
+  (unless (logtest 512 (hir-fun-flags fun)) (analyze-hir-native fun))
   (hir-prepare-native-environments fun)
   (let ((*hir-lowering-function* fun)
         (*hir-consumer-owner* fun) (*hir-consumer-bindings* (hir-consumer-slots fun))

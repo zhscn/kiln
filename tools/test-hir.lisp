@@ -1,9 +1,15 @@
 ;;;; Run with SBCL after tools/env.lisp and (ql:quickload "kiln").
 (in-package #:kiln.compiler)
 
+(defun hir-test-front-end-forms (&rest arguments)
+  "Prepare the HIR-native facts inspected by these lowering tests."
+  (let ((forms (apply #'front-end-forms arguments)))
+    (dolist (form forms) (analyze-hir-native (toplevel-form-ast form)))
+    forms))
+
 (defun hir-test-form (form)
   (let ((*source-file* "hir-test") (*toplevel-source* nil))
-    (let ((forms (front-end-forms (list form))))
+    (let ((forms (hir-test-front-end-forms (list form))))
       (assert (= (length forms) 1))
       (toplevel-form-ast (first forms)))))
 
@@ -725,7 +731,7 @@
 
 (let* ((*source-file* "compact-environment-reuse") (*toplevel-source* nil)
        (session (make-session))
-       (forms (front-end-forms '((let ((value 7))
+       (forms (hir-test-front-end-forms '((let ((value 7))
                                   (labels ((helper () 0)
                                            (read-value () (if #'helper value value)))
                                     #'read-value))) session))
@@ -740,7 +746,7 @@
 
 (let* ((*source-file* "lifted-environment-reuse") (*toplevel-source* nil)
        (session (make-session))
-       (forms (front-end-forms '((let ((value 7))
+       (forms (hir-test-front-end-forms '((let ((value 7))
                                   (labels ((read-value (n) (+ value n)))
                                     (declare (notinline read-value))
                                     (+ (read-value 1) (read-value 2))))) session))
@@ -773,7 +779,7 @@
                   (flet ((read-value (&key (x value)) (list value x)))
                     (declare (notinline read-value)) (read-value :x 9)))))
   (let* ((*source-file* "lifted-lambda-list-reuse") (*toplevel-source* nil)
-         (session (make-session)) (forms (front-end-forms (list form) session))
+         (session (make-session)) (forms (hir-test-front-end-forms (list form) session))
          (root (toplevel-form-ast (first forms)))
          (group (find 13 (hir-test-nodes root) :key #'hir-node-kind))
          (fun (svref (hir-node-a group) 0))
@@ -800,7 +806,7 @@
                   (let* ((function (lambda (n) (+ value n))) (other function))
                     (list (funcall function 1) (funcall other 2))))))
   (let* ((*source-file* "function-alias-reuse") (*toplevel-source* nil)
-         (session (make-session)) (forms (front-end-forms (list form) session))
+         (session (make-session)) (forms (hir-test-front-end-forms (list form) session))
          (root (toplevel-form-ast (first forms)))
          (calls (remove-if-not (lambda (node) (and (= (hir-node-kind node) 7)
                                                   (hir-fun-p (hir-node-a node))))
@@ -1063,7 +1069,7 @@
                       (declare (double-float payload)) (eq payload payload) (eq pair pair)) 0)
                    ((let ((pair (cons 1 2)) (other "bad")) (declare (fixnum other)) (eq pair pair)) 0)))
     (let* ((*source-file* "stack-cons-reuse") (*toplevel-source* nil)
-           (session (make-session)) (forms (front-end-forms (list (first entry)) session))
+           (session (make-session)) (forms (hir-test-front-end-forms (list (first entry)) session))
            (module (compile-module forms "stack-cons-reuse" :session session))
            (range-count (stack-ranges module))
            (first (with-output-to-string (stream) (kiln.kir:print-module module stream))))
@@ -1108,7 +1114,7 @@
                   (declare (notinline read-item))
                   (let ((,pair (cons 1 2))) (read-item ,pair))))
          (*source-file* "cons-borrow-debug") (*toplevel-source* nil)
-         (session (make-session)) (forms (front-end-forms (list form) session))
+         (session (make-session)) (forms (hir-test-front-end-forms (list form) session))
          (*toplevel* (first forms)) (root (toplevel-form-ast *toplevel*)))
     (assert (= (if call 0 1) (length (gethash root (hir-prepare-stack-conses root)))))))
 
@@ -1122,7 +1128,7 @@
                     (declare (notinline read-item))
                     (let ((,pair (cons 1 2))) (read-item ,pair)))))
          (*source-file* "cons-borrow-entry") (*toplevel-source* nil)
-         (session (make-session)) (forms (front-end-forms (list form) session))
+         (session (make-session)) (forms (hir-test-front-end-forms (list form) session))
          (*toplevel* (first forms)) (root (toplevel-form-ast *toplevel*))
          (*hir-native-environments* nil) (*hir-lifted-environments* nil))
     (hir-prepare-native-environments root)
@@ -1169,7 +1175,7 @@
                   (let ((,pair (cons 1 2)))
                     (let ((,alias (same ,pair))) (kiln.sys:%gc) (eq ,alias ,pair)))))
          (*source-file* "cons-return-layout") (*toplevel-source* nil)
-         (session (make-session)) (forms (front-end-forms (list form) session))
+         (session (make-session)) (forms (hir-test-front-end-forms (list form) session))
          (module (compile-module forms "cons-return-layout" :session session)))
     (labels ((ranges (form)
                (if (consp form)
@@ -1251,7 +1257,7 @@
 
 (let* ((*source-file* "unary-double-layout") (*toplevel-source* nil)
        (session (make-session))
-       (forms (front-end-forms
+       (forms (hir-test-front-end-forms
                '((lambda (value)
                    (declare (double-float value))
                    (* (1+ (abs (- value))) (1- value)))) session))
@@ -1272,7 +1278,7 @@
            (* (multiple-value-prog1 (1+ value) (opaque-effect)) 2d0)))
   (let* ((*source-file* "double-join-layout") (*toplevel-source* nil)
          (session (make-session))
-         (forms (front-end-forms
+         (forms (hir-test-front-end-forms
                  `((lambda (flag value) (declare (double-float value)) ,body)) session))
          (module (compile-module forms "double-join-layout" :session session)))
     (labels ((boxes (form)
@@ -1287,7 +1293,7 @@
 
 (let* ((*source-file* "double-cleanup-layout") (*toplevel-source* nil)
        (session (make-session))
-       (forms (front-end-forms
+       (forms (hir-test-front-end-forms
                '((lambda (value)
                    (declare (double-float value))
                    (* (unwind-protect (unwind-protect (1+ value) (opaque-effect))
@@ -1307,7 +1313,7 @@
                          (return-from done (1- value))))))
   (let* ((*source-file* "double-block-layout") (*toplevel-source* nil)
          (session (make-session))
-         (forms (front-end-forms
+         (forms (hir-test-front-end-forms
                  `((lambda (flag value) (declare (double-float value)) (* ,body 2d0))) session))
          (module (compile-module forms "double-block-layout" :session session)))
     (labels ((boxes (form)
@@ -1349,7 +1355,7 @@
                   (declare (notinline read-item))
                   (let ((,pair (cons 1 2))) (read-item ,pair ,@(when rest '(3))))))
          (*source-file* "cons-rest-entry") (*toplevel-source* nil)
-         (session (make-session)) (forms (front-end-forms (list form) session))
+         (session (make-session)) (forms (hir-test-front-end-forms (list form) session))
          (*toplevel* (first forms)) (root (toplevel-form-ast *toplevel*)))
     (assert (= (if rest 0 1) (length (gethash root (hir-prepare-stack-conses root)))))))
 
@@ -1696,7 +1702,7 @@
                        ,@(when effect (list effect))
                        (eq (car outer) inner))))))
          (*source-file* "cons-graph-observation") (*toplevel-source* nil)
-         (session (make-session)) (forms (front-end-forms (list form) session))
+         (session (make-session)) (forms (hir-test-front-end-forms (list form) session))
          (*toplevel* (first forms)) (root (toplevel-form-ast *toplevel*))
          (fun (hir-node-a (hir-fun-body root)))
          (plans (hir-prepare-stack-conses root)))
@@ -1833,7 +1839,7 @@
                   (let ((,outer (cons ,inner nil)))
                     (eq ,outer ,outer) (eq (walk-item ,outer 3) ,inner)))))
        (*source-file* "graph-loop-debug") (*toplevel-source* nil)
-       (session (make-session)) (forms (front-end-forms (list form) session))
+       (session (make-session)) (forms (hir-test-front-end-forms (list form) session))
        (*toplevel* (first forms)) (root (toplevel-form-ast *toplevel*)))
   (assert (null (gethash root (hir-prepare-stack-conses root)))))
 
@@ -1868,13 +1874,13 @@
                      (incf count) (if (< count 3) (go again)))
                   (eq (car outer) inner))))
        (*source-file* "owner-loop-observation") (*toplevel-source* nil)
-       (session (make-session)) (forms (front-end-forms (list form) session))
+       (session (make-session)) (forms (hir-test-front-end-forms (list form) session))
        (*toplevel* (first forms)) (root (toplevel-form-ast *toplevel*)))
   (assert (null (gethash root (hir-prepare-stack-conses root)))))
 
 (let* ((*source-file* "double-comparison-layout") (*toplevel-source* nil)
        (session (make-session))
-       (forms (front-end-forms
+       (forms (hir-test-front-end-forms
                '((lambda (left right)
                    (declare (double-float left right))
                    (< (1+ left) (* right 2d0)))) session))
@@ -1892,14 +1898,14 @@
                  (locally (declare (notinline <)) (< left right)))
                (lambda (left right) (declare (double-float left)) (< left right))))
   (let* ((*source-file* "generic-comparison-layout") (*toplevel-source* nil)
-         (session (make-session)) (forms (front-end-forms (list form) session))
+         (session (make-session)) (forms (hir-test-front-end-forms (list form) session))
          (module (compile-module forms "generic-comparison-layout" :session session))
          (kir (with-output-to-string (stream) (kiln.kir:print-module module stream))))
     (assert (not (search "(f64-compare " kir)))))
 
 (let* ((*source-file* "double-division-layout") (*toplevel-source* nil)
        (session (make-session))
-       (forms (front-end-forms
+       (forms (hir-test-front-end-forms
                '((lambda (left right)
                    (declare (double-float left right))
                    (< (/ left right) 1d0))) session))
@@ -1916,7 +1922,7 @@
 
 (let* ((*source-file* "generic-double-division") (*toplevel-source* nil)
        (session (make-session))
-       (forms (front-end-forms
+       (forms (hir-test-front-end-forms
                '((lambda (left right)
                    (declare (double-float left right))
                    (locally (declare (notinline /)) (/ left right)))) session))
@@ -1991,7 +1997,7 @@
 
 (let* ((*source-file* "double-values-layout") (*toplevel-source* nil)
        (session (make-session))
-       (forms (front-end-forms
+       (forms (hir-test-front-end-forms
                '((lambda (x y)
                    (declare (double-float x y))
                    (< (values (+ x y) (print 7) (setq x 99d0)) y))) session))
@@ -2007,7 +2013,7 @@
 
 (let* ((*source-file* "double-assignment-layout") (*toplevel-source* nil)
        (session (make-session))
-       (forms (front-end-forms
+       (forms (hir-test-front-end-forms
                '((lambda (a b)
                    (declare (double-float a b))
                    (let ((x a))
@@ -2025,7 +2031,7 @@
 
 (let* ((*source-file* "double-multiple-binding-layout") (*toplevel-source* nil)
        (session (make-session))
-       (forms (front-end-forms
+       (forms (hir-test-front-end-forms
                '((lambda (a b)
                    (declare (double-float a b))
                    (multiple-value-bind (x y marker missing)
@@ -2044,7 +2050,7 @@
 
 (let* ((*source-file* "double-multiple-join-layout") (*toplevel-source* nil)
        (session (make-session))
-       (forms (front-end-forms
+       (forms (hir-test-front-end-forms
                '((lambda (flag a b)
                    (declare (double-float a b))
                    (multiple-value-bind (x y marker)
@@ -2061,7 +2067,7 @@
 
 (let* ((*source-file* "double-multiple-preserved-layout") (*toplevel-source* nil)
        (session (make-session))
-       (forms (front-end-forms
+       (forms (hir-test-front-end-forms
                '((lambda (a b)
                    (declare (double-float a b))
                    (multiple-value-bind (x y marker)
@@ -2080,7 +2086,7 @@
 
 (let* ((*source-file* "double-multiple-cleanup-layout") (*toplevel-source* nil)
        (session (make-session))
-       (forms (front-end-forms
+       (forms (hir-test-front-end-forms
                '((lambda (a b)
                    (declare (double-float a b))
                    (multiple-value-bind (x y marker)
@@ -2286,7 +2292,7 @@
 
 (let* ((*source-file* "double-discard-layout") (*toplevel-source* nil)
        (session (make-session))
-       (forms (front-end-forms
+       (forms (hir-test-front-end-forms
                '((lambda (a b)
                    (declare (double-float a b))
                    (+ a b)
@@ -2301,7 +2307,7 @@
 
 (let* ((*source-file* "discard-cleanup-layout") (*toplevel-source* nil)
        (session (make-session))
-       (forms (front-end-forms
+       (forms (hir-test-front-end-forms
                '((lambda (a b)
                    (declare (double-float a b))
                    (multiple-value-prog1 (values (+ a b) (* a b)) (print 1))
@@ -2355,7 +2361,7 @@
 
 (let* ((*source-file* "double-predicate-layout") (*toplevel-source* nil)
        (session (make-session))
-       (forms (front-end-forms
+       (forms (hir-test-front-end-forms
                '((lambda (a b)
                    (declare (double-float a b))
                    (if (zerop (+ a b)) (plusp (* a b)) (minusp (- a b))))) session))
@@ -2370,7 +2376,7 @@
 
 (let* ((*source-file* "generic-double-predicate-layout") (*toplevel-source* nil)
        (session (make-session))
-       (forms (front-end-forms
+       (forms (hir-test-front-end-forms
                '((lambda (a) (declare (double-float a))
                    (locally (declare (notinline zerop plusp minusp))
                      (list (zerop a) (plusp a) (minusp a))))) session))
@@ -2438,7 +2444,7 @@
 
 (let* ((*source-file* "inferred-double-layout") (*toplevel-source* nil)
        (session (make-session))
-       (forms (front-end-forms
+       (forms (hir-test-front-end-forms
                '((lambda (a b)
                    (declare (double-float a b))
                    (let ((x (+ a b))) (setq x (* x b)) (< x b)))) session))
@@ -2473,7 +2479,7 @@
 (let* ((form '(let* ((inner (cons 1 nil)) (outer (cons inner nil)) (value (+ 1d0 2d0)))
                 (eq (setq value 4d0) 4d0) (eq outer outer) (eq (car outer) inner)))
        (*source-file* "inferred-double-observation") (*toplevel-source* nil)
-       (session (make-session)) (forms (front-end-forms (list form) session))
+       (session (make-session)) (forms (hir-test-front-end-forms (list form) session))
        (*toplevel* (first forms)) (root (toplevel-form-ast *toplevel*)))
   (assert (plusp (hash-table-count (hir-prepare-double-locals root))))
   (assert (null (gethash root (hir-prepare-stack-conses root)))))
@@ -2494,7 +2500,7 @@
 
 (let* ((*source-file* "inline-rest-layout") (*toplevel-source* nil)
        (session (make-session))
-       (forms (front-end-forms
+       (forms (hir-test-front-end-forms
                '((lambda () (flet ((gather (&rest items) (eq items items))) (gather 1 2)))) session))
        (module (compile-module forms "inline-rest-layout" :session session))
        (function (find-if (lambda (form) (search "kiln_hir_LAMBDA_" (second form)))
@@ -2518,7 +2524,7 @@
                      (flet ((done (s &optional (x (return-from done s))) (declare (special s)) x))
                        (done :parameter) :bad)) s))))
   (let* ((*source-file* "default-exit-scope") (*toplevel-source* nil)
-         (session (make-session)) (forms (front-end-forms (list form) session))
+         (session (make-session)) (forms (hir-test-front-end-forms (list form) session))
          (root (toplevel-form-ast (first forms)))
          (*hir-eval-client* (session-client session))
          (*hir-eval-global* (trucler:global-environment *hir-eval-client* (session-environment session))))
@@ -2527,7 +2533,7 @@
 
 (let* ((*source-file* "inferred-double-values-layout") (*toplevel-source* nil)
        (session (make-session))
-       (forms (front-end-forms
+       (forms (hir-test-front-end-forms
                '((lambda (a b flag)
                    (declare (double-float a b))
                    (multiple-value-bind (x y)
@@ -2592,7 +2598,7 @@
 (dolist (call '(nil t))
   (let* ((*source-file* "stack-closure-debug") (*toplevel-source* nil)
          (session (make-session))
-         (forms (front-end-forms
+         (forms (hir-test-front-end-forms
                  (list `(lambda (value)
                           (let ((f (lambda () value)))
                             ,@(when call '((unknown-input))) (eq f f)))) session))
@@ -2618,7 +2624,7 @@
 
 (let* ((*source-file* "stack-rest-debug") (*toplevel-source* nil)
        (session (make-session))
-       (forms (front-end-forms (list '(lambda (&rest items) (null items))) session))
+       (forms (hir-test-front-end-forms (list '(lambda (&rest items) (null items))) session))
        (module (compile-module forms "stack-rest-debug" :session session)))
   (labels ((ranges (tree)
              (if (consp tree)
@@ -2629,7 +2635,7 @@
 (dolist (escape '(nil t))
   (let* ((*source-file* "stack-rest-layout") (*toplevel-source* nil)
          (items (gensym "ITEMS")) (session (make-session))
-         (forms (front-end-forms
+         (forms (hir-test-front-end-forms
                  (list `(lambda (&optional (prefix 0) &rest ,items)
                           ,(if escape `(cdr ,items) `(car ,items)))) session))
          (module (compile-module forms "stack-rest-layout" :session session))
@@ -2644,7 +2650,7 @@
 
 (let* ((*source-file* "stack-closure-layout") (*toplevel-source* nil)
        (session (make-session))
-       (forms (front-end-forms
+       (forms (hir-test-front-end-forms
                (list '(lambda (value) (let ((f (lambda () value))) (eq f f)))) session))
        (module (compile-module forms "stack-closure-layout" :session session))
        (environment-ranges 0))
@@ -2667,7 +2673,7 @@
 (dolist (safety '(0 1 3))
   (let* ((*source-file* "policy-checks") (*toplevel-source* nil)
          (session (make-session))
-         (forms (front-end-forms
+         (forms (hir-test-front-end-forms
                  (list `(lambda (x) (declare (fixnum x) (optimize (safety ,safety))) x)) session))
          (module (compile-module forms "policy-checks" :session session))
          (kir (with-output-to-string (stream) (kiln.kir:print-module module stream))))
@@ -2676,7 +2682,7 @@
 (dolist (debug '(0 1 2 3))
   (let* ((*source-file* "policy-rest") (*toplevel-source* nil)
          (session (make-session))
-         (forms (front-end-forms
+         (forms (hir-test-front-end-forms
                  (list `(lambda (&rest items)
                           (declare (optimize (debug ,debug)))
                           (car items))) session))
@@ -2689,7 +2695,7 @@
     (assert (= (if (< debug 2) 8 0) ranges))))
 
 (let* ((*source-file* "type-alias-facts") (*toplevel-source* nil)
-       (forms (front-end-forms
+       (forms (hir-test-front-end-forms
                '((deftype frontend-unit-range () '(integer 0 7))
                  (lambda (x) (declare (type frontend-unit-range x)) (+ x 1)))))
        (root (toplevel-form-ast (car (last forms))))
@@ -2700,7 +2706,7 @@
   (assert (equal (hir-node-type (hir-fun-body fun)) '(integer 1 8))))
 
 (let* ((*source-file* "type-alias-cycle") (*toplevel-source* nil)
-       (forms (front-end-forms
+       (forms (hir-test-front-end-forms
                '((deftype frontend-unit-cycle () 'frontend-unit-cycle)
                  (lambda (x) (declare (type frontend-unit-cycle x)) x))))
        (root (toplevel-form-ast (car (last forms))))
@@ -2718,7 +2724,7 @@
     (assert (= 2 (length *image-literal-objects*)))))
 
 (let* ((*source-file* "type-alias-snapshot") (*toplevel-source* nil)
-       (forms (front-end-forms
+       (forms (hir-test-front-end-forms
                '((eval-when (:compile-toplevel) (defparameter *frontend-unit-schema* '(integer 0 7)))
                  (deftype frontend-unit-snapshot () *frontend-unit-schema*)
                  (lambda (x) (declare (type frontend-unit-snapshot x)) (+ x 1))
@@ -2734,7 +2740,7 @@
   (handler-bind ((undefined-function-warning
                    (lambda (condition) (push (undefined-function-names condition) warnings)
                      (muffle-warning condition))))
-    (front-end-forms
+    (hir-test-front-end-forms
      '((defun read-future-slot (x) (future-reader x))
        (defun write-future-slot (x v) (funcall #'(setf future-accessor) v x))
        (defclass future-class ()
