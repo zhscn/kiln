@@ -115,7 +115,7 @@ GC、packet 编码和跨栈 Lisp 调用可能 safepoint 或覆盖传递区；独
 - `append`：编译期合并相邻的 `list` 调用、去掉空列表和 `list` 后的尾随 `nil`（反引号展开大量产生这种形状），首参是 `list` 时改写成 `list*`，只剩两个参数时调用 `kiln.kernel::append-2`。
 - `(eql x 常量)`：常量不是堆上的数时按 `eq` 降级。`case` 展开成这样的比较。
 - 只有一个下标的 `aref` 和 `(setf aref)`：simple vector 就地读写，其他数组调用 kernel 的 `%aref-1`、`%set-aref-1`。
-- `typep` 的类型是编译期常量时：原子类型直接换成对应的谓词调用（`*type-predicates*`）；fixnum 范围内的整数区间（`fixnum`、`bit`、`integer`、`mod`、`unsigned-byte`、`signed-byte`）、`t`、`nil`、`boolean`、`(eql c)`、`(member ...)`（至多 8 项）以及由它们组成的 `not`、`or`、`and` 直接在调用点展开成比较或分支（`emit-inline-typep`）。其他含不在 CL 和 KEYWORD 包里的常量符号的类型，改成调用 `kiln.kernel::%typep-cached`，每个调用点带一个缓存（数据段里的一个静态 cons，`lower-cached-typep`）：car 是全局 `typep` 表的项，cdr 是填入时的类型假设版本，版本变了就重新查（[clos.md](clos.md) 的“类名的 `typep`”）。
+- `typep` 的类型是编译期常量时：原子类型直接换成对应的谓词调用（`*type-predicates*`）；fixnum 范围内的整数区间（`fixnum`、`bit`、`integer`、`mod`、`unsigned-byte`、`signed-byte`）、`t`、`nil`、`boolean`、`(eql c)`、`(member ...)`（至多 8 项）以及由它们组成的 `not`、`or`、`and` 直接在调用点展开成比较或分支（`emit-inline-typep`）。其他含不在 CL 和 KEYWORD 包里的常量符号的类型，改成调用 `kiln.kernel::%typep-cached`，每个调用点带一个缓存（数据段里的一个静态 cons，`emit-cached-typep`；HIR 的 AST 包装入口是 `lower-cached-typep`）：car 编码上次对象的类 stamp 和测试结果，cdr 是填入时的类型假设版本，版本变了就重新查（[clos.md](clos.md) 的“类名的 `typep`”）。
 - `member` 和 `assoc` 不带关键字参数，或只带常量的 `:test #'eq` / `'eq` / `#'eql` / `'eql` 时，改成调用两个参数的 `%member-eq`、`%member-eql`、`%assoc-eq`、`%assoc-eql`。
 - `slot-value` 和 `(setf (slot-value ...))` 的槽名是编译期常量的符号时，改成调用 `kiln.kernel::%slot-value-cached` / `%set-slot-value-cached`，每个调用点带一个位置缓存（数据段里的一个静态 cons：对象的 stamp 和槽的位置；位置在缓存里按 stamp 复核，见 [specialization.md](specialization.md) 的“调用点特化”）。
 - 参数个数超过 `call-arguments-limit` 的 `list`、`list*`、`vector` 调用改写成分块的 `list*` 嵌套（`vector` 再加一次 `coerce`），`nconc`、`append` 改写成嵌套调用。其他函数超过时报出函数名。

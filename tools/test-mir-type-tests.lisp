@@ -1,0 +1,40 @@
+;;;; Run after tools/env.lisp and (ql:quickload "kiln").
+(in-package #:kiln.compiler)
+
+(defun mir-type-test-function-reads (module name)
+  (let* ((label (kiln.kir::kir-name "kiln_sym_" (symbol-label name)))
+         (pattern `(:field-load ,kiln.kir::+packet-field-symbol-function+
+                               (:object-address ,label :general)))
+         (count 0))
+    (labels ((walk (form)
+               (when (consp form)
+                 (when (equal form pattern) (incf count))
+                 (walk (car form)) (walk (cdr form)))))
+      (mapc #'walk (kiln.kir::kmodule-funcs module)))
+    count))
+
+(dolist (entry
+         '((nil nil (lambda (x) (typep x 'integer)))
+           (nil nil (lambda (x) (typep x '(and integer (not (eql 2))))))
+           (nil nil (lambda (x) (typep x nil)))
+           (nil t (lambda (x) (typep x 'mir-model-class)))
+           (nil t (lambda (x)
+                    (typep x (progn (print x) 'mir-model-class))))
+           (nil t (lambda (x) (declare (type mir-model-class x)) x))
+           (nil nil (lambda (x) (declare (type (integer 0 7) x)) x))
+           (t nil (lambda (x type) (typep x type)))
+           (t nil (lambda (x) (typep x 'integer nil)))
+           (t nil (lambda (x) (declare (notinline typep)) (typep x 'integer)))
+           (t nil (lambda (x) (declare (notinline typep)) (typep x 'mir-model-class)))
+           (t nil (lambda (x) (declare (optimize (speed 0) (compilation-speed 3)))
+                    (typep x 'integer)))))
+  (let ((session (make-session)))
+    (call-with-front-end
+     session
+     (lambda ()
+       (let* ((*source-file* "mir-type-test") (*toplevel-source* nil)
+              (forms (front-end-forms (list (third entry))))
+              (module (compile-module forms "mir-type-test" :pipeline :mir)))
+         (assert (eq (first entry) (plusp (mir-type-test-function-reads module 'typep))))
+         (assert (eq (second entry) (plusp (mir-type-test-function-reads module 'kiln.kernel::%typep-cached)))))))))
+(format t "MIR constant type tests select predicates, guarded caches and generic calls.~%")

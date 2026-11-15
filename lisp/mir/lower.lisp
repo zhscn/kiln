@@ -57,10 +57,24 @@
 (defun mir-lir-check (value type)
   (unless (or (zerop (hir-policy-quality *hir-policy* :safety)) (eq (hir-declaration-expanded type) t))
     (let ((bad (new-block)) (done (new-block)))
-      (br `(:eq ,(emit-slow-call 'typep value (constant-object (hir-declaration-check-type type))) ,(nil-value)) bad done)
+      (br `(:eq ,(emit-typep-test value (hir-declaration-check-type type)) ,(nil-value)) bad done)
       (start-block bad)
       (emit-slow-call 'kiln.kernel::%declared-type-error value (constant-object (hir-declaration-original type)))
       (jump done) (start-block done))))
+
+(defun mir-lir-typep-specialization (instruction)
+  "Return a known type specifier only for optimizable two-argument TYPEP calls."
+  (let ((operands (mir-instruction-operands instruction)))
+    (when (and (= (mir-instruction-kind instruction) 6)
+               (eq (mir-instruction-data instruction) 'typep) (= (length operands) 2)
+               (hir-policy-optimize-p (mir-instruction-policy instruction))
+               (not (mir-instruction-notinline instruction)))
+      (let ((definition (svref *mir-lir-definitions*
+                               (mir-primary-origin (svref operands 1) *mir-lir-definitions*))))
+        (when (and definition (= (mir-instruction-kind definition) 0))
+          (let ((type (mir-instruction-data definition)))
+            (when (or (inline-typep-specifier-p type) (cached-typep-specifier-p type))
+              (list type))))))))
 
 (defun mir-lir-container-call (instruction)
   (when (and (= (mir-instruction-kind instruction) 6)
@@ -244,6 +258,10 @@
     (when (and result (not (svref *mir-lir-live* result))
                (mir-lir-double-forward-source instruction))
       (return-from mir-lir-instruction))
+    (let ((specialization (mir-lir-typep-specialization instruction)))
+      (when specialization
+        (mir-lir-save result (emit-typep-test (first args) (first specialization)) 1)
+        (return-from mir-lir-instruction)))
     (let ((operation (mir-lir-container-call instruction)))
       (when operation
         (mir-lir-save result (mir-lir-container-value operation data args) 1)

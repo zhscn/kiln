@@ -1109,17 +1109,21 @@ make that the test, with no key: none, or :TEST #'EQL, #'EQ, 'EQL or
            (and (member name '(eq eql)) name)))
         (t nil)))
 
-(defun lower-cached-typep (object-ast type)
-  "(TYPEP OBJECT 'TYPE), TYPE a symbol that is not a standard type name
-(a class name, mostly): a call to KILN.KERNEL::%TYPEP-CACHED with a cache
-of this call: a cons of static data whose car is NIL or a fixnum, the
-stamp of the last object's class and the result. Holding
-no pointer, the cons need not be scanned by the GC."
-  (let ((object (copy-to-var (lower object-ast)))
-        (label (fresh-label "kiln_typep_cache_")))
+(defun emit-cached-typep (object type)
+  "Emit a type test with a writable stamp/result and type-version cache."
+  (let ((label (fresh-label "kiln_typep_cache_")))
     (module-data label `(:static-mutable-cons ,(nil-word) ,(nil-word)))
     (emit-lisp-call (function-cell-value 'kiln.kernel::%typep-cached)
                     (list object (constant-object type) `(:object-address ,label :cons)))))
+
+(defun lower-cached-typep (object-ast type)
+  (emit-cached-typep (copy-to-var (lower object-ast)) type))
+
+(defun emit-typep-test (object type)
+  "Test an evaluated object against a known specifier, retaining runtime guards."
+  (cond ((inline-typep-specifier-p type) (emit-inline-typep object type))
+        ((cached-typep-specifier-p type) (emit-cached-typep object type))
+        (t (emit-slow-call 'typep object (constant-object type)))))
 
 (defun lower-cached-slot-value (object-ast slot-name)
   "(SLOT-VALUE OBJECT 'SLOT-NAME) at a call site: a call to
