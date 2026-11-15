@@ -34,7 +34,7 @@ running image, in the null lexical environment."
         (lambda (session)
           (setf (compilation-request-session request) session)
           (native-compile-in-session definition session pipeline))))
-     :pipeline :hir)))
+     :pipeline pipeline)))
 
 (defun native-compile-in-session (definition session &optional (pipeline :hir))
   (let* ((*eval-definition* (and kiln.kernel::*compile-name*
