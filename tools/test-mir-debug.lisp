@@ -1,0 +1,93 @@
+;;;; Run after tools/env.lisp and (ql:quickload "kiln").
+(in-package #:kiln.compiler)
+(defun mir-debug-test-unit (form)
+  (let* ((*source-file* "mir-debug-model") (*toplevel-source* nil)
+         (forms (front-end-forms (list form))) (*toplevel* (first forms)))
+    (hir-to-mir (toplevel-form-ast *toplevel*))))
+(defun mir-debug-test-bindings (unit)
+  (loop for function across (hir-vector (mir-unit-functions unit)) append
+    (loop for instruction across (hir-vector (mir-function-instructions function))
+          when (= (mir-instruction-kind instruction) 40) collect (cons function instruction))))
+(let* ((unit (mir-debug-test-unit '(lambda (x) (let ((y (+ x 1))) (+ x y)))))
+       (bindings (mir-debug-test-bindings unit)))
+  (verify-mir unit)
+  (assert (= 2 (length bindings)))
+  (assert (equal (mapcar (lambda (entry) (cdr (mir-instruction-data (cdr entry)))) bindings) '(x y)))
+  (let* ((entry (first bindings)) (function (car entry)) (instruction (cdr entry))
+         (saved (mir-instruction-data instruction)))
+    (unwind-protect
+         (dolist (data (list (cons (length (mir-function-bindings function)) 'x)
+                            (cons (car saved) 'wrong-name)))
+           (setf (mir-instruction-data instruction) data)
+           (let ((rejected nil))
+             (handler-case (verify-mir unit)
+               (mir-error (condition)
+                 (setf rejected (search "Invalid MIR debug binding" (princ-to-string condition)))))
+             (assert rejected)))
+      (setf (mir-instruction-data instruction) saved))))
+(assert (null (mir-debug-test-bindings
+               (mir-debug-test-unit '(lambda (x) (declare (optimize (debug 0))) x)))))
+(let ((bindings (mir-debug-test-bindings (mir-debug-test-unit '(lambda (x) (setq x (+ x 1)) x)))))
+  (assert (= 2 (count 'x bindings :key (lambda (entry) (cdr (mir-instruction-data (cdr entry))))))))
+(let* ((unit (mir-debug-test-unit '(lambda (n) (let ((count n)) (lambda () (incf count))))))
+       (bindings (remove-if-not (lambda (entry) (eq (cdr (mir-instruction-data (cdr entry))) 'count))
+                                (mir-debug-test-bindings unit))))
+  (verify-mir unit)
+  (assert bindings)
+  (dolist (entry bindings)
+    (assert (eq :cell (mir-value-representation
+                       (mir-at (mir-function-values (car entry))
+                               (svref (mir-instruction-operands (cdr entry)) 0)))))))
+(format t "MIR debug bindings preserve source visibility, assignment and cell representations.~%")
+
+(let* ((unit (mir-debug-test-unit '(lambda (n) (let ((count n)) (lambda () (incf count))))))
+       (entry (find 'count (mir-debug-test-bindings unit)
+                    :key (lambda (entry) (cdr (mir-instruction-data (cdr entry))))))
+       (function (car entry)) (instruction (cdr entry))
+       (unbound (find 25 (hir-vector (mir-function-instructions function)) :key #'mir-instruction-kind))
+       (saved (mir-instruction-operands instruction)) (rejected nil))
+  (assert unbound)
+  (unwind-protect
+       (progn
+         (setf (mir-instruction-operands instruction) (vector (mir-instruction-result unbound)))
+         (handler-case (verify-mir unit)
+           (mir-error (condition)
+             (setf rejected (search "cell is used before its binding is initialized" (princ-to-string condition)))))
+         (assert rejected))
+    (setf (mir-instruction-operands instruction) saved)))
+
+(let* ((unit (mir-debug-test-unit '(lambda (x) (setq x (+ x 1)) x)))
+       (bindings (mir-debug-test-bindings unit)))
+  (verify-mir unit)
+  (dolist (entry bindings)
+    (assert (eq :cell (mir-value-representation
+                       (mir-at (mir-function-values (car entry))
+                               (svref (mir-instruction-operands (cdr entry)) 0)))))))
+
+(let* ((unit (mir-debug-test-unit
+              '(defun mir-debug-model (x)
+                 (flet ((helper (y) (lambda () (+ x y)))) (helper x)))))
+       (names (map 'list #'mir-function-debug-name (hir-vector (mir-unit-functions unit)))))
+  (assert (member 'mir-debug-model names :test #'equal))
+  (assert (member '(flet helper :in mir-debug-model) names :test #'equal))
+  (assert (member '(lambda :in (flet helper :in mir-debug-model)) names :test #'equal)))
+
+(let* ((unit (mir-debug-test-unit
+              '(lambda (x) (flet ((helper (y) (+ y 1))) (helper x) (helper x)))))
+       (function (find 'helper (hir-vector (mir-unit-functions unit)) :key #'mir-function-name)))
+  (setf (mir-function-policy function) (logandc2 (mir-function-policy function) (ash 3 4)))
+  (loop for instruction across (hir-vector (mir-function-instructions function)) do
+    (setf (mir-instruction-policy instruction) (logandc2 (mir-instruction-policy instruction) (ash 3 4))))
+  (loop for block across (hir-vector (mir-function-blocks function))
+        for term = (mir-block-terminator block) do
+    (setf (mir-terminator-policy term) (logandc2 (mir-terminator-policy term) (ash 3 4))))
+  (assert (null (mir-inlining-cost function))))
+(format t "MIR debug names preserve lexical owners and observed frames.~%")
+
+(dolist (debug '(0 2))
+  (let* ((unit (mir-debug-test-unit
+                `(locally (declare (optimize (debug ,debug)))
+                   (let ((x (cons 1 2))) (if (eq x x) (car x) 0)))))
+         (storage (svref (mir-infer-storage unit) 0)))
+    (assert (eq (zerop (mir-storage-analysis-stack storage)) (= debug 2)))))
+(format t "MIR storage respects source-visible debugger observations.~%")

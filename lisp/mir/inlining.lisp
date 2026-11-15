@@ -14,7 +14,7 @@
           do (return-from mir-inlining-cost nil))
   (loop for instruction across (hir-vector (mir-function-instructions function))
         for kind = (mir-instruction-kind instruction)
-        when (or (= kind 22)
+        when (or (member kind '(22 40))
                  (and (>= kind 27) (< kind 37)))
           do (return-from mir-inlining-cost nil))
   (+ 2 (if (or (mir-function-tail-p function)

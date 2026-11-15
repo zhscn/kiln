@@ -127,7 +127,7 @@
       (loop for id across (hir-vector (mir-block-instructions block))
             for instruction = (mir-at (mir-function-instructions function) id)
             for kind = (mir-instruction-kind instruction)
-            when (member kind '(7 15 20 21 24)) do
+            when (member kind '(7 15 20 21 24 40)) do
         (let* ((args (mir-instruction-operands instruction))
                (uses (if (member kind '(7 15)) args (vector (svref args (if (= kind 24) 1 0))))))
           (loop for id across uses
@@ -359,7 +359,7 @@
                                        (1 (if (and (integerp data) (<= 0 data) (logbitp data (mir-function-argument-cells function))) :cell :obj))
                                        (12 :count)
                                        (11 (and (= (length args) 1) (representation (svref args 0))))
-                                       ((13 18 21 24 27 28 29 30 32 33 34 35) nil)
+                                       ((13 18 21 24 27 28 29 30 32 33 34 35 40) nil)
                                        ((19 25) :cell)
                                        (22 (if (and (integerp data) (<= 0 data) (< data (length (mir-function-captures function))))
                                                (if (logbitp data (mir-function-capture-cells function)) :cell :obj)
@@ -387,6 +387,14 @@
                        (11 (unless (and (= (length args) 1)
                                         (member (representation (svref args 0)) '(:obj :bundle)))
                              (mir-fail "Invalid MIR declaration-check operand")))
+                       (40 (unless (and (= (length args) 1) (consp data)
+                                        (integerp (car data)) (<= 0 (car data))
+                                        (< (car data) (length (mir-function-bindings function)))
+                                        (symbolp (cdr data)) (symbol-package (cdr data))
+                                        (eq (cdr data) (svref (mir-function-bindings function) (car data)))
+                                        (eq (representation (svref args 0))
+                                            (if (logbitp (car data) (mir-function-binding-cells function)) :cell :obj)))
+                             (mir-fail "Invalid MIR debug binding")))
                        (9 (expect-operands args '(:obj)))
                        ((10 14) (expect-operands args '(:bundle)))
                        ((13 16 17) (expect-operands args '(:count)))

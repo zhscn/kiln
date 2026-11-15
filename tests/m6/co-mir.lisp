@@ -252,7 +252,8 @@
   (multiple-value-bind (module literals)
       (kiln.compiler:compile-module
        (kiln.compiler::front-end-forms
-        '((let ((x (cons 1 2))) (if (eq x x) (car x) 0))) session)
+        '((locally (declare (optimize (debug 0)))
+            (let ((x (cons 1 2))) (if (eq x x) (car x) 0)))) session)
        "mir-storage-probe" :session session :pipeline :mir :image t)
     (let ((program (kiln.kir::normalize-lir-module module literals)))
       (print (some (lambda (form)
@@ -289,9 +290,10 @@
   (multiple-value-bind (module literals)
       (kiln.compiler:compile-module
        (kiln.compiler::front-end-forms
-        '((flet ((reader (p) (car p)))
+        '((locally (declare (optimize (debug 0)))
+           (flet ((reader (p) (car p)))
             (declare (notinline reader))
-            (let ((x (cons 1 nil))) (if (eq x x) (reader x) nil)))) session)
+            (let ((x (cons 1 nil))) (if (eq x x) (reader x) nil))))) session)
        "mir-borrow-probe" :session session :pipeline :mir :image t)
     (let ((program (kiln.kir::normalize-lir-module module literals)))
       (print (some (lambda (form)
@@ -459,8 +461,9 @@
   (multiple-value-bind (module literals)
       (kiln.compiler:compile-module
        (kiln.compiler::front-end-forms
-        '((flet ((reader (&rest xs) (kiln.sys:%gc) (car xs)))
-            (declare (notinline reader)) (reader 1 2))) session)
+        '((locally (declare (optimize (debug 0)))
+           (flet ((reader (&rest xs) (kiln.sys:%gc) (car xs)))
+            (declare (notinline reader)) (reader 1 2)))) session)
        "mir-stack-rest-probe" :session session :pipeline :mir :image t)
     (let ((program (kiln.kir::normalize-lir-module module literals)))
       (print (some (lambda (form)

@@ -1,5 +1,18 @@
 (in-package #:kiln.compiler)
 
+(defvar *mir-source-root*)
+(defvar *mir-debug-names*)
+
+(defun mir-source-debug-name (hir)
+  "Name a function in its lexical source context before flattening the unit."
+  (or (gethash hir *mir-debug-names*)
+      (setf (gethash hir *mir-debug-names*)
+            (if (eq hir *mir-source-root*) '(lambda)
+                (let* ((parent (hir-fun-parent hir))
+                       (*function-name* (and parent (not (eq parent *mir-source-root*))
+                                             (mir-source-debug-name parent))))
+                  (local-function-debug-name (or (hir-fun-name hir) '#:lambda)))))))
+
 (defvar *mir-unit*)
 (defvar *mir-function*)
 (defvar *mir-block*)
@@ -65,6 +78,9 @@
     (loop for function across (hir-vector functions) do
       (when (and (hir-fun-binding function) (not (gethash function dynamic)))
         (setf (gethash (hir-fun-binding function) *mir-static-function-bindings*) t))
+      (loop for variable across (hir-vector (hir-fun-vars function))
+            when (and (gethash variable assigned) (source-variable-name variable))
+              do (setf (gethash variable *mir-cell-variables*) t))
       (when (gethash function landing-functions)
         (loop for variable across (hir-vector (hir-fun-vars function)) when (gethash variable assigned)
               do (setf (gethash variable *mir-cell-variables*) t)))
@@ -128,9 +144,17 @@
     (if (logbitp index (mir-function-binding-cells *mir-function*))
         (mir-instruction 20 :obj (vector value)) value)))
 
+(defun mir-debug-binding (variable value)
+  "Expose a source-visible binding as an SSA use for frame inspection."
+  (let ((name (source-variable-name variable)))
+    (when name
+      (mir-instruction 40 nil (vector value) (cons (mir-binding-index variable) name)))))
+
 (defun mir-establish-binding (variable value)
-  (setf (svref *mir-environment* (mir-binding-index variable))
-        (if (gethash variable *mir-cell-variables*) (mir-instruction 19 :cell (vector value)) value)))
+  (let ((stored (if (gethash variable *mir-cell-variables*) (mir-instruction 19 :cell (vector value)) value)))
+    (setf (svref *mir-environment* (mir-binding-index variable)) stored)
+    (mir-debug-binding variable stored)
+    stored))
 
 (defun mir-fill-closure (function object)
   (loop for variable across (mir-captures function) for index from 0
@@ -207,7 +231,11 @@
                (when (and (integerp binding) (gethash id *mir-cleanups*))
                  (mir-build-node (gethash id *mir-cleanups*)))))))
 
-(defun mir-activate-parameter (variable)
+(defun mir-activate-parameter (variable &optional joined)
+  ;; A default and a supplied value meet in a new SSA block parameter.
+  ;; Name that value directly rather than relying on incoming value labels.
+  (when (and variable joined)
+    (mir-debug-binding variable (svref *mir-environment* (mir-binding-index variable))))
   (let ((special (rassoc variable *mir-parameter-specials*)))
     (when special (mir-enter-binding (car special) (mir-binding-value variable)))))
 
@@ -442,7 +470,8 @@
              (let ((index (mir-binding-index (hir-node-a node))))
                (if (logbitp index (mir-function-binding-cells *mir-function*))
                    (mir-instruction 21 nil (vector (svref *mir-environment* index) value))
-                   (setf (svref *mir-environment* index) value)))
+                   (setf (svref *mir-environment* index) value))
+               (mir-debug-binding (hir-node-a node) (svref *mir-environment* index)))
              (mir-single value))))
       (3 (mir-single (mir-instruction 2 :obj #() (hir-node-a node))))
       (4 (let ((value (mir-primary (hir-node-b node))))
@@ -507,8 +536,8 @@
           (mir-bind-parameter (svref parameter 2) (mir-instruction 0 :obj #() nil)))
         (mir-jump join)))
     (mir-start join)
-    (mir-activate-parameter (svref parameter 0))
-    (mir-activate-parameter (svref parameter 2))))
+    (mir-activate-parameter (svref parameter 0) t)
+    (mir-activate-parameter (svref parameter 2) t)))
 
 (defun mir-call-primary (name &rest arguments)
   (mir-instruction 10 :obj (vector (mir-instruction 6 :bundle (coerce arguments 'simple-vector) name))))
@@ -592,8 +621,8 @@
         (mir-bind-parameter (svref parameter 2) (mir-instruction 0 :obj #() nil))
         (mir-jump join)))
     (mir-start join)
-    (mir-activate-parameter (svref parameter 0))
-    (mir-activate-parameter (svref parameter 2))))
+    (mir-activate-parameter (svref parameter 0) t)
+    (mir-activate-parameter (svref parameter 2) t)))
 
 (defun mir-import-function (hir)
   (multiple-value-bind (old found) (gethash hir *mir-functions*)
@@ -606,7 +635,7 @@
          (binding-count (length all-bindings))
          (keys (hir-lambda-list-keys ll))
          (scratch (if (hir-lambda-list-key-p ll) (+ 3 (* 2 (length keys))) 0))
-         (*mir-function* (make-mir-function :id id :name (hir-fun-name hir) :source (hir-fun-source hir)
+         (*mir-function* (make-mir-function :id id :name (hir-fun-name hir) :debug-name (mir-source-debug-name hir) :source (hir-fun-source hir)
                                            :policy (hir-fun-policy hir) :required (length (hir-lambda-list-required ll))
                                            :optional (length (hir-lambda-list-optional ll)) :rest (not (null (hir-lambda-list-rest ll)))
                                            :key-p (hir-lambda-list-key-p ll) :keys (map 'simple-vector (lambda (parameter) (svref parameter 3)) keys)
@@ -649,7 +678,8 @@
                 (setf (svref *mir-environment* index) unbound)))))
         (loop for variable across captures for index from 0
               do (setf (svref *mir-environment* (mir-binding-index variable))
-                       (mir-instruction 22 (if (gethash variable *mir-cell-variables*) :cell :obj) #() index)))
+                       (mir-instruction 22 (if (gethash variable *mir-cell-variables*) :cell :obj) #() index))
+                 (mir-debug-binding variable (svref *mir-environment* (mir-binding-index variable))))
         ;; Snapshot every keyword before defaults can mutate the rest list.
         (when (hir-lambda-list-key-p ll)
           (let ((cursor binding-count))
@@ -679,7 +709,7 @@
     id))
 
 (defun hir-to-mir (hir)
-  (let ((*mir-unit* (make-mir-unit)) (*mir-functions* (make-hash-table :test 'eq))
+  (let ((*mir-source-root* hir) (*mir-debug-names* (make-hash-table :test 'eq)) (*mir-unit* (make-mir-unit)) (*mir-functions* (make-hash-table :test 'eq))
         (*mir-load-time-indices* (make-hash-table :test 'eq)) (*mir-load-time-nodes* (make-hir-buffer))
         (*mir-static-function-bindings* (make-hash-table :test 'eq))
         (*mir-function-bindings* (make-hash-table :test 'eq))

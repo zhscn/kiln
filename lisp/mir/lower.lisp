@@ -15,6 +15,8 @@
 (defvar *mir-lir-bindings*)
 (defvar *mir-lir-stack-regions*)
 (defvar *mir-lir-rest-slots*)
+(defvar *mir-lir-debug-bindings*)
+(defvar *mir-lir-debug-cells*)
 
 (defun mir-lir-value (id) (svref *mir-lir-values* id))
 
@@ -297,6 +299,13 @@
         (emit `(:set ,(svref *mir-lir-doubles* result) ,(svref *mir-lir-doubles* source)))
         (unless (svref *mir-lir-boxed* result) (return-from mir-lir-instruction))))
     (case kind
+      (40 (let* ((index (car data))
+                 (slot (or (svref *mir-lir-debug-bindings* index)
+                           (let ((variable (kiln.kir::new-var)))
+                             (setf (svref *mir-lir-debug-bindings* index) variable)
+                             (note-debug-var variable (cdr data) (logbitp index *mir-lir-debug-cells*))
+                             variable))))
+            (emit `(:set ,slot ,(first args)))))
       (0 (emit `(:set ,out ,(constant-object data))))
       (26 (emit `(:set ,out (:cell-ref ,(svref *mir-lir-load-time-cells* data)))))
       (27 (let* ((region (svref *mir-lir-bindings* (car data)))
@@ -489,7 +498,9 @@
                        :handler (and handler (region-handler handler))) outer)))
 
 (defun mir-lir-function-body (function &optional unit)
-  (let* ((*regions* *regions*)
+  (let* ((*mir-lir-debug-bindings* (make-array (length (mir-function-bindings function)) :initial-element nil))
+         (*mir-lir-debug-cells* (mir-function-binding-cells function))
+         (*regions* *regions*)
          (*mir-lir-stack-regions* nil) (*mir-lir-rest-slots* nil)
          (*mir-lir-bindings*
            (map 'simple-vector
@@ -613,7 +624,8 @@
             do (kiln.kir::module-object-cell cell (nil-word))))
     (loop for function across functions for id from 0
           do (let ((*regions* nil) (*debug-vars* nil) (*debug-var-count* 0)
-                   (*function-name* (local-function-debug-name (or (mir-function-name function) 'lambda))))
+                   (*function-name* (or (mir-function-debug-name function)
+                                       (local-function-debug-name (or (mir-function-name function) '#:lambda)))))
                (with-function ((svref *mir-lir-labels* id))
                  (let ((*self* (copy-to-var :self)))
                    (mir-lir-function-body function unit))
