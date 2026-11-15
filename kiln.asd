@@ -58,6 +58,7 @@
                (:file "mir/escape")
                (:file "mir/predicates")
                (:file "mir/lifting")
+               (:file "mir/lifting-environments")
                (:file "mir/inlining")
                (:file "mir/lists")
                (:file "mir/scalar")

@@ -177,17 +177,17 @@
       (setf (mir-function-instructions function) rebuilt-instructions)))
   function)
 
-(defun mir-lift-local-functions (unit &key (parameter-budget 4096))
+(defun mir-lift-direct-environments (unit &key (parameter-budget 4096))
   (let* ((calls (mir-infer-calls unit)) (widths (mir-lifting-widths unit calls))
          (identities (mir-call-analysis-identities calls))
          (cell-masks (map 'simple-vector #'mir-function-capture-cells (hir-vector (mir-unit-functions unit)))))
-    (unless (find-if #'identity widths) (return-from mir-lift-local-functions unit))
+    (unless (find-if #'identity widths) (return-from mir-lift-direct-environments unit))
     (loop for function across (hir-vector (mir-unit-functions unit)) for known across identities
           for extra = (loop for block across (hir-vector (mir-function-blocks function))
                             sum (loop for parameter across (mir-block-parameters block)
                                       for target = (svref known parameter)
                                       sum (if (integerp target) (or (svref widths target) 0) 0)))
-          when (> extra parameter-budget) do (return-from mir-lift-local-functions unit))
+          when (> extra parameter-budget) do (return-from mir-lift-direct-environments unit))
     (mir-run-unit-pass unit
       (lambda (unit)
         (loop for function across (hir-vector (mir-unit-functions unit)) for known across identities
