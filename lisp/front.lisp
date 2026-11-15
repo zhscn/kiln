@@ -599,16 +599,17 @@ the second value."
         (otherwise (list (first form) (second form)))))))
 
 (defun source-definition-record (form keys calls parent source)
-  (list :dspec (definition-specifier form) :name (definition-name form)
-        :form form :package (target-package-name *package*) :file *source-file*
-        :source source :origin *source-origin* :parent parent :keys keys :calls calls
-        :outputs (case (first form)
-                   (defmacro (list (list :macro (second form))))
-                   (define-compiler-macro (list (list :compiler-macro (second form))))
-                   ((defsetf define-setf-expander) (list (list :setf (second form))))
-                   (deftype (list (list :type (second form))))
-                   (defconstant (list (list :constant (second form))))
-                   ((defun defgeneric) (list (list :function (second form)))))))
+  (multiple-value-bind (keys calls) (canonical-definition-references form keys calls)
+    (list :dspec (definition-specifier form) :name (definition-name form)
+          :form form :package (target-package-name *package*) :file *source-file*
+          :source source :origin *source-origin* :parent parent :keys keys :calls calls
+          :outputs (case (first form)
+                     (defmacro (list (list :macro (second form))))
+                     (define-compiler-macro (list (list :compiler-macro (second form))))
+                     ((defsetf define-setf-expander) (list (list :setf (second form))))
+                     (deftype (list (list :type (second form))))
+                     (defconstant (list (list :constant (second form))))
+                     ((defun defgeneric) (list (list :function (second form))))))))
 
 (defgeneric evaluate-at-compile-time (client input environment)
   (:documentation "Evaluates INPUT, a CST or a form, at compile time in the

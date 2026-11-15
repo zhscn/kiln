@@ -40,6 +40,17 @@
 
 收集器是 `*dependencies*`。原生 `eval` 和文件前端在处理定义时都绑定它。文件编译把依赖与定义记录一起写入初始化代码；compiler 模块导入记录后建立反向索引。
 
+同一组事实在宿主和 image 中可能通过不同的查询顺序收集。依赖键和已知调用关系
+是集合；若把查询顺序直接写入定义记录，等价编译也会生成不同的常量图，破坏
+产物比较。`canonical-definition-references` 在创建记录时复制列表，再按依赖种类、
+目标包名、符号名及普通／setf 函数名排序。请求收集器保留实际查询的先后顺序，准备钩子仍在每次查询前执行；
+规范化仅处理已经收集的引用。
+
+未 intern 的符号靠身份区分，不能按可能重复的打印名或宿主 gensym 计数器排序。
+记录使用源码图中首次出现的顺序为这些名字编号，遍历会保留共享并识别循环；
+没有源码位置的外部名字保留记录内首次引用的身份顺序。排序只重排引用，不复制或合并
+符号，也不改变定义及其源位置。
+
 ## 失效和更新
 
 - 重定义点调用 `kiln.kernel::*redefinition-hook*`。宏、setf 展开器、常量和函数绑定的变更都经过 `change-assumption`（`lisp/target/assumptions.lisp`），由它把键交给钩子。`deftype`、`(setf find-class)`、类的终结与重初始化、方法增删和泛函重初始化也经过这个入口。前端的 `note-inline-definition` 和 `notinline` 声明只在编译进 image 时改变 inline 假设。compiler 模块载入时设置这个钩子（`lisp/target/compiler/dependencies.lisp`）。
