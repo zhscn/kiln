@@ -8,6 +8,8 @@ Both are copied unchanged in their own commit; kiln's changes to them are listed
 
 `native-compile-small.lisp` measures warmed runtime compilation of independent small functions. Run `tools/bench-native-compile.py --modules build/boot/stage0`; select an output directory for each module set. It reports CPU microseconds per compile after warmup and verifies the compiled results. Keep the backend, heap configuration and machine load fixed when comparing modules.
 
+Pass `--pipeline hir` or `--pipeline mir` to select the runtime compiler independently of how those modules were built. The default follows `KILN_BUILD_PIPELINE`, falling back to HIR. Use `--backend target/release/kiln-cg` for a release backend; the default is the debug executable. The default heap is 8 GiB unless `MMTK_GC_TRIGGER` is set. Reports identify the inputs by checksum and summarize process means, rather than individual compilation tail latency.
+
 ## Running
 
 `tools/bench.sh [--no-build] [--kiln-only | --sbcl-only] [NAME|GROUP ...]` runs cl-bench on kiln (an AOT executable with the five modules, each benchmark in a process of its own with a timeout) and on SBCL (`sbcl --script`, default optimization), and prints a table of milliseconds per run and the ratio. The harness is `cl-bench-prelude.lisp` (DEFBENCH, `*misc-dir*`) and `cl-bench-driver.lisp` (selection, timing, errors), around cl-bench's `files/` and `tests.lisp`, which are used unchanged; they replace cl-bench's `support.lisp` and `cl-bench.lisp` (ASDF, trivial-garbage, report files).

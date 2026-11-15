@@ -14,6 +14,11 @@
 脚本还记录可执行文件与模块清单的校验和，用于识别测量对象；相同输入产生
 不同编译记录的运行会被拒绝。
 
+`--pipeline hir|mir` 显式选择本次自编译的分析路径，并写入汇总；省略时使用
+`KILN_BUILD_PIPELINE`，环境变量也未设置时选择 HIR。同一可执行文件可以分别
+运行两条路径；比较不同构建的可执行文件时也应显式指定，避免把模块自身的
+编译路径与本次测量使用的路径混为一谈。
+
 ```sh
 tools/bootstrap.sh
 tools/bench-compiler.py --output build/compiler-baseline
@@ -56,7 +61,7 @@ HIR 的表示与分析见 [hir.md](hir.md)，降级见 [lowering.md](lowering.md
 reader 与文件流见 [io.md](io.md)。性能测量记录见
 [performance.md](../research/performance.md)。
 
-宿主的可移植编码器按记录构建临时列表，image 的批量 native 编码器直接构造拥有所有权的记录并生成同一字节格式；一次性 `compile` 直接交接 Rust 自有记录，省去字节向量及编码、解码往返。结果仍使用 Lisp simple-vector octets，记录空间与编码成本须单独测量，不能将传输实现等同于预算达标。运行期缓存和 FASL 不再依赖 KIR 文本。
+宿主的可移植编码器使用可增长的紧凑记录、边与字节向量，image 的批量 native 编码器直接构造拥有所有权的记录并生成同一字节格式；一次性 `compile` 直接交接 Rust 自有记录，省去字节向量及编码、解码往返。结果仍使用 Lisp simple-vector octets，记录空间与编码成本须单独测量，不能将传输实现等同于预算达标。运行期缓存和 FASL 不再依赖 KIR 文本。
 
 ## 小函数与切换预算
 
@@ -71,3 +76,10 @@ reader 与文件流见 [io.md](io.md)。性能测量记录见
 ## 小函数基准入口
 
 `tools/bench-native-compile.py --modules build/boot/stage0 --output build/native-baseline` 使用指定目录的五个模块，测量预热后独立小函数的原生 `compile` CPU 时间。`bench/native-compile-small.lisp` 每次生成新函数并校验调用结果，绕开顶层产物缓存；每个进程先预热，重复进程报告中位数。比较不同模块目录时保持同一后端、堆配置和机器负载，运行期间不进行构建或其他基准。原始输出保存在指定的忽略目录。它覆盖完整小函数编译开销，不代替协议阶段的独立计时。
+
+`--pipeline hir|mir` 在预热之前设置运行期编译路径，不由模块目录的构建方式推断；
+默认规则与自编译基准一致。`--backend` 选择后端可执行文件，默认使用 debug 构建；
+测量生产配置时可指定 `target/release/kiln-cg`。默认堆为 8 GiB，保留调用者的
+`MMTK_GC_TRIGGER` 设置。汇总包含路径、堆、后端和模块校验和，以及原基准、
+生成的源程序和 LIR 校验和。每个样本是一次进程内多次编译的平均 CPU 时间，
+报告的是这些均值的中位数，不提供单次编译的尾延迟分布。

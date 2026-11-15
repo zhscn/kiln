@@ -20,14 +20,18 @@ def main():
     parser.add_argument('--output', type=Path, default=root / 'build/bench-compiler')
     parser.add_argument('--runs', type=int, default=5)
     parser.add_argument('--warmup', type=int, default=1)
+    parser.add_argument('--pipeline', choices=('hir', 'mir'),
+                        default=os.environ.get('KILN_BUILD_PIPELINE', 'hir'))
     args = parser.parse_args()
     if args.runs < 1 or args.warmup < 0:
         parser.error('runs must be positive and warmup nonnegative')
+    if args.pipeline not in ('hir', 'mir'):
+        parser.error('KILN_BUILD_PIPELINE must be hir or mir')
     exe, manifest, output = (p.resolve() for p in (args.exe, args.manifest, args.output))
     if not exe.is_file() or not manifest.is_file():
         parser.error('build the bootstrap executable and manifest first')
     output.mkdir(parents=True, exist_ok=True)
-    env = dict(os.environ, KILN_BUILD_TIMING='1')
+    env = dict(os.environ, KILN_BUILD_TIMING='1', KILN_BUILD_PIPELINE=args.pipeline)
     for key in ('KILN_SERVE', 'KILN_SAVE_IMAGE', 'KILN_IMAGE'):
         env.pop(key, None)
     env.setdefault('MMTK_GC_TRIGGER', 'FixedHeapSize:8589934592')
@@ -66,7 +70,7 @@ def main():
             records.append(record)
         print(f'{"warmup" if index < args.warmup else "sample"} {index}: {elapsed:.3f}s',
               flush=True)
-    result = dict(executable=str(exe), executable_sha256=hashlib.sha256(exe.read_bytes()).hexdigest(),
+    result = dict(pipeline=args.pipeline, executable=str(exe), executable_sha256=hashlib.sha256(exe.read_bytes()).hexdigest(),
                   manifest_sha256=hashlib.sha256(manifest.read_bytes()).hexdigest(),
                   heap=env['MMTK_GC_TRIGGER'], warmup=args.warmup, samples=records,
                   kir_sha256=expected, median_seconds=statistics.median(r['seconds'] for r in records),
