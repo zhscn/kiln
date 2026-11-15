@@ -571,8 +571,16 @@
         (mir-lir-edge-copies function (second entry))
         (jump (svref labels (mir-edge-target (second entry))))))))
 
+(defun mir-optimize-unit (unit)
+  (mir-fold-type-predicates unit)
+  (mir-lift-local-functions unit)
+  (mir-inline-local-functions unit)
+  (mir-fold-type-predicates unit)
+  (mir-scalar-replace unit)
+  (mir-simplify-block-parameters unit))
+
 (defun mir-lower-toplevel (hir)
-  (let* ((unit (mir-simplify-block-parameters (mir-scalar-replace (mir-lift-local-functions (mir-fold-type-predicates (hir-to-mir hir)))))) (*mir-lir-functions* (hir-vector (mir-unit-functions unit)))
+  (let* ((unit (mir-optimize-unit (hir-to-mir hir))) (*mir-lir-functions* (hir-vector (mir-unit-functions unit)))
          (functions *mir-lir-functions*)
          (*mir-lir-load-time-cells* (map 'simple-vector
                                         (lambda (id) (declare (ignore id)) (fresh-label "kiln_mir_ltv_"))

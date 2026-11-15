@@ -1723,3 +1723,125 @@
                 (handler-case (progn (funcall old 20) nil)
                   (type-error (condition) (eq (type-error-expected-type condition) 'mir-values-domain)))
                 (handler-case (progn (funcall new 5) nil) (type-error () t))))))
+
+
+(print
+ (multiple-value-list
+  (funcall
+   (mir-test-compile
+    '(lambda (x)
+       (declare (optimize (speed 3) (debug 0) (compilation-speed 0)))
+       (flet ((add (a)
+                (+ a 1)))
+         (values (add x) (add 2)))))
+   3)))
+
+(print
+ (multiple-value-list
+  (funcall
+   (mir-test-compile
+    '(lambda (x)
+       (declare (optimize (speed 3) (debug 0) (compilation-speed 0)))
+       (flet ((choose (a)
+                (if a
+                    (values 1 2)
+                    (values))))
+         (values (choose x) (choose nil)))))
+   3)))
+
+(print
+ (multiple-value-list
+  (funcall
+   (mir-test-compile
+    '(lambda (x)
+       (declare (optimize (speed 3) (debug 0) (compilation-speed 0)))
+       (flet ((sum (n)
+                (let ((i 0) (total 0))
+                  (tagbody
+                   again
+                    (if (= i n)
+                        (go done))
+                    (incf total i)
+                    (incf i)
+                    (go again)
+                   done)
+                  total)))
+         (values (sum x) (sum 3)))))
+   3)))
+
+(print
+ (multiple-value-list
+  (funcall
+   (mir-test-compile
+    '(lambda (x)
+       (declare (optimize (speed 3) (debug 0) (compilation-speed 0)))
+       (let ((n x))
+         (flet ((next ()
+                  (incf n)))
+           (values (next) (next) n)))))
+   3)))
+
+(print
+ (multiple-value-list
+  (funcall
+   (mir-test-compile
+    '(lambda (x)
+       (declare (optimize (speed 3) (debug 0) (compilation-speed 0)))
+       (flet ((make (a)
+                (lambda () (incf a))))
+         (let ((a (make x)) (b (make 10)))
+           (values (funcall a) (funcall a) (funcall b))))))
+   3)))
+
+(print
+ (multiple-value-list
+  (funcall
+   (mir-test-compile
+    '(lambda (x)
+       (declare (optimize (speed 3) (debug 0) (compilation-speed 0)))
+       (flet ((leave (a)
+                (kiln.sys:%gc)
+                (throw 'done (values a :exit))))
+         (catch 'done
+           (if x
+               (leave x)
+               (leave nil))))))
+   3)))
+
+(print
+ (multiple-value-list
+  (funcall
+   (mir-test-compile
+    '(lambda (x)
+       (declare (optimize (speed 3) (debug 0) (compilation-speed 0)))
+       (flet ((apply-one (function argument)
+                (funcall function argument))
+              (add (a)
+                (+ a 1)))
+         (values (apply-one #'add x) (apply-one #'add 2)))))
+   3)))
+
+(print
+ (multiple-value-list
+  (funcall
+   (mir-test-compile
+    '(lambda (x)
+       (declare (ignore x)
+                (optimize (speed 3) (debug 0) (compilation-speed 0)))
+       (let ((n 0))
+         (flet ((probe (a b)
+                  (list a b n)))
+           (values (probe (incf n) (incf n)) (probe (incf n) (incf n)) n)))))
+   3)))
+
+(print
+ (multiple-value-list
+  (funcall
+   (mir-test-compile
+    '(lambda (x)
+       (declare (ignore x) (optimize (speed 3) (debug 0) (compilation-speed 0)))
+       (flet ((literal () (load-time-value (list :token))))
+         (let ((first (literal)))
+           (kiln.sys:%gc)
+           (values (eq first (literal)) (car (literal)))))))
+   3)))

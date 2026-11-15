@@ -250,6 +250,20 @@
 (defun mir-infer-cell-aliases (unit)
   (mir-unit-analysis unit :cell-aliases #'mir-compute-cell-aliases))
 
+(defun mir-known-call-graph (functions identities)
+  "Collect reachable local-call edges from SSA function identities."
+  (let ((outgoing (make-array (length functions) :initial-element nil)))
+    (loop for function across functions for known across identities
+          for id = (mir-function-id function) for reachable = (mir-reachable-blocks function)
+          do (loop for block across (hir-vector (mir-function-blocks function))
+                   when (logbitp (mir-block-id block) reachable) do
+                     (loop for index across (hir-vector (mir-block-instructions block))
+                           for instruction = (mir-at (mir-function-instructions function) index)
+                           when (member (mir-instruction-kind instruction) '(7 15)) do
+                             (let ((target (svref known (svref (mir-instruction-operands instruction) 0))))
+                               (when (integerp target) (pushnew target (svref outgoing id)))))))
+    outgoing))
+
 (defun mir-compute-calls (unit)
   (let* ((functions (hir-vector (mir-unit-functions unit))) (count (length functions))
          (identities (map 'simple-vector #'mir-function-identities functions))
@@ -282,15 +296,7 @@
          (cell-types (make-array (mir-cell-aliases-count cell-aliases) :initial-element :unseen))
          (cell-changes (make-array (length cell-types) :initial-element 0))
          (types (make-array count)) (packets (make-array count)))
-    (loop for function across functions for id from 0
-          for known across identities for reachable = (mir-reachable-blocks function) do
-      (loop for block across (hir-vector (mir-function-blocks function))
-            when (logbitp (mir-block-id block) reachable) do
-        (loop for index across (hir-vector (mir-block-instructions block))
-              for instruction = (mir-at (mir-function-instructions function) index)
-              when (member (mir-instruction-kind instruction) '(7 15)) do
-                (let ((target (svref known (svref (mir-instruction-operands instruction) 0))))
-                  (when (integerp target) (pushnew target (svref outgoing id)))))))
+    (setf outgoing (mir-known-call-graph functions identities))
     (let ((components (mir-strong-components outgoing)) (changed t))
       (labels ((merge-fact (row counts position candidate)
                  (let ((old (svref row position)))
