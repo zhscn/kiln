@@ -131,3 +131,65 @@
                (mir-run-pass unit function
                  (lambda (function) (mir-rewrite-block-parameters function aliases live))))))
   unit)
+
+(defun mir-prune-unreachable-blocks (unit function)
+  "Remove dead CFG bodies and compact their block, value, instruction and region IDs."
+  (let* ((blocks (hir-vector (mir-function-blocks function)))
+         (instructions (mir-function-instructions function))
+         (values (hir-vector (mir-function-values function)))
+         (live (make-array (length blocks) :initial-element nil))
+         (work (make-hir-buffer)) (count 0))
+    (hir-push 0 work)
+    (loop for cursor from 0 while (< cursor (hir-buffer-count work))
+          for id = (mir-at work cursor) unless (svref live id) do
+            (setf (svref live id) t) (incf count)
+            (loop for edge across (mir-terminator-edges (mir-block-terminator (svref blocks id)))
+                  do (hir-push (mir-edge-target edge) work)))
+    (when (= count (length blocks)) (return-from mir-prune-unreachable-blocks nil))
+    (let ((block-map (make-array (length blocks) :initial-element nil))
+          (value-map (make-array (length values) :initial-element nil))
+          (regions (make-hash-table))
+          (new-blocks (make-hir-buffer)) (new-values (make-hir-buffer)) (new-instructions (make-hir-buffer)))
+      (loop for block across blocks for old from 0 when (svref live old) do
+        (setf (svref block-map old) (hir-buffer-count new-blocks))
+        (hir-push block new-blocks)
+        (loop for id across (hir-vector (mir-block-instructions block))
+              for instruction = (mir-at instructions id)
+              when (member (mir-instruction-kind instruction) '(27 29 30 32 34 35))
+                do (setf (gethash (mir-binding-entry-id instruction) regions) (hash-table-count regions))))
+      (loop for value across values for old from 0 when (svref live (mir-value-block value)) do
+        (setf (svref value-map old) (hir-buffer-count new-values)
+              (mir-value-id value) (hir-buffer-count new-values)
+              (mir-value-block value) (svref block-map (mir-value-block value)))
+        (hir-push value new-values))
+      (labels ((value (id) (or (svref value-map id) (mir-fail "Live MIR use lost its definition")))
+               (value-vector (ids) (map 'simple-vector #'value ids))
+               (region (id) (or (gethash id regions) (mir-fail "Live MIR region lost its entry"))))
+        (loop for block across (hir-vector new-blocks) for id from 0
+              for body = (make-hir-buffer) for term = (mir-block-terminator block) do
+          (setf (mir-block-id block) id
+                (mir-block-parameters block) (value-vector (mir-block-parameters block)))
+          (loop for old across (hir-vector (mir-block-instructions block))
+                for instruction = (mir-at instructions old) for kind = (mir-instruction-kind instruction) do
+                  (setf (mir-instruction-id instruction) (hir-buffer-count new-instructions)
+                        (mir-instruction-operands instruction) (value-vector (mir-instruction-operands instruction)))
+                  (when (mir-instruction-result instruction)
+                    (setf (mir-instruction-result instruction) (value (mir-instruction-result instruction))))
+                  (when (<= 27 kind 36)
+                    (setf (mir-instruction-data instruction)
+                          (if (= kind 27)
+                              (cons (region (car (mir-instruction-data instruction))) (cdr (mir-instruction-data instruction)))
+                              (region (mir-instruction-data instruction)))))
+                  (hir-push (mir-instruction-id instruction) body)
+                  (hir-push instruction new-instructions))
+          (setf (mir-block-instructions block) body
+                (mir-terminator-operands term) (value-vector (mir-terminator-operands term)))
+          (when (mir-terminator-region term) (setf (mir-terminator-region term) (region (mir-terminator-region term))))
+          (loop for edge across (mir-terminator-edges term) do
+            (setf (mir-edge-target edge) (or (svref block-map (mir-edge-target edge)) (mir-fail "Live MIR edge targets dead block"))
+                  (mir-edge-arguments edge) (value-vector (mir-edge-arguments edge))))))
+      (setf (mir-function-blocks function) new-blocks (mir-function-values function) new-values
+            (mir-function-instructions function) new-instructions)
+      (clrhash (mir-function-analyses function))
+      (clrhash (mir-unit-analyses unit))
+      t)))

@@ -236,5 +236,8 @@
             (unless selected (return))
             (destructuring-bind (block call callee cost) selected
               (incf growth cost)
-              (mir-run-pass unit caller (lambda (caller) (mir-inline-call caller block call callee)))))))))
+              (mir-run-pass unit caller
+                (lambda (caller)
+                  (mir-inline-call caller block call callee)
+                  (mir-prune-unreachable-blocks unit caller)))))))))
   unit)

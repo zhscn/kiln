@@ -136,6 +136,9 @@
     (loop for function across functions for known across identities
           for sets = (mir-contained-functions function)
           for reachable = (mir-reachable-blocks function) do
+      ;; Unconstructed bodies still read captured functions through their public ABI.
+      (loop for target across (mir-function-capture-functions function) when target
+            do (setf external (logior external (ash 1 target))))
       (loop for block across (hir-vector (mir-function-blocks function))
             when (logbitp (mir-block-id block) reachable) do
         (loop for id across (hir-vector (mir-block-instructions block))

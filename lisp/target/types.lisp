@@ -132,7 +132,8 @@
                (or (null args) (eq (car args) '*) (typep (car object) (car args)))
                (or (null (cdr args)) (eq (cadr args) '*) (typep (cdr object) (cadr args)))))
     ((string base-string)
-     (and (if (eq head 'base-string) (base-string-p object) (stringp object)) (or (null args) (eq (car args) '*) (= (length object) (car args)))))
+     (and (if (eq head 'base-string) (base-string-p object) (stringp object))
+          (or (null args) (eq (car args) '*) (= (array-dimension object 0) (car args)))))
     ((simple-string simple-base-string)
      (and (if (eq head 'simple-base-string) (simple-base-string-p object) (simple-string-p object)) (or (null args) (eq (car args) '*) (= (length object) (car args)))))
     (simple-vector

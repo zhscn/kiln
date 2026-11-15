@@ -87,6 +87,8 @@
                    do (mir-run-pass unit function
                         (lambda (function)
                           (when folds (mir-replace-type-predicates function folds))
-                          (when branches (mir-replace-type-branches function branches))))
+                          (when branches
+                            (mir-replace-type-branches function branches)
+                            (mir-prune-unreachable-blocks unit function))))
                       (setf changed t)))
   unit)
