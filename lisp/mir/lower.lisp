@@ -124,8 +124,12 @@
             ((and (= count 2) (eq name 'elt) (eq type :simple-array-vector)) :array-read)
             ((and store (equal name '(setf elt)) (eq type :simple-array-vector)) :array-write)))))
 
-(defun mir-lir-container-value (operation name args)
+(defun mir-lir-container-value (operation instruction args)
   (let* ((store (member operation '(:vector-write :string-write :array-write)))
+         (name (mir-instruction-data instruction))
+         (operands (mir-instruction-operands instruction))
+         (index-type (and (> (length operands) 1)
+                          (svref *mir-lir-types* (svref operands (if store 2 1)))))
          (object (if store (second args) (first args)))
          (index (if store (third args) (second args))) (value (and store (first args))))
     (case operation
@@ -303,7 +307,7 @@
         (return-from mir-lir-instruction)))
     (let ((operation (mir-lir-container-call instruction)))
       (when operation
-        (mir-lir-save result (mir-lir-container-value operation data args) 1)
+        (mir-lir-save result (mir-lir-container-value operation instruction args) 1)
         (return-from mir-lir-instruction)))
     (when (mir-lir-fixnum-call-p instruction)
       (mir-lir-save result (mir-lir-fixnum-call instruction args) 1)

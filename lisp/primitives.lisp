@@ -571,15 +571,19 @@ are compared (no short circuit), which also checks every argument."
 ;;; strings, for LENGTH); anything else, and a bad index, takes the slow
 ;;; path: a call to the kernel's function, which signals the error or
 ;;; handles the other sequences.
-(defun emit-svref-fast-path (v i fast-fn slow-fn &optional known-vector)
+(defun emit-svref-fast-path (v i fast-fn slow-fn &optional known-vector known-fixnum nonnegative)
   "Calls FAST-FN in a block where V is a simple vector and I a valid index
-of it, SLOW-FN otherwise; both return an operand. Returns the result."
+of it, SLOW-FN otherwise; both return an operand. Returns the result.
+KNOWN-FIXNUM and NONNEGATIVE require proofs about I; the length check remains."
   (let ((r (new-var)) (vector (new-block)) (fast (new-block)) (slow (new-block))
         (done (new-block)))
     (if known-vector (jump vector)
         (br (emit-kind-test v kiln.kir::+packet-class-simple-vector+) vector slow))
     (start-block vector)
-    (br `(:or (:eq (:test-class ,kiln.kir::+packet-class-fixnum+ ,i) 0) (:or (:lt ,i (:fixnum-tag 0)) (:ge ,i ,(vector-length v)))) slow fast)
+    (let* ((bounds `(:ge ,i ,(vector-length v)))
+           (bounds (if nonnegative bounds `(:or (:lt ,i (:fixnum-tag 0)) ,bounds))))
+      (br (if known-fixnum bounds
+              `(:or (:eq (:test-class ,kiln.kir::+packet-class-fixnum+ ,i) 0) ,bounds)) slow fast))
     (start-block fast)
     (emit `(:set ,r ,(funcall fast-fn)))
     (jump done)
