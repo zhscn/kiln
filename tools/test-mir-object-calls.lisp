@@ -1,0 +1,26 @@
+;;;; Run after tools/env.lisp and (ql:quickload "kiln").
+(in-package #:kiln.compiler)
+
+(defun mir-object-test-cache-count (form pipeline &optional (name "object-cache-model"))
+  (let ((module (compile-module (front-end-forms (list form)) name :pipeline pipeline)))
+    (count-if (lambda (entry)
+                (and (consp (third entry)) (eq (car (third entry)) :static-mutable-cons)))
+              (kiln.kir::kmodule-data module))))
+
+(dolist (pipeline '(:hir :mir))
+  (dolist (form '((lambda (object) (slot-value object 'value))
+                  (lambda (object value) (setf (slot-value object 'value) value))
+                  (lambda (value) (make-instance 'cache-model-class :value value))))
+    (assert (= 1 (mir-object-test-cache-count form pipeline)))))
+
+(dolist (form '((lambda (object slot) (slot-value object slot))
+                (lambda (object value slot) (setf (slot-value object slot) value))
+                (lambda (class value) (make-instance class :value value))
+                (lambda (key value) (make-instance 'cache-model-class key value))
+                (lambda (object) (declare (notinline slot-value)) (slot-value object 'value))
+                (lambda (value) (declare (notinline make-instance)) (make-instance 'cache-model-class :value value))
+                (lambda (object) (declare (optimize (speed 0) (debug 3))) (slot-value object 'value))))
+  (assert (zerop (mir-object-test-cache-count form :mir))))
+(assert (zerop (mir-object-test-cache-count '(lambda (value) (make-instance 'cache-model-class :value value))
+                                           :mir "kernel")))
+(format t "MIR object calls allocate caches only for literal names and complete constructor keys under an optimizing policy.~%")

@@ -78,6 +78,34 @@
             (when (or (inline-typep-specifier-p type) (cached-typep-specifier-p type))
               (list type))))))))
 
+(defun mir-lir-object-call-plan (instruction)
+  "Find literal names and keys needed by guarded slot and constructor caches."
+  (when (and (= (mir-instruction-kind instruction) 6)
+             (hir-policy-optimize-p (mir-instruction-policy instruction))
+             (not (mir-instruction-notinline instruction)))
+    (let* ((name (mir-instruction-data instruction))
+           (operands (mir-instruction-operands instruction)) (count (length operands)))
+      (labels ((constant (index)
+                 (let ((definition (svref *mir-lir-definitions*
+                                          (mir-primary-origin (svref operands index) *mir-lir-definitions*))))
+                   (when (and definition (= (mir-instruction-kind definition) 0))
+                     (values (mir-instruction-data definition) t)))))
+        (cond ((or (and (eq name 'slot-value) (= count 2))
+                   (and (equal name '(setf slot-value)) (= count 3)))
+               (multiple-value-bind (slot known) (constant (1- count))
+                 (when (and known (symbolp slot))
+                   (list (if (= count 2) :slot-read :slot-write) slot))))
+              ((and (eq name 'make-instance) (oddp count) (call-site-specialization-p)
+                    (<= count kiln.kir::+backend-argument-limit+))
+               (multiple-value-bind (class known) (constant 0)
+                 (when (and known class (symbolp class))
+                   (let ((keys nil))
+                     (loop for index from 1 below count by 2 do
+                       (multiple-value-bind (key known) (constant index)
+                         (unless (and known (symbolp key)) (return-from mir-lir-object-call-plan nil))
+                         (push key keys)))
+                     (list :constructor class (nreverse keys)))))))))))
+
 (defun mir-lir-container-call (instruction)
   (when (and (= (mir-instruction-kind instruction) 6)
              (hir-policy-optimize-p (mir-instruction-policy instruction))
@@ -263,6 +291,15 @@
     (let ((specialization (mir-lir-typep-specialization instruction)))
       (when specialization
         (mir-lir-save result (emit-typep-test (first args) (first specialization)) 1)
+        (return-from mir-lir-instruction)))
+    (let ((plan (mir-lir-object-call-plan instruction)))
+      (when plan
+        (multiple-value-bind (value count)
+            (ecase (first plan)
+              (:slot-read (emit-cached-slot-value (first args) (second plan)))
+              (:slot-write (emit-cached-set-slot-value (first args) (second args) (second plan)))
+              (:constructor (emit-constructor-call data args (second plan) (third plan))))
+          (mir-lir-save result value (or count 1)))
         (return-from mir-lir-instruction)))
     (let ((operation (mir-lir-container-call instruction)))
       (when operation
@@ -606,10 +643,12 @@
 
 (defun mir-optimize-unit (unit)
   (mir-simplify-block-parameters unit :preserve-refinements t)
+  (mir-specialize-sequence-calls unit)
   (mir-fold-type-predicates unit)
   (mir-lift-local-functions unit)
   (mir-inline-local-functions unit)
   (mir-expand-list-calls unit)
+  (mir-specialize-sequence-calls unit)
   (mir-fold-type-predicates unit)
   (mir-scalar-replace unit)
   (mir-simplify-block-parameters unit))

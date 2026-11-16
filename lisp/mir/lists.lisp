@@ -59,3 +59,46 @@
       (when selected
         (mir-run-pass unit function (lambda (function) (mir-expand-list-function function selected))))))
   unit)
+
+(defun mir-sequence-call-helper (instruction definitions)
+  "Select a two-argument search when its complete keyword contract is known."
+  (let ((name (mir-instruction-data instruction))
+        (args (mir-instruction-operands instruction)))
+    (when (and (= (mir-instruction-kind instruction) 6) (member name '(member assoc))
+               (member (length args) '(2 4))
+               (hir-policy-optimize-p (mir-instruction-policy instruction))
+               (not (mir-instruction-notinline instruction)))
+      (labels ((definition (index)
+                 (svref definitions (mir-primary-origin (svref args index) definitions))))
+        (let ((test (if (= (length args) 2) 'eql
+                        (let ((key (definition 2)) (value (definition 3)))
+                          (and key (= (mir-instruction-kind key) 0)
+                               (eq (mir-instruction-data key) :test)
+                               value (member (mir-instruction-kind value) '(0 4))
+                               (mir-instruction-data value))))))
+          (cdr (assoc (list name test)
+                      '(((member eq) . kiln.kernel::%member-eq)
+                        ((member eql) . kiln.kernel::%member-eql)
+                        ((assoc eq) . kiln.kernel::%assoc-eq)
+                        ((assoc eql) . kiln.kernel::%assoc-eql)) :test #'equal)))))))
+
+(defun mir-specialize-sequence-calls (unit)
+  (loop for function across (hir-vector (mir-unit-functions unit)) do
+    (let ((definitions (mir-value-definitions function))
+          (reachable (mir-reachable-blocks function)) (selected nil))
+      (loop for block across (hir-vector (mir-function-blocks function))
+            when (logbitp (mir-block-id block) reachable) do
+        (loop for id across (hir-vector (mir-block-instructions block))
+              for instruction = (mir-at (mir-function-instructions function) id)
+              for helper = (mir-sequence-call-helper instruction definitions)
+              when helper do (push (cons instruction helper) selected)))
+      (when selected
+        (mir-run-pass unit function
+          (lambda (function)
+            (declare (ignore function))
+            ;; Operand producers remain in place, including evaluation of the test.
+            (dolist (entry selected)
+              (setf (mir-instruction-data (car entry)) (cdr entry)
+                    (mir-instruction-operands (car entry))
+                    (subseq (mir-instruction-operands (car entry)) 0 2))))))))
+  unit)

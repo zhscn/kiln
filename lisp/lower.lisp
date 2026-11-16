@@ -1125,30 +1125,26 @@ make that the test, with no key: none, or :TEST #'EQL, #'EQ, 'EQL or
         ((cached-typep-specifier-p type) (emit-cached-typep object type))
         (t (emit-slow-call 'typep object (constant-object type)))))
 
-(defun lower-cached-slot-value (object-ast slot-name)
-  "(SLOT-VALUE OBJECT 'SLOT-NAME) at a call site: a call to
-KILN.KERNEL::%SLOT-VALUE-CACHED with a cache of this call, a cons of static
-data whose car is the stamp of the last object's class and whose cdr is the
-slot's location there, both fixnums: a stamp belongs to one finalization of
-a class, so it is the guard of the location (see lisp/target/clos/
-support.lisp)."
-  (let ((object (copy-to-var (lower object-ast)))
-        (label (fresh-label "kiln_slot_value_cache_")))
+(defun emit-cached-slot-value (object slot-name)
+  "Read a named slot through a cache guarded by the object's class stamp."
+  (let ((label (fresh-label "kiln_slot_value_cache_")))
     (module-data label `(:static-mutable-cons ,(nil-word) ,(nil-word)))
     (emit-lisp-call (function-cell-value 'kiln.kernel::%slot-value-cached)
-                    (list object (constant-object slot-name)
-                          `(:object-address ,label :cons)))))
+                    (list object (constant-object slot-name) `(:object-address ,label :cons)))))
 
-(defun lower-cached-set-slot-value (value-ast object-ast slot-name)
-  "(SETF (SLOT-VALUE OBJECT 'SLOT-NAME) VALUE), the same cache as
-LOWER-CACHED-SLOT-VALUE."
-  (let ((value (copy-to-var (lower value-ast)))
-        (object (copy-to-var (lower object-ast)))
-        (label (fresh-label "kiln_set_slot_value_cache_")))
+(defun lower-cached-slot-value (object-ast slot-name)
+  (emit-cached-slot-value (copy-to-var (lower object-ast)) slot-name))
+
+(defun emit-cached-set-slot-value (value object slot-name)
+  "Write a named slot through a cache guarded by the object's class stamp."
+  (let ((label (fresh-label "kiln_set_slot_value_cache_")))
     (module-data label `(:static-mutable-cons ,(nil-word) ,(nil-word)))
     (emit-lisp-call (function-cell-value 'kiln.kernel::%set-slot-value-cached)
-                    (list value object (constant-object slot-name)
-                          `(:object-address ,label :cons)))))
+                    (list value object (constant-object slot-name) `(:object-address ,label :cons)))))
+
+(defun lower-cached-set-slot-value (value-ast object-ast slot-name)
+  (let ((value (copy-to-var (lower value-ast))) (object (copy-to-var (lower object-ast))))
+    (emit-cached-set-slot-value value object slot-name)))
 
 (defun call-site-root ()
   "A mutable cache cons whose object-valued car is a static GC root."
@@ -1160,9 +1156,8 @@ LOWER-CACHED-SLOT-VALUE."
   ;; The construction protocol itself (kernel, CLOS) calls MAKE-INSTANCE plainly.
   (not (member (kmodule-name *module*) '("kernel" "clos") :test #'string=)))
 
-(defun lower-constructor-call (name arg-asts class-name keys)
-  (let* ((vals (lower-args arg-asts))
-         (helper (function-cell-value 'kiln.kernel::%constructor-target))
+(defun emit-constructor-call (name vals class-name keys)
+  (let* ((helper (function-cell-value 'kiln.kernel::%constructor-target))
          (fallback (new-block)) (specialized (new-block)) (done (new-block))
          (result (new-var)) (count (new-var :raw)))
     (br (undefined-function-test helper) fallback specialized)
@@ -1181,6 +1176,9 @@ LOWER-CACHED-SLOT-VALUE."
     (jump done)
     (start-block done)
     (values result count)))
+
+(defun lower-constructor-call (name arg-asts class-name keys)
+  (emit-constructor-call name (lower-args arg-asts) class-name keys))
 
 (defun list-call-elements (ast)
   "The argument ASTs of AST if it is a call to LIST, and T; else NIL and NIL."
