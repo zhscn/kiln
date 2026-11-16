@@ -268,7 +268,7 @@
       (let ((zero (new-block)) (divide (new-block)))
         (br `(:eq (:and ,right #x7fffffffffffffff) 0) zero divide)
         (start-block zero)
-        (emit-error +err-division-by-zero+ (hir-box-double-bits left))
+        (emit-error +err-division-by-zero+ (emit-box-double-bits left))
         (jump divide) (start-block divide)))
     (copy-to-var
      (if right
@@ -329,7 +329,7 @@
             (raw (svref *mir-lir-doubles* result)))
         (when raw (emit `(:set ,raw ,bits)))
         (when (or (not raw) (svref *mir-lir-boxed* result))
-          (mir-lir-save result (hir-box-double-bits bits) 1)))
+          (mir-lir-save result (emit-box-double-bits bits) 1)))
       (return-from mir-lir-instruction))
     (let ((source (mir-lir-double-forward-source instruction)))
       (when (and result source (svref *mir-lir-doubles* result) (svref *mir-lir-doubles* source))
@@ -574,7 +574,7 @@
     (emit `(:receive-prefix ,(coerce arguments 'list) ,count))
     (when (and storage (not (zerop (mir-storage-analysis-rest storage))))
       (dotimes (index 8)
-        (multiple-value-bind (slot region) (hir-establish-stack-object kiln.kir::+packet-class-cons+ 2)
+        (multiple-value-bind (slot region) (establish-stack-object kiln.kir::+packet-class-cons+ 2)
           (push slot *mir-lir-rest-slots*)
           (push region *mir-lir-stack-regions*) (push region *regions*))))
     (when storage
@@ -584,7 +584,7 @@
                  (closure (= (mir-instruction-kind instruction) 23))
                  (class (if closure kiln.kir::+packet-class-function+ kiln.kir::+packet-class-cons+))
                  (count (if closure (length (mir-function-captures (svref *mir-lir-functions* (mir-instruction-data instruction)))) 2)))
-            (multiple-value-bind (slot region) (hir-establish-stack-object class count)
+            (multiple-value-bind (slot region) (establish-stack-object class count)
               (setf (svref *mir-lir-stack-slots* id) slot)
               (push region *mir-lir-stack-regions*) (push region *regions*))))))
     (setf base-regions *regions*)

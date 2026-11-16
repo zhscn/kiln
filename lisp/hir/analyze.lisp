@@ -1,15 +1,5 @@
 (in-package #:kiln.compiler)
 
-(defun hir-map-function (function fun)
-  "Visit the roots owned by FUN, including default parameter forms."
-  (let ((ll (hir-fun-lambda-list fun)))
-    (when ll
-      (loop for parameter across (hir-lambda-list-optional ll)
-            do (funcall function (svref parameter 1)))
-      (loop for parameter across (hir-lambda-list-keys ll)
-            do (funcall function (svref parameter 1)))))
-  (when (hir-fun-body fun) (funcall function (hir-fun-body fun))))
-
 (defun hir-canonical-function (fun)
   (loop while (and fun (logtest 16 (hir-fun-flags fun))) do (setf fun (hir-fun-parent fun))
         finally (return fun)))

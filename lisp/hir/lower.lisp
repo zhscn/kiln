@@ -8,10 +8,6 @@
   (let ((value (hir-var-lowering var)))
     (and (consp value) (eq (car value) :double-bits))))
 
-(defun hir-box-double-bits (bits)
-  (let ((bits (copy-to-var bits :raw)))
-    (emit-fixed-object kiln.kir::+packet-class-double+ (list bits))))
-
 (defun hir-static-function-binding-p (var)
   (unless (and *hir-consumer-state* (eq (hir-consumer-state-kind *hir-consumer-state*) :native))
     (return-from hir-static-function-binding-p nil))
@@ -156,7 +152,7 @@
 
 (defun hir-variable-value (var)
   (let ((value (hir-variable-operand var)))
-    (cond ((hir-raw-double-variable-p var) (hir-box-double-bits value))
+    (cond ((hir-raw-double-variable-p var) (emit-box-double-bits value))
           ((logtest 4 (hir-var-flags var)) (copy-to-var `(:field-load ,kiln.kir::+packet-field-cons-car+ ,value)))
           (t (copy-to-var value)))))
 
@@ -192,13 +188,6 @@
          (emit `(:field-store ,kiln.kir::+packet-field-cons-car+ ,(hir-variable-operand var) ,value)))
         (t (emit `(:set ,(hir-variable-operand var) ,value))))
   value)
-
-(defun hir-parameter-list (fun)
-  (let ((ll (hir-fun-lambda-list fun)))
-    (append (loop for var across (hir-lambda-list-required ll) collect (vector var nil nil nil))
-            (coerce (hir-lambda-list-optional ll) 'list)
-            (when (hir-lambda-list-rest ll) (list (vector (hir-lambda-list-rest ll) nil nil nil)))
-            (coerce (hir-lambda-list-keys ll) 'list))))
 
 (defun hir-parsed-lambda-list (fun &optional captures)
   (let ((ll (hir-fun-lambda-list fun)))
@@ -262,36 +251,22 @@
 (defvar *hir-rest-slots* nil)
 (defvar *hir-stack-slots* nil)
 
-(defun hir-establish-stack-object (class reference-count)
-  "Allocate fixed storage and register only its contiguous Lisp reference fields.
-All words are initialized before the object can be observed at a safepoint.
-Return the storage slot and its root region, if any."
-  (let ((slot (new-slot `(:stack-object ,class ,reference-count))))
-    (emit `(:stack-object-init ,slot ,class ,reference-count))
-    (values slot
-            (when (plusp reference-count)
-              (let ((region (make-region :kind :stack-roots
-                                         :slot (new-slot '(:stack-roots-entry))
-                                         :handler nil :outer *regions*)))
-                (emit `(:stack-roots-enter ,(region-slot region) ,slot ,class ,reference-count))
-                region)))))
-
 (defun hir-with-stack-storage (fun body)
   (let ((*hir-stack-slots* nil) (*hir-rest-slots* nil) (*regions* *regions*) (roots nil))
     (when (and *hir-stack-rests* (gethash fun *hir-stack-rests*))
       (dotimes (i 8)
-        (multiple-value-bind (slot region) (hir-establish-stack-object kiln.kir::+packet-class-cons+ 2)
+        (multiple-value-bind (slot region) (establish-stack-object kiln.kir::+packet-class-cons+ 2)
           (push slot *hir-rest-slots*)
           (push region roots)
           (push region *regions*))))
     (dolist (closure (and *hir-stack-closures* (gethash fun *hir-stack-closures*)))
       (let ((count (length (hir-native-environment closure))))
         (multiple-value-bind (slot region)
-            (hir-establish-stack-object kiln.kir::+packet-class-function+ count)
+            (establish-stack-object kiln.kir::+packet-class-function+ count)
           (push (cons closure slot) *hir-stack-slots*)
           (when region (push region roots) (push region *regions*)))))
     (dolist (node (and *hir-stack-conses* (gethash fun *hir-stack-conses*)))
-      (multiple-value-bind (slot region) (hir-establish-stack-object kiln.kir::+packet-class-cons+ 2)
+      (multiple-value-bind (slot region) (establish-stack-object kiln.kir::+packet-class-cons+ 2)
         (push (cons node slot) *hir-stack-slots*)
         (when region
           (push region roots)
@@ -743,7 +718,7 @@ predicate inside it is branched on, not made into T or NIL and compared."
                   (let ((zero (new-block)) (divide (new-block)))
                     (br `(:eq (:and ,right #x7fffffffffffffff) 0) zero divide)
                     (start-block zero)
-                    (emit-error +err-division-by-zero+ (hir-box-double-bits left))
+                    (emit-error +err-division-by-zero+ (emit-box-double-bits left))
                     (jump divide)
                     (start-block divide)))
                 (copy-to-var `(,(case name (+ :f64-add) (- :f64-sub) (* :f64-mul) (/ :f64-div))
@@ -928,7 +903,7 @@ unsupported call. Arguments retain their evaluation order and effects."
                         (copy-to-var `(:field-load ,kiln.kir::+packet-field-double-bits+ ,value) :raw)))))
         (emit `(:set ,(hir-variable-operand var) ,bits))
         (return-from hir-lower-assignment
-          (cond (double-primary bits) (value-needed (hir-box-double-bits bits)) (t (nil-value))))))
+          (cond (double-primary bits) (value-needed (emit-box-double-bits bits)) (t (nil-value))))))
     ;; A checked fixnum destination can share arithmetic's overflow edge.
     ;; Construct the full result there so TYPE-ERROR retains its datum.
     (when (and (plusp (hir-policy-quality *hir-policy* :safety))

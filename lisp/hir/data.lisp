@@ -66,6 +66,24 @@
 
 ;;; A parameter is #(variable init supplied-p keyword). Init forms see only
 ;;; earlier parameters. Special parameters use lexical argument temporaries.
+(defun hir-parameter-list (fun)
+  (let ((ll (hir-fun-lambda-list fun)))
+    (append (loop for var across (hir-lambda-list-required ll) collect (vector var nil nil nil))
+            (coerce (hir-lambda-list-optional ll) 'list)
+            (when (hir-lambda-list-rest ll) (list (vector (hir-lambda-list-rest ll) nil nil nil)))
+            (coerce (hir-lambda-list-keys ll) 'list))))
+
+(defun hir-map-function (function fun)
+  "Visit the roots owned by FUN, including default parameter forms."
+  (let ((ll (hir-fun-lambda-list fun)))
+    (when ll
+      (loop for parameter across (hir-lambda-list-optional ll)
+            do (funcall function (svref parameter 1)))
+      (loop for parameter across (hir-lambda-list-keys ll)
+            do (funcall function (svref parameter 1)))))
+  (when (hir-fun-body fun) (funcall function (hir-fun-body fun))))
+
+
 (defstruct hir-exit
   (name nil) (owner nil) (group nil) (token nil) (flags 0) (index 0))
 

@@ -2,11 +2,9 @@
 
 (defvar *compiler-pipeline* :hir)
 
-;;;; Lowering to KIR: the module, functions, calls, special variables,
-;;;; non-local exits, allocation and constants. lisp/hir/lower.lisp walks
-;;;; the HIR of each top-level form and emits its nodes with these; the
-;;;; top-level forms of a file run in order from the module's init
-;;;; function.
+;;;; Shared LIR emission for the HIR and MIR consumers: modules, calls,
+;;;; allocation, dynamic environments and constants. Top-level forms run
+;;;; in source order from the module initialization function.
 
 (define-condition kiln-compile-error (error)
   ((message :initarg :message :reader kiln-compile-error-message))
@@ -704,6 +702,24 @@ if needed (not a safepoint)."
   (let ((result (new-var)))
     (emit `(:alloc-fixed ,result ,class ,fields ,(handler)))
     result))
+
+(defun emit-box-double-bits (bits)
+  (let ((bits (copy-to-var bits :raw)))
+    (emit-fixed-object kiln.kir::+packet-class-double+ (list bits))))
+
+(defun establish-stack-object (class reference-count)
+  "Allocate fixed storage and register only its contiguous Lisp reference fields.
+All words are initialized before the object can be observed at a safepoint.
+Return the storage slot and its root region, if any."
+  (let ((slot (new-slot `(:stack-object ,class ,reference-count))))
+    (emit `(:stack-object-init ,slot ,class ,reference-count))
+    (values slot
+            (when (plusp reference-count)
+              (let ((region (make-region :kind :stack-roots
+                                         :slot (new-slot '(:stack-roots-entry))
+                                         :handler nil :outer *regions*)))
+                (emit `(:stack-roots-enter ,(region-slot region) ,slot ,class ,reference-count))
+                region)))))
 
 (defun emit-vector-object (class length initial-value)
   "Allocate and fill a vector using evaluated length and initial value."
