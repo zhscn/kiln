@@ -46,24 +46,43 @@
                  (let ((id (root id)))
                    (unless (svref live id) (setf (svref live id) t))))
                (find-aliases (protected)
-                 ;; Ignore loop self edges, but retain conflicting incoming
-                 ;; values, including parallel swaps.
-                 (loop with changed = t while changed do
-                   (setf changed nil)
-                   (loop for block across blocks for id = (mir-block-id block)
-                         when (logbitp id reachable) do
-                     (loop for parameter across (mir-block-parameters block) for index from 0
-                           when (and (= parameter (root parameter))
-                                     (not (and protected (svref protected parameter)))) do
-                       (let ((candidate nil) (conflict nil))
+                 ;; Watch incoming values rather than rescanning every join
+                 ;; after one alias changes. Watchers move to the new root.
+                 (let ((users (make-array (length values) :initial-element nil))
+                       (positions (make-array (length values) :initial-element nil))
+                       (queued (make-array (length values) :initial-element nil))
+                       (work (make-hir-buffer)))
+                   (labels ((enqueue (id)
+                              (unless (svref queued id)
+                                (setf (svref queued id) t)
+                                (hir-push id work))))
+                     (loop for block across blocks for id = (mir-block-id block)
+                           when (logbitp id reachable) do
+                       (loop for parameter across (mir-block-parameters block) for index from 0
+                             unless (and protected (svref protected parameter)) do
+                         (setf (svref positions parameter) index)
+                         (enqueue parameter)
                          (dolist (edge (svref incoming id))
-                           (let ((argument (root (svref (mir-edge-arguments edge) index))))
-                             (unless (= argument parameter)
-                               (cond ((null candidate) (setf candidate argument))
-                                     ((/= argument candidate) (setf conflict t))))))
-                         (when (and candidate (not conflict)
-                                    (logbitp (mir-value-block (svref values candidate)) (svref dominators id)))
-                           (setf (svref aliases parameter) candidate changed t))))))
+                           (push parameter (svref users (svref (mir-edge-arguments edge) index))))))
+                     (loop for cursor from 0 while (< cursor (hir-buffer-count work))
+                           for parameter = (mir-at work cursor)
+                           for id = (mir-value-block (svref values parameter))
+                           for index = (svref positions parameter) do
+                       (setf (svref queued parameter) nil)
+                       (when (= parameter (root parameter))
+                         (let ((candidate nil) (conflict nil))
+                           (dolist (edge (svref incoming id))
+                             (let ((argument (root (svref (mir-edge-arguments edge) index))))
+                               (unless (= argument parameter)
+                                 (cond ((null candidate) (setf candidate argument))
+                                       ((/= argument candidate) (setf conflict t))))))
+                           (when (and candidate (not conflict)
+                                      (logbitp (mir-value-block (svref values candidate)) (svref dominators id)))
+                             (setf (svref aliases parameter) candidate)
+                             (let ((watchers (svref users parameter)))
+                               (dolist (user watchers) (enqueue user))
+                               (setf (svref users parameter) nil
+                                     (svref users candidate) (nconc watchers (svref users candidate))))))))))
                  (dotimes (id (length aliases)) (setf (svref aliases id) (root id)))))
         (find-aliases nil)
         (when preserve-refinements
