@@ -1787,7 +1787,7 @@
     (mir-infer-calls unit)
     (mir-simplify-block-parameters unit)
     (verify-mir unit)
-    (assert (< (mir-test-parameter-count unit) before))
+    (assert (<= (mir-test-parameter-count unit) before))
     (assert (equalp signatures (map 'simple-vector #'mir-function-signature (hir-vector (mir-unit-functions unit)))))
     (mir-infer-calls unit)
     (mir-infer-storage unit)
@@ -1832,7 +1832,7 @@
     (let ((parameters (mir-test-parameter-count unit)))
       (mir-simplify-block-parameters unit :preserve-refinements t)
       (verify-mir unit)
-      (assert (< (mir-test-parameter-count unit) parameters))
+      (assert (<= (mir-test-parameter-count unit) parameters))
       (let ((types (mir-infer-types function)))
         (assert (equal before
                        (loop for instruction across (hir-vector (mir-function-instructions function))

@@ -92,13 +92,64 @@
 
 (defun mir-new-block (&optional result)
   (let* ((id (hir-buffer-count (mir-function-blocks *mir-function*)))
-         (parameters (make-array (+ (length (mir-function-bindings *mir-function*)) (if result 1 0)))))
-    (dotimes (i (length parameters))
-      (setf (svref parameters i) (mir-add-value *mir-function*
-                                  (cond ((= i (length (mir-function-bindings *mir-function*))) :bundle)
-                                        ((logbitp i (mir-function-binding-cells *mir-function*)) :cell) (t :obj)) id -1)))
+         (width (length (mir-function-bindings *mir-function*)))
+         (parameters (make-array (+ width (if result 1 0)))))
+    ;; Negative IDs denote pending (block, binding) reads until the graph is
+    ;; complete. Edge-only forwarding does not allocate an SSA value.
+    (dotimes (index width)
+      (setf (svref parameters index) (- -1 (+ (* id width) index))))
+    (when result (setf (svref parameters width) (mir-add-value *mir-function* :bundle id -1)))
     (hir-push (make-mir-block :id id :parameters parameters) (mir-function-blocks *mir-function*))
     id))
+
+(defun mir-materialize-bindings (function)
+  "Materialize binding parameters demanded by operations and their incoming values."
+  (let* ((blocks (hir-vector (mir-function-blocks function)))
+         (width (length (mir-function-bindings function)))
+         (incoming (make-array (length blocks) :initial-element nil))
+         (work (make-hir-buffer)))
+    (labels ((resolve (id)
+               (if (minusp id)
+                   (multiple-value-bind (block index) (floor (- -1 id) width)
+                     (let* ((parameters (mir-block-parameters (svref blocks block)))
+                            (parameter (svref parameters index)))
+                       (when (minusp parameter)
+                         (setf parameter (mir-add-value function
+                                           (if (logbitp index (mir-function-binding-cells function)) :cell :obj)
+                                           block -1)
+                               (svref parameters index) parameter)
+                         (hir-push (cons block index) work))
+                       parameter))
+                   id))
+             (rewrite (ids)
+               (dotimes (index (length ids))
+                 (setf (svref ids index) (resolve (svref ids index))))))
+      (loop for block across blocks for term = (mir-block-terminator block) do
+        (loop for edge across (mir-terminator-edges term)
+              do (push edge (svref incoming (mir-edge-target edge))))
+        ;; Explicit result/cursor parameters also demand their incoming values.
+        (loop for parameter across (mir-block-parameters block) for index from 0
+              unless (minusp parameter) do (hir-push (cons (mir-block-id block) index) work))
+        (rewrite (mir-terminator-operands term)))
+      (loop for instruction across (hir-vector (mir-function-instructions function))
+            do (rewrite (mir-instruction-operands instruction)))
+      (loop for cursor from 0 while (< cursor (hir-buffer-count work))
+            for demand = (mir-at work cursor)
+            do (dolist (edge (svref incoming (car demand)))
+                 (let ((args (mir-edge-arguments edge)) (index (cdr demand)))
+                   (setf (svref args index) (resolve (svref args index)))))))
+    (mir-verify-construction-bindings function)
+    ;; Keep the construction prefix until every incoming demand is resolved;
+    ;; then compact targets and all their edges using the same positions.
+    (loop for block across blocks for parameters = (mir-block-parameters block)
+          for kept = (loop for parameter across parameters for index from 0
+                           unless (minusp parameter) collect index) do
+      (dolist (edge (svref incoming (mir-block-id block)))
+        (setf (mir-edge-arguments edge)
+              (map 'simple-vector (lambda (index) (svref (mir-edge-arguments edge) index)) kept)))
+      (setf (mir-block-parameters block)
+            (map 'simple-vector (lambda (index) (svref parameters index)) kept))))
+  function)
 
 (defun mir-start (id)
   (setf *mir-block* (mir-at (mir-function-blocks *mir-function*) id)
@@ -706,6 +757,7 @@
       (loop for block across (hir-vector (mir-function-blocks *mir-function*))
             unless (mir-block-terminator block)
               do (setf (mir-block-terminator block) (make-mir-terminator :kind 3))))
+    (mir-materialize-bindings *mir-function*)
     id))
 
 (defun hir-to-mir (hir)
@@ -721,7 +773,5 @@
                (hir-vector *mir-load-time-nodes*)))
     (when (plusp (length (mir-function-captures (mir-at (mir-unit-functions *mir-unit*) 0))))
       (mir-unavailable "root function requires an environment"))
-    (loop for function across (hir-vector (mir-unit-functions *mir-unit*))
-          do (mir-verify-construction-bindings function))
     (verify-mir *mir-unit*)
     *mir-unit*))

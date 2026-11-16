@@ -319,16 +319,19 @@
   (mir-analysis function :binding-regions #'mir-compute-binding-regions))
 
 (defun mir-verify-construction-bindings (function)
-  "Check the importer's complete binding prefix before SSA simplification."
-  (loop for block across (hir-vector (mir-function-blocks function))
-        unless (zerop (mir-block-id block))
-          do (unless (>= (length (mir-block-parameters block)) (length (mir-function-bindings function)))
-               (mir-fail "MIR block is missing binding parameters"))
-             (loop for index below (length (mir-function-bindings function))
-                   for value = (mir-at (mir-function-values function) (svref (mir-block-parameters block) index))
-                   unless (eq (mir-value-representation value)
-                              (if (logbitp index (mir-function-binding-cells function)) :cell :obj))
-                     do (mir-fail "MIR binding parameter disagrees with its cell layout")))
+  "Check binding representations and undemanded placeholders before compaction."
+  (let ((width (length (mir-function-bindings function))))
+    (loop for block across (hir-vector (mir-function-blocks function))
+          for id = (mir-block-id block) unless (zerop id) do
+      (unless (>= (length (mir-block-parameters block)) width)
+        (mir-fail "MIR block is missing binding parameters"))
+      (loop for index below width for parameter = (svref (mir-block-parameters block) index) do
+        (if (minusp parameter)
+            (unless (= parameter (- -1 (+ (* id width) index)))
+              (mir-fail "MIR binding placeholder disagrees with its block"))
+            (unless (eq (mir-value-representation (mir-at (mir-function-values function) parameter))
+                        (if (logbitp index (mir-function-binding-cells function)) :cell :obj))
+              (mir-fail "MIR binding parameter disagrees with its cell layout"))))))
   function)
 
 (defun verify-mir-function (unit function)
