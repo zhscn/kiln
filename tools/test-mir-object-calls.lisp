@@ -7,7 +7,7 @@
                 (and (consp (third entry)) (eq (car (third entry)) :static-mutable-cons)))
               (kiln.kir::kmodule-data module))))
 
-(dolist (pipeline '(:hir :mir))
+(dolist (pipeline '(:mir))
   (dolist (form '((lambda (object) (slot-value object 'value))
                   (lambda (object value) (setf (slot-value object 'value) value))
                   (lambda (value) (make-instance 'cache-model-class :value value))))

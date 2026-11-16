@@ -1,7 +1,7 @@
 (defvar *dead-block-special* :outside)
 
 (defun mir-dead-block-check (body expected)
-  (dolist (pipeline '(:hir :mir))
+  (dolist (pipeline '(:mir))
     (let* ((kiln.compiler::*compiler-pipeline* pipeline)
            (function (compile nil `(lambda (x) (declare (optimize (speed 3) (safety 1) (debug 1))) ,body))))
       (print (equal (funcall function 10) expected)))))

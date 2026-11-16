@@ -94,9 +94,8 @@ SESSION has compiled."
     (and (stringp value) (plusp (length value)) value)))
 
 (defun build-pipeline (&optional (name (getenv "KILN_BUILD_PIPELINE")))
-  (cond ((or (null name) (equal name "") (equal name "hir")) :hir)
-        ((equal name "mir") :mir)
-        (t (error "KILN_BUILD_PIPELINE must be hir or mir, got ~S" name))))
+  (cond ((or (null name) (equal name "") (equal name "mir")) :mir)
+        (t (error "KILN_BUILD_PIPELINE must be mir, got ~S" name))))
 
 ;;; With KILN_SERVE set, the program serves the back-end protocol on its
 ;;; standard input and output instead.

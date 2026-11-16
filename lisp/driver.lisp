@@ -358,7 +358,7 @@
 
 (defun compile-files (files session module-name &key extra-symbols
                           (pipeline kiln.compiler::*compiler-pipeline*))
-  (unless (member pipeline '(:hir :mir))
+  (unless (eq pipeline :mir)
     (kiln.compiler::fail "Unknown compiler pipeline ~S" pipeline))
   (let ((kiln.compiler::*compiler-pipeline* pipeline))
     (multiple-value-bind (asts defined-packages) (kiln.compiler:front-end files session)
@@ -501,7 +501,7 @@ those whose names are in EXCLUDE."
      ;; kiln's compiler (M5.3): its packages are the host's.
      (mapcar (lambda (name) (asdf:system-relative-pathname "kiln" (format nil "lisp/~A.lisp" name)))
              '("abi" "kir" "lir-schema" "backend-target" "backend-packet" "lir" "lir-function" "lir-values" "lir-closures" "lir-stack" "lir-regions" "hir/data" "hir/consumer" "lower" "values" "primitives" "structures" "source-forms" "compilation-context" "environment-query" "toplevel" "front" "cross"
-               "hir/environment" "hir/convert" "type-inference" "hir/analyze" "hir/types" "hir/escape" "hir/eval" "hir/lower" "mir/data" "mir/verify" "mir/build" "mir/values" "mir/types" "mir/calls" "mir/escape" "mir/predicates" "mir/lifting" "mir/lifting-environments" "mir/inlining" "mir/lists" "mir/scalar" "mir/simplify" "mir/lower" "mir/dump"
+               "hir/environment" "hir/convert" "type-inference" "hir/analyze" "hir/eval" "mir/data" "mir/verify" "mir/build" "mir/values" "mir/types" "mir/calls" "mir/escape" "mir/predicates" "mir/lifting" "mir/lifting-environments" "mir/inlining" "mir/lists" "mir/scalar" "mir/simplify" "mir/lower" "mir/dump"
                "target/compiler/client" "target/eval/interpreter"))))
 
 (defparameter *eval-files*
@@ -546,14 +546,14 @@ namestrings for pathnames."
                   (namestring file)))
             files)))
 
-(defun bootstrap-stage0 (directory &key (output-format :lir) (pipeline :hir))
+(defun bootstrap-stage0 (directory &key (output-format :lir) (pipeline kiln.compiler::*compiler-pipeline*))
   "Stage 0 of the bootstrap: compiles the five modules and the
 build program (lisp/target/build.lisp) to binary NAME.lir in DIRECTORY, in one
 session, and writes the build program's manifest there, modules.lisp-expr:
 for each module, its name and source files. kiln0, linked from these
 modules, runs the build program, which compiles the same modules and
 itself as here. PIPELINE selects the stage0 module compiler."
-  (unless (member pipeline '(:hir :mir))
+  (unless (eq pipeline :mir)
     (kiln.compiler::fail "Unknown compiler pipeline ~S" pipeline))
   (let* ((kiln.compiler::*compiler-pipeline* pipeline)
          (dir (uiop:ensure-directory-pathname directory))

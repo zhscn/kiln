@@ -2,15 +2,9 @@
 (in-package #:kiln.compiler)
 
 (defun mir-list-test-unit (form)
-  (let ((expand (symbol-function 'expand-hir-list-bindings)))
-    (unwind-protect
-         (progn
-           (setf (symbol-function 'expand-hir-list-bindings)
-                 (lambda (&rest arguments) (declare (ignore arguments)) nil))
-           (let* ((*source-file* "mir-list-model") (*toplevel-source* nil)
-                  (forms (front-end-forms (list form))))
-             (hir-to-mir (toplevel-form-ast (first forms)))))
-      (setf (symbol-function 'expand-hir-list-bindings) expand))))
+  (let* ((*source-file* "mir-list-model") (*toplevel-source* nil)
+         (forms (front-end-forms (list form))))
+    (hir-to-mir (toplevel-form-ast (first forms)))))
 
 (defun mir-list-test-count (unit name)
   (loop for function across (hir-vector (mir-unit-functions unit))

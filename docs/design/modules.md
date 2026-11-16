@@ -1,6 +1,6 @@
 # 复用的模块和 kiln 的模块划分
 
-目标编译器分工为 Lisp HIR/MIR 与表示选择、结构化 LIR 边界、Rust 布局和 ABI 降级及机器后端，见 [compiler.md](compiler.md)。下述模块加载描述当前实现，LIR 协议尚未接入。
+HIR 负责词法语义与求值，Lisp MIR 负责原生分析与表示选择，结构化 LIR 是与 Rust 后端的交接边界。Rust 完成布局、ABI 降级及机器码生成，见 [compiler.md](compiler.md)。
 
 ## 决定
 
@@ -48,7 +48,7 @@ kiln 的 Lisp 代码编成五个模块，按顺序载入，每个模块只编译
 | kernel | `lisp/target/*.lisp`（[kernel.md](kernel.md)） | 所有测试 |
 | clos | Clostrophilia 和 CLOS 引导，Predicament、Salmagundi、Parcl、ctype、Regalia、Anatomicl 的目标端部分、Trinsic、Cyclosis、文件和 pathname、Acclimation、Incless、Inravina、Invistra、Khazern、alexandria、Eclector 的 reader，以及调试接口 | `clos-` |
 | frontend | Concrete-Syntax-Tree、Eclector 的 parse-result 和 CST 读取器 | `fe-` |
-| eval | Ecclesia、Common-macros、Trucler、Clostrum、Anatomicl、HIR 前端与求值器、`lisp/target/eval/`（evaluator、REPL、后端协议） | `ev-` |
+| eval | Ecclesia、Common-macros、Trucler、Clostrum、Anatomicl、HIR 前端与求值器、MIR 中端与 LIR 发射、`lisp/target/eval/`（evaluator、REPL、后端协议） | `ev-` |
 | compiler | 原生编译入口、文件编译、依赖追踪与顶层缓存 | `co-` |
 
 frontend 不进 CLOS 模块，以免拖慢所有 CLOS 测试的启动。

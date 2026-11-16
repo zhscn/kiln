@@ -1,5 +1,5 @@
 (defvar *mir-search-events* nil)
-(dolist (pipeline '(:hir :mir))
+(dolist (pipeline '(:mir))
   (let* ((kiln.compiler::*compiler-pipeline* pipeline)
          (member-eq (compile nil '(lambda (item list)
                                    (member (progn (push :item *mir-search-events*) item)

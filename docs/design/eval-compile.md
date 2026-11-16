@@ -1,26 +1,26 @@
 # 运行期求值、编译和文件加载
 
-运行期与编译期共用 HIR 前端。eval 模块提供词法环境、宏展开、HIR 分析与求值，
-compiler 模块安装 HIR → LIR → Rust 降级 → KIR → Cranelift 的原生入口。两种执行方式构造的函数
+运行期与编译期共用 HIR 前端。eval 模块提供词法环境、宏展开、HIR 词法准备与求值，
+compiler 模块安装 HIR → MIR → LIR → Rust 降级 → KIR → Cranelift 的原生入口。两种执行方式构造的函数
 都可与 AOT 函数互相调用；全局函数、特殊变量及宏定义属于同一个运行中 image。
 
 ## 目标后端交接
 
-原生路径为 Lisp 的 HIR → 表示选择 → LIR 请求 → Rust 布局与 ABI 降级 → 内存 KIR → Cranelift。HIR 求值器继续留在 Lisp。运行期批量提交结构化程序或二进制载荷，以及受保护的 literal 向量，不生成 LIR 或 KIR 文本；请求失败与产物发布采用 [compiler-protocol.md](compiler-protocol.md) 的所有权规则。独立 LIR 负责类型化交接，Rust 负责布局和 ABI 降级。FASL 版本 2 保存 packet，加载不解析 KIR 文本。
+原生路径为 Lisp 的 HIR → MIR 分析与表示选择 → LIR 请求 → Rust 布局与 ABI 降级 → 内存 KIR → Cranelift。HIR 求值器继续留在 Lisp。运行期批量提交结构化程序或二进制载荷，以及受保护的 literal 向量，不生成 LIR 或 KIR 文本；请求失败与产物发布采用 [compiler-protocol.md](compiler-protocol.md) 的所有权规则。独立 LIR 负责类型化交接，Rust 负责布局和 ABI 降级。FASL 版本 2 保存 packet，加载不解析 KIR 文本。
 
 ## 模块与自举边界
 
 编译器的前端与 HIR 求值器随 eval 模块载入，因此原生编译入口安装前已经能够
-运行宏、`eval` 和 `compile`。求值器把分析后的 HIR 节点构造成原生闭包，不需要
+运行宏、`eval` 和 `compile`。求值器把完成词法准备的 HIR 节点构造成执行闭包，不需要
 调用正在初始化的原生编译器。编译期和解释执行共用相同的词法绑定、声明、捕获、
-多值与退出分析。cross-client 的全局定义保存在 Clostrum 环境中，image-client
+多值与退出语义。cross-client 的全局定义保存在 Clostrum 环境中，image-client
 直接访问运行中 image；后者的动态绑定使用运行时 `progv`。
 
 模块按依赖顺序加载：
 
 1. frontend 提供 Eclector CST reader。
 2. eval 提供 Ecclesia、运行期 Common-macros、Trucler 查询协议和 image 全局环境。
-3. eval 中的共享前端包含 Trucler reference 环境、Clostrum、Anatomicl、HIR、
+3. eval 中的共享前端包含 Trucler reference 环境、Clostrum、Anatomicl、HIR、MIR、
    LIR 生成及 image-client。求值路径不调用降级和机器码生成。
 4. eval 提供 HIR 执行入口、编译单元、FASL 对象图、文件和模块加载、REPL 及后端协议。
 5. compiler 提供内联元数据、依赖追踪、顶层原生缓存、原生 `compile` / `eval` 和

@@ -1,4 +1,4 @@
-(dolist (pipeline '(:hir :mir))
+(dolist (pipeline '(:mir))
   (let ((kiln.compiler::*compiler-pipeline* pipeline))
     (let ((function
             (compile nil
@@ -11,7 +11,7 @@
                           (observe))))))
       (print (equal (funcall function) (list pipeline pipeline))))))
 
-(dolist (pipeline '(:hir :mir))
+(dolist (pipeline '(:mir))
   (let ((kiln.compiler::*compiler-pipeline* pipeline))
     (let ((function
             (compile nil

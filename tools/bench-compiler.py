@@ -21,7 +21,7 @@ def main():
     parser.add_argument('--runs', type=int, default=5)
     parser.add_argument('--warmup', type=int, default=1)
     parser.add_argument('--pipeline', choices=('hir', 'mir'),
-                        default=os.environ.get('KILN_BUILD_PIPELINE', 'hir'))
+                        default=os.environ.get('KILN_BUILD_PIPELINE', 'mir'))
     args = parser.parse_args()
     if args.runs < 1 or args.warmup < 0:
         parser.error('runs must be positive and warmup nonnegative')

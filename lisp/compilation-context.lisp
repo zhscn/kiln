@@ -10,7 +10,7 @@
 (defvar *unit-fingerprint* nil)
 
 (defstruct compilation-request
-  purpose session parent (children nil) source-origin (pipeline :hir)
+  purpose session parent (children nil) source-origin (pipeline *compiler-pipeline*)
   dependencies calls outputs fingerprint observer definition-parent
   (expansion-origins (make-hash-table :test 'eq))
   (records (list :records)) (diagnostics nil) (results nil) (state :running))

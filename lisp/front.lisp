@@ -2,8 +2,8 @@
 
 ;;;; Front end (M2): Eclector reads CSTs; top-level forms are processed
 ;;;; here as in COMPILE-FILE (CLHS 3.2.3.1); each form to be compiled is
-;;;; converted to HIR (lisp/hir/convert.lisp), which lisp/hir/lower.lisp
-;;;; translates to KIR.
+;;;; converted to HIR. Native compilation builds and analyzes MIR before
+;;;; emitting LIR for the backend.
 ;;;;
 ;;;; This file is the compiler's in the host (SBCL) and on kiln (the
 ;;;; compiler module): what differs is in cross.lisp and

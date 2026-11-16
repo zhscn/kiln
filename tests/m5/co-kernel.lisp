@@ -3,11 +3,7 @@
 ;;; the kernel module that SBCL made in the same session (co-kernel.same-kir).
 
 ;;; Compiler diagnostics are separate from the serialized program.
-(let ((kiln.compiler::*compiler-pipeline*
-        (if (equal (kiln.kernel::sys-string
-                    10 (kiln.kernel::string-octets "KILN_BUILD_PIPELINE"))
-                   "mir")
-            :mir :hir)))
+(let ((kiln.compiler::*compiler-pipeline* :mir))
   (declare (special kiln.compiler::*compiler-pipeline*))
   (handler-bind ((warning #'muffle-warning))
     (let ((session (kiln.compiler:make-session :client-class 'kiln.compiler::cross-client))

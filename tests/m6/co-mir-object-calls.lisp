@@ -1,7 +1,7 @@
 (defclass mir-cache-object () ((value :initarg :value) (other :initarg :other :initform 0)))
 (defvar *mir-cache-events* nil)
 
-(dolist (pipeline '(:hir :mir))
+(dolist (pipeline '(:mir))
   (let* ((kiln.compiler::*compiler-pipeline* pipeline)
          (reader (compile nil '(lambda (object) (slot-value object 'value))))
          (writer (compile nil '(lambda (value object) (setf (slot-value object 'value) value))))

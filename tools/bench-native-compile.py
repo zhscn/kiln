@@ -13,7 +13,7 @@ parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--modules', type=Path, required=True, help='directory containing the five backend modules (.lir or legacy .kir)')
 parser.add_argument('--runs', type=int, default=5)
 parser.add_argument('--pipeline', choices=('hir', 'mir'),
-                    default=os.environ.get('KILN_BUILD_PIPELINE', 'hir'))
+                    default=os.environ.get('KILN_BUILD_PIPELINE', 'mir'))
 parser.add_argument('--backend', type=Path, default=root / 'target/debug/kiln-cg')
 parser.add_argument('--output', type=Path, default=root / 'build/native-compile')
 args = parser.parse_args()

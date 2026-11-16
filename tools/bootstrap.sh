@@ -16,10 +16,10 @@ case "$boot" in
   "$root/build/"*) ;;
   *) echo "KILN_BOOT_DIR must name a directory below $root/build" >&2; exit 2 ;;
 esac
-pipeline=${KILN_BUILD_PIPELINE:-hir}
+pipeline=${KILN_BUILD_PIPELINE:-mir}
 case "$pipeline" in
-  hir|mir) ;;
-  *) echo "KILN_BUILD_PIPELINE must be hir or mir" >&2; exit 2 ;;
+  mir) ;;
+  *) echo "KILN_BUILD_PIPELINE must be mir" >&2; exit 2 ;;
 esac
 if [ "${1:-}" = --from-stage1 ]; then
   previous=$(cat "$boot/pipeline" 2>/dev/null || echo hir)

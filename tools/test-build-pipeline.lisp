@@ -1,6 +1,8 @@
 ;;;; Run after tools/env.lisp and (ql:quickload "kiln").
 (in-package #:kiln.compiler)
 
+(assert (eq *compiler-pipeline* :mir))
+
 (let* ((root (asdf:system-source-directory "kiln"))
        (input (merge-pathnames "build/pipeline-test/input.lisp" root)))
   (ensure-directories-exist input)
@@ -9,14 +11,19 @@
   (labels ((mir-module-p (module)
              (some (lambda (function) (search "kiln_mir_" (second function)))
                    (kiln.kir::kmodule-funcs module))))
-    (dolist (pipeline '(:hir :mir))
+    (assert (mir-module-p (compile-module (front-end-forms '((identity 17))) "pipeline-default")))
+    (dolist (pipeline '(:mir))
       (let* ((*compiler-pipeline* pipeline)
              (module (kiln::compile-files (list input) (make-session) "pipeline-test")))
-        (assert (eq (eq pipeline :mir) (not (null (mir-module-p module)))))))
-    (let ((*compiler-pipeline* :mir))
-      (assert (not (mir-module-p (kiln::compile-files (list input) (make-session)
-                                                    "pipeline-override" :pipeline :hir))))
-      (assert (eq *compiler-pipeline* :mir)))))
+        (assert (eq (eq pipeline :mir) (not (null (mir-module-p module)))))
+        (assert (eq (eq pipeline :mir)
+                    (not (null (mir-module-p (compile-module
+                                            (front-end-forms '((identity 17)))
+                                            "pipeline-module-inheritance"))))))))
+    (assert (handler-case
+                (progn (kiln::compile-files (list input) (make-session)
+                                            "unsupported-pipeline" :pipeline :hir) nil)
+              (kiln-compile-error () t)))))
 (assert (handler-case (progn (kiln:bootstrap-stage0 nil :pipeline :invalid) nil)
           (kiln-compile-error () t)))
 
@@ -28,7 +35,7 @@
                     (string= (symbol-name (second form)) "BUILD-PIPELINE"))
             do (eval form))))
 (let ((selector (symbol-function (find-symbol "BUILD-PIPELINE" :cl-user))))
-  (dolist (entry '((nil . :hir) ("" . :hir) ("hir" . :hir) ("mir" . :mir)))
+  (dolist (entry '((nil . :mir) ("" . :mir) ("mir" . :mir)))
     (assert (eq (cdr entry) (funcall selector (car entry)))))
-  (assert (handler-case (progn (funcall selector "invalid") nil) (error () t))))
-(format t "Build pipeline selection reaches HIR/MIR lowering and rejects invalid configuration.~%")
+  (assert (handler-case (progn (funcall selector "hir") nil) (error () t))))
+(format t "Build pipeline selection reaches MIR lowering and rejects invalid configuration.~%")

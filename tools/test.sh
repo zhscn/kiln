@@ -9,10 +9,10 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 build=$root/build/test
 mkdir -p "$build"
 cd "$root"
-pipeline=${KILN_BUILD_PIPELINE:-hir}
+pipeline=${KILN_BUILD_PIPELINE:-mir}
 case "$pipeline" in
-  hir|mir) ;;
-  *) echo "KILN_BUILD_PIPELINE must be hir or mir" >&2; exit 2 ;;
+  mir) ;;
+  *) echo "KILN_BUILD_PIPELINE must be mir" >&2; exit 2 ;;
 esac
 cargo build -q
 cg=$root/target/debug/kiln-cg

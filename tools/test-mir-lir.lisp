@@ -880,7 +880,7 @@
        (module (compile-module (front-end-forms (list producer) session)
                                "mir-throw" :session session :pipeline :mir))
        (driver-module (compile-module (front-end-forms (list driver) session)
-                                      "mir-throw-driver" :session session :pipeline :hir)))
+                                      "mir-throw-driver" :session session :pipeline :mir)))
   (kiln::write-module module producer-output)
   (kiln::write-module driver-module driver-output)
   (let* ((text (uiop:run-program

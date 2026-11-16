@@ -44,7 +44,7 @@ image literal 表通过 `literal-table` 声明数量，读引用和间接调试�
 
 `invalid-vector-length` 检查带 tag 的候选长度是否为非负 fixnum 且不超过运行时 header 可表示的最大长度；生成方负责错误路径。常量长度在后端展开时也检查同一上限。
 
-LIR（low-level IR）是表示选择后的后端输入语言，也是编译协议的程序载荷。它不设独立的优化管线。初期由 HIR 降级产生，后续由 MIR 产生；两者使用同一 schema。它已经确定了“做什么”：每个值的表示、每个对象的存储、闭包的内容、控制流和动态范围；还没有确定“怎么做”：tag、对象和 context 的偏移、调用序列、展开 payload 的编码、栈图。后者由 kiln-cg 降级成 KIR 时按 kiln-rt 的布局决定。
+LIR（low-level IR）是表示选择后的后端输入语言，也是编译协议的程序载荷。它不设独立的优化管线。由 MIR 完成表示选择后产生。它已经确定了“做什么”：每个值的表示、每个对象的存储、闭包的内容、控制流和动态范围；还没有确定“怎么做”：tag、对象和 context 的偏移、调用序列、展开 payload 的编码、栈图。后者由 kiln-cg 降级成 KIR 时按 kiln-rt 的布局决定。
 
 固定角色入口通过 `(builtin ROLE file|image)` 声明。ROLE 是 `undefined-function`、`undefined-setf-function`、`funcallable-trampoline` 或 `funcallable-unset`；file 模式由 Rust 建立可合并的共享入口，image 模式导入已有入口。函数体、错误分派、捕获布局、初始函数对象和转发调用序列都由后端生成。`undefined-function-p` 检查函数对象是否为任一种未定义占位函数，返回机器布尔值；生成方保证操作数是函数对象。
 
@@ -290,6 +290,6 @@ Rust 在函数入口生成栈检查（包括“参数全在寄存器里的函数
 
 LIR 请求从第一版起采用下述[编译协议](compiler-protocol.md)。运行期批量提交结构化记录并由适配器转交 Rust 所有权，生产构建文件默认保存这些记录的规范化二进制编码。解码与快照适配器进入同一个操作验证和 KIR 构造路径，避免进程内的序列化往返。可读的 LIR/KIR dump 只供诊断，不是编译输入的中转步骤。
 
-## 迁移期间
+## 验证边界
 
-先由现有 HIR 降级产生 LIR。kiln-cg 暂时同时接受旧 KIR 和新 LIR 输入，以便对照输出；新生产入口不依赖旧文本入口。MIR 接入后直接以相同 LIR 契约为目标。切换和删除门槛见 [compiler.md](compiler.md#切换门槛和验证范围)。
+MIR 输出独立 LIR，kiln-cg 验证操作和控制流后构造内部 KIR。旧文本入口仅供诊断与协议对照；生产文件和运行期请求使用结构化程序载荷。语义差分、项目回归与自举验证范围见 [compiler.md](compiler.md#切换门槛和验证范围)。

@@ -1,8 +1,5 @@
 (in-package #:kiln.compiler)
 
-(defvar *compiler-pipeline* :hir
-  "Native COMPILE pipeline: :HIR for production, :MIR for the experimental middle end.")
-
 (define-condition mir-error (kiln-compile-error) ())
 (define-condition mir-unsupported (mir-error) ())
 

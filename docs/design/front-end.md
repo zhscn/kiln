@@ -4,7 +4,7 @@
 
 ## 流水线
 
-以下是当前实现。目标语义分析和表示选择迁往 Lisp MIR，输出[结构化 LIR 请求](compiler-protocol.md)，Rust 只做后端验证、布局、ABI 和元数据降级，见 [compiler.md](compiler.md)。
+HIR 构造后由 Lisp MIR 完成语义分析和表示选择，输出[结构化 LIR 请求](compiler-protocol.md)，Rust 只做后端验证、布局、ABI 和元数据降级，见 [compiler.md](compiler.md)。
 
 
 ```
@@ -14,14 +14,14 @@
 CST ── 顶层形式处理（lisp/front.lisp，CLHS 3.2.3.1）
   │      progn / eval-when / 宏展开在这里做，编译期求值交给 client 的求值器
   ▼
-HIR 转换（lisp/hir/convert.lisp）── 构造后的分析（lisp/hir/analyze.lisp）
+HIR 转换（lisp/hir/convert.lisp）── 词法捕获与退出准备（lisp/hir/analyze.lisp）
   ▼
-HIR ── 降级（lisp/hir/lower.lisp，用 lisp/lower.lisp、lisp/values.lisp、lisp/primitives.lisp 的发射工具）
+HIR ── MIR 构图、分析与表示选择（lisp/mir/）
   ▼
-KIR
+LIR ── Rust 验证、布局与 ABI 降级 ── KIR
 ```
 
-HIR 的词法绑定、自由变量、赋值、退出点和闭包布局直接记录在结构中；宏展开结果直接转换，不重建 CST，源码位置按顶层形式 CST 里记下的位置取。编译期求值按 client 分派（`evaluate-at-compile-time`）：cross-client 和 image-client 共用 HIR 求值器（`lisp/hir/eval.lisp`）。数据结构、源码位置和分析规则见 [hir.md](hir.md)。
+HIR 在结构中记录词法绑定、自由变量、赋值与退出点，MIR 再决定原生闭包布局。宏展开结果直接转换，不重建 CST，源码位置按顶层形式 CST 里记下的位置取。编译期求值按 client 分派（`evaluate-at-compile-time`）：cross-client 和 image-client 共用 HIR 求值器（`lisp/hir/eval.lisp`）。数据结构、源码位置和分析规则见 [hir.md](hir.md)。
 
 ## 环境查询与源码来源
 
@@ -71,7 +71,7 @@ session 保存可跨文件使用的环境、内联定义、结构描述和源码
 动态变量是当前请求的访问入口，退出时恢复外层状态；warning 只登记到当前请求，
 仍由调用者原来的 condition handler 决定如何处理。
 
-原生 `compile` 在进入请求前保存选定的 HIR 或 MIR 路径，并将同一选择用于请求
+原生 `compile` 在进入请求前保存 MIR 管线选择，并将同一选择用于请求
 绑定和模块降级。前端仍构造 HIR，但这不应把请求标成 HIR；否则宏展开中的
 嵌套 `compile` 会继承错误的路径。嵌套请求按调用点当前选择建立自己的绑定，
 退出后恢复外层请求的路径。
@@ -136,7 +136,7 @@ raw cons 到 CST 的只读映射，再分别为 car、cdr 筛选引用、登记�
 ## 转换时的处理
 
 - **对 symbol macro 做 `setq`**：CLHS 3.1.2.1.1 要求按对展开式的 `setf` 处理，转换时改写成 `(setf 展开式 值)`。`with-slots`、`with-accessors` 依赖这一点。
-- **词法类型声明**按绑定身份和作用域保留，供 Trucler 查询。可投影到证明域的声明在绑定、赋值或局部读取处检查后用于特化；用户类型别名在当前编译期环境中展开，保留原始声明供环境查询与诊断；尚未支持的复合类型不建立证明事实，见 [HIR 类型传播](hir.md#类型传播与降级特化)。
+- **词法类型声明**按绑定身份和作用域保留，供 Trucler 查询。可投影到证明域的声明在绑定、赋值或局部读取处检查后用于特化；用户类型别名在当前编译期环境中展开，保留原始声明供环境查询与诊断；尚未支持的复合类型不建立证明事实，见 [MIR 类型传播](mir.md)。
 - **`(setf (the 类型 place) 值)`**（CLHS 5.1.2.6）：交叉编译和运行期都按 `(setf place (the 类型 值))` 处理。
 - **Trucler 的缓存**：reference 环境会把查到的全局描述缓存在环境对象里，而会话的环境在多个文件之间是同一个，后来重新定义的宏会被缓存挡住，所以每个顶层形式之前都清空缓存。
 
@@ -145,7 +145,7 @@ raw cons 到 CST 的只读映射，再分别为 car、cdr 筛选引用、登记�
 `proclaim` 和 `declaim` 在当前编译环境记录 `special`、`type`（含类型名简写）、
 `ftype`、`inline`、`notinline`、`optimize` 和用户声明名。cross-client 把这些信息
 保存在独立环境中；image-client 使用 image 的元数据。变量类型声明参与绑定检查和
-HIR 类型分析，函数类型保留在 Trucler 的全局函数描述中，可在函数定义之前声明。
+MIR 类型分析，函数类型保留在 Trucler 的全局函数描述中，可在函数定义之前声明。
 全局类型声明对同名词法绑定同样生效，不会把变量改成 special。
 
 声明位置先识别标准声明和已注册的用户声明，再查询类型展开器及已知类型。

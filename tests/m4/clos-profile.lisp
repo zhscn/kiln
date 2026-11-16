@@ -3,8 +3,22 @@
 
 (defun show (x) (write-line (prin1-to-string x)))
 
-(defun spin (n) (let ((s 0)) (dotimes (i n s) (setf s (logand (+ s i) #xffff)))))
-(defun spin-outer () (dotimes (i 200) (spin 100000)))
+;; Keep the sampled work in a separate frame with bounded fixnum arithmetic.
+(defun spin (n)
+  (declare (type (integer 0 3000000) n))
+  (let ((s 0) (i 0))
+    (declare (type (unsigned-byte 16) s) (type (integer 0 3000000) i))
+    (tagbody
+     again
+       (when (>= i n) (go done))
+       (setf s (logand (+ s i) #xffff))
+       (incf i)
+       (go again)
+     done)
+    s))
+(defun spin-outer ()
+  (declare (notinline spin))
+  (dotimes (i 200) (spin 100000)))
 (defvar *last* nil)
 (defun allocate (n) (dotimes (i n) (setf *last* (make-list 10))))
 

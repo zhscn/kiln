@@ -3,11 +3,7 @@
 ;;; compiles them. The KIR printed must be the eval module that SBCL made
 ;;; (co-eval.same-kir). Slow: run only when named (co-eval.slow).
 
-(let ((kiln.compiler::*compiler-pipeline*
-        (if (equal (kiln.kernel::sys-string
-                    10 (kiln.kernel::string-octets "KILN_BUILD_PIPELINE"))
-                   "mir")
-            :mir :hir)))
+(let ((kiln.compiler::*compiler-pipeline* :mir))
   (declare (special kiln.compiler::*compiler-pipeline*))
   (let ((session (kiln.compiler:make-session :client-class 'kiln.compiler::cross-client))
         (symbols '()))
@@ -25,7 +21,9 @@
                                                            :defined-packages packages
                                                            args)))))
       (compile-files "kernel" (kiln.compiler::module-files "kernel") :extra-symbols symbols)
-      (compile-files "clos" (kiln.compiler::module-files "clos"))
+      (compile-files "clos" (kiln.compiler::module-files "clos")
+                     :extra-symbols '(closer-mop:ensure-class))
       (compile-files "frontend" (kiln.compiler::module-files "frontend"))
+      (kiln.compiler::prepare-compiler-session session)
       (kiln.kir:print-module (compile-files "eval" (kiln.compiler::module-files "eval")) *standard-output*)))
 )

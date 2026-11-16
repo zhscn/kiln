@@ -5,10 +5,10 @@ set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 dir=$(realpath -m "${1:-$root/build/boot}")
 cd "$root"
-pipeline=${KILN_BUILD_PIPELINE:-hir}
+pipeline=${KILN_BUILD_PIPELINE:-mir}
 case "$pipeline" in
-  hir|mir) ;;
-  *) echo "KILN_BUILD_PIPELINE must be hir or mir" >&2; exit 2 ;;
+  mir) ;;
+  *) echo "KILN_BUILD_PIPELINE must be mir" >&2; exit 2 ;;
 esac
 cargo build -q
 rm -rf "$dir/stage0"

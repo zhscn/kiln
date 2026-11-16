@@ -5,6 +5,10 @@
 ;;;; Values that must survive calls are saved through backend operations.
 ;;;; The backend owns the carrier, transfer-area access, and allocation roots.
 
+(defun emit-move-values (primary count value value-count)
+  "Move the primary value and its multiple-value count together."
+  (emit `(:move-values ,primary ,count ,value ,value-count)))
+
 (defun values-word (i)
   "Operand for value I (I >= 1, raw variable or integer) in the transfer area."
   `(:secondary-value-ref ,i))

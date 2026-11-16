@@ -38,7 +38,7 @@ kiln0 ──运行构建程序──▶ stage1 ──kiln-cg──▶ kiln1 ─�
 
 `tools/stage0-kiln.sh [DIR]` 只做 stage0 和 kiln0，用来试编译器或 CLOS 的改动；配合只含部分模块的清单单独计时。
 
-`KILN_BUILD_PIPELINE=hir|mir` 选择模块的编译路径，默认是 `hir`。两个构建脚本在
+模块使用 MIR 编译；`KILN_BUILD_PIPELINE` 未设置或为 `mir` 时选择同一默认路径。两个构建脚本在
 SBCL 阶段把选择交给 `bootstrap-stage0` 的 `:pipeline` 参数；kiln 构建程序从同一
 环境变量读取选择，并在前端转换及模块降级期间绑定对应策略。这样各阶段的
 清单和源文件不变，MIR 验证可以沿同一条路径比较产物。
@@ -46,9 +46,7 @@ SBCL 阶段把选择交给 `bootstrap-stage0` 的 `:pipeline` 参数；kiln 构�
 完整自举默认写入 `build/boot/`，`KILN_BOOT_DIR` 可选择 `build/` 下的另一个子目录。
 例如 `KILN_BUILD_PIPELINE=mir KILN_BOOT_DIR=build/boot-mir tools/bootstrap.sh` 使用
 独立的 MIR 构建目录。构建目录记录 stage0 的路径选择，`--from-stage1` 会拒绝
-不一致的选择，避免用另一条路径的产物继续验证。直接调用 SBCL 的
-`bootstrap-stage0 :pipeline :mir` 后，运行生成的构建程序时也需设置
-`KILN_BUILD_PIPELINE=mir`。
+不一致的选择，避免用另一条路径的产物继续验证。`bootstrap-stage0` 的 `:pipeline` 参数只接受 `:mir`。
 
 ## 构建程序和清单
 

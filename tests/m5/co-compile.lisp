@@ -3,11 +3,7 @@
 ;;; must be the module that SBCL made of that file in the same session
 ;;; (co-compile.same-kir names it, tools/test.sh).
 
-(let ((kiln.compiler::*compiler-pipeline*
-        (if (equal (kiln.kernel::sys-string
-                    10 (kiln.kernel::string-octets "KILN_BUILD_PIPELINE"))
-                   "mir")
-            :mir :hir)))
+(let ((kiln.compiler::*compiler-pipeline* :mir))
   (declare (special kiln.compiler::*compiler-pipeline*))
   (let ((session (kiln.compiler:make-session)))
     (multiple-value-bind (asts packages)

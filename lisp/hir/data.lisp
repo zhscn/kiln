@@ -22,7 +22,7 @@
     (and (plusp speed) (>= speed (hir-policy-quality policy :compilation-speed)))))
 
 (defstruct (hir-node (:constructor hir-node (kind source &optional a b c d)))
-  (kind 0) (source nil) (a nil) (b nil) (c nil) (d nil) (type t) (mark 0) (policy *hir-policy*) (origin *source-origin*))
+  (kind 0) (source nil) (a nil) (b nil) (c nil) (d nil) (policy *hir-policy*) (origin *source-origin*))
 
 (defstruct (hir-buffer (:constructor make-hir-buffer (&optional (data (make-array 8)))))
   (data nil) (count 0))
@@ -42,24 +42,17 @@
 ;;; Variable flags: assigned, captured, cell, ignorable, dynamic-extent.
 (defstruct hir-var
   (name nil) (owner nil) (id -1) (flags 0) (refs 0) (type t)
-  (constant nil) (constant-p nil) (policy *hir-policy*))
+  (policy *hir-policy*))
 
 (defstruct (hir-type-declaration (:constructor make-hir-type-declaration (original expanded)))
   original expanded)
 
-;;; Function flags: escapes, closure, single call, direct calls, inlined, native-prepared,
-;;; local definitions, static environment, function aliases, HIR-native facts ready.
 (defstruct hir-fun
   (name nil) (parent nil) (lambda-list nil) (body nil) (parameter-specials nil)
   (free #()) (exits (make-hir-buffer)) (vars (make-hir-buffer)) (binding-count 0)
-  (flags 8) (calls 0) (value-refs 0) (caller nil) (call-site nil) (policy *hir-policy*)
+  (policy *hir-policy*)
   (source nil) (origin *source-origin*) (binding nil)
-  (input-types nil) (result-type t)
   (load-time-values (make-hir-buffer)))
-
-(defstruct (hir-function-alias (:constructor make-hir-function-alias (node owner variable initializer index)))
-  (node nil) (owner nil) (variable nil) (initializer nil) (index 0)
-  (target nil) (source nil) (users nil) (escaped nil) (used nil))
 
 (defstruct hir-lambda-list
   (required #()) (optional #()) (rest nil) (keys #()) (key-p nil) (allow-other-keys nil))
@@ -95,9 +88,6 @@
   (make-hir-env parent (if (hir-env-p parent) (hir-env-base parent) parent)
                :vars vars :funcs funcs :blocks blocks :tags tags :declarations declarations))
 
-(defvar *hir-lowering-epoch*)
-(defvar *hir-native-environments* nil)
-(defvar *hir-lifted-environments* nil)
 (defvar *hir-function*)
 (defvar *hir-source* nil)
 (defvar *hir-file-id* 0)
@@ -190,21 +180,6 @@ found here.")
   (unless (eq (hir-var-owner var) *hir-function*)
     (setf (hir-var-flags var) (logior 2 (hir-var-flags var))))
   var)
-
-(defun hir-note-local-functions (fun)
-  (loop for owner = fun then (hir-fun-parent owner)
-        while (and owner (not (logtest 64 (hir-fun-flags owner))))
-        do (setf (hir-fun-flags owner) (logior 64 (hir-fun-flags owner)))))
-
-(defun hir-note-function-aliases (fun)
-  (loop for owner = fun then (hir-fun-parent owner)
-        while (and owner (not (logtest 256 (hir-fun-flags owner))))
-        do (setf (hir-fun-flags owner) (logior 256 (hir-fun-flags owner)))))
-
-(defun hir-note-call (fun)
-  (incf (hir-fun-calls fun))
-  (setf (hir-fun-caller fun) *hir-function*)
-  fun)
 
 (defun hir-own-function (node)
   "The function defined by NODE, or NIL for a reference to a local function."

@@ -1,4 +1,4 @@
-(dolist (pipeline '(:hir :mir))
+(dolist (pipeline '(:mir))
   (let* ((kiln.compiler::*compiler-pipeline* pipeline)
          (reader (compile nil '(lambda (array index)
                                  (declare (optimize (speed 3) (safety 3))) (aref array index))))

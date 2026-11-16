@@ -1,5 +1,5 @@
 (defvar *mir-value-events* nil)
-(defun mir-value-check (body &optional (pipelines '(:hir :mir)))
+(defun mir-value-check (body &optional (pipelines '(:mir)))
   (dolist (pipeline pipelines)
     (let* ((kiln.compiler::*compiler-pipeline* pipeline)
            (function (compile nil `(lambda (x xs) (declare (optimize (speed 3) (safety 3))) ,body))))

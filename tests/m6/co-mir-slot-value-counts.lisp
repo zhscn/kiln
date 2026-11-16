@@ -3,7 +3,7 @@
   (declare (ignore class object))
   (case name (zero (values)) (many (values 1 2 3)) (shared (values 7 8))))
 
-(dolist (pipeline '(:hir :mir))
+(dolist (pipeline '(:mir))
   (let ((kiln.compiler::*compiler-pipeline* pipeline)
         (object (make-instance 'mir-slot-value-probe)))
     (dolist (entry '((zero nil) (many 1) (shared 7)))

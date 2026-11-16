@@ -629,7 +629,7 @@ of it, SLOW-FN otherwise; both return an operand. Returns the result."
 (define-primitive char (s i) (emit-schar s i nil 'char))
 (define-primitive (setf char) (c s i) (emit-schar s i c '(setf char)))
 
-;;; AREF and (SETF AREF) with one subscript (lower-global-call renames
+;;; AREF and (SETF AREF) with one subscript (the MIR consumer selects
 ;;; them): a simple vector or a string is accessed inline, anything else,
 ;;; a bad index or a non-character stored into a string through the
 ;;; kernel's two- and three-argument functions (no &REST list).

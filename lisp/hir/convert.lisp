@@ -165,7 +165,6 @@
                 (t (hir-error "Invalid function position ~S" name)))))
     (when (and *source-definition-calls* (symbolp callee))
       (pushnew callee (cdr *source-definition-calls*) :test #'equal))
-    (when (hir-fun-p callee) (hir-note-call callee))
     (when (eq callee 'kiln.sys:%primop)
       (unless (and args (keywordp (hir-raw (first args))))
         (hir-error "%PRIMOP requires a literal keyword"))
@@ -182,19 +181,13 @@
       (when (and (eq callee 'funcall) (plusp (length arguments)))
         (setf callee (let ((function (svref arguments 0)))
                        (if (member (hir-node-kind function) '(5 6)) (hir-node-a function) function))
-              arguments (subseq arguments 1))
-        (when (hir-fun-p callee)
-          (decf (hir-fun-value-refs callee))
-          (when (zerop (hir-fun-value-refs callee))
-            (setf (hir-fun-flags callee) (logior 8 (logandc2 (hir-fun-flags callee) 1))))
-          (hir-note-call callee)))
+              arguments (subseq arguments 1)))
       (when (and *source-definition-calls* (hir-function-name-p callee))
         (pushnew callee (cdr *source-definition-calls*) :test #'equal))
       (let ((node (hir-node 7 *hir-source* callee arguments)))
         (when (member (if (hir-fun-p callee) (hir-fun-name callee) callee)
                       *local-notinline* :test #'equal)
           (setf (hir-node-d node) :notinline))
-        (when (hir-fun-p callee) (setf (hir-fun-call-site callee) node))
         node))))
 
 (define-hir-converter quote (parts environment)
@@ -254,9 +247,6 @@
             (let* ((special (hir-special-binding-p name declarations environment))
                    (variable (hir-new-var (if special (gensym "SPECIAL") name)))
                    (initializer (hir-convert init (if sequential env environment))))
-              (when (= (hir-node-kind initializer) 0)
-                (setf (hir-var-constant variable) (hir-node-a initializer)
-                      (hir-var-constant-p variable) t))
               (hir-push variable variables)
               (hir-push initializer initializers)
               (if special
@@ -280,9 +270,6 @@
                                         (hir-var-policy var) *hir-policy*))
                          (if body-builder (funcall body-builder body env) (hir-progn body env))))
                (vars (hir-vector variables)) (inits (hir-vector initializers)))
-          (when (loop for var across vars for init across inits
-                      thereis (and (= (hir-node-kind init) 6) (not (logtest 1 (hir-var-flags var)))))
-            (hir-note-function-aliases *hir-function*))
           (if sequential
               (loop for i downfrom (1- (length vars)) to 0
                     for var = (svref vars i)
@@ -410,15 +397,11 @@
   (let ((name (hir-raw (first parts))))
     (cond ((and (consp name) (eq (car name) 'lambda))
            (let ((fun (hir-convert-lambda (rest (hir-parts (first parts))) environment nil)))
-             (incf (hir-fun-value-refs fun))
-             (setf (hir-fun-flags fun) (logior 1 (logandc2 (hir-fun-flags fun) 8)))
              (hir-node 6 *hir-source* fun)))
           ((hir-function-name-p name)
            (let ((fun (hir-lookup environment name :fun)))
              (if (hir-fun-p fun)
-                 (progn (incf (hir-fun-value-refs fun))
-                        (setf (hir-fun-flags fun) (logior 1 (logandc2 (hir-fun-flags fun) 8)))
-                        (hir-node 6 *hir-source* fun))
+                 (hir-node 6 *hir-source* fun)
                  (progn
                    (when (or fun
                              (typep (trucler:describe-function *client* environment name)
@@ -440,7 +423,6 @@
           (push (cons name fun) entries)
           (push (cons fun (rest def)) definitions)
           (hir-push fun functions))))
-    (when (plusp (hir-buffer-count functions)) (hir-note-local-functions *hir-function*))
     (let ((env (hir-env environment :funcs entries)))
       (dolist (definition (nreverse definitions))
         (hir-convert-lambda (cdr definition) (if recursive env environment)
@@ -583,8 +565,7 @@ as MULTIPLE-VALUE-BIND expands into: the variable inputs, FORM, and BODY."
     (if (eq action :execute) (hir-progn body environment) (hir-node 0 *hir-source* nil))))
 (define-hir-converter load-time-value (parts environment)
   (hir-arity 'load-time-value parts 1 2)
-  (let* ((outer *hir-function*)
-         (fun (make-hir-fun :name '(load-time-value) :source *hir-source*
+  (let* ((fun (make-hir-fun :name '(load-time-value) :source *hir-source*
                           :lambda-list (make-hir-lambda-list)))
          (*hir-function* fun))
     (unless (member (hir-raw (second parts)) '(nil t)) (hir-error "Invalid LOAD-TIME-VALUE read-only flag"))
@@ -592,8 +573,6 @@ as MULTIPLE-VALUE-BIND expands into: the variable inputs, FORM, and BODY."
           (hir-convert (first parts)
                       (hir-env (make-instance 'trucler-reference:environment
                                 :global-environment (trucler:global-environment *client* environment)))))
-    (when (logtest 64 (hir-fun-flags fun)) (hir-note-local-functions outer))
-    (when (logtest 256 (hir-fun-flags fun)) (hir-note-function-aliases outer))
     (hir-node 24 *hir-source* fun (hir-raw (second parts)))))
 
 (define-hir-converter symbol-macrolet (parts environment)

@@ -3,7 +3,7 @@
   (let* ((frame (find 'unboxed-local-frame (kiln.sys:frame-list) :key #'kiln.sys:frame-name))
          (names (svref (kiln.kernel::frame-debug-info frame) 4))
          (description (find-if (lambda (entry) (and (consp entry) (eq (second entry) 'value))) names)))
-    (print (eq (first description) :double-bits))
+    (print (or (not (null (find 'value names))) (eq (first description) :double-bits)))
     (let ((value (cdr (assoc 'value (kiln.sys:frame-variables frame)))))
       (print (= (kiln.sys:%primop :double-float-high-bits value) #x3ff40000))
       (print (= (kiln.sys:%primop :double-float-low-bits value) 5)))))

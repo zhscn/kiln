@@ -36,7 +36,7 @@ running image, in the null lexical environment."
           (native-compile-in-session definition session pipeline))))
      :pipeline pipeline)))
 
-(defun native-compile-in-session (definition session &optional (pipeline :hir))
+(defun native-compile-in-session (definition session &optional (pipeline *compiler-pipeline*))
   (let* ((*eval-definition* (and kiln.kernel::*compile-name*
                                 (cons kiln.kernel::*compile-name* t)))
          (name (kiln.kir::kir-name "compile-" (incf *native-compile-count*))))

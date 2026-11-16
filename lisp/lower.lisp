@@ -1,8 +1,9 @@
 (in-package #:kiln.compiler)
 
-(defvar *compiler-pipeline* :hir)
+(defvar *compiler-pipeline* :mir
+  "Native compilation pipeline. The supported middle end is :MIR.")
 
-;;;; Shared LIR emission for the HIR and MIR consumers: modules, calls,
+;;;; LIR emission for the MIR consumer: modules, calls,
 ;;;; allocation, dynamic environments and constants. Top-level forms run
 ;;;; in source order from the module initialization function.
 
@@ -343,7 +344,6 @@ name of its package as a string."
   kind            ; :catch, :unwind-protect, :cleanup-running or :exit-point
   slot            ; stack slot holding the entry
   handler         ; block that dispatches exceptional entry into this frame
-  cleanup         ; unwind-protect cleanup ASTs
   outer)          ; regions outside this one
 
 (defun handler ()
@@ -379,19 +379,6 @@ one (bindings have none)."
   (if (eq (region-kind region) :stack-roots)
       (emit `(:stack-roots-leave ,(region-slot region)))
       (emit `(:dynamic-leave ,(region-slot region)))))
-
-(defun emit-local-exit (target-regions)
-  "Leaves the regions entered since TARGET-REGIONS, running cleanups."
-  (loop for regions on *regions*
-        until (eq regions target-regions)
-        do (let ((r (first regions)))
-             (case (region-kind r)
-               (:bind (emit-unbind r))
-               (:progv (emit-unbind-progv r)))
-             (pop-entry r)
-             (when (eq (region-kind r) :unwind-protect)
-               (let ((*regions* (region-outer r)))
-                 (lower-progn (region-cleanup r)))))))
 
 (defun establish-entry (kind &optional (tag 0))
   "Links a new dynamic-environment entry into the context. Returns its
@@ -520,119 +507,6 @@ and kiln, where some macro packages have other names."
          (gethash name (toplevel-symbols *toplevel*))
          name)))
 
-(defvar *hir-entry-p* nil)
-
-(defun bind-var (definition operand &key (name (source-variable-name definition)) cell)
-  "Binds the variable DEFINITION to a new KIR variable holding OPERAND.
-NAME is the source variable's name for the debug info, NIL for none; CELL
-true if the variable holds the cell of the variable NAME."
-  (let ((v (copy-to-var operand)))
-    (setf (hir-var-lowering definition) v)
-    (unless *hir-entry-p*
-      (note-debug-var v name cell))
-    v))
-
-;;; Lowering
-
-(defgeneric lower (ast)
-  (:documentation "Emits code for AST; returns an operand holding its value."))
-
-(defmethod lower ((ast t))
-  (fail "cannot compile ~S yet" (class-name (class-of ast))))
-
-;;; Multiple values. LOWER-MV returns the operand of the
-;;; primary value and the number of values: an integer, or a raw variable.
-;;; Values after the first are in the context's transfer area (ctx.values)
-;;; and must be consumed before the next call. Forms through which values
-;;; pass define LOWER-MV, and their LOWER takes the primary value.
-
-(defgeneric lower-mv (ast))
-
-(defmethod lower-mv ((ast t))
-  (values (lower ast) 1))
-
-(defun lower-progn-mv (asts)
-  (if (null asts)
-      (values (nil-value) 1)
-      (progn
-        (dolist (a (butlast asts))
-          (lower a))
-        (lower-mv (car (last asts))))))
-
-(defun lower-progn (asts)
-  (values (lower-progn-mv asts)))
-
-(defun lower-or-nil-mv (ast)
-  (if ast (lower-mv ast) (values (nil-value) 1)))
-
-(defun set-mv (r n v nv)
-  "Assigns the values (V, NV) to the variables R and N."
-  (emit `(:move-values ,r ,n ,v ,nv)))
-
-(defun constant-value (ast)
-  "The value of AST if it is a constant (QUOTE, a literal, or a variable
-known to hold one), and true; else NIL and NIL."
-  (typecase ast
-    (hir-node
-     (case (hir-node-kind ast)
-       (0 (values (hir-node-a ast) t))
-       (1 (let ((var (hir-node-a ast)))
-            (values (hir-var-constant var)
-                    (and (hir-var-constant-p var) (not (logtest 1 (hir-var-flags var)))))))
-       (otherwise (values nil nil))))
-    (t (values nil nil))))
-
-(defun lower-switch-mv (reference arms default &optional effect)
-  (let ((value (lower reference))
-        (r (and (not effect) (new-var))) (n (and (not effect) (new-var :raw)))
-        (fallback (new-block)) (dispatch (new-block)) (join (new-block))
-        (blocks '()))
-    (dolist (arm arms)
-      (unless (assoc (cdr arm) blocks :test #'eq)
-        (push (cons (cdr arm) (new-block)) blocks)))
-    (setf blocks (nreverse blocks))
-    (br `(:test-class ,kiln.kir::+packet-class-fixnum+ ,value) dispatch fallback)
-    (start-block dispatch)
-    (emit `(:switch (:fixnum-untag ,value) ,(kiln.kir::kblock-name fallback)
-                    ,(loop for (key . body) in arms
-                           collect (list key (kiln.kir::kblock-name
-                                              (cdr (assoc body blocks :test #'eq)))))))
-    (loop for (body . block) in blocks
-          do (start-block block)
-             (if effect (funcall effect body)
-                 (multiple-value-call #'set-mv r n (lower-mv body)))
-             (jump join))
-    (start-block fallback)
-    (if effect (when default (funcall effect default))
-        (multiple-value-call #'set-mv r n (lower-or-nil-mv default)))
-    (jump join)
-    (start-block join)
-    (if effect (values (nil-value) 1) (values r n))))
-
-
-;;; Tests (the test of an IF, HIR-LOWER-BRANCH): a predicate's (:SELECT
-;;; condition T NIL) becomes a branch on the condition. The unused SELECT
-;;; is left to kiln-cg's dead code elimination.
-
-(defun boolean-condition (v)
-  "The condition C if the last statement of the current block is
-(:SET V (:SELECT C T NIL)): the value V was just made from it."
-  (let ((stmt (first (kiln.kir::kblock-stmts (kiln.kir::kfunc-current *func*)))))
-    (and (kiln.kir::kvar-p v)
-         (consp stmt)
-         (eq (first stmt) :set)
-         (eq (second stmt) v)
-         (let ((x (third stmt)))
-           (and (consp x)
-                (eq (first x) :select)
-                (equal (third x) (t-value))
-                (equal (fourth x) (nil-value))
-                (second x))))))
-
-(defun branch-on-value (v then else)
-  (br (or (boolean-condition v) `(:ne ,v ,(nil-value))) then else))
-
-
 ;;; Special variables. The backend selects TLS slots and the global fallback.
 
 (defun emit-symbol-value (sym)
@@ -739,14 +613,6 @@ Return the storage slot and its root region, if any."
 
 ;;; Functions
 
-(defstruct (parsed-lambda-list (:conc-name ll-))
-  (required '())   ; variable definitions
-  (optional '())   ; (variable supplied-p) definitions
-  (rest nil)       ; variable definition
-  (keys '())       ; (variable supplied-p keyword)
-  (key-p nil)
-  (allow-other-keys nil))
-
 (defun emit-nargs-check (count min max)
   "Checks the incoming argument COUNT; MAX is NIL for no upper limit."
   (let ((bad (new-block)) (ok (new-block)))
@@ -757,115 +623,6 @@ Return the storage slot and its root region, if any."
     (start-block bad)
     (emit-error +err-wrong-nargs+ `(:fixnum-tag ,count))
     (start-block ok)))
-
-(defun emit-find-key (plist keyword value supplied)
-  "Sets VALUE and SUPPLIED (variables) from the first occurrence of
-KEYWORD in the keyword argument list PLIST; leaves them alone otherwise."
-  (let ((cur (copy-to-var plist)) (found (copy-to-var (nil-value)))
-        (head (new-block)) (body (new-block)) (hit (new-block)) (next (new-block))
-        (done (new-block)))
-    (jump head)
-    (start-block head)
-    (br `(:eq ,cur ,(nil-value)) done body)
-    (start-block body)
-    (br `(:and (:eq (:field-load ,kiln.kir::+packet-field-cons-car+ ,cur) ,(constant-object keyword))
-               (:eq ,found ,(nil-value)))
-        hit next)
-    (start-block hit)
-    (emit `(:set ,value (:field-load ,kiln.kir::+packet-field-cons-car+ (:field-load ,kiln.kir::+packet-field-cons-cdr+ ,cur))))
-    (emit `(:set ,supplied ,(t-value)))
-    (emit `(:set ,found ,(t-value)))
-    (jump next)
-    (start-block next)
-    (emit `(:set ,cur (:field-load ,kiln.kir::+packet-field-cons-cdr+ (:field-load ,kiln.kir::+packet-field-cons-cdr+ ,cur))))
-    (jump head)
-    (start-block done)))
-
-(defun emit-check-keywords (plist keywords allow-other-keys)
-  "Signals an error if PLIST has odd length, or (unless other keys are
-allowed) a keyword not in KEYWORDS."
-  (let ((cur (copy-to-var plist))
-        (allow (copy-to-var (if allow-other-keys (t-value) (nil-value))))
-        (allow-supplied (copy-to-var (nil-value)))
-        (head (new-block)) (body (new-block)) (odd (new-block)) (even (new-block))
-        (check (new-block)) (unknown (new-block)) (next (new-block)) (done (new-block)))
-    ;; Parity first: the other loops step two elements at a time.
-    (let ((c (copy-to-var plist))
-          (h (new-block)) (b (new-block)) (step (new-block)) (ok (new-block)))
-      (jump h)
-      (start-block h)
-      (br `(:eq ,c ,(nil-value)) ok b)
-      (start-block b)
-      (br `(:eq (:field-load ,kiln.kir::+packet-field-cons-cdr+ ,c) ,(nil-value)) odd step)
-      (start-block step)
-      (emit `(:set ,c (:field-load ,kiln.kir::+packet-field-cons-cdr+ (:field-load ,kiln.kir::+packet-field-cons-cdr+ ,c))))
-      (jump h)
-      (start-block odd)
-      (emit-error +err-odd-keywords+ plist)
-      (start-block ok))
-    (unless allow-other-keys
-      (emit-find-key plist :allow-other-keys allow allow-supplied))
-    (jump head)
-    (start-block head)
-    (br `(:eq ,cur ,(nil-value)) done body)
-    (start-block body)
-    (jump even)
-    (start-block even)
-    (br `(:ne ,allow ,(nil-value)) next check)
-    (start-block check)
-    (let ((key (copy-to-var `(:field-load ,kiln.kir::+packet-field-cons-car+ ,cur))))
-      (dolist (k (cons :allow-other-keys keywords))
-        (let ((no (new-block)))
-          (br `(:eq ,key ,(constant-object k)) next no)
-          (start-block no)))
-      (jump unknown)
-      (start-block unknown)
-      (emit-error +err-unknown-keyword+ key))
-    (start-block next)
-    (emit `(:set ,cur (:field-load ,kiln.kir::+packet-field-cons-cdr+ (:field-load ,kiln.kir::+packet-field-cons-cdr+ ,cur))))
-    (jump head)
-    (start-block done)))
-
-(defun emit-entry (ll &key rest-slots)
-  "Binds the parameters of the parsed lambda list LL on function entry."
-  (let* ((nreq (length (ll-required ll)))
-         (npos (+ nreq (length (ll-optional ll))))
-         (rest-p (or (ll-rest ll) (ll-key-p ll)))
-         (count (new-var :raw))
-         (args (loop repeat npos collect (new-var))))
-    (when (> npos kiln.kir::+backend-argument-limit+)
-      (fail "functions with more than ~D positional parameters are not supported"
-            kiln.kir::+backend-argument-limit+))
-    (emit `(:receive-prefix ,args ,count))
-    (loop for p in (ll-required ll)
-          for i from 0
-          do (bind-var p (nth i args)))
-    (loop for (p supplied) in (ll-optional ll)
-          for i from nreq
-          do (bind-var p `(:select (:gt ,count ,i) ,(nth i args) ,(nil-value)))
-             (bind-var supplied `(:select (:gt ,count ,i) ,(t-value) ,(nil-value))))
-    (emit-nargs-check count nreq (if rest-p nil npos))
-    (when rest-p
-      (let ((list (emit-rest-list npos rest-slots)))
-        (when (ll-rest ll)
-          (bind-var (ll-rest ll) list))
-        (when (ll-key-p ll)
-          (emit-check-keywords list (mapcar #'third (ll-keys ll)) (ll-allow-other-keys ll))
-          (loop for (p supplied keyword) in (ll-keys ll)
-                do (let ((v (bind-var p (nil-value)))
-                         (s (bind-var supplied (nil-value))))
-                     (emit-find-key list keyword v s))))))))
-
-(defun local-function-label-name (name)
-  "NAME's part of the label of a local function: a gensym's without its
-number, so that the labels do not depend on the image that compiles (the
-host or kiln)."
-  (mangle (cond ((and (symbolp name) (symbol-package name)) (symbol-name name))
-                ((symbolp name) (string-right-trim "0123456789" (symbol-name name)))
-                (t (princ-to-string name)))))
-
-
-;;; Calls
 
 (defun emit-check-function (f)
   (let ((bad (new-block)) (ok (new-block)))
@@ -914,9 +671,6 @@ it is a function, the global function of F if it is a symbol."
 (defun function-cell-value (name)
   (multiple-value-bind (base field) (function-cell-place name)
     (copy-to-var `(:field-load ,field ,base))))
-
-(defun lower-args (asts)
-  (mapcar (lambda (a) (copy-to-var (lower a))) asts))
 
 (defparameter *type-predicates*
   '((cons . consp) (symbol . symbolp) (list . listp) (null . null) (atom . atom)
@@ -1011,15 +765,14 @@ returns LOW, HIGH and T; else NIL, NIL and NIL."
                  (funcall primitive (list val))
                  (emit-lisp-call (function-cell-value predicate) (list val)))))
           ((eq (first type) 'eql)
-           (let ((c (hir-node 0 nil (second type))))
-             (if (eq-comparable-constant-p c)
-                 (boolean-value `(:eq ,val ,(constant-object (second type))))
-                 (funcall (gethash 'eql *primitives*)
-                          (list val (constant-object (second type)))))))
+           (if (eq-comparable-value-p (second type))
+               (boolean-value `(:eq ,val ,(constant-object (second type))))
+               (funcall (gethash 'eql *primitives*)
+                        (list val (constant-object (second type))))))
           ((eq (first type) 'member)
            (let ((items (rest type)))
              (cond ((null items) (nil-value))
-                   ((every (lambda (x) (eq-comparable-constant-p (hir-node 0 nil x))) items)
+                   ((every #'eq-comparable-value-p items)
                     (boolean-value
                      (reduce (lambda (a b) `(:or ,a ,b))
                              (mapcar (lambda (x) `(:eq ,val ,(constant-object x))) items))))
@@ -1075,56 +828,11 @@ returns LOW, HIGH and T; else NIL, NIL and NIL."
                  (cached-typep-specifier-p (second type))))))
         (t nil)))
 
-(defun call-ast (name arg-asts)
-  (hir-node 7 nil name (coerce arg-asts 'simple-vector)))
-
-(defun long-call-ast (name arg-asts)
-  "An AST equivalent to the call of NAME (LIST, LIST*, VECTOR, NCONC or
-APPEND) with ARG-ASTS, whose calls have few enough arguments: (LIST* a1
-... an REST) in chunks, (COERCE list 'SIMPLE-VECTOR) for VECTOR, nested
-calls for the associative NCONC and APPEND."
-  (let ((chunk 60))
-    (labels ((literal (value) (hir-node 0 nil value))
-             (list-ast (asts tail-ast)
-               ;; The list of ASTS's values followed by TAIL-AST's value.
-               (if (<= (length asts) chunk)
-                   (call-ast 'list* (append asts (list tail-ast)))
-                   (call-ast 'list* (append (subseq asts 0 chunk)
-                                            (list (list-ast (nthcdr chunk asts) tail-ast)))))))
-      (ecase name
-        ((nconc append)
-         ;; Associative: (F (F a1 ... a60) (F a61 ...)).
-         (call-ast name (list (call-ast name (subseq arg-asts 0 chunk))
-                              (call-ast name (nthcdr chunk arg-asts)))))
-        (list (list-ast arg-asts (literal nil)))
-        (list* (list-ast (butlast arg-asts) (car (last arg-asts))))
-        (vector (call-ast 'coerce
-                          (list (list-ast arg-asts (literal nil))
-                                (literal 'simple-vector))))))))
-
 (defun eq-comparable-value-p (value)
   "Whether EQL with VALUE has the same result as EQ."
   (and (not (and (integerp value)
                  (not (<= +most-negative-fixnum+ value +most-positive-fixnum+))))
        (not (typep value '(or ratio double-float complex)))))
-
-(defun eq-comparable-constant-p (ast)
-  (multiple-value-bind (value constantp) (constant-value ast)
-    (and constantp (eq-comparable-value-p value))))
-
-(defun simple-sequence-test (keyword-asts)
-  "EQL or EQ if the keyword arguments KEYWORD-ASTS (of MEMBER or ASSOC)
-make that the test, with no key: none, or :TEST #'EQL, #'EQ, 'EQL or
-'EQ. Else NIL."
-  (cond ((null keyword-asts) 'eql)
-        ((and (= (length keyword-asts) 2)
-              (eq (constant-value (first keyword-asts)) :test))
-         (let* ((test (second keyword-asts))
-                (name (cond ((and (hir-node-p test) (= (hir-node-kind test) 5)) (hir-node-a test))
-                            (t (multiple-value-bind (value constantp) (constant-value test)
-                                 (and constantp value))))))
-           (and (member name '(eq eql)) name)))
-        (t nil)))
 
 (defun emit-cached-typep (object type)
   "Emit a type test with a writable stamp/result and type-version cache."
@@ -1132,9 +840,6 @@ make that the test, with no key: none, or :TEST #'EQL, #'EQ, 'EQL or
     (module-data label `(:static-mutable-cons ,(nil-word) ,(nil-word)))
     (emit-lisp-call (function-cell-value 'kiln.kernel::%typep-cached)
                     (list object (constant-object type) `(:object-address ,label :cons)))))
-
-(defun lower-cached-typep (object-ast type)
-  (emit-cached-typep (copy-to-var (lower object-ast)) type))
 
 (defun emit-typep-test (object type)
   "Test an evaluated object against a known specifier, retaining runtime guards."
@@ -1149,19 +854,12 @@ make that the test, with no key: none, or :TEST #'EQL, #'EQ, 'EQL or
     (emit-lisp-call (function-cell-value 'kiln.kernel::%slot-value-cached)
                     (list object (constant-object slot-name) `(:object-address ,label :cons)))))
 
-(defun lower-cached-slot-value (object-ast slot-name)
-  (emit-cached-slot-value (copy-to-var (lower object-ast)) slot-name))
-
 (defun emit-cached-set-slot-value (value object slot-name)
   "Write a named slot through a cache guarded by the object's class stamp."
   (let ((label (fresh-label "kiln_set_slot_value_cache_")))
     (module-data label `(:static-mutable-cons ,(nil-word) ,(nil-word)))
     (emit-lisp-call (function-cell-value 'kiln.kernel::%set-slot-value-cached)
                     (list value object (constant-object slot-name) `(:object-address ,label :cons)))))
-
-(defun lower-cached-set-slot-value (value-ast object-ast slot-name)
-  (let ((value (copy-to-var (lower value-ast))) (object (copy-to-var (lower object-ast))))
-    (emit-cached-set-slot-value value object slot-name)))
 
 (defun call-site-root ()
   "A mutable cache cons whose object-valued car is a static GC root."
@@ -1179,7 +877,7 @@ make that the test, with no key: none, or :TEST #'EQL, #'EQ, 'EQL or
          (result (new-var)) (count (new-var :raw)))
     (br (undefined-function-test helper) fallback specialized)
     (start-block fallback)
-    (multiple-value-call #'set-mv result count
+    (multiple-value-call #'emit-move-values result count
       (emit-lisp-call (function-cell-value name) vals))
     (jump done)
     (start-block specialized)
@@ -1187,44 +885,12 @@ make that the test, with no key: none, or :TEST #'EQL, #'EQ, 'EQL or
                      (emit-lisp-call helper (list (call-site-root)
                                                   (constant-object class-name)
                                                   (constant-object keys))))))
-      (multiple-value-call #'set-mv result count
+      (multiple-value-call #'emit-move-values result count
         (emit-lisp-call function
                         (loop for value in (cddr vals) by #'cddr collect value))))
     (jump done)
     (start-block done)
     (values result count)))
-
-(defun lower-constructor-call (name arg-asts class-name keys)
-  (emit-constructor-call name (lower-args arg-asts) class-name keys))
-
-(defun list-call-elements (ast)
-  "The argument ASTs of AST if it is a call to LIST, and T; else NIL and NIL."
-  (if (and (hir-node-p ast) (= (hir-node-kind ast) 7) (eq (hir-node-a ast) 'list))
-      (values (coerce (hir-node-b ast) 'list) t)
-      (values nil nil)))
-
-(defun null-constant-p (ast)
-  (multiple-value-bind (value constantp) (constant-value ast)
-    (and constantp (null value))))
-
-(defun simplify-append-asts (asts)
-  "Simplifies the argument ASTs of APPEND (such as quasiquote expansions):
-drops empty lists, merges adjacent LIST calls, and drops a trailing NIL
-after a LIST call."
-  (let ((out '()))
-    (loop for (ast . rest) on asts
-          do (multiple-value-bind (elems listp) (list-call-elements ast)
-               (cond ((and (null rest) (null-constant-p ast)
-                           out (nth-value 1 (list-call-elements (first out)))))
-                     ((and rest (or (null-constant-p ast) (and listp (null elems)))))
-                     ((and (null rest) listp (null elems))
-                      (unless (and out (nth-value 1 (list-call-elements (first out))))
-                        (push (hir-node 0 nil nil) out)))
-                     ((and listp out (nth-value 1 (list-call-elements (first out))))
-                      (setf (first out)
-                            (call-ast 'list (append (list-call-elements (first out)) elems))))
-                     (t (push ast out)))))
-    (nreverse out)))
 
 (defun emit-set-constant-fdefinition (name function)
   "Install a checked function before the kernel's definition setter exists."
@@ -1241,133 +907,6 @@ after a LIST call."
     (jump done)
     (start-block done))
   function)
-
-(defun lower-global-call (name arg-asts)
-  (when (eq name 'append)
-    (let ((asts (simplify-append-asts arg-asts)))
-      (cond ((null asts)
-             (return-from lower-global-call (nil-value)))
-            ((null (rest asts))
-             (return-from lower-global-call (lower (first asts))))
-            ((nth-value 1 (list-call-elements (first asts)))
-             (return-from lower-global-call
-               (lower-global-call 'list*
-                                  (append (list-call-elements (first asts))
-                                          (list (call-ast 'append (rest asts)))))))
-            ((= (length asts) 2)
-             (return-from lower-global-call
-               (lower-global-call 'kiln.kernel::append-2 asts)))
-            (t (setf arg-asts asts)))))
-  (when (and (eq name 'make-instance) (call-site-specialization-p)
-             (oddp (length arg-asts))
-             (<= (length arg-asts) kiln.kir::+backend-argument-limit+))
-    (multiple-value-bind (class-name constantp) (constant-value (first arg-asts))
-      (when (and constantp (symbolp class-name) class-name)
-        (let ((keys '()) (valid t))
-          (loop for key-ast in (rest arg-asts) by #'cddr
-                do (multiple-value-bind (key constantp) (constant-value key-ast)
-                     (if (and constantp (symbolp key)) (push key keys) (setf valid nil))))
-          (when valid
-            (return-from lower-global-call
-              (lower-constructor-call name arg-asts class-name (nreverse keys))))))))
-  ;; (EQL x constant), as CASE expands into, is EQ for most constants.
-  (when (and (eq name 'eql) (= (length arg-asts) 2)
-             (or (eq-comparable-constant-p (first arg-asts))
-                 (eq-comparable-constant-p (second arg-asts))))
-    (return-from lower-global-call (lower-global-call 'eq arg-asts)))
-  ;; One subscript: the primitives with a simple vector fast path.
-  (cond ((and (eq name 'aref) (= (length arg-asts) 2))
-         (setf name 'kiln.kernel::%aref-1))
-        ((and (equal name '(setf aref)) (= (length arg-asts) 3))
-         (setf name 'kiln.kernel::%set-aref-1)))
-  (when (and (eq name 'typep) (= (length arg-asts) 2))
-    (multiple-value-bind (type constantp) (constant-value (second arg-asts))
-      (when constantp
-        (let ((predicate (and (symbolp type) (cdr (assoc type *type-predicates*)))))
-          (cond (predicate
-                 (return-from lower-global-call
-                   (lower-global-call predicate (list (first arg-asts)))))
-                ((inline-typep-specifier-p type)
-                 (return-from lower-global-call
-                   (emit-inline-typep (copy-to-var (lower (first arg-asts))) type)))
-                ((cached-typep-specifier-p type)
-                 (return-from lower-global-call
-                   (lower-cached-typep (first arg-asts) type))))))))
-  ;; SLOT-VALUE and (SETF SLOT-VALUE) with a constant slot name: a cache
-  ;; of the slot's location, guarded by the object's stamp.
-  (when (and (eq name 'slot-value) (= (length arg-asts) 2))
-    (multiple-value-bind (slot-name constantp) (constant-value (second arg-asts))
-      (when (and constantp (symbolp slot-name))
-        (return-from lower-global-call
-          (lower-cached-slot-value (first arg-asts) slot-name)))))
-  (when (and (equal name '(setf slot-value)) (= (length arg-asts) 3))
-    (multiple-value-bind (slot-name constantp) (constant-value (third arg-asts))
-      (when (and constantp (symbolp slot-name))
-        (return-from lower-global-call
-          (lower-cached-set-slot-value (first arg-asts) (second arg-asts)
-                                       slot-name)))))
-  ;; MEMBER and ASSOC with EQL or EQ as the test and no key: functions of
-  ;; two arguments, without parsing keywords.
-  (when (and (member name '(member assoc)) (>= (length arg-asts) 2))
-    (let ((test (simple-sequence-test (rest (rest arg-asts)))))
-      (when test
-        (return-from lower-global-call
-          (lower-global-call (cdr (assoc (list name test)
-                                         '(((member eql) . kiln.kernel::%member-eql)
-                                           ((member eq) . kiln.kernel::%member-eq)
-                                           ((assoc eql) . kiln.kernel::%assoc-eql)
-                                           ((assoc eq) . kiln.kernel::%assoc-eq))
-                                         :test #'equal))
-                             (subseq arg-asts 0 2))))))
-  ;; (FUNCALL #'F ...) and %PRIMOP are converted before (lisp/hir/convert.lisp).
-  (progn
-      (let ((constant-name (and (equal name '(setf fdefinition))
-                                (= (length arg-asts) 2)
-                                (quoted-constant (second arg-asts)))))
-        (cond
-          ;; (SETF FDEFINITION) of a constant name, as DEFUN expands to:
-          ;; store straight into the cell. This is also the only way to
-          ;; define (SETF F) functions until run-time function names exist.
-          ((and constant-name (or (symbolp constant-name)
-                                  (and (consp constant-name)
-                                       (eq (first constant-name) 'setf))))
-           (emit-set-constant-fdefinition constant-name
-                                         (copy-to-var (lower (first arg-asts)))))
-          ((and (> (length arg-asts) kiln.kir::+backend-argument-limit+)
-                (member name '(list list* vector nconc append)))
-           ;; Calls are limited to +REG-ARGS+ + +VALUES-MAX+ arguments:
-           ;; build long lists in chunks, and vectors from them.
-           (lower (long-call-ast name arg-asts)))
-          (t
-           (when (> (length arg-asts) kiln.kir::+backend-argument-limit+)
-             (fail "the call to ~S has ~D arguments; at most ~D are supported"
-                   name (length arg-asts) kiln.kir::+backend-argument-limit+))
-           (let ((primitive (and (not (and (eq name 'print)
-                                            (or *image-literals* (/= (length arg-asts) 1))))
-                                 (gethash name *primitives*)))
-                 (vals (lower-args arg-asts)))
-             ;; The PRINT primitive is the runtime's printer, for programs
-             ;; without streams; code compiled into a running image has
-             ;; them, and its output goes where *STANDARD-OUTPUT* says. A
-             ;; call with a stream is the printer's PRINT.
-             (if primitive
-                 (funcall primitive vals)
-                 (emit-lisp-call (function-cell-value name) vals))))))))
-
-(defun quoted-constant (ast)
-  (values (constant-value ast)))
-
-
-;;; BLOCK and RETURN-FROM
-
-(defstruct exit-info
-  func            ; KIR function that contains the block or tagbody
-  regions         ; regions outside it (targets of local exits)
-  exit            ; BLOCK: exit block
-  result          ; BLOCK: result variable
-  count           ; BLOCK: raw variable, number of values
-  double-primary  ; BLOCK: local exits carry binary64 bits
-  block)          ; TAGBODY: KIR block of the tag
 
 (defun emit-exit-token ()
   "A fresh object identifying one activation of a block or tagbody that a
@@ -1431,9 +970,7 @@ returns the operand of its (static) function object."
         (emit-poll)
         (dolist (form asts)
           (let ((*toplevel* form))
-            (ecase *compiler-pipeline*
-              (:hir (hir-lower-toplevel (toplevel-form-ast form)))
-              (:mir (mir-lower-toplevel (toplevel-form-ast form))))))
+            (mir-lower-toplevel (toplevel-form-ast form))))
         (emit `(:return ,(nil-value) 1)))
       (let ((*toplevel* (and (= (length files) 1) (first files)
                              (make-toplevel-form nil (first files) nil nil nil))))
@@ -1528,7 +1065,7 @@ use list only names packages that exist at run time."
                                     (target-package-local-nicknames p known)))
               'simple-vector))))
 
-(defun compile-module (asts module-name &key session defined-packages extra-symbols image (pipeline :hir))
+(defun compile-module (asts module-name &key session defined-packages extra-symbols image (pipeline *compiler-pipeline*))
   "Compiles the top-level forms ASTS (TOPLEVEL-FORMs) into a KIR module. The module's
 symbol table describes its symbols, the EXTRA-SYMBOLS and the symbols of
 the DEFINED-PACKAGES (host packages its DEFPACKAGE forms created) for the
@@ -1536,14 +1073,9 @@ package system.
 IMAGE true: the module is to be loaded into the running image; its
 literals are the image's objects, and it has no symbol table.
 Returns the module and the vector of its literals."
-  (unless (member pipeline '(:hir :mir)) (fail "Unknown compiler pipeline ~S" pipeline))
+  (unless (eq pipeline :mir) (fail "Unknown compiler pipeline ~S" pipeline))
   (let ((*compiler-pipeline* pipeline)
         (*module* (make-kmodule module-name))
-        (*hir-lowering-epoch* (list nil))
-        (*hir-consumer-state* (make-hir-consumer-state))
-        (*hir-consumer-owner* nil) (*hir-consumer-bindings* nil)
-        (*hir-native-environments* nil)
-        (*hir-lifted-environments* nil)
         (*image-literals* (and image (make-hash-table :test 'eq)))
         (*image-literal-objects* '())
         (*module-label* (mangle module-name))

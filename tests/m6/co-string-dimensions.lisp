@@ -9,7 +9,7 @@
                             :displaced-index-offset 1 :fill-pointer 1)))
   (print (and (typep string '(string 3)) (not (typep string '(string 1))))))
 
-(dolist (pipeline '(:hir :mir))
+(dolist (pipeline '(:mir))
   (let* ((kiln.compiler::*compiler-pipeline* pipeline)
          (function (compile nil '(lambda (string) (declare (optimize safety)) (the (string 1) string))))
          (string (make-array 1 :element-type 'base-char :initial-element #\x :fill-pointer 0)))

@@ -15,7 +15,8 @@
           `(initialize-fasl-node ',object ',(fasl-node-payload object))))
 (defvar *fasl-a*)
 (defvar *fasl-b*)
-(let* ((source "build/test/co-fasl-order-source.lisp")
+(let* ((kiln.sys:*warn-on-cross-file-redefinition* nil)
+       (source "build/test/co-fasl-order-source.lisp")
        (output (compile-file-pathname source)))
   (unwind-protect
        (progn
@@ -41,7 +42,8 @@
     (when (probe-file source) (delete-file source))
     (when (probe-file output) (delete-file output))))
 
-(let* ((source "build/test/co-fasl-order-three.lisp")
+(let* ((kiln.sys:*warn-on-cross-file-redefinition* nil)
+       (source "build/test/co-fasl-order-three.lisp")
        (output (compile-file-pathname source)))
   (unwind-protect
        (progn

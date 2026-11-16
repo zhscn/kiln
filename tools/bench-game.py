@@ -105,15 +105,15 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('cases', nargs='*', help='names from ' + ', '.join([*CASES, *UNSUPPORTED]))
     parser.add_argument('--no-build', action='store_true')
-    parser.add_argument('--pipeline', choices=('hir', 'mir'),
-                        default=os.environ.get('KILN_BUILD_PIPELINE', 'hir'))
+    parser.add_argument('--pipeline', choices=('mir',),
+                        default=os.environ.get('KILN_BUILD_PIPELINE', 'mir'))
     parser.add_argument('--runs', type=int, default=3)
     parser.add_argument('--warmup', type=int, default=1)
     parser.add_argument('--timeout', type=float, default=30)
     parser.add_argument('--output', type=Path, default=root / 'build/bench-game')
     args = parser.parse_args()
-    if args.pipeline not in ('hir', 'mir'):
-        parser.error('KILN_BUILD_PIPELINE must be hir or mir')
+    if args.pipeline != 'mir':
+        parser.error('KILN_BUILD_PIPELINE must be mir')
     if args.runs < 1 or args.warmup < 0 or args.timeout <= 0:
         parser.error('runs and timeout must be positive; warmup must be nonnegative')
     if any(name not in CASES and name not in UNSUPPORTED for name in args.cases):

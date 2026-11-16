@@ -1,6 +1,6 @@
 # MIR：Lisp 语义中端
 
-状态：**实验框架已接入**。生产编译仍使用 HIR → LIR；MIR 通过显式入口构造 CFG、验证 SSA 并输出同一套 LIR。HIR 求值器和已有优化保留原来的路径。分层和迁移见 [compiler.md](compiler.md)。
+MIR 是默认的原生编译中端。它从 HIR 构造 CFG，验证 SSA，完成语义分析与表示选择，再输出 LIR。HIR 求值器继续直接执行 HIR。分层和迁移见 [compiler.md](compiler.md)。
 
 MIR（mid-level IR）由 Lisp 从 HIR 构造，是控制流图加 SSA。它负责 Lisp 程序的分析、优化和表示选择，最后退出 SSA，输出 [LIR](lir.md)。MIR 不是通用的低级 SSA：对象身份、闭包、可写捕获、多值和动态范围在 MIR 里仍是可辨认的操作。机器层的通用优化留给 Cranelift。
 
@@ -67,7 +67,7 @@ fixnum 运算保持带标记的对象表示。MIR 证明操作数都是 fixnum �
 共享算术原语保留 fixnum 类型守卫、溢出检查及通用数值慢路径。
 操作数能放入 fixnum 并不保证算术结果也能放入：只有结果区间证明成立时，
 加减乘才省略溢出分支；否则使用带溢出标志的操作，溢出后调用任意精度数值路径。
-HIR 与 MIR 共用这部分 LIR 发射器，各自提供结果范围证明。
+MIR 将结果范围证明传给公共 LIR 算术发射器。
 声明检查面对完整结果执行，因此溢出导致的类型错误仍携带正确的整数 datum。
 
 容器访问需要分别证明表示与索引是否合法。已知 simple-vector 的 `aref`、`svref`、
@@ -129,10 +129,9 @@ EQL 与已知常量比较时，若该常量不需要堆数值比较，就改用 
 HIR 的区间、逃逸、栈存储和拆箱证明不导入 MIR。
 公共准备阶段若先合并函数或改写调用，MIR 建图时就失去了原来的函数边界，
 也无法独立决定这些优化。因此前端只准备绑定、捕获、声明和退出等公共信息；
-HIR 函数别名与身份传播、单调用点内联、短列表展开、类型推导、调用特化、
-cons 标量替换和静态闭包环境分类均延迟到 HIR 原生降级入口执行。
-直接选择 MIR 编译时，由 MIR 自己完成身份传播、内联与列表展开等分析和改写。
-公共准备与原生准备使用显式参数区分，嵌套编译不会继承另一次编译的准备模式。
+函数别名与身份传播、内联、短列表展开、类型推导、调用特化、cons 标量替换
+和闭包存储选择均由 MIR 在自己的定义和控制流上完成。嵌套编译使用独立请求
+和 MIR 单元，不将另一份编译的优化状态写回共享 HIR。
 指令和终结点保留源码位置与策略，调用还保留 `notinline` 约束。
 
 MIR 将嵌套函数平铺到单元的函数表，发射器的当前函数名因而不足以恢复词法
@@ -188,7 +187,7 @@ HIR 节点上的推导标记。代码生成选择测试见 `tools/test-mir-type-
 带签名的 `function` 是声明类型，不能直接交给 `typep`。声明检查把它投影为
 可判定的函数类别；布尔组合及结构组件保留不会拒绝合法值的检查条件，无法
 判定的否定条件保守放宽。参数和返回签名仍是程序的声明，检查不包装函数，也
-不改变对象身份。HIR 和 MIR 共用这项声明投影，多值检查则由 MIR 的 CFG 和
+不改变对象身份。声明投影保留在公共类型工具中，多值检查由 MIR 的 CFG 和
 bundle 事实独立生成。
 
 `throw` 是无正常后继的终结点，显式接收 tag 对象和多值 bundle。构造器先求出
@@ -333,18 +332,19 @@ special 变量的引用必须读取当前动态环境，词法 SSA 参数不能�
 - `hir-to-mir` 接受一个 HIR 函数，返回已验证的函数单元。
 - `verify-mir` 检查编号所有权、边参数、表示、效果下界、入口数量检查及 SSA 支配关系。
 - `print-mir` 输出编号、块参数、操作、效果、源码和策略，供调试查看。
-- `compile-module` 的 `:pipeline :mir` 为显式文件模块入口；默认是 `:hir`。
+- `compile-module` 默认继承 `kiln.compiler::*compiler-pipeline*`，初始值为 `:mir`；
+  原生编译只支持 `:mir`。
   `bootstrap-stage0` 的 `:pipeline :mir` 及构建脚本的 `KILN_BUILD_PIPELINE=mir`
   选择整模块 MIR 构建；各阶段与产物比较见 [bootstrap.md](bootstrap.md)。
-  允许优化且未指定 `notinline` 的全局内建函数与生产路径共享原语发射器；
+  允许优化且未指定 `notinline` 的全局内建函数使用公共原语发射器；
   参数是否逃逸仍由 MIR 的调用和存储
   分析决定。常量函数名的 `(setf fdefinition)` 检查函数对象后直接写函数 cell，
   并在通知函数已安装时发送定义变更通知，使 kernel 能在运行期 setter 安装前
   建立自己的函数定义。`tools/test-mir-kernel.lisp` 从源码编译 MIR kernel，再运行
   依赖模块，验证初始化、普通及 setf 函数定义和重定义。
 - 运行期动态绑定 `kiln.compiler::*compiler-pipeline*` 为 `:mir` 后调用原生 `compile`，
-  只选择本次函数编译。转换期间内部生成的编译器辅助函数继续使用生产路径。
-  `eval`、`load`、缓存及 FASL 保持原有入口。
+  选择该动态范围内的原生编译；嵌套编译和转换期间生成的辅助函数继承相同选择。
+  默认的 `compile`、原生 `eval`、`load` 及 FASL 编译均使用 MIR。
 
 `mir-analysis` 按函数修订号缓存一个分析结果。结构变换通过 `mir-run-pass`
 执行：先增加修订号，清除没有列入 `:preserves` 的分析，再运行变换并验证结果。
@@ -384,8 +384,8 @@ special 变量的引用必须读取当前动态环境，词法 SSA 参数不能�
 赋值、单值 bundle 和取主值操作传递事实，块参数汇合所有可达前驱的实参类型。
 固定点迭代覆盖循环回边，不可达前驱不参与合流。CL 标准函数的类型规则接收
 实参的 SSA 类型，推导二元算术、增减、位运算和部分容器操作的主值类型；
-`values` 和 `identity` 转发主值事实。类型域、函数规则与声明证明在
-`lisp/type-inference.lisp` 中由两条路径共用，不读取 HIR 节点的推导标记。
+`values` 和 `identity` 转发主值事实。`lisp/type-inference.lisp` 提供类型域、
+函数规则与声明投影等纯函数；MIR 求解器负责将它们应用于 SSA 值和控制流。
 
 循环回边和内联复制的块不一定按数据流方向排列。每次类型变化都重扫整张图，
 会反复计算尚未获得新输入的指令。类型求解器因此按图版本缓存 SSA 值到使用块
@@ -765,21 +765,20 @@ cdr 指向同一抽象链。SSA、字段读写和局部调用按对象图规则�
 
 模型测试见 `tools/test-mir.lisp`，内联与增长预算测试见 `tools/test-mir-inline.lisp`
 和 `tools/test-mir-inline-entry.lisp`，
-cell 初始化传播测试见 `tools/test-mir-cells.lisp`；运行方式与 HIR 模型测试相同。
+cell 初始化传播测试见 `tools/test-mir-cells.lisp`，局部声明检查见
+`tools/test-mir-scoped-declarations.lisp`；运行方式与 HIR 模型测试相同。
 `tools/test-mir-lir.lisp` 使用 `tools/test.sh` 已生成的 kernel、CLOS 模块，验证
 SBCL 从显式 MIR 入口生成二进制 LIR 并交给 JIT 执行。端到端用例在
 `tests/m6/co-mir.lisp`，覆盖循环中的并行复制、多值跨调用保存、声明检查、参数数量
 和未支持形式的失败路径。
 
-以下各节描述 MIR 扩展到完整语义中端后的契约。
-
 ## 数据模型
 
-函数、基本块、指令和值使用紧凑的整数编号，存在按编号索引的 simple-vector 里；节点本身是原生结构对象（[hir.md](hir.md) 的“原生的结构对象”），指令按整数 kind 分派。集合用位集合，工作队列用可增长向量。这些也是 [compiler-performance.md](compiler-performance.md) 要推的做法。
+函数、基本块、指令和值使用紧凑的整数编号，存在按编号索引的 simple-vector 里；节点本身是[原生结构对象](objects.md)，指令按整数 kind 分派。集合用位集合，工作队列用可增长向量。这些也是 [compiler-performance.md](compiler-performance.md) 要推的做法。
 
 - 基本块参数表达 SSA 合流，终结指令列出全部后继和边上的实参。
 - 绑定（HIR 的变量身份）、源码位置、策略和 SSA 值分开编号；循环里的一个分配点不代表所有动态对象是同一身份。
-- 只有标量走 SSA。可变的堆字段、闭包共享的 cell、函数 cell、special 变量和动态环境保留显式的操作；起初不做 Memory SSA。
+- 只有标量走 SSA。可变的堆字段、闭包共享的 cell、函数 cell、special 变量和动态环境保留显式的操作；内存状态不采用 Memory SSA。
 - 语义类型和机器表示分开：一个值可以有整数区间事实，同时仍是装箱的 `obj`。
 
 分析结果放在侧表里，带函数的修订号。修改 CFG、调用或存储的 pass 声明它使哪些分析失效，不能沿用旧的证明。
@@ -809,7 +808,7 @@ SBCL 从显式 MIR 入口生成二进制 LIR 并交给 JIT 执行。端到端用
 
 ## 类型驱动的改写
 
-MIR 在 Lisp 里，所以类型推导之后可以生成 Lisp 形式再拼回来：改写函数拿到调用点的实参类型，返回一个 lambda 形式，经 HIR 转换（在定义环境里，带依赖记录）、构造成 MIR 子图，替换原调用，然后让受影响的分析失效。这是 SBCL deftransform 的做法，适合 `append`、序列函数、`typep`、CLOS 调用点特化这类改写（现在在降级时手写，见 [lowering.md](lowering.md) 的“降级时的改写”）。编译器宏照旧在 HIR 转换时展开，此时没有类型信息。
+MIR 在 Lisp 里，所以类型推导之后可以生成 Lisp 形式再拼回来：改写函数拿到调用点的实参类型，返回一个 lambda 形式，经 HIR 转换（在定义环境里，带依赖记录）、构造成 MIR 子图，替换原调用，然后让受影响的分析失效。这是 SBCL deftransform 的做法，适合 `append`、序列函数、`typep`、CLOS 调用点特化这类改写（当前由 MIR pass 和发射器中的专门规则实现，见 [lowering.md](lowering.md)）。编译器宏照旧在 HIR 转换时展开，此时没有类型信息。
 
 ## 身份和存储的证明
 

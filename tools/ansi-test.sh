@@ -8,7 +8,7 @@
 #   KILN_COMPILER   kiln executable (default: build/boot/kiln1, or build/stage0/kiln0)
 #   ANSI_TEST_DIR   path to ansi-test checkout (default: ~/package/ansi-test)
 #   ANSI_EVAL       "native" (default) or "hir" (shared HIR evaluator)
-#   KILN_BUILD_PIPELINE  "hir" or "mir" for runtime compilation (default: image setting)
+#   KILN_BUILD_PIPELINE  "mir" for runtime compilation (default: image setting)
 #   ANSI_OUTPUT_DIR output directory (default: build/ansi-test)
 set -euo pipefail
 
@@ -20,8 +20,8 @@ case "${ANSI_EVAL:-native}" in
   *) echo "ANSI_EVAL must be native or hir" >&2; exit 1 ;;
 esac
 case "${KILN_BUILD_PIPELINE:-}" in
-  ""|hir|mir) ;;
-  *) echo "KILN_BUILD_PIPELINE must be hir or mir" >&2; exit 1 ;;
+  ""|mir) ;;
+  *) echo "KILN_BUILD_PIPELINE must be mir" >&2; exit 1 ;;
 esac
 
 ANSI_TEST_DIR="${ANSI_TEST_DIR:-$HOME/package/ansi-test}"
@@ -99,11 +99,10 @@ if [[ ! -f "$IMAGE" || "$KILN_COMPILER" -nt "$IMAGE" || "$0" -nt "$IMAGE" ]]; th
     ;; Set the path at image entry, outside EVAL's request-local binding.
     (when pipeline
       (setf kiln.compiler::*compiler-pipeline*
-            (cond ((string= pipeline "hir") :hir)
-                  ((string= pipeline "mir") :mir)
+            (cond ((string= pipeline "mir") :mir)
                   (t (error "Unknown compiler pipeline ~S." pipeline)))))
     (format t "~&ANSI-PIPELINE ~A~%"
-            (ecase kiln.compiler::*compiler-pipeline* (:hir "hir") (:mir "mir")))
+            (ecase kiln.compiler::*compiler-pipeline* (:mir "mir")))
     (when sandbox
       (setf regression-test::*sandbox-path* (pathname sandbox))
       (let ((target (merge-pathnames "**/*.*" (pathname sandbox))))
