@@ -36,7 +36,11 @@
             do (loop for edge across (mir-terminator-edges (mir-block-terminator block))
                      do (push edge (svref incoming (mir-edge-target edge)))))
       (labels ((root (id)
-                 (loop while (/= id (svref aliases id)) do (setf id (svref aliases id))
+                 ;; Compress forwarding chains as they are queried: long
+                 ;; sequences of joins otherwise retrace the same suffix.
+                 (loop for next = (svref aliases id) while (/= id next)
+                       do (setf (svref aliases id) (svref aliases next)
+                                id next)
                        finally (return id)))
                (mark (id)
                  (let ((id (root id)))
@@ -66,8 +70,9 @@
           ;; Resolve copies first so predicates defined in an earlier block
           ;; still protect the corresponding values on a later branch.
           (let ((protected (mir-refinement-parameters function aliases reachable)))
-            (dotimes (id (length aliases)) (setf (svref aliases id) id))
-            (find-aliases protected)))
+            (when (find t protected)
+              (dotimes (id (length aliases)) (setf (svref aliases id) id))
+              (find-aliases protected))))
         ;; Edge arguments count as uses only if their destination is needed.
         ;; Instructions remain intact: effects and declaration checks are kept.
         (loop for instruction across (hir-vector (mir-function-instructions function))
