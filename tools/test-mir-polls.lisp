@@ -34,3 +34,29 @@
                   x)))
   (assert (plusp (mir-poll-test-count (mir-poll-test-forms body) :loop))))
 (format t "MIR safepoints cover loops and omit acyclic interior blocks.~%")
+
+;; Every remaining cycle would permit unbounded execution without a poll.
+;; Test the graph property directly, including an irreducible two-entry SCC.
+(dolist (outgoing '(#((1) (2) (3) (1))
+                    #((1) (1))
+                    #((1 2) (3) (3) (1 2))
+                    #((1) (2 4) (3) (2 1) nil)))
+  (let* ((function (make-mir-function)) (blocks (mir-function-blocks function)))
+    (loop for targets across outgoing for id from 0 do
+      (hir-push (make-mir-block :id id :terminator
+                  (make-mir-terminator :edges
+                    (map 'simple-vector (lambda (target) (make-mir-edge :target target)) targets))) blocks))
+    (let* ((polls (mir-loop-poll-blocks function))
+           (remaining (map 'simple-vector
+                           (lambda (block)
+                             (unless (logbitp (mir-block-id block) polls)
+                               (loop for edge across (mir-terminator-edges (mir-block-terminator block))
+                                     unless (logbitp (mir-edge-target edge) polls)
+                                       collect (mir-edge-target edge))))
+                           (hir-vector blocks))))
+      (dolist (component (mir-strong-components remaining))
+        (assert (null (cdr component)))
+        (assert (not (member (car component) (svref remaining (car component))))))
+      (when (equalp outgoing #((1) (2) (3) (1)))
+        (assert (= 1 (logcount polls)))))))
+(format t "Selected poll blocks intersect every CFG cycle.~%")

@@ -52,6 +52,30 @@
             (dolist (id component) (setf cyclic (logior cyclic (ash 1 id))))))
         cyclic))))
 
+(defun mir-loop-poll-blocks (function)
+  "Select DFS back-edge targets: deleting them leaves an acyclic graph."
+  (mir-analysis function :loop-polls
+    (lambda (function)
+      (let* ((blocks (hir-vector (mir-function-blocks function)))
+             (states (make-array (length blocks) :initial-element 0))
+             (next (make-array (length blocks) :initial-element 0))
+             (polls 0))
+        ;; An explicit stack bounds host stack use for large generated CFGs.
+        (dotimes (root (length blocks))
+          (when (zerop (svref states root))
+            (let ((stack (list root)))
+              (setf (svref states root) 1)
+              (loop while stack for id = (car stack)
+                    for edges = (mir-terminator-edges (mir-block-terminator (svref blocks id))) do
+                (if (= (svref next id) (length edges))
+                    (progn (setf (svref states id) 2) (pop stack))
+                    (let ((target (mir-edge-target (svref edges (svref next id)))))
+                      (incf (svref next id))
+                      (case (svref states target)
+                        (0 (setf (svref states target) 1) (push target stack))
+                        (1 (setf polls (logior polls (ash 1 target)))))))))))
+        polls))))
+
 (defstruct mir-parameter-summary (required 0) (maximum 0) (borrow 0) returns effects)
 
 (defun mir-known-borrow-call (instruction borrows identities)
