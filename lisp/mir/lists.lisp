@@ -102,3 +102,48 @@
                     (mir-instruction-operands (car entry))
                     (subseq (mir-instruction-operands (car entry)) 0 2))))))))
   unit)
+
+(defun mir-value-call-plan (instruction definitions)
+  "Simplify constant comparisons and APPEND's fixed argument contract."
+  (when (and (= (mir-instruction-kind instruction) 6)
+             (hir-policy-optimize-p (mir-instruction-policy instruction))
+             (not (mir-instruction-notinline instruction)))
+    (let* ((name (mir-instruction-data instruction))
+           (args (mir-instruction-operands instruction)) (count (length args)))
+      (labels ((definition (id) (svref definitions (mir-primary-origin id definitions)))
+               (nil-value-p (id)
+                 (let ((definition (definition id)))
+                   (and definition (= (mir-instruction-kind definition) 0)
+                        (null (mir-instruction-data definition))))))
+        (cond ((and (eq name 'eql) (= count 2)
+                    (loop for id across args for definition = (definition id)
+                          thereis (and definition (= (mir-instruction-kind definition) 0)
+                                       (eq-comparable-value-p (mir-instruction-data definition)))))
+               (cons 'eq args))
+              ((eq name 'append)
+               ;; The last NIL forces a copy of preceding lists, so retain it.
+               (let* ((kept (loop for id across args for index from 0
+                                  when (or (= index (1- count)) (not (nil-value-p id))) collect id))
+                      (length (length kept))
+                      (target (case length (0 'list) (1 'identity) (2 'kiln.kernel::append-2) (otherwise 'append))))
+                 (unless (and (eq target name) (= length count))
+                   (cons target (coerce kept 'simple-vector))))))))))
+
+(defun mir-specialize-value-calls (unit)
+  (loop for function across (hir-vector (mir-unit-functions unit)) do
+    (let ((definitions (mir-value-definitions function))
+          (reachable (mir-reachable-blocks function)) (selected nil))
+      (loop for block across (hir-vector (mir-function-blocks function))
+            when (logbitp (mir-block-id block) reachable) do
+        (loop for id across (hir-vector (mir-block-instructions block))
+              for instruction = (mir-at (mir-function-instructions function) id)
+              for plan = (mir-value-call-plan instruction definitions)
+              when plan do (push (list instruction (car plan) (cdr plan)) selected)))
+      (when selected
+        (mir-run-pass unit function
+          (lambda (function)
+            (declare (ignore function))
+            (dolist (entry selected)
+              (setf (mir-instruction-data (car entry)) (cadr entry)
+                    (mir-instruction-operands (car entry)) (third entry))))))))
+  unit)

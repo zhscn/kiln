@@ -643,11 +643,13 @@
 
 (defun mir-optimize-unit (unit)
   (mir-simplify-block-parameters unit :preserve-refinements t)
+  (mir-specialize-value-calls unit)
   (mir-specialize-sequence-calls unit)
   (mir-fold-type-predicates unit)
   (mir-lift-local-functions unit)
   (mir-inline-local-functions unit)
   (mir-expand-list-calls unit)
+  (mir-specialize-value-calls unit)
   (mir-specialize-sequence-calls unit)
   (mir-fold-type-predicates unit)
   (mir-scalar-replace unit)

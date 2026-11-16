@@ -1086,14 +1086,15 @@ calls for the associative NCONC and APPEND."
                           (list (list-ast arg-asts (literal nil))
                                 (literal 'simple-vector))))))))
 
+(defun eq-comparable-value-p (value)
+  "Whether EQL with VALUE has the same result as EQ."
+  (and (not (and (integerp value)
+                 (not (<= +most-negative-fixnum+ value +most-positive-fixnum+))))
+       (not (typep value '(or ratio double-float complex)))))
+
 (defun eq-comparable-constant-p (ast)
-  "True if AST is a constant that EQL compares as EQ: not a number that is
-a heap object (bignum, ratio, double float, complex)."
   (multiple-value-bind (value constantp) (constant-value ast)
-    (and constantp
-         (not (and (integerp value)
-                   (not (<= +most-negative-fixnum+ value +most-positive-fixnum+))))
-         (not (typep value '(or ratio double-float complex))))))
+    (and constantp (eq-comparable-value-p value))))
 
 (defun simple-sequence-test (keyword-asts)
   "EQL or EQ if the keyword arguments KEYWORD-ASTS (of MEMBER or ASSOC)
