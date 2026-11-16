@@ -81,6 +81,10 @@ Parcl 以 intrinsic 方式加载：`parcl-low`（泛函协议和默认方法）�
 - **`:include` 的槽布局**：Anatomicl 默认通过 closer-mop 读被包含结构的类，可编译期没有目标端的类。kiln 在编译会话里记下每个结构的槽布局（`session-structures`）：先是被包含结构的槽（访问器名按本结构的 `conc-name` 重新生成，`:include` 给出的槽描述覆盖原有的），再是本结构自己的直接槽。
 - **类定义与原生表示**：生成目标端的 `defclass`，元类是 `structure-class`；实例是原生结构对象（`+kind-structure-instance+`），第一个字指向布局向量，其后按位置紧排各槽，不需要单独的 rack 对象。`:print-object` 选项生成 `print-object` 方法。
 - **访问器、谓词和构造函数**：布局向量存在包 `kiln.structures` 的全局变量里，经 `%primop :symbol-global-value` 直接读取（不经过 TLS 查找）。访问器、可写槽的 setf 函数、类型谓词（`%structure-typep`，按布局向量里的深度和祖先表做 O(1) 判断）以及至多 8 个槽的标准构造函数都声明为 `inline`；标准构造函数直接生成 `%primop :allocate-structure` 和按位置的 `:set-structure-slot`（调用点上内联展开时，关键字参数也在编译期解析）。
+- **槽类型事实**：访问器用槽声明类型约束读取结果，构造函数和 setter 在写入前检查该类型。
+  内联后 MIR 可据此选择整数运算和向量访问路径；读取仍保留必要检查，因此低层修改槽
+  不会凭空产生类型证明。`:include` 的覆盖槽保留父槽约束，并与显式子类型取交集；
+  初始化值的覆盖不丢失继承的类型与只读属性。
 - 复制函数调用 `cl:copy-structure`；typed 结构（`:type list`/`vector`）的描述也记在会话里，只生成访问器。BOA 构造函数用 Anatomicl 生成的 lambda list，分配和写槽同样走 `:allocate-structure` 和 `:set-structure-slot`。
 - **目标端**（`lisp/target/clos/structures.lisp`）：`structure-class` 是 `standard-class` 的子类，`structure-object` 是 `standard-object` 的子类；`%ensure-structure-layout` 在类终结后建立布局向量；`copy-structure` 直接分配同长度的原生结构对象并逐槽复制。
 - `#S`：每次结构定义把第一个标准关键字构造函数登记到类型名上；重新定义时更新登记。Eclector 的运行期与原生编译器 reader client 共用构造协议，把槽名转成 keyword 后调用该构造函数，保留默认值和继承槽。没有标准构造函数的结构和未定义的类型报告关联输入流的 `reader-error`。随机状态有私有标准构造函数，打印形式可回读并保持生成序列。

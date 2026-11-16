@@ -55,15 +55,19 @@
                     (anatomicl::slot-name slot))))
          (loop for slot in parent
                for name = (anatomicl::slot-name slot)
-               collect (or (find name included :key #'anatomicl::slot-name)
-                           (make-instance 'anatomicl::slot-description
-                                          :name name
-                                          :accessor-name (anatomicl::compute-accessor-name
-                                                          description name)
-                                          :initform (anatomicl::slot-initform slot)
-                                          :initform-p (anatomicl::slot-initform-p slot)
-                                          :type (anatomicl::slot-type slot)
-                                          :read-only (anatomicl::slot-read-only slot))))))
+               for override = (find name included :key #'anatomicl::slot-name)
+               for initializer = (if (and override (anatomicl::slot-initform-p override)) override slot)
+               collect (make-instance 'anatomicl::slot-description
+                                      :name name
+                                      :accessor-name (anatomicl::compute-accessor-name description name)
+                                      :initform (anatomicl::slot-initform initializer)
+                                      :initform-p (anatomicl::slot-initform-p initializer)
+                                      :type (if override
+                                                `(and ,(anatomicl::slot-type slot)
+                                                      ,(anatomicl::slot-type override))
+                                                (anatomicl::slot-type slot))
+                                      :read-only (or (anatomicl::slot-read-only slot)
+                                                     (and override (anatomicl::slot-read-only override)))))))
      (anatomicl::defstruct-direct-slots description))))
 
 (defun keyword-of (symbol)
@@ -106,11 +110,13 @@
           for accessor = (anatomicl::slot-accessor-name slot)
           when accessor
             do (push `(defun ,accessor (object)
-                        (kiln.sys::%structure-ref object ,layout-form ',name ,location))
+                        (the ,(anatomicl::slot-type slot)
+                          (kiln.sys::%structure-ref object ,layout-form ',name ,location)))
                      accessors)
                (unless (anatomicl::slot-read-only slot)
                  (push `(defun (setf ,accessor) (value object)
-                          (kiln.sys::%structure-set value object ,layout-form ',name ,location))
+                          (kiln.sys::%structure-set (the ,(anatomicl::slot-type slot) value)
+                                                    object ,layout-form ',name ,location))
                        accessors)))
     `((defparameter ,variable (kiln.sys::%ensure-structure-layout (find-class ',name)))
       (declaim (inline ,@(anatomicl::defstruct-predicates description)
@@ -133,7 +139,7 @@
      layout object slot value)
   `(kiln.sys:%primop :set-structure-slot ,object
                      ,(position (anatomicl::slot-name slot) layout :key #'anatomicl::slot-name)
-                     ,value))
+                     (the ,(anatomicl::slot-type slot) ,value)))
 
 (defmethod anatomicl::generate-standard-constructor
     ((client anatomicl-client) (description anatomicl::defstruct-object-description)
