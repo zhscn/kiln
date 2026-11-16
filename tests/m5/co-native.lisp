@@ -79,5 +79,7 @@
 (defvar *ld*)
 (with-open-file (out "build/test/co-native-load.lisp" :direction :output :if-exists :supersede)
   (format out "(defmacro ld-twice (x) `(list ,x ,x))~%(defun ld-f (y) (ld-twice (1+ y)))~%(defparameter *ld* (ld-f 1))~%"))
-(load "build/test/co-native-load.lisp")
+;; The fixture initializes a variable declared by this test file.
+(let ((kiln.sys:*warn-on-cross-file-redefinition* nil))
+  (load "build/test/co-native-load.lisp"))
 (print (list *ld* (ld-f 10)))

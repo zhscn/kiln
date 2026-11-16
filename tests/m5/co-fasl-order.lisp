@@ -15,6 +15,8 @@
           `(initialize-fasl-node ',object ',(fasl-node-payload object))))
 (defvar *fasl-a*)
 (defvar *fasl-b*)
+;; Fixture files reuse the compile-time variable names. Their source
+;; locations do not affect object creation and initialization order.
 (let* ((kiln.sys:*warn-on-cross-file-redefinition* nil)
        (source "build/test/co-fasl-order-source.lisp")
        (output (compile-file-pathname source)))

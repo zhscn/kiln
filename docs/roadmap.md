@@ -117,6 +117,7 @@
 
 ### CLOS
 
+- 完整编译器 image 中重设 `initialize-instance` 的 method combination 时，仍可能递归耗尽栈；需检查构造协议变更与定义导入、依赖失效之间的重入。对应协议测试保留 CLOS 最小模块环境。
 - 泛函的重定义（`defgeneric` 改 lambda list 等）。
 - 过时实例只在分派时更新：`slot-value` 在更新之前读的是旧布局（类名 `typep` 的调用点缓存已在统一框架里修掉）。
 - 重定义结构后，inline 的访问器在已编译的调用者里不变（依赖追踪不覆盖 AOT 模块）。

@@ -1,0 +1,2 @@
+Requires CLOS-only module state while replacing INITIALIZE-INSTANCE's
+method combination.
