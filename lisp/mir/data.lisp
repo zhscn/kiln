@@ -89,6 +89,8 @@
         (copy-seq (mir-function-capture-functions function))
         (mir-function-internal-prefix function) (mir-function-argument-cells function)))
 
+(defvar *mir-verification-identities* nil)
+
 (defun mir-run-pass (unit function transform &key preserves)
   "Rewrite one body while preserving function and load-time entry layouts."
   (let ((load-time-functions (copy-seq (mir-unit-load-time-functions unit)))
@@ -108,14 +110,15 @@
       (mir-fail "MIR load-time entry changes require a unit pass"))
     (unless (= (length signatures) (hir-buffer-count (mir-unit-functions unit)))
       (mir-fail "MIR function membership changes require a unit pass"))
-    (loop for saved across signatures for entry across (hir-vector (mir-unit-functions unit))
+    (let ((*mir-verification-identities* (make-hash-table :test 'eq)))
+      (loop for saved across signatures for entry across (hir-vector (mir-unit-functions unit))
           do (unless (eq (car saved) entry) (mir-fail "MIR function replacement requires a unit pass"))
              (mir-verify-function-layout unit entry)
              (unless (equalp (cdr saved) (mir-function-signature entry))
                (mir-fail "MIR entry or capture layout changes require a unit pass")))
-    (mir-verify-load-time-functions unit)
-    (verify-mir-function unit function)
-    (mir-verify-private-entries unit)
+      (mir-verify-load-time-functions unit)
+      (verify-mir-function unit function)
+      (mir-verify-private-entries unit))
     function))
 
 (defun mir-run-unit-pass (unit transform)

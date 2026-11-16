@@ -51,6 +51,14 @@
                             (hir-push target work)))
         reachable))))
 
+(defun mir-verification-function-identities (function)
+  "Reuse identities within one verification of an unchanged graph."
+  (if *mir-verification-identities*
+      (or (gethash function *mir-verification-identities*)
+          (setf (gethash function *mir-verification-identities*)
+                (mir-compute-function-identities function)))
+      (mir-compute-function-identities function)))
+
 (defun mir-verify-closure-initialization (unit function)
   (let* ((instructions (hir-vector (mir-function-instructions function)))
          (definitions (make-array (hir-buffer-count (mir-function-values function)) :initial-element nil))
@@ -99,7 +107,7 @@
                 do (mir-fail "MIR closure is observed before its environment is initialized")))))
 
   (let ((known (and (find 24 (hir-vector (mir-function-instructions function)) :key #'mir-instruction-kind)
-                    (mir-compute-function-identities function))))
+                    (mir-verification-function-identities function))))
     (loop for instruction across (hir-vector (mir-function-instructions function))
           when (= (mir-instruction-kind instruction) 24) do
       (let* ((data (mir-instruction-data instruction))
@@ -188,7 +196,7 @@
 (defun mir-verify-private-entries (unit)
   (let ((functions (hir-vector (mir-unit-functions unit))))
     (when (some (lambda (function) (plusp (mir-function-internal-prefix function))) functions)
-      (let* ((identities (map 'simple-vector #'mir-compute-function-identities functions))
+      (let* ((identities (map 'simple-vector #'mir-verification-function-identities functions))
              (external (mir-external-functions functions identities (mir-unit-load-time-functions unit))))
         (loop for function across functions for id from 0
               when (and (plusp (mir-function-internal-prefix function)) (logbitp id external))
@@ -199,7 +207,7 @@
   (unless (find-if (lambda (instruction) (member (mir-instruction-kind instruction) '(7 15)))
                    (hir-vector (mir-function-instructions function)))
     (return-from mir-verify-internal-calls nil))
-  (let ((known (mir-compute-function-identities function)))
+  (let ((known (mir-verification-function-identities function)))
     (loop for instruction across (hir-vector (mir-function-instructions function))
           for kind = (mir-instruction-kind instruction)
           when (member kind '(7 15)) do
@@ -533,18 +541,19 @@
   unit)
 
 (defun verify-mir (unit)
-  (when (zerop (hir-buffer-count (mir-unit-functions unit))) (mir-fail "Empty MIR unit"))
-  ;; Call validation reads callee layouts. Check every layout before any
-  ;; function body so malformed later entries cannot reach those reads.
-  (loop for function across (hir-vector (mir-unit-functions unit)) for id from 0
-        do (unless (and (mir-function-p function) (eql id (mir-function-id function)))
-             (mir-fail "Invalid MIR function ID"))
-           (mir-verify-function-layout unit function))
-  (mir-verify-load-time-functions unit)
-  (unless (zerop (length (mir-function-captures (mir-at (mir-unit-functions unit) 0))))
-    (mir-fail "MIR unit entry cannot require a closure environment"))
-  (unless (eql 0 (mir-function-internal-prefix (mir-at (mir-unit-functions unit) 0)))
-    (mir-fail "MIR unit entry cannot require a private prefix"))
-  (loop for function across (hir-vector (mir-unit-functions unit)) do (verify-mir-function unit function))
-  (mir-verify-private-entries unit)
-  unit)
+  (let ((*mir-verification-identities* (make-hash-table :test 'eq)))
+    (when (zerop (hir-buffer-count (mir-unit-functions unit))) (mir-fail "Empty MIR unit"))
+    ;; Call validation reads callee layouts. Check every layout before any
+    ;; function body so malformed later entries cannot reach those reads.
+    (loop for function across (hir-vector (mir-unit-functions unit)) for id from 0
+          do (unless (and (mir-function-p function) (eql id (mir-function-id function)))
+               (mir-fail "Invalid MIR function ID"))
+             (mir-verify-function-layout unit function))
+    (mir-verify-load-time-functions unit)
+    (unless (zerop (length (mir-function-captures (mir-at (mir-unit-functions unit) 0))))
+      (mir-fail "MIR unit entry cannot require a closure environment"))
+    (unless (eql 0 (mir-function-internal-prefix (mir-at (mir-unit-functions unit) 0)))
+      (mir-fail "MIR unit entry cannot require a private prefix"))
+    (loop for function across (hir-vector (mir-unit-functions unit)) do (verify-mir-function unit function))
+    (mir-verify-private-entries unit)
+    unit))
