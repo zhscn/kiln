@@ -7,7 +7,7 @@
         (sublis (loop for name in '(pair reader alias) collect (cons name (gensym (symbol-name name))))
          '((setq *lir-stack-function*
                 (lambda (payload)
-                  (declare (optimize (speed 3) (compilation-speed 0)))
+                  (declare (optimize (speed 3) (compilation-speed 0) (debug 0)))
                   (let ((pair (cons payload nil)))
                     (declare (dynamic-extent pair))
                     (let ((reader (lambda () (kiln.sys:%gc) payload)))
@@ -15,6 +15,9 @@
                       (kiln.sys:%gc)
                       (let* ((alias (if (consp payload) nil reader))
                              (value (funcall alias)))
+                        ;; Preserve both object identities through storage selection.
+                        (unless (eq pair (if (consp payload) nil pair)) (error "Cons alias changed"))
+                        (unless (eq reader alias) (error "Closure alias changed"))
                         (rplaca pair (vector value))
                         (kiln.sys:%gc)
                         (values value (svref (car pair) 0)))))))))

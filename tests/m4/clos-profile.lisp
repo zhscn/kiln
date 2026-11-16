@@ -22,9 +22,11 @@
 (defvar *last* nil)
 (defun allocate (n) (dotimes (i n) (setf *last* (make-list 10))))
 
-(kiln.sys:start-profiler :mode :cpu :interval 1000)
-(spin-outer)
-(kiln.sys:stop-profiler)
+;; Keep FASL record loading outside each sampling window.
+(let ()
+  (kiln.sys:start-profiler :mode :cpu :interval 1000)
+  (spin-outer)
+  (kiln.sys:stop-profiler))
 (let* ((samples (kiln.sys:profile-samples))
        (total (reduce #'+ samples :key #'car))
        (spin (reduce #'+ (remove-if-not (lambda (s) (eq (cadr s) 'spin)) samples) :key #'car))
@@ -32,9 +34,10 @@
                       :key #'car)))
   (show (list (> total 10) (> spin (* 0.8 total)) (> outer (* 0.9 total)))))
 
-(kiln.sys:start-profiler :mode :alloc)
-(allocate 200000)
-(kiln.sys:stop-profiler)
+(let ()
+  (kiln.sys:start-profiler :mode :alloc)
+  (allocate 200000)
+  (kiln.sys:stop-profiler))
 (let* ((samples (kiln.sys:profile-samples))
        (total (reduce #'+ samples :key #'car))
        (mine (reduce #'+ (remove-if-not (lambda (s) (member 'allocate (cdr s))) samples)
