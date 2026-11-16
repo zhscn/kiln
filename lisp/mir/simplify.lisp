@@ -30,11 +30,18 @@
          (values (hir-vector (mir-function-values function)))
          (aliases (map 'simple-vector #'mir-value-id values))
          (incoming (make-array (length blocks) :initial-element nil))
+         (live-incoming (make-array (length blocks) :initial-element nil))
+         (positions (make-array (length values) :initial-element nil))
+         (live-work (make-hir-buffer))
          (live (make-array (length values) :initial-element nil)))
     (multiple-value-bind (reachable dominators) (mir-control-flow function)
-      (loop for block across blocks when (logbitp (mir-block-id block) reachable)
-            do (loop for edge across (mir-terminator-edges (mir-block-terminator block))
-                     do (push edge (svref incoming (mir-edge-target edge)))))
+      (loop for block across blocks do
+        (loop for parameter across (mir-block-parameters block) for index from 0
+              do (setf (svref positions parameter) index))
+        (loop for edge across (mir-terminator-edges (mir-block-terminator block))
+              do (push edge (svref live-incoming (mir-edge-target edge)))
+                 (when (logbitp (mir-block-id block) reachable)
+                   (push edge (svref incoming (mir-edge-target edge))))))
       (labels ((root (id)
                  ;; Compress forwarding chains as they are queried: long
                  ;; sequences of joins otherwise retrace the same suffix.
@@ -44,12 +51,14 @@
                        finally (return id)))
                (mark (id)
                  (let ((id (root id)))
-                   (unless (svref live id) (setf (svref live id) t))))
+                   (unless (svref live id)
+                     (setf (svref live id) t)
+                     (when (= -1 (mir-value-position (svref values id))) (hir-push id live-work))
+                     t)))
                (find-aliases (protected)
                  ;; Watch incoming values rather than rescanning every join
                  ;; after one alias changes. Watchers move to the new root.
                  (let ((users (make-array (length values) :initial-element nil))
-                       (positions (make-array (length values) :initial-element nil))
                        (queued (make-array (length values) :initial-element nil))
                        (work (make-hir-buffer)))
                    (labels ((enqueue (id)
@@ -60,7 +69,6 @@
                            when (logbitp id reachable) do
                        (loop for parameter across (mir-block-parameters block) for index from 0
                              unless (and protected (svref protected parameter)) do
-                         (setf (svref positions parameter) index)
                          (enqueue parameter)
                          (dolist (edge (svref incoming id))
                            (push parameter (svref users (svref (mir-edge-arguments edge) index))))))
@@ -98,15 +106,12 @@
               do (map nil #'mark (mir-instruction-operands instruction)))
         (loop for block across blocks
               do (map nil #'mark (mir-terminator-operands (mir-block-terminator block))))
-        (loop with changed = t while changed do
-          (setf changed nil)
-          (loop for block across blocks
-                do (loop for edge across (mir-terminator-edges (mir-block-terminator block))
-                         for parameters = (mir-block-parameters (svref blocks (mir-edge-target edge)))
-                         do (loop for parameter across parameters for argument across (mir-edge-arguments edge)
-                                  when (and (= parameter (svref aliases parameter))
-                                            (svref live parameter) (mark argument))
-                                    do (setf changed t)))))))
+        (loop for cursor from 0 while (< cursor (hir-buffer-count live-work))
+              for parameter = (mir-at live-work cursor)
+              for block = (mir-value-block (svref values parameter))
+              for index = (svref positions parameter)
+              do (dolist (edge (svref live-incoming block))
+                   (mark (svref (mir-edge-arguments edge) index))))))
     (values aliases live)))
 
 (defun mir-rewrite-block-parameters (function aliases live)
