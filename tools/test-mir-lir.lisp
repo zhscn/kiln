@@ -584,7 +584,7 @@
                              (merge-pathnames "build/test/clos.lir" root) output))
                :output :string :error-output :string)))
     (assert (search "T" text) () "Unexpected MIR container output: ~S" text)))
-(dolist (form '((lambda (v i) (aref v i))
+(dolist (form '((lambda (v i j) (aref v i j))
                 (lambda (v i) (declare (simple-vector v) (notinline aref)) (aref v i))
                 (lambda (v i) (declare (simple-vector v) (optimize (speed 0))) (aref v i))))
   (let* ((session (make-session))
