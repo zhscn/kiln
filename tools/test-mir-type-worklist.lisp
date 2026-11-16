@@ -96,3 +96,20 @@
           function))
       (assert (equal (svref (mir-infer-types function) result) '(integer 0 100))))))
 (format t "MIR comparison-edge refinements follow widening inputs across blocks.~%")
+
+;; A local fixed point in one body must not re-run unrelated type solvers.
+(let* ((forms (front-end-forms '((list (lambda () 1) (lambda () 2) (lambda () 3)))))
+       (unit (hir-to-mir (toplevel-form-ast (first forms))))
+       (original (symbol-function 'mir-compute-types))
+       (counts (make-hash-table :test 'eq)))
+  (unwind-protect
+       (progn
+         (setf (symbol-function 'mir-compute-types)
+               (lambda (function &rest arguments)
+                 (incf (gethash function counts 0))
+                 (apply original function arguments)))
+         (mir-infer-calls unit)
+         (assert (= (hash-table-count counts) (hir-buffer-count (mir-unit-functions unit))))
+         ;; One solve and one finalization, with no unrelated round trips.
+         (maphash (lambda (function count) (declare (ignore function)) (assert (= count 2))) counts))
+    (setf (symbol-function 'mir-compute-types) original)))
