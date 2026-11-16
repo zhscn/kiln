@@ -173,18 +173,31 @@
                                                   :initial-element (if (logbitp (mir-function-id function) external)
                                                                        :unknown :unseen))) functions))
          (summaries (make-array count :initial-element :unseen))
-         (identities (make-array count)) (changed t))
-    (labels ((merge-identity (row index value)
+         (identities (make-array count))
+         (callers (make-array count :initial-element 0))
+         (queued (make-array count :initial-element nil))
+         (work (make-hir-buffer)) (cursor 0))
+    (labels ((enqueue (id)
+               (unless (svref queued id)
+                 (setf (svref queued id) t)
+                 (hir-push id work)))
+             (notify-callers (id)
+               (loop with bits = (svref callers id) while (plusp bits)
+                     for caller = (1- (integer-length (logand bits (- bits))))
+                     do (enqueue caller) (setf bits (logand bits (1- bits)))))
+             (merge-identity (row index value)
                (let ((joined (mir-function-identity-join (svref row index) value)))
                  (unless (eql joined (svref row index))
-                   (setf (svref row index) joined changed t))))
+                   (setf (svref row index) joined) t)))
              (solve ()
-               (loop while changed do
-                 (setf changed nil)
-                 (loop for function across functions for id from 0
-                       for known = (mir-compute-function-identities function :inputs (svref inputs id)
-                                                                    :summaries summaries :finalize nil)
-                       for reachable = (mir-reachable-blocks function) do
+               (loop while (< cursor (hir-buffer-count work))
+                     for id = (mir-at work cursor)
+                     for function = (svref functions id) do
+                 (incf cursor)
+                 (setf (svref queued id) nil)
+                 (let ((known (mir-compute-function-identities function :inputs (svref inputs id)
+                                                                       :summaries summaries :finalize nil))
+                       (reachable (mir-reachable-blocks function)))
                    (setf (svref identities id) known)
                    (loop for block across (hir-vector (mir-function-blocks function))
                          when (logbitp (mir-block-id block) reachable) do
@@ -196,26 +209,35 @@
                        (let* ((target (svref known (svref args 0)))
                               (callee (and (integerp target) (svref functions target)))
                               (argc (1- (length args))))
-                         (when (and callee (or (= kind 15)
-                                              (and (<= (mir-function-required callee) argc)
-                                                   (or (null (mir-function-maximum callee))
-                                                       (<= argc (mir-function-maximum callee))))))
-                           (let ((row (svref inputs target)))
-                             (dotimes (slot (length row))
-                               (merge-identity row slot
-                                               (if (and (= kind 7) (< slot argc))
-                                                   (svref known (svref args (1+ slot))) :unknown)))))))
+                         (when callee
+                           ;; Returned identities depend on this summary even
+                           ;; when no positional input can be propagated.
+                           (setf (svref callers target) (logior (svref callers target) (ash 1 id)))
+                           (when (or (= kind 15)
+                                     (and (<= (mir-function-required callee) argc)
+                                          (or (null (mir-function-maximum callee))
+                                              (<= argc (mir-function-maximum callee)))))
+                             (let ((row (svref inputs target)))
+                               (dotimes (slot (length row))
+                                 (when (merge-identity row slot
+                                          (if (and (= kind 7) (< slot argc))
+                                              (svref known (svref args (1+ slot))) :unknown))
+                                   (enqueue target))))))))
                      (let ((term (mir-block-terminator block)))
-                       (when (= (mir-terminator-kind term) 2)
-                         (merge-identity summaries id (svref known (svref (mir-terminator-operands term) 0))))))))))
+                       (when (and (= (mir-terminator-kind term) 2)
+                                  (merge-identity summaries id (svref known (svref (mir-terminator-operands term) 0))))
+                         (notify-callers id))))))))
+      (dotimes (id count) (enqueue id))
       (solve)
       ;; Uncalled functions and unseeded recursive groups need public-safe
-      ;; code too. Close the fixed point again after replacing bottom by top.
-      (loop for row across inputs do
+      ;; code too. Only consumers of newly unknown facts need another visit.
+      (loop for row across inputs for id from 0 do
         (dotimes (index (length row))
-          (when (eq (svref row index) :unseen) (setf (svref row index) :unknown changed t))))
+          (when (eq (svref row index) :unseen)
+            (setf (svref row index) :unknown) (enqueue id))))
       (dotimes (id count)
-        (when (eq (svref summaries id) :unseen) (setf (svref summaries id) :unknown changed t)))
+        (when (eq (svref summaries id) :unseen)
+          (setf (svref summaries id) :unknown) (notify-callers id)))
       (solve)
       (loop for row across identities do
         (dotimes (index (length row))

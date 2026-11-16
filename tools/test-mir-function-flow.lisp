@@ -106,3 +106,19 @@
        (give (mir-function-id (mir-flow-test-function unit 'give))))
   (assert (eq :unknown (svref (mir-function-flow-summaries (mir-infer-function-flow unit)) give))))
 (format t "MIR function flow excludes invalid entries and rejects mixed primary targets.~%")
+
+;; Unrelated functions must not be revisited when another summary changes.
+(let* ((forms (front-end-forms '((list (lambda () 1) (lambda () 2) (lambda () 3)))))
+       (unit (hir-to-mir (toplevel-form-ast (first forms))))
+       (original (symbol-function 'mir-compute-function-identities))
+       (counts (make-hash-table :test 'eq)))
+  (unwind-protect
+       (progn
+         (setf (symbol-function 'mir-compute-function-identities)
+               (lambda (function &rest arguments)
+                 (when (member :summaries arguments) (incf (gethash function counts 0)))
+                 (apply original function arguments)))
+         (mir-infer-function-flow unit)
+         (assert (= (hash-table-count counts) (hir-buffer-count (mir-unit-functions unit))))
+         (maphash (lambda (function count) (declare (ignore function)) (assert (= count 1))) counts))
+    (setf (symbol-function 'mir-compute-function-identities) original)))
