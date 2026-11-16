@@ -25,7 +25,8 @@
   (kind 0) (source nil) (a nil) (b nil) (c nil) (d nil) (policy *hir-policy*) (origin *source-origin*))
 
 (defstruct (hir-buffer (:constructor make-hir-buffer (&optional (data (make-array 8)))))
-  (data nil) (count 0))
+  (data #() :type simple-vector)
+  (count 0 :type (integer 0 #.most-positive-fixnum)))
 
 (defun hir-push (value buffer)
   (let* ((data (hir-buffer-data buffer)) (count (hir-buffer-count buffer)))
