@@ -34,7 +34,12 @@ tools/bench-compiler.py --output build/compiler-candidate
 这项基准执行 Lisp 编译器到二进制后端请求，包含进程启动与初始化；不包含 Cranelift
 代码生成和系统链接。指定 `--backend target/release/kiln-cg` 后，在每次模块编译结束后
 分别生成各模块的目标文件，另报后端墙钟时间、Cranelift 机器码编译时间和目标文件字节数。
-LIR 字节数始终记录；目标文件测量后删除，后端原始计时保留在日志中。
+LIR 字节数与 `lir_metrics` 始终记录；目标文件测量后删除，后端原始计时保留在日志中。
+`tools/lir_stats.py FILE.lir...` 按规范化 LIR 的函数与基本块统计变量、语句、赋值和
+显式 poll，并单列常量个数及包的记录、边和字符串占用。统计只遍历函数的代码块，
+不把常量中的 Lisp 形式当成指令。比较代码膨胀时同时检查这些数量和文件字节数，
+因为常量与调试数据也占用二进制包，而退出 SSA 的复制和 poll 可能显著减少，
+却只改变总文件的一小部分。
 已有模块可用 `--lir-directory DIR --backend target/release/kiln-cg` 独立测量，
 避免在后端采样中重复运行 Lisp 编译器。跨版本比较固定同一个后端二进制，使用
 `machine_seconds` 区分 Cranelift 优化与寄存器分配成本，使用后端总时间观察

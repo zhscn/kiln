@@ -11,6 +11,8 @@ import statistics
 import subprocess
 import time
 
+from lir_stats import lir_stats
+
 
 def measure_backend(backend, packets, output, env):
     """Time isolated object compilation; machine_seconds excludes LIR lowering."""
@@ -73,6 +75,7 @@ def main():
         result = dict(backend_sha256=hashlib.sha256(args.backend.read_bytes()).hexdigest(),
                       lir_sha256={p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in packets},
                       lir_bytes={p.stem: p.stat().st_size for p in packets},
+                      lir_metrics={p.stem: lir_stats(p) for p in packets},
                       warmup=args.warmup, samples=records,
                       median_backend={p.stem: {
                           field: statistics.median(r[p.stem][field] for r in records)
@@ -136,6 +139,7 @@ def main():
                                         for phase in ('frontend', 'lower', 'emit')}
                                  for name in records[0]['phases']})
     result['lir_bytes'] = records[0]['lir_bytes']
+    result['lir_metrics'] = {p.stem: lir_stats(p) for p in run.glob('*.lir')}
     if args.backend:
         result['backend_sha256'] = hashlib.sha256(args.backend.read_bytes()).hexdigest()
         result['median_backend'] = {
