@@ -74,8 +74,29 @@ FASL 保存 LIR 和字面量对象图，加载时仍由 Cranelift 生成测试�
 
 base 可执行文件和快照必须配套使用。测试驱动按 Lisp、vendor、Rust、协议和构建工具
 的内容计算缓存键，变化后重新构建二者；测试 FASL 每次重新生成。
+工具输入包括依赖加载配置、stage0 构建脚本和 base 初始化代码；修改测试驱动或基准
+统计工具本身可继续使用已有 base，避免仅调整测量方式就触发完整重建。
 首次构建和快照日志保存在 `build/test-fasl/base/`，各测试的编译及加载输出保存在
 `build/test-fasl/`。基础模块的 LIR 在成功生成快照后删除，需要重新构建时再生成。
+
+`tools/test-fasl.py --report build/test-metrics.json [FILE...]` 记录缓存键计算、base
+构建与快照时间，以及每个用例的编译、加载和 GC 压力加载时间。磁盘统计同时报告
+文件逻辑大小与实际分配块数，分别列出 base 和整个 FASL 测试目录；符号链接不计入，
+硬链接按 inode 去重。交叉测试单列耗时，其产物不计入 FASL 目录的占用。
+
+`tools/bench-tests.py --output build/test-baseline [FILE...]` 先运行一次准备 base，
+再串行测量五次缓存命中的测试，中位数和逐用例耗时写入 `summary.json`。
+准备过程的冷构建成本单独保留，不混入热运行中位数。随后指定
+`--baseline build/test-baseline/summary.json` 可比较耗时及保留文件空间；默认任一项
+增长超过 10% 时返回非零，`--max-regression` 可调整预算。比较时保持同机、相同堆配置、
+相同测试选择。空间预算统计 base 与所选用例的产物，包括同名的可执行文件或快照；
+完整测试目录的占用另外保留在逐次报告中，便于检查累积产物。
+`--rebuild-base` 强制在准备阶段重建 base；前后两份报告都有冷测量时，构建及快照时间
+也参与预算比较。缓存命中的准备阶段不提供冷耗时，不能用来判断冷构建是否退化。
+`bench/baselines/shared-base.json` 保存固定工作负载及机器配置的汇总基线。
+指定它作为 `--baseline` 且不传文件名时，工具按记录的顺序选择用例；测试源码摘要
+变化时要求重新建立工作负载基线。时间预算应在记录的机器和堆配置下比较。
+测量期间不运行其他测试、自举或基准。原始样本保留在忽略的构建目录，不纳入源码。
 
 `tools/test.sh --cross [FILE.lisp...]` 选择独立 LIR 的完整交叉测试，
 也可直接调用 `tools/test-cross.sh`。该路径在 SBCL 的同一会话里编基础模块和测试，

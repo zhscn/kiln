@@ -8,13 +8,15 @@ Both are copied unchanged in their own commit; kiln's changes to them are listed
 
 `native-compile-small.lisp` measures warmed runtime compilation of independent small functions. Run `tools/bench-native-compile.py --modules build/boot/stage0`; select an output directory for each module set. It reports CPU microseconds per compile after warmup and verifies the compiled results. Keep the backend, heap configuration and machine load fixed when comparing modules.
 
-Pass `--pipeline hir` or `--pipeline mir` to select the runtime compiler independently of how those modules were built. The default follows `KILN_BUILD_PIPELINE`, falling back to HIR. Use `--backend target/release/kiln-cg` for a release backend; the default is the debug executable. The default heap is 8 GiB unless `MMTK_GC_TRIGGER` is set. Reports identify the inputs by checksum and summarize process means, rather than individual compilation tail latency.
+Pass `--pipeline` to select the runtime compiler independently of how those modules were built. The default follows `KILN_BUILD_PIPELINE`, falling back to MIR. Current compilers accept MIR; `--pipeline hir` measures older compilers that still support HIR. Use `--backend target/release/kiln-cg` for a release backend; the default is the debug executable. The default heap is 8 GiB unless `MMTK_GC_TRIGGER` is set. Reports identify the inputs by checksum and summarize process means, rather than individual compilation tail latency.
+
+`baselines/shared-base.json` records a fixed compile-file/load workload, machine configuration, cold base costs, warm medians and retained space. Run `tools/bench-tests.py --baseline bench/baselines/shared-base.json --output build/test-comparison` to reuse its test selection and order. Add `--rebuild-base` to compare cold construction as well as warm execution. The default regression budget is 10%; compare on the recorded machine and remeasure when changing the workload or environment. Space budgets cover the base and selected tests; reports also retain the whole test directory's usage. Raw samples stay in the ignored output directory.
 
 ## Running
 
 `tools/bench.sh [--no-build] [--kiln-only | --sbcl-only] [NAME|GROUP ...]` runs cl-bench on kiln (an AOT executable with the five modules, each benchmark in a process of its own with a timeout) and on SBCL (`sbcl --script`, default optimization), and prints a table of milliseconds per run and the ratio. The harness is `cl-bench-prelude.lisp` (DEFBENCH, `*misc-dir*`) and `cl-bench-driver.lisp` (selection, timing, errors), around cl-bench's `files/` and `tests.lisp`, which are used unchanged; they replace cl-bench's `support.lisp` and `cl-bench.lisp` (ASDF, trivial-garbage, report files).
 
-`KILN_BUILD_PIPELINE=hir|mir` selects both module construction and runtime compilation, including the CLOS benchmarks' calls to `compile`. The default is HIR. Set `KILN_BENCH_DIR` to keep separate executables and results for each configuration. `--no-build` checks the selected pipeline against the last completed build and rejects a different pipeline or an interrupted build. Executables predating the pipeline stamp are treated as HIR builds.
+`KILN_BUILD_PIPELINE=mir` selects module construction and runtime compilation, including the CLOS benchmarks' calls to `compile`; MIR is also the default. Set `KILN_BENCH_DIR` to keep separate executables and results for each configuration. `--no-build` checks the selected pipeline against the last completed build and rejects a different pipeline or an interrupted build. Executables predating the pipeline stamp are treated as HIR builds.
 
 The CLOS cases share class, method and instance definitions. Each selected CLOS
 case runs its preceding CLOS cases in the same process, including when selecting
@@ -30,8 +32,8 @@ per-process output are kept under `build/bench-game/`; `--output` selects anothe
 directory. Build or runtime failures produce a nonzero exit status after the
 remaining cases have run.
 
-`--pipeline hir|mir` selects the compiler used for the modules and benchmark
-source; its default follows `KILN_BUILD_PIPELINE`, falling back to HIR. Use
+`--pipeline mir` selects the compiler used for the modules and benchmark
+source; its default follows `KILN_BUILD_PIPELINE`, falling back to MIR. Use
 separate output directories for comparisons. `--no-build` rejects a pipeline
 that differs from the completed build or a build marked as interrupted; older
 outputs without a pipeline stamp are treated as HIR. Successful result records
