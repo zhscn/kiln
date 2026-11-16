@@ -84,11 +84,13 @@
                          for branches = (mir-type-branch-folds function unit)
                          when (or folds branches) collect (list function folds branches))
         while plans do
-           (loop for (function folds branches) in plans
-                 do (mir-run-pass unit function
-                        (lambda (function)
-                          (when folds (mir-replace-type-predicates function folds))
-                          (when branches
-                            (mir-replace-type-branches function branches)
-                            (mir-prune-unreachable-blocks unit function))))))
+           (mir-run-passes unit
+             (mapcar (lambda (plan)
+                       (destructuring-bind (function folds branches) plan
+                         (cons function
+                               (lambda (function)
+                                 (when folds (mir-replace-type-predicates function folds))
+                                 (when branches
+                                   (mir-replace-type-branches function branches)
+                                   (mir-prune-unreachable-blocks unit function)))))) plans)))
   unit)

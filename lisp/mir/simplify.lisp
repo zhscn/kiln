@@ -147,13 +147,15 @@
     function))
 
 (defun mir-simplify-block-parameters (unit &key preserve-refinements)
-  (loop for function across (hir-vector (mir-unit-functions unit))
-        do (multiple-value-bind (aliases live) (mir-block-parameter-plan function :preserve-refinements preserve-refinements)
-             (when (loop for value across (hir-vector (mir-function-values function)) for id from 0
-                         thereis (and (= -1 (mir-value-position value))
-                                      (or (/= id (svref aliases id)) (not (svref live id)))))
-               (mir-run-pass unit function
-                 (lambda (function) (mir-rewrite-block-parameters function aliases live))))))
+  (let ((transformations nil))
+    (loop for function across (hir-vector (mir-unit-functions unit))
+          do (multiple-value-bind (aliases live) (mir-block-parameter-plan function :preserve-refinements preserve-refinements)
+               (when (loop for value across (hir-vector (mir-function-values function)) for id from 0
+                           thereis (and (= -1 (mir-value-position value))
+                                        (or (/= id (svref aliases id)) (not (svref live id)))))
+                 (push (cons function (lambda (function) (mir-rewrite-block-parameters function aliases live)))
+                       transformations))))
+    (mir-run-passes unit (nreverse transformations)))
   unit)
 
 (defun mir-prune-unreachable-blocks (unit function)

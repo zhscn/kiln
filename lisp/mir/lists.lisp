@@ -48,16 +48,18 @@
   function)
 
 (defun mir-expand-list-calls (unit &key (cell-budget 16))
-  (loop for function across (hir-vector (mir-unit-functions unit)) do
-    (let ((remaining cell-budget) (selected nil) (reachable (mir-reachable-blocks function)))
-      (loop for block across (hir-vector (mir-function-blocks function))
-            when (logbitp (mir-block-id block) reachable) do
-        (loop for id across (hir-vector (mir-block-instructions block))
-              for cells = (mir-short-list-cells (mir-at (mir-function-instructions function) id))
-              when (and cells (<= cells remaining)) do
-                (decf remaining cells) (push (cons id cells) selected)))
-      (when selected
-        (mir-run-pass unit function (lambda (function) (mir-expand-list-function function selected))))))
+  (let ((transformations nil))
+    (loop for function across (hir-vector (mir-unit-functions unit)) do
+      (let ((remaining cell-budget) (selected nil) (reachable (mir-reachable-blocks function)))
+        (loop for block across (hir-vector (mir-function-blocks function))
+              when (logbitp (mir-block-id block) reachable) do
+          (loop for id across (hir-vector (mir-block-instructions block))
+                for cells = (mir-short-list-cells (mir-at (mir-function-instructions function) id))
+                when (and cells (<= cells remaining)) do
+                  (decf remaining cells) (push (cons id cells) selected)))
+        (when selected
+          (push (cons function (lambda (function) (mir-expand-list-function function selected))) transformations))))
+    (mir-run-passes unit (nreverse transformations)))
   unit)
 
 (defun mir-sequence-call-helper (instruction definitions)
@@ -83,24 +85,26 @@
                         ((assoc eql) . kiln.kernel::%assoc-eql)) :test #'equal)))))))
 
 (defun mir-specialize-sequence-calls (unit)
-  (loop for function across (hir-vector (mir-unit-functions unit)) do
-    (let ((definitions (mir-value-definitions function))
-          (reachable (mir-reachable-blocks function)) (selected nil))
-      (loop for block across (hir-vector (mir-function-blocks function))
-            when (logbitp (mir-block-id block) reachable) do
-        (loop for id across (hir-vector (mir-block-instructions block))
-              for instruction = (mir-at (mir-function-instructions function) id)
-              for helper = (mir-sequence-call-helper instruction definitions)
-              when helper do (push (cons instruction helper) selected)))
-      (when selected
-        (mir-run-pass unit function
-          (lambda (function)
-            (declare (ignore function))
-            ;; Operand producers remain in place, including evaluation of the test.
-            (dolist (entry selected)
-              (setf (mir-instruction-data (car entry)) (cdr entry)
-                    (mir-instruction-operands (car entry))
-                    (subseq (mir-instruction-operands (car entry)) 0 2))))))))
+  (let ((transformations nil))
+    (loop for function across (hir-vector (mir-unit-functions unit)) do
+      (let ((definitions (mir-value-definitions function))
+            (reachable (mir-reachable-blocks function)) (selected nil))
+        (loop for block across (hir-vector (mir-function-blocks function))
+              when (logbitp (mir-block-id block) reachable) do
+          (loop for id across (hir-vector (mir-block-instructions block))
+                for instruction = (mir-at (mir-function-instructions function) id)
+                for helper = (mir-sequence-call-helper instruction definitions)
+                when helper do (push (cons instruction helper) selected)))
+        (when selected
+          (push (cons function
+            (lambda (function)
+              (declare (ignore function))
+              ;; Operand producers remain in place, including evaluation of the test.
+              (dolist (entry selected)
+                (setf (mir-instruction-data (car entry)) (cdr entry)
+                      (mir-instruction-operands (car entry))
+                      (subseq (mir-instruction-operands (car entry)) 0 2))))) transformations))))
+    (mir-run-passes unit (nreverse transformations)))
   unit)
 
 (defun mir-value-call-plan (instruction definitions)
@@ -130,20 +134,22 @@
                    (cons target (coerce kept 'simple-vector))))))))))
 
 (defun mir-specialize-value-calls (unit)
-  (loop for function across (hir-vector (mir-unit-functions unit)) do
-    (let ((definitions (mir-value-definitions function))
-          (reachable (mir-reachable-blocks function)) (selected nil))
-      (loop for block across (hir-vector (mir-function-blocks function))
-            when (logbitp (mir-block-id block) reachable) do
-        (loop for id across (hir-vector (mir-block-instructions block))
-              for instruction = (mir-at (mir-function-instructions function) id)
-              for plan = (mir-value-call-plan instruction definitions)
-              when plan do (push (list instruction (car plan) (cdr plan)) selected)))
-      (when selected
-        (mir-run-pass unit function
-          (lambda (function)
-            (declare (ignore function))
-            (dolist (entry selected)
-              (setf (mir-instruction-data (car entry)) (cadr entry)
-                    (mir-instruction-operands (car entry)) (third entry))))))))
+  (let ((transformations nil))
+    (loop for function across (hir-vector (mir-unit-functions unit)) do
+      (let ((definitions (mir-value-definitions function))
+            (reachable (mir-reachable-blocks function)) (selected nil))
+        (loop for block across (hir-vector (mir-function-blocks function))
+              when (logbitp (mir-block-id block) reachable) do
+          (loop for id across (hir-vector (mir-block-instructions block))
+                for instruction = (mir-at (mir-function-instructions function) id)
+                for plan = (mir-value-call-plan instruction definitions)
+                when plan do (push (list instruction (car plan) (cdr plan)) selected)))
+        (when selected
+          (push (cons function
+            (lambda (function)
+              (declare (ignore function))
+              (dolist (entry selected)
+                (setf (mir-instruction-data (car entry)) (cadr entry)
+                      (mir-instruction-operands (car entry)) (third entry))))) transformations))))
+    (mir-run-passes unit (nreverse transformations)))
   unit)

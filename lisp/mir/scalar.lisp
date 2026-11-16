@@ -142,12 +142,15 @@
     function))
 
 (defun mir-scalar-replace (unit)
-  (loop for function across (hir-vector (mir-unit-functions unit)) when (mir-scalar-policy-p function) do
-    (let* ((calls (mir-infer-calls unit)) (id (mir-function-id function))
-           (packets (svref (mir-call-analysis-packets calls) id))
-           (origins (mir-cons-origins function packets))
-           (candidates (mir-scalar-candidates function (svref (mir-infer-storage unit) id) origins
-                                              (svref (mir-call-analysis-types calls) id) packets)))
-      (when candidates
-        (mir-run-pass unit function (lambda (function) (mir-promote-cons-fields function candidates origins))))))
+  (let ((transformations nil))
+    (loop for function across (hir-vector (mir-unit-functions unit)) when (mir-scalar-policy-p function) do
+      (let* ((calls (mir-infer-calls unit)) (id (mir-function-id function))
+             (packets (svref (mir-call-analysis-packets calls) id))
+             (origins (mir-cons-origins function packets))
+             (candidates (mir-scalar-candidates function (svref (mir-infer-storage unit) id) origins
+                                                (svref (mir-call-analysis-types calls) id) packets)))
+        (when candidates
+          (push (cons function (lambda (function) (mir-promote-cons-fields function candidates origins)))
+                transformations))))
+    (mir-run-passes unit (nreverse transformations)))
   unit)
