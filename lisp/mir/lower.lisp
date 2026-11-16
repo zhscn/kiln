@@ -512,6 +512,23 @@
 
 (defun mir-lir-parallel-copies (copies)
   "Assign atomic operands in parallel, using one temporary per copy cycle."
+  (setf copies (delete-if (lambda (copy) (eq (car copy) (cdr copy))) copies))
+  (unless copies (return-from mir-lir-parallel-copies))
+  ;; Most CFG edges have very few live parameters; a bounded scan avoids
+  ;; allocating dependency tables for these edges.
+  (when (<= (length copies) 8)
+    (loop while copies do
+      (let ((ready (loop for copy in copies
+                         unless (loop for reader in copies thereis (eq (car copy) (cdr reader)))
+                           return copy)))
+        (if ready
+            (progn (emit `(:set ,(car ready) ,(cdr ready)))
+                   (setf copies (delete ready copies :test #'eq)))
+            (let* ((destination (caar copies))
+                   (temporary (copy-to-var destination (svref destination 2))))
+              (dolist (copy copies)
+                (when (eq (cdr copy) destination) (setf (cdr copy) temporary)))))))
+    (return-from mir-lir-parallel-copies))
   (let ((pending (make-hash-table :test 'eq))
         (readers (make-hash-table :test 'eq))
         (uses (make-hash-table :test 'eq))
