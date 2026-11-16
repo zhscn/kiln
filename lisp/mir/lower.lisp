@@ -141,7 +141,9 @@
                        (progn (emit `(:vector-set ,object (:fixnum-untag ,index) ,value)) value)
                        `(:vector-ref ,object (:fixnum-untag ,index))))
         (lambda () (if store (emit-slow-call name value object index)
-                       (emit-slow-call name object index))) t))
+                       (emit-slow-call name object index))) t
+        (hir-fixnum-type-p index-type)
+        (and (hir-fixnum-type-p index-type) (hir-range-p index-type) (<= 0 (second index-type)))))
       ((:string-read :string-write) (emit-schar object index value name t))
       ((:array-read :array-write) (emit-aref-1 object index value)))))
 
@@ -217,15 +219,30 @@
          (doubles (make-array (length values) :initial-element nil))
          (boxed (make-array (length values) :initial-element nil))
          (instructions (hir-vector (mir-function-instructions function)))
-         (blocks (hir-vector (mir-function-blocks function))))
-    (when (and (< (hir-policy-quality (mir-function-policy function) :debug) 2)
-               (every (lambda (instruction)
-                        (and (hir-policy-optimize-p (mir-instruction-policy instruction))
-                             (< (hir-policy-quality (mir-instruction-policy instruction) :debug) 2))) instructions))
+         (blocks (hir-vector (mir-function-blocks function)))
+         (high-debug (or (>= (hir-policy-quality (mir-function-policy function) :debug) 2)
+                         (some (lambda (instruction)
+                                 (>= (hir-policy-quality (mir-instruction-policy instruction) :debug) 2))
+                               instructions)))
+         (observed (and high-debug (make-array (length values) :initial-element nil))))
+    (when observed
+      (loop for instruction across instructions when (= 40 (mir-instruction-kind instruction))
+            do (setf (svref observed (mir-primary-origin (svref (mir-instruction-operands instruction) 0)
+                                                       *mir-lir-definitions*)) t)))
+    (when (every (lambda (instruction)
+                   (hir-policy-optimize-p (mir-instruction-policy instruction))) instructions)
       (loop for value across values for id = (mir-value-id value)
             when (and (svref *mir-lir-live* id) (eq (svref *mir-lir-types* id) 'double-float)
                       (or (eq (mir-value-representation value) :obj)
-                          (and (eq (mir-value-representation value) :bundle) (mir-lir-single-p id))))
+                          (and (eq (mir-value-representation value) :bundle) (mir-lir-single-p id)))
+                      ;; Preserve object liveness for source observations.
+                      ;; At high debug, only unobserved arithmetic chains use
+                      ;; raw locals; arguments and merge parameters stay boxed.
+                      (or (not high-debug)
+                          (let* ((origin (mir-primary-origin id *mir-lir-definitions*))
+                                 (definition (svref *mir-lir-definitions* origin)))
+                            (and (not (svref observed origin)) definition
+                                 (mir-lir-double-call-p definition)))))
               do (setf (svref doubles id) (new-var :f64))))
     (labels ((require-object (id)
                (when (and (svref doubles id) (not (svref boxed id)))
