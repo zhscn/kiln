@@ -1860,7 +1860,7 @@
                  ((list (the (values &optional integer) (mir-unknown))) nil)
                  ((list (the (values &rest symbol) (mir-unknown))) t)
                  ((list (if (identity t) (mir-unknown) (values 1 2))) nil)
-                 ((if (identity t) (mir-unknown) (values 1 2)) t)))
+                 ((if (identity t) (mir-unknown) (values 1 2)) nil)))
   (let* ((unit (mir-test-unit (first entry)))
          (function (mir-at (mir-unit-functions unit) 0))
          (call (find-if (lambda (instruction)

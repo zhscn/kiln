@@ -1026,7 +1026,7 @@
 (dolist (entry '(((list (car (mir-carrier-unknown))) nil)
                  ((list (the integer (mir-carrier-unknown))) nil)
                  ((list (the (values &optional integer) (mir-carrier-unknown))) nil)
-                 ((mir-carrier-unknown) t)
+                 ((mir-carrier-unknown) nil)
                  ((multiple-value-bind (a b) (mir-carrier-unknown) (list a b)) t)))
   (let* ((session (make-session))
          (module (compile-module (front-end-forms (list (first entry)) session)

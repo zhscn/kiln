@@ -33,7 +33,7 @@ def lir_stats(path):
             tag, offset, length = record(index)
             return data[string_start + offset:string_start + offset + length] if tag == 1 else None
 
-        result = dict(functions=0, blocks=0, variables=0, statements=0, sets=0, polls=0, constants=0,
+        result = dict(functions=0, blocks=0, variables=0, statements=0, sets=0, polls=0, mv_saves=0, mv_restores=0, mv_moves=0, constants=0,
                       record_bytes=16 * records, edge_bytes=4 * edges, string_bytes=strings)
         for index in children(root):
             parts = children(index)
@@ -60,6 +60,9 @@ def lir_stats(path):
                                 opcode = symbol(operation[0])
                                 result['sets'] += opcode == b'set'
                                 result['polls'] += opcode == b'poll'
+                                result['mv_saves'] += opcode == b'mv-save'
+                                result['mv_restores'] += opcode == b'mv-restore'
+                                result['mv_moves'] += opcode == b'mv-move'
         return result
 
 

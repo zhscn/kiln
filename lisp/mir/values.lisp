@@ -109,22 +109,73 @@
                      < > <= >= = /= eq eql equal equalp zerop plusp minusp
                      cons list vector make-array length char schar aref elt char-code))))
 
-(defun mir-compute-bundle-carriers (function)
-  "Mark bundles whose secondary values must survive later operations."
-  (let* ((values (hir-vector (mir-function-values function)))
-         (blocks (hir-vector (mir-function-blocks function)))
-         (carriers (make-array (length values) :initial-element nil)))
-    (labels ((mark (id)
-               (when (and (eq (mir-value-representation (svref values id)) :bundle)
-                          (not (svref carriers id)))
-                 (setf (svref carriers id) t))))
-      (loop for instruction across (hir-vector (mir-function-instructions function))
+(defun mir-return-value-owners (function carriers)
+  "Track bundles whose secondary values still occupy the ABI value area."
+  (let* ((blocks (hir-vector (mir-function-blocks function)))
+         (instructions (mir-function-instructions function))
+         (polls (mir-loop-poll-blocks function))
+         (inputs (make-array (length blocks) :initial-element :unseen))
+         (outputs (make-array (length blocks) :initial-element 0))
+         (masks (map 'simple-vector
+                     (lambda (block)
+                       (loop for parameter across (mir-block-parameters block)
+                             sum (ash 1 parameter))) blocks))
+         (queued (make-array (length blocks) :initial-element nil))
+         (work (make-hir-buffer)))
+    (setf (svref inputs 0) 0 (svref queued 0) t)
+    (hir-push 0 work)
+    (loop for cursor from 0 while (< cursor (hir-buffer-count work))
+          for id = (mir-at work cursor) for block = (svref blocks id)
+          for owners = (svref inputs id) for term = (mir-block-terminator block) do
+      (setf (svref queued id) nil)
+      (when (logbitp id polls) (setf owners 0))
+      (loop for index across (hir-vector (mir-block-instructions block))
+            for instruction = (mir-at instructions index)
             for kind = (mir-instruction-kind instruction)
-            unless (or (member kind '(10 11 37 39))
-                       (and (= kind 14) (zerop (mir-instruction-data instruction))))
-              do (map nil #'mark (mir-instruction-operands instruction)))
-      (loop for block across blocks
-            do (map nil #'mark (mir-terminator-operands (mir-block-terminator block))))
+            for result = (mir-instruction-result instruction) do
+        (cond ((and result (svref carriers result)) (setf owners 0))
+              ((member kind '(6 7 15))
+               (setf owners (if result (ash 1 result) 0)))
+              ((= kind 9) (setf owners (logior owners (ash 1 result))))
+              ((= kind 39)
+               (setf owners (if (and result
+                                    (not (svref carriers (svref (mir-instruction-operands instruction) 0)))
+                                    (logbitp (svref (mir-instruction-operands instruction) 0) owners))
+                                (logior owners (ash 1 result)) 0)))
+              ;; Checks, dynamic exits and unknown primops conservatively
+              ;; destroy ownership. Heap carriers continue to handle them.
+              ((logtest 124 (mir-instruction-effects instruction)) (setf owners 0))))
+      (setf (svref outputs id) owners)
+      (unless (member (mir-terminator-kind term) '(0 1 2)) (setf owners 0))
+      (loop for edge across (mir-terminator-edges term)
+            for target = (mir-edge-target edge)
+            for parameters = (mir-block-parameters (svref blocks target))
+            for mapped = (logandc2 owners (svref masks target))
+            for bundles = 0 do
+        (loop for parameter across parameters for argument across (mir-edge-arguments edge)
+              when (eq (mir-value-representation (mir-at (mir-function-values function) parameter)) :bundle) do
+          (incf bundles)
+          ;; A pair move may publish a single-value view or restore a carrier.
+          ;; Retain only the destination's proof, not unrelated old aliases.
+          (setf mapped (if (and (= bundles 1) (not (svref carriers parameter))
+                                (not (svref carriers argument)) (logbitp argument owners))
+                           (ash 1 parameter) 0)))
+        (when (> bundles 1) (setf mapped 0))
+        (let* ((old (svref inputs target))
+               (joined (if (eq old :unseen) mapped (logand old mapped))))
+          (unless (eql old joined)
+            (setf (svref inputs target) joined)
+            (unless (svref queued target)
+              (setf (svref queued target) t)
+              (hir-push target work))))))
+    outputs))
+
+(defstruct mir-bundle-plan carriers demand)
+
+(defun mir-propagate-bundle-demand (function carriers)
+  (let ((blocks (hir-vector (mir-function-blocks function))))
+    (labels ((mark (id)
+               (unless (svref carriers id) (setf (svref carriers id) t))))
       (loop with changed = t while changed do
         (setf changed nil)
         (loop for instruction across (hir-vector (mir-function-instructions function))
@@ -133,13 +184,49 @@
                         result (svref carriers result)
                         (mark (svref (mir-instruction-operands instruction) 0)))
                 do (setf changed t))
-        (loop for block across blocks
-              do (loop for edge across (mir-terminator-edges (mir-block-terminator block))
-                       for parameters = (mir-block-parameters (svref blocks (mir-edge-target edge)))
-                       do (loop for parameter across parameters for argument across (mir-edge-arguments edge)
-                                when (and (svref carriers parameter) (mark argument))
-                                  do (setf changed t))))))
+        (loop for block across blocks do
+          (loop for edge across (mir-terminator-edges (mir-block-terminator block))
+                for parameters = (mir-block-parameters (svref blocks (mir-edge-target edge))) do
+            (loop for parameter across parameters for argument across (mir-edge-arguments edge)
+                  when (and (svref carriers parameter) (mark argument)) do (setf changed t))))))
     carriers))
 
+(defun mir-compute-bundle-plan (function)
+  "Separate secondary-value demand from the need to persist a heap carrier."
+  (let* ((values (hir-vector (mir-function-values function)))
+         (blocks (hir-vector (mir-function-blocks function)))
+         (carriers (make-array (length values) :initial-element nil)))
+    (labels ((mark (id)
+               (when (eq (mir-value-representation (svref values id)) :bundle)
+                 (unless (svref carriers id) (setf (svref carriers id) t)))))
+      (loop for instruction across (hir-vector (mir-function-instructions function))
+            for kind = (mir-instruction-kind instruction)
+            unless (or (member kind '(10 11 37 39))
+                       (and (= kind 14) (zerop (mir-instruction-data instruction))))
+              do (map nil #'mark (mir-instruction-operands instruction)))
+      (loop for block across blocks for term = (mir-block-terminator block)
+            unless (= 2 (mir-terminator-kind term)) do (map nil #'mark (mir-terminator-operands term)))
+      (mir-propagate-bundle-demand function carriers)
+      (let ((demand (copy-seq carriers)))
+        (loop for block across blocks for term = (mir-block-terminator block)
+              when (= 2 (mir-terminator-kind term)) do
+                (setf (svref demand (svref (mir-terminator-operands term) 0)) t))
+        (mir-propagate-bundle-demand function demand)
+        ;; Saving another bundle or restoring it at an edge can invalidate a
+        ;; transient view. Repeat after adding carriers until no proof changes.
+        (loop for owners = (mir-return-value-owners function carriers)
+              for changed = nil do
+          (loop for block across blocks for term = (mir-block-terminator block)
+                when (= 2 (mir-terminator-kind term)) do
+            (let ((value (svref (mir-terminator-operands term) 0)))
+              (unless (logbitp value (svref owners (mir-block-id block)))
+                (when (mark value) (setf changed t)))))
+          (unless changed (return))
+          (mir-propagate-bundle-demand function carriers))
+        (make-mir-bundle-plan :carriers carriers :demand demand)))))
+
+(defun mir-bundle-plan (function)
+  (mir-analysis function :bundle-plan #'mir-compute-bundle-plan))
+
 (defun mir-bundle-carriers (function)
-  (mir-analysis function :bundle-carriers #'mir-compute-bundle-carriers))
+  (mir-bundle-plan-carriers (mir-bundle-plan function)))
