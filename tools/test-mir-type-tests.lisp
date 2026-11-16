@@ -14,7 +14,12 @@
     count))
 
 (dolist (entry
-         '((nil nil (lambda (x) (typep x 'integer)))
+         '((nil nil (lambda (x) (typep x 'unsigned-byte)))
+           (nil nil (lambda (x) (typep x 'signed-byte)))
+           (nil nil (lambda (x) (declare (type unsigned-byte x)) x))
+           (nil nil (lambda (x) (declare (type signed-byte x)) x))
+           (t nil (lambda (x) (declare (notinline typep)) (typep x 'unsigned-byte)))
+           (nil nil (lambda (x) (typep x 'integer)))
            (nil nil (lambda (x) (typep x '(and integer (not (eql 2))))))
            (nil nil (lambda (x) (typep x nil)))
            (nil t (lambda (x) (typep x 'mir-model-class)))

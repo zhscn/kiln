@@ -738,7 +738,7 @@ returns LOW, HIGH and T; else NIL, NIL and NIL."
     cond))
 
 (defun inline-typep-specifier-p (type)
-  (cond ((member type '(t nil boolean)) t)
+  (cond ((member type '(t nil boolean unsigned-byte signed-byte)) t)
         ((nth-value 2 (type-fixnum-bounds type)) t)
         ((and (symbolp type) (assoc type *type-predicates*)) t)
         ((and (consp type) (hir-proper-list-p (rest type)))
@@ -750,12 +750,27 @@ returns LOW, HIGH and T; else NIL, NIL and NIL."
            ((or and) (every #'inline-typep-specifier-p (rest type)))))
         (t nil)))
 
+(defun emit-unbounded-byte-typep (value unsigned)
+  "Test integer membership and, for UNSIGNED-BYTE, a nonnegative sign."
+  (let ((integer (funcall (gethash 'integerp *primitives*) (list value))))
+    (if (not unsigned) integer
+        (let ((result (new-var)) (check (new-block)) (done (new-block)))
+          (emit `(:set ,result ,(nil-value)))
+          (br `(:ne ,integer ,(nil-value)) check done)
+          (start-block check)
+          (emit `(:set ,result ,(funcall (gethash '>= *primitives*) (list value (constant-object 0)))))
+          (jump done)
+          (start-block done)
+          result))))
+
 (defun emit-inline-typep (val type)
   (multiple-value-bind (low high fixnum-range-p) (type-fixnum-bounds type)
     (cond (fixnum-range-p
            (boolean-value (emit-fixnum-range-test val low high)))
           ((eq type t) (t-value))
           ((eq type nil) (nil-value))
+          ((member type '(unsigned-byte signed-byte))
+           (emit-unbounded-byte-typep val (eq type 'unsigned-byte)))
           ((eq type 'boolean)
            (boolean-value `(:or (:eq ,val ,(nil-value)) (:eq ,val ,(t-value)))))
           ((symbolp type)
