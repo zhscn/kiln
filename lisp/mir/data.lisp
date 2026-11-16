@@ -8,7 +8,7 @@
 
 (defstruct mir-values-declaration (required #()) (optional #()) (rest t))
 
-(defstruct mir-unit (load-time-functions #()) (functions (make-hir-buffer)) (analyses (make-hash-table :test 'eq)))
+(defstruct mir-unit (revision 0 :type fixnum) (load-time-functions #()) (functions (make-hir-buffer)) (analyses (make-hash-table :test 'eq)))
 (defstruct mir-function
   (id 0 :type fixnum) name source (policy 1023) (internal-prefix 0) (argument-cells 0) (required 0) (optional 0) (rest nil) (key-p nil) (keys #()) (allow-other-keys nil) (bindings #()) (binding-cells 0) (captures #()) (capture-cells 0) (capture-functions #())
   (blocks (make-hir-buffer)) (instructions (make-hir-buffer)) (values (make-hir-buffer))
@@ -70,14 +70,12 @@
           result))))
 
 (defun mir-unit-analysis (unit name compute)
-  "Cache an analysis against load-time entries and every function revision."
-  (let* ((revisions (cons (coerce (mir-unit-load-time-functions unit) 'list)
-                           (loop for function across (hir-vector (mir-unit-functions unit))
-                                collect (cons function (mir-function-revision function)))))
-         (entry (gethash name (mir-unit-analyses unit))))
-    (if (and entry (equal (car entry) revisions)) (cdr entry)
+  "Cache against the unit epoch advanced before every graph rewrite."
+  (let ((entry (gethash name (mir-unit-analyses unit))))
+    (if (and entry (= (car entry) (mir-unit-revision unit))) (cdr entry)
         (let ((result (funcall compute unit)))
-          (setf (gethash name (mir-unit-analyses unit)) (cons revisions result))
+          (setf (gethash name (mir-unit-analyses unit))
+                (cons (mir-unit-revision unit) result))
           result))))
 
 (defun mir-function-signature (function)
@@ -97,6 +95,7 @@
         (signatures (map 'simple-vector
                          (lambda (entry) (cons entry (mir-function-signature entry)))
                          (hir-vector (mir-unit-functions unit)))))
+    (incf (mir-unit-revision unit))
     (incf (mir-function-revision function))
     (let ((remove nil))
       (maphash (lambda (name entry)
@@ -123,6 +122,7 @@
 
 (defun mir-run-unit-pass (unit transform)
   "Invalidate the whole unit before a coordinated signature and caller rewrite."
+  (incf (mir-unit-revision unit))
   (loop for function across (hir-vector (mir-unit-functions unit))
         do (incf (mir-function-revision function)) (clrhash (mir-function-analyses function)))
   (clrhash (mir-unit-analyses unit))
