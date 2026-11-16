@@ -185,6 +185,9 @@
   unit)
 
 (defun mir-verify-internal-calls (unit function)
+  (unless (find-if (lambda (instruction) (member (mir-instruction-kind instruction) '(7 15)))
+                   (hir-vector (mir-function-instructions function)))
+    (return-from mir-verify-internal-calls nil))
   (let ((known (mir-compute-function-identities function)))
     (loop for instruction across (hir-vector (mir-function-instructions function))
           for kind = (mir-instruction-kind instruction)
