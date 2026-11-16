@@ -462,7 +462,7 @@
     (case (hir-node-kind node)
       (0 (mir-single (mir-instruction 0 :obj #() (hir-node-a node))))
       (1 (let ((value (mir-binding-value (hir-node-a node))))
-           (when (hir-node-c node) (setf value (mir-check value (hir-node-b node))))
+           (when (hir-node-b node) (setf value (mir-check value (hir-node-b node))))
            (mir-single value)))
       (2 (let ((value (mir-primary (hir-node-b node))))
            (when *mir-block*

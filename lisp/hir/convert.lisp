@@ -48,7 +48,10 @@
   (multiple-value-bind (binding found) (hir-lookup environment name :var)
     (cond ((hir-var-p binding)
            (let ((type (hir-declared-variable-type environment binding)))
-             (hir-node 1 *hir-source* (hir-note-ref binding) (unless (eq type t) type))))
+             ;; Keep the empty type distinct from an absent reference annotation.
+             (hir-node 1 *hir-source* (hir-note-ref binding)
+                       (if (null type) (make-hir-type-declaration nil nil)
+                           (unless (eq type t) type)))))
           ((and found (eq (car binding) :symbol-macro))
            (hir-convert (invoke-macro-expander :symbol-macro
                            (lambda (form env) (declare (ignore form env)) (second binding))
