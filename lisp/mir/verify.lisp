@@ -38,7 +38,18 @@
 
 (defun mir-reachable-blocks (function)
   "Cache the reachable block bitset at the function's current revision."
-  (mir-analysis function :reachable #'mir-control-flow))
+  (mir-analysis function :reachable
+    (lambda (function)
+      (let ((blocks (mir-function-blocks function)) (work (make-hir-buffer)) (reachable 1))
+        (hir-push 0 work)
+        (loop for index from 0 while (< index (hir-buffer-count work))
+              for block = (mir-at blocks (mir-at work index))
+              do (loop for edge across (mir-terminator-edges (mir-block-terminator block))
+                       for target = (mir-edge-target edge)
+                       unless (logbitp target reachable)
+                         do (setf reachable (logior reachable (ash 1 target)))
+                            (hir-push target work)))
+        reachable))))
 
 (defun mir-verify-closure-initialization (unit function)
   (let* ((instructions (hir-vector (mir-function-instructions function)))
