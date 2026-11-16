@@ -76,19 +76,19 @@
   function)
 
 (defun mir-fold-type-predicates (unit)
-  ;; Predicates and selected edges can refine callee summaries and caller
-  ;; facts. Recompute after each revision until neither kind of rewrite applies.
-  (loop with changed = t while changed
-        do (setf changed nil)
-           (loop for function across (hir-vector (mir-unit-functions unit))
-                 for folds = (mir-type-predicate-folds function unit)
-                 for branches = (mir-type-branch-folds function unit)
-                 when (or folds branches)
-                   do (mir-run-pass unit function
+  ;; Gather a round from one analysis snapshot before changing revisions.
+  ;; These rewrites preserve behavior, so all proofs remain valid within the
+  ;; round. Recompute summaries next round to discover newly precise facts.
+  (loop for plans = (loop for function across (hir-vector (mir-unit-functions unit))
+                         for folds = (mir-type-predicate-folds function unit)
+                         for branches = (mir-type-branch-folds function unit)
+                         when (or folds branches) collect (list function folds branches))
+        while plans do
+           (loop for (function folds branches) in plans
+                 do (mir-run-pass unit function
                         (lambda (function)
                           (when folds (mir-replace-type-predicates function folds))
                           (when branches
                             (mir-replace-type-branches function branches)
-                            (mir-prune-unreachable-blocks unit function))))
-                      (setf changed t)))
+                            (mir-prune-unreachable-blocks unit function))))))
   unit)
