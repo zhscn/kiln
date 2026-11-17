@@ -70,6 +70,7 @@ def host_script(project, projects, args, output):
     (dolist (action (asdf/plan:plan-actions plan))
       (when (and (typep (car action) 'asdf:load-op) (typep (cdr action) 'asdf:cl-source-file))
         (format s "~A~%" (asdf:component-pathname (cdr action)))))))
+(format t "~&LIBRARY-LOAD-BEGIN~%")
 (let ((start (get-internal-real-time)))
   (asdf:load-system {system})
   (format t "~&LIBRARY-LOAD-SECONDS ~F~%"
@@ -204,7 +205,7 @@ def main():
                     result['smoke_completed'] = 'LIBRARY-SMOKE-COMPLETED' in log
                     result['compile_seconds'] = sum(float(value) for value in re.findall(
                         r'^LIBRARY-COMPILE-SECONDS .+ ([0-9.]+)$',
-                        log.split('LIBRARY-LOAD-SECONDS', 1)[0], re.M))
+                        log.split('LIBRARY-LOAD-BEGIN', 1)[-1].split('LIBRARY-LOAD-SECONDS', 1)[0], re.M))
                     plan = output / 'sources.txt'
                     if plan.exists():
                         result['source_sha256'] = {
