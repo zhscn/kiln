@@ -204,3 +204,10 @@ HIR 前端转换 lambda list 之后（`lisp/hir/convert.lisp`），每个 `&opti
 请求复制、验证与降级期间不分配 Lisp 对象；失败诊断的分配可以 GC，调用方的
 program、packet 和 literal 向量必须作为普通活跃对象进入栈图。Rust 不在 GC 后
 读取旧请求地址。内部 panic 沿 panic=abort 策略结束进程，不转换成可恢复诊断。
+
+## 进程环境查询
+
+通用 `sys` 服务的操作 24 接收零起始的命令行参数索引 `a`，将该参数的原始
+操作系统字节写入 octet 缓冲区 `b`，返回所需字节数；索引越界返回 -1，负索引
+返回负 EINVAL。索引 0 是可执行文件名。该查询不分配 Lisp 对象、不触发 safepoint，
+通过既有系统服务调用约定执行。字符串解码及结果列表由 Lisp 构造。

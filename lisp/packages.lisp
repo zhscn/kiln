@@ -42,6 +42,7 @@
            ;; Frames and backtraces (lisp/target/clos/debug.lisp).
            #:frame-list #:frame-name #:frame-source #:frame-variables #:frame-pc
            #:source-line #:print-frame #:print-backtrace #:exit
+           #:getenv #:getcwd #:command-line-arguments
            ;; The back-end protocol (lisp/target/eval/server.lisp).
            #:serve
            ;; Assumptions and dependency tracking (lisp/target/assumptions.lisp,

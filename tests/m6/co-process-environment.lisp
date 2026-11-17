@@ -1,0 +1,8 @@
+(assert (null (kiln.sys:getenv "KILN_ABSENT_ENVIRONMENT_TEST_6F824AED")))
+(assert (handler-case (progn (kiln.sys:getenv 42) nil) (type-error () t)))
+(let ((directory (kiln.sys:getcwd)) (arguments (kiln.sys:command-line-arguments)))
+  (assert (pathnamep directory))
+  (assert (eq :absolute (first (pathname-directory directory))))
+  (assert (and (consp arguments) (every #'stringp arguments)))
+  (assert (plusp (length (first arguments)))))
+(print :process-environment)

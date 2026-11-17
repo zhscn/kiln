@@ -2,6 +2,21 @@
 
 (in-package #:kiln.kernel)
 
+(defun kiln.sys:getenv (name)
+  "Return the process environment value, including empty strings, or NIL if absent."
+  (check-type name string)
+  (let ((value (sys-string 10 (string-octets name))))
+    (and (stringp value) value)))
+
+(defun kiln.sys:getcwd ()
+  "Return the process working directory as an absolute directory pathname."
+  (current-directory))
+
+(defun kiln.sys:command-line-arguments ()
+  "Return process arguments, beginning with the executable name."
+  (loop for index from 0 for value = (sys-string 24 index)
+        while (stringp value) collect value))
+
 (defun environment-information (which)
   (let ((value (sys-string 20 which)))
     (and (stringp value) value)))
