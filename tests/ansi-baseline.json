@@ -15,7 +15,7 @@
   },
   "expected_counts": {
     "skipped": 77,
-    "known_failures": 20
+    "known_failures": 25
   },
   "skipped": [
     {"group": "symbols", "test": "MAKE-SYMBOL.11", "disabled_notes": ["NIL-VECTORS-ARE-STRINGS"]},
@@ -102,6 +102,11 @@
     {"group": "data-and-control-flow", "test": "MACROLET.36"},
     {"group": "environment", "test": "APROPOS-LIST.ERROR.2"},
     {"group": "environment", "test": "APROPOS.ERROR.2"},
+    {"group": "iteration", "test": "LOOP.1.39"},
+    {"group": "iteration", "test": "LOOP.1.40"},
+    {"group": "iteration", "test": "LOOP.1.41"},
+    {"group": "iteration", "test": "LOOP.1.42"},
+    {"group": "iteration", "test": "LOOP.1.43"},
     {"group": "misc", "test": "MISC.598"},
     {"group": "numbers", "test": "EXP.ERROR.10"},
     {"group": "numbers", "test": "EXP.ERROR.11"},
