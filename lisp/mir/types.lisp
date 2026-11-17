@@ -116,7 +116,7 @@
                  (when (and (hir-range-p (svref types id)) (hir-range-p joined)
                             (not (equal joined (svref types id))))
                    (incf (svref changes id))
-                   (when (>= (svref changes id) 2) (setf joined 'integer)))
+                   (when (>= (svref changes id) 2) (setf joined (hir-widen-integer-type joined))))
                  (unless (equal joined (svref types id))
                    (setf (svref types id) joined) (enqueue-users id))))
              (merge-packet (id packet)

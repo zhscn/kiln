@@ -55,7 +55,7 @@
                     (joined (mir-type-join before (mir-values-ref-type new index))))
                (when (and (hir-range-p before) (hir-range-p joined) (not (equal before joined)))
                  (incf (svref expansions index))
-                 (when (>= (svref expansions index) 2) (setf joined 'integer)))
+                 (when (>= (svref expansions index) 2) (setf joined (hir-widen-integer-type joined))))
                (setf (svref types index) joined)))
            (make-mir-values-fact :count count :types types)))))
 

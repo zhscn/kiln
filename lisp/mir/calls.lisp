@@ -258,7 +258,7 @@
   (let ((joined (mir-type-join old candidate)))
     (when (and (hir-range-p old) (hir-range-p joined) (not (equal old joined)))
       (incf expansions)
-      (when (>= expansions 2) (setf joined 'integer)))
+      (when (>= expansions 2) (setf joined (hir-widen-integer-type joined))))
     (values joined expansions)))
 
 (defun mir-call-argument-types (instruction facts packets required &optional (maximum required))

@@ -1,7 +1,8 @@
 (in-package #:kiln.compiler)
 
 ;;; The domain is deliberately bounded: canonical value classes and finite
-;;; machine-word integer intervals. T means unknown, not an assertion. Host FIXNUM
+;;; machine-word intervals plus unbounded nonnegative integers. T means unknown,
+;;; not an assertion. Host FIXNUM
 ;;; bounds need not match the target's and must not determine inferred types.
 (defconstant +hir-fixnum-min+ kiln.kir::+backend-fixnum-min+)
 (defconstant +hir-fixnum-max+ kiln.kir::+backend-fixnum-max+)
@@ -11,7 +12,7 @@
 (defun hir-integer-range (low high)
   (if (and (<= +hir-bound-min+ low) (<= high +hir-bound-max+))
       (list 'integer low high)
-      'integer))
+      (if (<= 0 low) 'unsigned-byte 'integer)))
 
 (defun hir-range-p (type)
   (and (consp type) (eq (car type) 'integer)))
@@ -22,7 +23,13 @@
            (<= (third type) +hir-fixnum-max+))))
 
 (defun hir-integer-type-p (type)
-  (or (eq type 'integer) (eq type 'fixnum) (hir-range-p type)))
+  (or (eq type 'integer) (eq type 'fixnum) (eq type 'unsigned-byte) (hir-range-p type)))
+
+(defun hir-nonnegative-integer-type-p (type)
+  (or (eq type 'unsigned-byte) (and (hir-range-p type) (<= 0 (second type)))))
+
+(defun hir-widen-integer-type (type)
+  (if (hir-nonnegative-integer-type-p type) 'unsigned-byte 'integer))
 
 (defun hir-type-range (type)
   (cond ((hir-range-p type) type)
@@ -33,6 +40,7 @@
   (cond ((equal a b) a)
         ((and (hir-range-p a) (hir-range-p b))
          (hir-integer-range (min (second a) (second b)) (max (third a) (third b))))
+        ((and (hir-nonnegative-integer-type-p a) (hir-nonnegative-integer-type-p b)) 'unsigned-byte)
         ((and (hir-fixnum-type-p a) (hir-fixnum-type-p b)) 'fixnum)
         ((and (hir-integer-type-p a)
               (hir-integer-type-p b)) 'integer)
@@ -132,14 +140,16 @@
                (* (let ((products (list (* (second a) (second b)) (* (second a) (third b))
                                         (* (third a) (second b)) (* (third a) (third b)))))
                     (hir-integer-range (apply #'min products) (apply #'max products)))))))
-         (if (and (hir-integer-type-p a)
-                  (hir-integer-type-p b))
-             'integer t)))
+         (cond ((and (member name '(+ *))
+                     (hir-nonnegative-integer-type-p a) (hir-nonnegative-integer-type-p b)) 'unsigned-byte)
+               ((and (hir-integer-type-p a) (hir-integer-type-p b)) 'integer)
+               (t t))))
       ((and (member name '(1+ 1-)) (= count 1))
        (let* ((actual (svref types 0)) (type (or (hir-type-range actual) actual))
               (delta (if (eq name '1+) 1 -1)))
          (cond ((hir-range-p type)
                 (hir-integer-range (+ (second type) delta) (+ (third type) delta)))
+               ((and (eq name '1+) (hir-nonnegative-integer-type-p type)) 'unsigned-byte)
                ((hir-integer-type-p type) 'integer)
                (t t))))
       ((and (member name '(logand logior logxor)) (= count 2))
@@ -153,6 +163,10 @@
          (cond ((and (hir-range-p a) (hir-range-p b) (<= 0 (second a)) (<= 0 (second b)))
                 (hir-integer-range 0 (1- (ash 1 (max (integer-length (third a))
                                                   (integer-length (third b)))))))
+               ((and (hir-integer-type-p a) (hir-integer-type-p b)
+                     (if (eq name 'logand)
+                         (or (hir-nonnegative-integer-type-p a) (hir-nonnegative-integer-type-p b))
+                         (and (hir-nonnegative-integer-type-p a) (hir-nonnegative-integer-type-p b)))) 'unsigned-byte)
                ((and (hir-fixnum-type-p a) (hir-fixnum-type-p b)) 'fixnum)
                ((and (hir-integer-type-p a)
                      (hir-integer-type-p b)) 'integer)
@@ -203,6 +217,8 @@
   (cond ((member specifier '(fixnum integer rational real number float single-float double-float
                             cons symbol character simple-vector simple-string string vector array
                             function null list)) specifier)
+        ((eq specifier 'unsigned-byte) 'unsigned-byte)
+        ((eq specifier 'signed-byte) 'integer)
         ((member specifier '(short-float long-float))
          (if (eq specifier 'short-float) 'single-float 'double-float))
         ((nth-value 2 (type-fixnum-bounds specifier))
@@ -210,6 +226,13 @@
            (hir-integer-range low high)))
         ((and (consp specifier) (hir-proper-list-p specifier))
          (case (car specifier)
+           ((unsigned-byte signed-byte)
+            (if (and (<= (length specifier) 2)
+                     (or (null (cdr specifier)) (eq (second specifier) '*)))
+                (if (eq (car specifier) 'unsigned-byte) 'unsigned-byte 'integer) t))
+           (integer
+            (if (and (member (length specifier) '(2 3)) (eql (second specifier) 0)
+                     (or (= (length specifier) 2) (eq (third specifier) '*))) 'unsigned-byte t))
            ((array simple-array)
             (if (> (length specifier) 3) t
               (let ((element (if (cdr specifier) (second specifier) '*))
@@ -237,6 +260,7 @@
   "A proof in the finite domain, independent of user-defined type aliases."
   (cond ((eq actual t) nil)
         ((equal actual required) t)
+        ((eq required 'unsigned-byte) (hir-nonnegative-integer-type-p actual))
         ((eq required :simple-array-vector)
          (member actual '(simple-vector :native-string simple-string)))
         ((hir-range-p required)
