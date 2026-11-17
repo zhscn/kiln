@@ -1000,9 +1000,25 @@
                             (log-one-plus (+ a (/ (* a a) (+ 1 (sqrt (+ 1 (* a a))))))))))
         (float-sign value magnitude))))
 (defun acosh (x)
-  (if (and (realp x) (>= x 1))
-      (log (+ x (sqrt (- (* x x) 1))))
-      (log (+ x (* (sqrt (+ x 1)) (sqrt (- x 1)))))))
+  (let ((prototype (complex-float-prototype x)))
+    (cond ((and (realp x) (>= x 1))
+           (let ((epsilon (if (%primop :double-float-p prototype)
+                              double-float-epsilon single-float-epsilon)))
+             (if (> x (/ 1 (sqrt epsilon)))
+                 (+ (log x) (log (float 2 prototype)))
+                 (let ((delta (- x 1)))
+                   (log-one-plus (+ delta (sqrt (* delta (+ x 1)))))))))
+          ((realp x)
+           (if (>= x -1)
+               (complex (float 0 prototype) (acos x))
+               (complex (acosh (- x)) (float pi prototype))))
+          (t
+           ;; The log formula rounds a tiny real component to zero and can
+           ;; leave a spurious real residue on the interval [-1, 1].
+           (let ((inverse (acos x)))
+             (complex (abs (imagpart inverse))
+                      (float-sign (float (imagpart x) prototype)
+                                  (realpart inverse))))))))
 (defun atanh (x)
   (cond ((and (realp x) (< -1 x 1)) (/ (log (/ (+ 1 x) (- 1 x))) 2))
         ;; On the branch cut above 1, continuous with the upper half plane
