@@ -1017,10 +1017,11 @@ created."
     (process-toplevel cst compile-time-too)))
 
 (defun call-with-front-end (session thunk)
-  (call-with-compilation-request
-   :front-end session
-   (lambda (request) (call-with-front-end-request session thunk request))
-   :dependencies :inherit :calls :inherit :outputs :inherit :fingerprint :inherit :observers :inherit))
+  (with-compilation-phase (:frontend)
+    (call-with-compilation-request
+     :front-end session
+     (lambda (request) (call-with-front-end-request session thunk request))
+     :dependencies :inherit :calls :inherit :outputs :inherit :fingerprint :inherit :observers :inherit)))
 
 (defun call-with-front-end-request (session thunk request)
   "Calls THUNK, which processes top-level forms, with the front end's state

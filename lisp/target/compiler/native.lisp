@@ -50,9 +50,10 @@ running image, in the null lexical environment."
                                            session)
                           name :session session :image t :pipeline pipeline))
       (multiple-value-bind (program bindings) (kiln.lir:module-program module literals)
-        (let ((init (kiln.lir:require-init
-                      (kiln.sys:%primop :compile-program program bindings (kiln.lir:target-fingerprint))
-                      :compile-program)))
+        (let ((init (with-compilation-phase (:backend)
+                      (kiln.lir:require-init
+                       (kiln.sys:%primop :compile-program program bindings (kiln.lir:target-fingerprint))
+                       :compile-program))))
           (let ((*compiled-function* nil))
             (funcall init)
             *compiled-function*))))))

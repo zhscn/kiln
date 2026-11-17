@@ -21,6 +21,7 @@
                (:file "kir")
                (:file "lir-schema")
                (:file "backend-target")
+               (:file "compilation-metrics")
                (:file "backend-packet")
                (:file "lir")
                (:file "lir-function")

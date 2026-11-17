@@ -80,7 +80,8 @@ Native code already registered with the runtime follows the runtime's lifetime."
             (note-compiled-code (svref entry 5) (svref entry 6) (svref entry 3))
             (svref entry 7))
           (let* ((packet (kiln.lir:encode-program program))
-                 (init (kiln.lir:require-init (kiln.sys:%primop :compile-packet packet literals) :compile-packet)))
+                 (init (with-compilation-phase (:backend)
+                        (kiln.lir:require-init (kiln.sys:%primop :compile-packet packet literals) :compile-packet))))
             (incf *compilation-cache-misses*)
             (when init
               (note-compiled-code name canonical literals)

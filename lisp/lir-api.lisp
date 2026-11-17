@@ -4,7 +4,8 @@
 
 (defun module-program (module &optional literals)
   "Normalize a private compiler builder into a program and complete literal bindings."
-  (kiln.kir::normalize-lir-module module literals))
+  (kiln.compiler::with-compilation-phase (:lir-normalize)
+    (kiln.kir::normalize-lir-module module literals)))
 
 (defun require-program (program)
   (unless (and (consp program) (eq (car program) :lir-module))
@@ -13,7 +14,8 @@
 
 (defun encode-program (program)
   "Encode only the production LIR payload; compatibility formats are separate."
-  (kiln.kir::encode-backend-packet (require-program program) kiln.kir::+packet-lir-payload+))
+  (kiln.compiler::with-compilation-phase (:lir-encode)
+    (kiln.kir::encode-backend-packet (require-program program) kiln.kir::+packet-lir-payload+)))
 
 (defun module-packet (module &optional literals)
   (multiple-value-bind (program bindings) (module-program module literals)

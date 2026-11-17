@@ -85,7 +85,7 @@
          (entries (or (gethash owner *mir-edit-analysis-cache*)
                       (setf (gethash owner *mir-edit-analysis-cache*) (make-hash-table :test 'eq)))))
     (multiple-value-bind (result present) (gethash name entries)
-      (if present result (setf (gethash name entries) (funcall compute owner))))))
+      (if present result (setf (gethash name entries) (with-compilation-phase (:mir-analysis) (funcall compute owner)))))))
 
 (defun mir-analysis-buffer-views (analyses revision)
   (let ((entry (gethash :buffer-views analyses)))
@@ -103,7 +103,7 @@
         (let* ((*hir-buffer-views*
                  (or *hir-buffer-views*
                      (mir-analysis-buffer-views (mir-function-analyses function) (mir-function-revision function))))
-               (result (funcall compute function)))
+               (result (with-compilation-phase (:mir-analysis) (funcall compute function))))
           (setf (gethash name (mir-function-analyses function))
                 (cons (mir-function-revision function) result))
           result))))
@@ -117,7 +117,7 @@
         (let* ((*hir-buffer-views*
                  (or *hir-buffer-views*
                      (mir-analysis-buffer-views (mir-unit-analyses unit) (mir-unit-revision unit))))
-               (result (funcall compute unit)))
+               (result (with-compilation-phase (:mir-analysis) (funcall compute unit))))
           (setf (gethash name (mir-unit-analyses unit))
                 (cons (mir-unit-revision unit) result))
           result))))
