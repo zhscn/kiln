@@ -1,0 +1,19 @@
+--- a/src/utils.lisp
++++ b/src/utils.lisp
+@@ -143,6 +143,7 @@
+ ;;; For gcl, getpid imported from system in maxima-package.lisp
+ #-gcl
+ (defun getpid ()
++#+kiln (kiln.sys:getpid)
+ #+clisp (os:process-id)
+ #+(or cmu scl) (unix:unix-getpid)
+ #+sbcl (sb-unix:unix-getpid)
+@@ -164,7 +165,7 @@
+                                 "java.lang.management.ManagementFactory"))))
+        (parse-integer name :end (position #\@ name))))
+     (getpid-from-environment))
+-#-(or clisp cmu scl sbcl gcl openmcl lispworks ecl ccl allegro abcl)
++#-(or kiln clisp cmu scl sbcl gcl openmcl lispworks ecl ccl allegro abcl)
+   (getpid-from-environment)
+ )
+ 
