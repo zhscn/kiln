@@ -6,7 +6,7 @@
 (defparameter *mir-change-kinds* '(:instructions :values :control-flow :bindings))
 
 (defun mir-pass-changes (changes)
-  (cond ((eq changes :all) *mir-change-kinds*)
+  (cond ((eq changes :all) :all)
         ((and (listp changes) changes
               (every (lambda (kind) (member kind *mir-change-kinds*)) changes)) changes)
         (t (mir-fail "Invalid MIR change declaration ~S" changes))))
@@ -14,22 +14,23 @@
 (defun mir-invalidate-function (function changes)
   "Retain only registered facts whose inputs cannot change in this edit."
   (incf (mir-function-revision function))
-  (let ((remove nil))
-    (maphash (lambda (name analysis)
-               ;; CFG facts depend only on blocks and successor structure.
-               ;; Unknown analyses and read views always expire.
-               (if (and (member name '(:reachable :control-flow :cyclic :loop-polls))
-                        (not (member :control-flow changes)))
-                   (setf (car analysis) (mir-function-revision function))
-                   (push name remove)))
-             (mir-function-analyses function))
-    (dolist (name remove) (remhash name (mir-function-analyses function)))))
+  (if (or (eq changes :all) (member :control-flow changes))
+      (clrhash (mir-function-analyses function))
+      (let ((remove nil))
+        (maphash (lambda (name analysis)
+                   ;; Only these registered facts depend solely on the CFG.
+                   (case name
+                     ((:reachable :control-flow :cyclic :loop-polls)
+                      (setf (car analysis) (mir-function-revision function)))
+                     (otherwise (push name remove))))
+                 (mir-function-analyses function))
+        (dolist (name remove) (remhash name (mir-function-analyses function))))))
 
 (defun mir-invalidate-unit (unit)
   (incf (mir-unit-revision unit))
   (clrhash (mir-unit-analyses unit))
   (loop for function across (hir-vector (mir-unit-functions unit))
-        do (mir-invalidate-function function *mir-change-kinds*)))
+        do (mir-invalidate-function function :all)))
 
 (defun mir-function-signature (function)
   "Snapshot entry and capture layout fields independently of mutable vectors."
@@ -113,7 +114,7 @@
     (dolist (saved before)
       (let* ((entry (car saved)) (after (mir-pass-body-state entry identities)))
         (dolist (state (cdr saved))
-          (unless (or (and (eq entry function) (member (car state) changes))
+          (unless (or (and (eq entry function) (or (eq changes :all) (member (car state) changes)))
                       (equal (cdr state) (cdr (assoc (car state) after))))
             (mir-fail "MIR pass changed undeclared ~S in function ~D" (car state) (mir-function-id entry))))))))
 
