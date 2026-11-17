@@ -111,7 +111,7 @@
 
 (defun mir-return-value-owners (function carriers)
   "Track bundles whose secondary values still occupy the ABI value area."
-  (let* ((blocks (hir-vector (mir-function-blocks function)))
+  (let* ((blocks (hir-buffer-view (mir-function-blocks function)))
          (instructions (mir-function-instructions function))
          (polls (mir-loop-poll-blocks function))
          (inputs (make-array (length blocks) :initial-element :unseen))
@@ -129,7 +129,7 @@
           for owners = (svref inputs id) for term = (mir-block-terminator block) do
       (setf (svref queued id) nil)
       (when (logbitp id polls) (setf owners 0))
-      (loop for index across (hir-vector (mir-block-instructions block))
+      (loop for index across (hir-buffer-view (mir-block-instructions block))
             for instruction = (mir-at instructions index)
             for kind = (mir-instruction-kind instruction)
             for result = (mir-instruction-result instruction) do
@@ -173,12 +173,12 @@
 (defstruct mir-bundle-plan carriers demand)
 
 (defun mir-propagate-bundle-demand (function carriers)
-  (let ((blocks (hir-vector (mir-function-blocks function))))
+  (let ((blocks (hir-buffer-view (mir-function-blocks function))))
     (labels ((mark (id)
                (unless (svref carriers id) (setf (svref carriers id) t))))
       (loop with changed = t while changed do
         (setf changed nil)
-        (loop for instruction across (hir-vector (mir-function-instructions function))
+        (loop for instruction across (hir-buffer-view (mir-function-instructions function))
               for result = (mir-instruction-result instruction)
               when (and (member (mir-instruction-kind instruction) '(11 39))
                         result (svref carriers result)
@@ -193,13 +193,13 @@
 
 (defun mir-compute-bundle-plan (function)
   "Separate secondary-value demand from the need to persist a heap carrier."
-  (let* ((values (hir-vector (mir-function-values function)))
-         (blocks (hir-vector (mir-function-blocks function)))
+  (let* ((values (hir-buffer-view (mir-function-values function)))
+         (blocks (hir-buffer-view (mir-function-blocks function)))
          (carriers (make-array (length values) :initial-element nil)))
     (labels ((mark (id)
                (when (eq (mir-value-representation (svref values id)) :bundle)
                  (unless (svref carriers id) (setf (svref carriers id) t)))))
-      (loop for instruction across (hir-vector (mir-function-instructions function))
+      (loop for instruction across (hir-buffer-view (mir-function-instructions function))
             for kind = (mir-instruction-kind instruction)
             unless (or (member kind '(10 11 37 39))
                        (and (= kind 14) (zerop (mir-instruction-data instruction))))

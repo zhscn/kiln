@@ -69,20 +69,20 @@
       (visit-function root))
     (loop while changed do
       (setf changed nil)
-      (loop for function across (hir-vector functions) unless (gethash function dynamic) do
+      (loop for function across (hir-buffer-view functions) unless (gethash function dynamic) do
         (when (some (lambda (variable)
                       (let ((target (gethash variable *mir-function-bindings*)))
                         (or (null target) (gethash target dynamic) (gethash variable assigned))))
                     (hir-fun-free function))
           (setf (gethash function dynamic) t changed t))))
-    (loop for function across (hir-vector functions) do
+    (loop for function across (hir-buffer-view functions) do
       (when (and (hir-fun-binding function) (not (gethash function dynamic)))
         (setf (gethash (hir-fun-binding function) *mir-static-function-bindings*) t))
-      (loop for variable across (hir-vector (hir-fun-vars function))
+      (loop for variable across (hir-buffer-view (hir-fun-vars function))
             when (and (gethash variable assigned) (source-variable-name variable))
               do (setf (gethash variable *mir-cell-variables*) t))
       (when (gethash function landing-functions)
-        (loop for variable across (hir-vector (hir-fun-vars function)) when (gethash variable assigned)
+        (loop for variable across (hir-buffer-view (hir-fun-vars function)) when (gethash variable assigned)
               do (setf (gethash variable *mir-cell-variables*) t)))
       (loop for variable across (hir-fun-free function) when (gethash variable assigned)
             do (setf (gethash variable *mir-cell-variables*) t)))))
@@ -104,7 +104,7 @@
 
 (defun mir-materialize-bindings (function)
   "Materialize binding parameters demanded by operations and their incoming values."
-  (let* ((blocks (hir-vector (mir-function-blocks function)))
+  (let* ((blocks (hir-buffer-view (mir-function-blocks function)))
          (width (length (mir-function-bindings function)))
          (incoming (make-array (length blocks) :initial-element nil))
          (work (make-hir-buffer)))
@@ -131,7 +131,7 @@
         (loop for parameter across (mir-block-parameters block) for index from 0
               unless (minusp parameter) do (hir-push (cons (mir-block-id block) index) work))
         (rewrite (mir-terminator-operands term)))
-      (loop for instruction across (hir-vector (mir-function-instructions function))
+      (loop for instruction across (hir-buffer-view (mir-function-instructions function))
             do (rewrite (mir-instruction-operands instruction)))
       (loop for cursor from 0 while (< cursor (hir-buffer-count work))
             for demand = (mir-at work cursor)
@@ -387,7 +387,7 @@
     (when *mir-block* (or result (mir-single (mir-instruction 0 :obj #() nil))))))
 
 (defun mir-has-predecessor-p (target)
-  (loop for block across (hir-vector (mir-function-blocks *mir-function*))
+  (loop for block across (hir-buffer-view (mir-function-blocks *mir-function*))
         thereis (let ((term (mir-block-terminator block)))
                   (and term (find target (mir-terminator-edges term) :key #'mir-edge-target)))))
 
@@ -680,7 +680,7 @@
     (when found (return-from mir-import-function old)))
   (let* ((ll (hir-fun-lambda-list hir))
          (id (hir-buffer-count (mir-unit-functions *mir-unit*)))
-         (bindings (hir-vector (hir-fun-vars hir)))
+         (bindings (hir-buffer-view (hir-fun-vars hir)))
          (captures (mir-captures hir))
          (all-bindings (concatenate 'simple-vector bindings captures))
          (binding-count (length all-bindings))
@@ -754,7 +754,7 @@
               do (mir-build-keyword parameter index (1+ index))))
       (let ((value (mir-build-node (hir-fun-body hir))))
         (when *mir-block* (mir-leave-bindings nil) (mir-terminate 2 (vector value))))
-      (loop for block across (hir-vector (mir-function-blocks *mir-function*))
+      (loop for block across (hir-buffer-view (mir-function-blocks *mir-function*))
             unless (mir-block-terminator block)
               do (setf (mir-block-terminator block) (make-mir-terminator :kind 3))))
     (mir-materialize-bindings *mir-function*)
@@ -770,7 +770,7 @@
     (mir-import-function hir)
     (setf (mir-unit-load-time-functions *mir-unit*)
           (map 'simple-vector (lambda (node) (mir-import-function (hir-node-a node)))
-               (hir-vector *mir-load-time-nodes*)))
+               (hir-buffer-view *mir-load-time-nodes*)))
     (when (plusp (length (mir-function-captures (mir-at (mir-unit-functions *mir-unit*) 0))))
       (mir-unavailable "root function requires an environment"))
     (verify-mir *mir-unit*)

@@ -74,15 +74,15 @@
       (mir-compute-function-identities function)))
 
 (defun mir-verify-closure-initialization (unit function)
-  (let* ((instructions (hir-vector (mir-function-instructions function)))
+  (let* ((instructions (hir-buffer-view (mir-function-instructions function)))
          (definitions (make-array (hir-buffer-count (mir-function-values function)) :initial-element nil))
          (fields (make-array (length instructions) :initial-element 0))
          (last-write (make-array (length instructions) :initial-element -1))
          (dependencies (make-array (length instructions) :initial-element nil)))
     (loop for instruction across instructions for result = (mir-instruction-result instruction)
           when result do (setf (svref definitions result) instruction))
-    (loop for block across (hir-vector (mir-function-blocks function)) do
-      (loop for id across (hir-vector (mir-block-instructions block)) for position from 0
+    (loop for block across (hir-buffer-view (mir-function-blocks function)) do
+      (loop for id across (hir-buffer-view (mir-block-instructions block)) for position from 0
             for instruction = (svref instructions id) when (= (mir-instruction-kind instruction) 24) do
         (let* ((receiver (svref (mir-instruction-operands instruction) 0))
                (allocation (svref definitions receiver)) (value (mir-at (mir-function-values function) receiver))
@@ -111,8 +111,8 @@
         (dolist (source (svref dependencies site))
           (when (< (svref last-write site) (svref last-write source))
             (setf (svref last-write site) (svref last-write source) changed t)))))
-    (loop for block across (hir-vector (mir-function-blocks function)) do
-      (loop for id across (hir-vector (mir-block-instructions block)) for position from 0
+    (loop for block across (hir-buffer-view (mir-function-blocks function)) do
+      (loop for id across (hir-buffer-view (mir-block-instructions block)) for position from 0
             for instruction = (svref instructions id) unless (= (mir-instruction-kind instruction) 24) do
         (loop for arg across (mir-instruction-operands instruction) for definition = (svref definitions arg)
               when (and definition (= (mir-instruction-kind definition) 23)
@@ -120,9 +120,9 @@
                         (< position (svref last-write (mir-instruction-id definition))))
                 do (mir-fail "MIR closure is observed before its environment is initialized")))))
 
-  (let ((known (and (find 24 (hir-vector (mir-function-instructions function)) :key #'mir-instruction-kind)
+  (let ((known (and (find 24 (hir-buffer-view (mir-function-instructions function)) :key #'mir-instruction-kind)
                     (mir-verification-function-identities function))))
-    (loop for instruction across (hir-vector (mir-function-instructions function))
+    (loop for instruction across (hir-buffer-view (mir-function-instructions function))
           when (= (mir-instruction-kind instruction) 24) do
       (let* ((data (mir-instruction-data instruction))
              (target (svref (mir-function-capture-functions (mir-at (mir-unit-functions unit) (car data))) (cdr data))))
@@ -131,14 +131,14 @@
 
 (defun mir-verify-cells (function)
   "Reject placeholder cell uses after propagating reachable SSA edges."
-  (unless (find 25 (hir-vector (mir-function-instructions function)) :key #'mir-instruction-kind)
+  (unless (find 25 (hir-buffer-view (mir-function-instructions function)) :key #'mir-instruction-kind)
     (return-from mir-verify-cells nil))
   (let* ((values (mir-function-values function)) (count (hir-buffer-count values))
          (unbound (make-array count :initial-element nil))
          (successors (make-array count :initial-element nil))
          (work (make-hir-buffer)) (reachable (mir-reachable-blocks function))
-         (blocks (hir-vector (mir-function-blocks function))))
-    (loop for instruction across (hir-vector (mir-function-instructions function))
+         (blocks (hir-buffer-view (mir-function-blocks function))))
+    (loop for instruction across (hir-buffer-view (mir-function-instructions function))
           when (= (mir-instruction-kind instruction) 25)
             do (let ((id (mir-instruction-result instruction)))
                  (setf (svref unbound id) t)
@@ -157,7 +157,7 @@
                  (setf (svref unbound target) t)
                  (hir-push target work))))
     (loop for block across blocks when (logbitp (mir-block-id block) reachable) do
-      (loop for id across (hir-vector (mir-block-instructions block))
+      (loop for id across (hir-buffer-view (mir-block-instructions block))
             for instruction = (mir-at (mir-function-instructions function) id)
             for kind = (mir-instruction-kind instruction)
             when (member kind '(7 15 20 21 24 40)) do
@@ -208,7 +208,7 @@
   function)
 
 (defun mir-verify-private-entries (unit)
-  (let ((functions (hir-vector (mir-unit-functions unit))))
+  (let ((functions (hir-buffer-view (mir-unit-functions unit))))
     (when (some (lambda (function) (plusp (mir-function-internal-prefix function))) functions)
       (let* ((identities (map 'simple-vector #'mir-verification-function-identities functions))
              (external (mir-external-functions functions identities (mir-unit-load-time-functions unit))))
@@ -219,10 +219,10 @@
 
 (defun mir-verify-internal-calls (unit function)
   (unless (find-if (lambda (instruction) (member (mir-instruction-kind instruction) '(7 15)))
-                   (hir-vector (mir-function-instructions function)))
+                   (hir-buffer-view (mir-function-instructions function)))
     (return-from mir-verify-internal-calls nil))
   (let ((known (mir-verification-function-identities function)))
-    (loop for instruction across (hir-vector (mir-function-instructions function))
+    (loop for instruction across (hir-buffer-view (mir-function-instructions function))
           for kind = (mir-instruction-kind instruction)
           when (member kind '(7 15)) do
             (let* ((args (mir-instruction-operands instruction))
@@ -243,10 +243,10 @@
                       do (mir-fail "MIR call disagrees with its private cell prefix"))))))
 
 (defun mir-verify-region-landings (function)
-  (let* ((blocks (hir-vector (mir-function-blocks function)))
+  (let* ((blocks (hir-buffer-view (mir-function-blocks function)))
          (instructions (mir-function-instructions function))
          (landings (make-array (length blocks) :initial-element nil)))
-    (loop for block across blocks for body = (hir-vector (mir-block-instructions block))
+    (loop for block across blocks for body = (hir-buffer-view (mir-block-instructions block))
           for term = (mir-block-terminator block) do
       (loop for id across body for position from 0 for instruction = (mir-at instructions id)
             when (member (mir-instruction-kind instruction) '(30 32 34 35))
@@ -256,7 +256,7 @@
         (let* ((entry (and (plusp (length body)) (mir-at instructions (svref body (1- (length body))))))
                (edges (mir-terminator-edges term))
                (landing (mir-edge-target (svref edges 1)))
-               (target (svref blocks landing)) (code (hir-vector (mir-block-instructions target))))
+               (target (svref blocks landing)) (code (hir-buffer-view (mir-block-instructions target))))
           (unless (and entry (member (mir-instruction-kind entry) '(30 32 34 35))
                        (/= (mir-edge-target (svref edges 0)) landing)
                        (null (svref landings landing)) (plusp (length code))
@@ -266,7 +266,7 @@
             (mir-fail "MIR region entry has no unique matching landing"))
           (setf (svref landings landing) (cons (mir-block-id block) (mir-instruction-data entry))))))
     (loop for block across blocks do
-      (loop for id across (hir-vector (mir-block-instructions block)) for position from 0
+      (loop for id across (hir-buffer-view (mir-block-instructions block)) for position from 0
             for instruction = (mir-at instructions id) when (member (mir-instruction-kind instruction) '(31 33 36))
               do (unless (and (zerop position) (svref landings (mir-block-id block)))
                    (mir-fail "MIR landed values must begin an exceptional landing")))
@@ -281,8 +281,8 @@
 
 (defun mir-compute-binding-regions (function)
   "Check one active binding stack per reachable block and balanced returns."
-  (let* ((blocks (hir-vector (mir-function-blocks function)))
-         (instructions (hir-vector (mir-function-instructions function)))
+  (let* ((blocks (hir-buffer-view (mir-function-blocks function)))
+         (instructions (hir-buffer-view (mir-function-instructions function)))
          (entries (make-array (count-if (lambda (instruction)
                                           (member (mir-instruction-kind instruction) '(27 29 30 32 34 35))) instructions)
                               :initial-element nil))
@@ -299,7 +299,7 @@
     (setf (svref inputs 0) nil)
     (loop while pending for block = (svref blocks (pop pending))
           for active = (svref inputs (mir-block-id block)) do
-      (loop for id across (hir-vector (mir-block-instructions block))
+      (loop for id across (hir-buffer-view (mir-block-instructions block))
             for instruction = (svref instructions id)
             for data = (mir-instruction-data instruction) do
         (case (mir-instruction-kind instruction)
@@ -335,7 +335,7 @@
 (defun mir-verify-construction-bindings (function)
   "Check binding representations and undemanded placeholders before compaction."
   (let ((width (length (mir-function-bindings function))))
-    (loop for block across (hir-vector (mir-function-blocks function))
+    (loop for block across (hir-buffer-view (mir-function-blocks function))
           for id = (mir-block-id block) unless (zerop id) do
       (unless (>= (length (mir-block-parameters block)) width)
         (mir-fail "MIR block is missing binding parameters"))
@@ -349,6 +349,13 @@
   function)
 
 (defun verify-mir-function (unit function)
+  (let ((*hir-buffer-views* (if *mir-verification-identities*
+                               (or *hir-buffer-views* (make-hash-table :test 'eq))
+                               (make-hash-table :test 'eq)))
+        (*mir-verification-identities* (or *mir-verification-identities* (make-hash-table :test 'eq))))
+    (mir-verify-function-body unit function)))
+
+(defun mir-verify-function-body (unit function)
   (let* ((blocks (mir-function-blocks function)) (instructions (mir-function-instructions function))
          (values (mir-function-values function))
          (seen-instructions (make-array (hir-buffer-count instructions) :initial-element nil))
@@ -374,7 +381,7 @@
           (when (and (zerop i) (plusp (length (mir-block-parameters block))))
             (mir-fail "MIR entry block cannot have edge parameters"))
           (loop for id across (mir-block-parameters block) do (definition id i -1))
-          (loop for id across (hir-vector (mir-block-instructions block)) for position from 0
+          (loop for id across (hir-buffer-view (mir-block-instructions block)) for position from 0
                 for instruction = (mir-at instructions id)
                 do (unless (and (mir-instruction-p instruction) (= (mir-instruction-id instruction) id)
                                 (not (svref seen-instructions id))) (mir-fail "Invalid MIR instruction ID"))
@@ -505,7 +512,7 @@
                              unless (eq (representation parameter) (representation argument))
                                do (mir-fail "MIR edge representation mismatch")))))))
       (let ((checks 0) (checked nil) (rest-lists 0) (calls nil))
-        (loop for id across (hir-vector (mir-block-instructions (mir-at blocks 0)))
+        (loop for id across (hir-buffer-view (mir-block-instructions (mir-at blocks 0)))
               for instruction = (mir-at instructions id)
               do (case (mir-instruction-kind instruction)
                    (13 (incf checks) (setf checked t))
@@ -534,7 +541,7 @@
                                     (or (/= owner block) (< (mir-value-position value) position)))
                          (mir-fail "MIR value ~D does not dominate its use in block ~D" id block))))))
           (dotimes (i (hir-buffer-count blocks))
-            (let* ((block (mir-at blocks i)) (body (hir-vector (mir-block-instructions block)))
+            (let* ((block (mir-at blocks i)) (body (hir-buffer-view (mir-block-instructions block)))
                    (term (mir-block-terminator block)))
               (loop for id across body for position from 0
                     do (loop for operand across (mir-instruction-operands (mir-at instructions id))
@@ -563,11 +570,12 @@
   unit)
 
 (defun verify-mir (unit)
-  (let ((*mir-verification-identities* (make-hash-table :test 'eq)))
+  (let ((*mir-verification-identities* (make-hash-table :test 'eq))
+        (*hir-buffer-views* (make-hash-table :test 'eq)))
     (when (zerop (hir-buffer-count (mir-unit-functions unit))) (mir-fail "Empty MIR unit"))
     ;; Call validation reads callee layouts. Check every layout before any
     ;; function body so malformed later entries cannot reach those reads.
-    (loop for function across (hir-vector (mir-unit-functions unit)) for id from 0
+    (loop for function across (hir-buffer-view (mir-unit-functions unit)) for id from 0
           do (unless (and (mir-function-p function) (eql id (mir-function-id function)))
                (mir-fail "Invalid MIR function ID"))
              (mir-verify-function-layout unit function))
@@ -576,6 +584,6 @@
       (mir-fail "MIR unit entry cannot require a closure environment"))
     (unless (eql 0 (mir-function-internal-prefix (mir-at (mir-unit-functions unit) 0)))
       (mir-fail "MIR unit entry cannot require a private prefix"))
-    (loop for function across (hir-vector (mir-unit-functions unit)) do (verify-mir-function unit function))
+    (loop for function across (hir-buffer-view (mir-unit-functions unit)) do (verify-mir-function unit function))
     (mir-verify-private-entries unit)
     unit))

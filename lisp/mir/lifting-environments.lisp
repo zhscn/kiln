@@ -14,9 +14,9 @@
           for known across identities
           for sets = (mir-contained-functions function)
           for reachable = (mir-reachable-blocks function)
-          do (loop for block across (hir-vector (mir-function-blocks function))
+          do (loop for block across (hir-buffer-view (mir-function-blocks function))
                    when (logbitp (mir-block-id block) reachable)
-                   do (loop for id across (hir-vector (mir-block-instructions block))
+                   do (loop for id across (hir-buffer-view (mir-block-instructions block))
                             for instruction = (mir-at (mir-function-instructions function) id)
                             for kind = (mir-instruction-kind instruction)
                             for args = (mir-instruction-operands instruction)
@@ -63,7 +63,7 @@
 
 (defun mir-lifting-environment-candidates (unit &optional (excluded 0))
   (let* ((calls (mir-infer-calls unit))
-         (functions (hir-vector (mir-unit-functions unit)))
+         (functions (hir-buffer-view (mir-unit-functions unit)))
          (candidates (map 'simple-vector (lambda (f) (plusp (length (mir-function-captures f)))) functions)))
     (loop
      (let* ((external
@@ -83,7 +83,7 @@
 
 (defun mir-lifting-environment-layouts (unit candidates)
   "Collect data fields reachable through private function captures, in code/slot order."
-  (let* ((functions (hir-vector (mir-unit-functions unit)))
+  (let* ((functions (hir-buffer-view (mir-unit-functions unit)))
          (layouts (make-array (length functions) :initial-element nil)))
     (loop for root across functions for candidate across candidates when candidate do
       (let ((seen (make-array (length functions) :initial-element nil))
@@ -104,12 +104,12 @@
     layouts))
 
 (defun mir-lifting-environment-values (unit function candidates layouts)
-  (let* ((functions (hir-vector (mir-unit-functions unit)))
+  (let* ((functions (hir-buffer-view (mir-unit-functions unit)))
          (known (mir-function-identities function))
          (environments (make-array (length known) :initial-element nil))
          (own (mir-function-id function))
          (own-layout (svref layouts own))
-         (instructions (hir-vector (mir-function-instructions function)))
+         (instructions (hir-buffer-view (mir-function-instructions function)))
          (definitions (mir-value-definitions function))
          (constraints nil))
     (labels ((private (id)
@@ -129,7 +129,7 @@
                                origin))
                          origin))
                    value)))
-      (loop for block across (hir-vector (mir-function-blocks function))
+      (loop for block across (hir-buffer-view (mir-function-blocks function))
             do (loop for parameter across (mir-block-parameters block)
                      for target = (svref known parameter)
                      when (private target)
@@ -218,9 +218,9 @@
   (multiple-value-bind (reachable dominators)
       (mir-cached-control-flow function)
     (let* ((known (mir-function-identities function))
-           (blocks (hir-vector (mir-function-blocks function)))
+           (blocks (hir-buffer-view (mir-function-blocks function)))
            (own (mir-function-id function))
-           (entry (hir-vector (mir-block-instructions (svref blocks 0))))
+           (entry (hir-buffer-view (mir-block-instructions (svref blocks 0))))
            (arity
             (position-if
              (lambda (id) (= 13 (mir-instruction-kind (mir-at (mir-function-instructions function) id))))
@@ -246,7 +246,7 @@
         (loop for block across blocks
               for id = (mir-block-id block)
               when (logbitp id reachable)
-              do (loop for instruction-id across (hir-vector (mir-block-instructions block))
+              do (loop for instruction-id across (hir-buffer-view (mir-block-instructions block))
                        for position from 0
                        for i = (mir-at (mir-function-instructions function) instruction-id)
                        for kind = (mir-instruction-kind i)
@@ -297,7 +297,7 @@
         nil))))
 
 (defun mir-plan-lifted-environments (unit &key (parameter-budget 4096))
-  (let* ((functions (hir-vector (mir-unit-functions unit))) (calls (mir-infer-calls unit)) (excluded 0))
+  (let* ((functions (hir-buffer-view (mir-unit-functions unit))) (calls (mir-infer-calls unit)) (excluded 0))
     (loop
      (let* ((candidates (let ((result (mir-lifting-environment-candidates unit excluded)))
                             (unless (loop for candidate across result for id from 0
@@ -324,7 +324,7 @@
                for packets across (mir-call-analysis-packets calls)
                for reachable = (mir-reachable-blocks f)
                do (let ((extra 0) (parameter-targets nil))
-                    (loop for block across (hir-vector (mir-function-blocks f))
+                    (loop for block across (hir-buffer-view (mir-function-blocks f))
                           do (loop for parameter across (mir-block-parameters block)
                                    for target = (svref known parameter)
                                    when (private target)
@@ -400,7 +400,7 @@
          (dolist (id rejected) (setf excluded (logior excluded (ash 1 id)))))))))
 
 (defun mir-lift-expanded-function (function candidates layouts masks known environments)
-  (let* ((blocks (hir-vector (mir-function-blocks function)))
+  (let* ((blocks (hir-buffer-view (mir-function-blocks function)))
          (instructions (mir-function-instructions function))
          (original (map 'simple-vector #'mir-block-parameters blocks))
          (own (mir-function-id function))
@@ -492,7 +492,7 @@
                  (when (zerop (mir-block-id block))
                    (when nil-instruction (append-instruction nil-instruction))
                    (when unbound-instruction (append-instruction unbound-instruction)))
-                 (loop for id across (hir-vector (mir-block-instructions block))
+                 (loop for id across (hir-buffer-view (mir-block-instructions block))
                        for instruction = (mir-at instructions id)
                        for kind = (mir-instruction-kind instruction)
                        for args = (mir-instruction-operands instruction)
@@ -643,7 +643,7 @@
   function)
 
 (defun mir-lift-private-environments (unit &key (parameter-budget 4096))
-  (let ((functions (hir-vector (mir-unit-functions unit))))
+  (let ((functions (hir-buffer-view (mir-unit-functions unit))))
     (unless (loop for function across functions
                   thereis (loop for target across (mir-function-capture-functions function)
                                 thereis (and (integerp target) (plusp (length (mir-function-captures (svref functions target)))))))
@@ -651,7 +651,7 @@
   (multiple-value-bind (candidates layouts environments)
       (mir-plan-lifted-environments unit :parameter-budget parameter-budget)
     (unless candidates (return-from mir-lift-private-environments unit))
-    (let* ((functions (hir-vector (mir-unit-functions unit)))
+    (let* ((functions (hir-buffer-view (mir-unit-functions unit)))
            (known (map 'simple-vector #'mir-function-identities functions))
            (masks
             (map 'simple-vector

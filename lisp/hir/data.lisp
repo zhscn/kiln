@@ -40,6 +40,18 @@
 (defun hir-vector (buffer)
   (subseq (hir-buffer-data buffer) 0 (hir-buffer-count buffer)))
 
+(defvar *hir-buffer-views* nil)
+
+(defun hir-buffer-view (buffer)
+  "Borrow a read-only snapshot in the current analysis scope; append refreshes it."
+  (if *hir-buffer-views*
+      (let ((entry (gethash buffer *hir-buffer-views*)))
+        (if (and entry (= (car entry) (hir-buffer-count buffer))) (cdr entry)
+            (let ((view (hir-vector buffer)))
+              (setf (gethash buffer *hir-buffer-views*) (cons (hir-buffer-count buffer) view))
+              view)))
+      (hir-vector buffer)))
+
 ;;; Variable flags: assigned, captured, cell, ignorable, dynamic-extent.
 (defstruct hir-var
   (name nil) (owner nil) (id -1) (flags 0) (refs 0) (type t)

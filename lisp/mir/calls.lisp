@@ -10,7 +10,7 @@
   "Track one local function ID, or :UNKNOWN, through primary values."
   (let* ((identities (make-array (hir-buffer-count (mir-function-values function))
                                  :initial-element :unseen))
-         (blocks (hir-vector (mir-function-blocks function)))
+         (blocks (hir-buffer-view (mir-function-blocks function)))
          (reachable (mir-reachable-blocks function)) (changed t))
     (labels ((merge-identity (id identity)
                (let ((joined (mir-function-identity-join (svref identities id) identity)))
@@ -37,7 +37,7 @@
       (loop while changed do
         (setf changed nil)
         (loop for block across blocks when (logbitp (mir-block-id block) reachable) do
-          (loop for id across (hir-vector (mir-block-instructions block))
+          (loop for id across (hir-buffer-view (mir-block-instructions block))
                 for instruction = (mir-at (mir-function-instructions function) id)
                 for result = (mir-instruction-result instruction)
                 when result do (merge-identity result (transfer instruction)))
@@ -77,7 +77,7 @@
 
 (defun mir-return-type (function types)
   (let ((result :unseen) (reachable (mir-reachable-blocks function)))
-    (loop for block across (hir-vector (mir-function-blocks function))
+    (loop for block across (hir-buffer-view (mir-function-blocks function))
           for term = (mir-block-terminator block)
           when (and (logbitp (mir-block-id block) reachable) (= (mir-terminator-kind term) 2))
             do (setf result (mir-type-join result (svref types (svref (mir-terminator-operands term) 0)))))
@@ -86,7 +86,7 @@
 (defun mir-return-values (function packets)
   (let ((result :unseen) (reachable (mir-reachable-blocks function))
         (expansions (make-array +mir-values-prefix-limit+ :initial-element 0)))
-    (loop for block across (hir-vector (mir-function-blocks function))
+    (loop for block across (hir-buffer-view (mir-function-blocks function))
           for term = (mir-block-terminator block)
           when (and (logbitp (mir-block-id block) reachable) (= (mir-terminator-kind term) 2))
             do (setf result (mir-join-values result
@@ -96,7 +96,7 @@
 (defun mir-contained-functions (function)
   "Overapproximate local functions carried by each scalar or saved bundle."
   (let* ((sets (make-array (hir-buffer-count (mir-function-values function)) :initial-element 0))
-         (blocks (hir-vector (mir-function-blocks function)))
+         (blocks (hir-buffer-view (mir-function-blocks function)))
          (reachable (mir-reachable-blocks function)) (changed t))
     (labels ((merge-set (id bits)
                (let ((joined (logior (svref sets id) bits)))
@@ -119,7 +119,7 @@
       (loop while changed do
         (setf changed nil)
         (loop for block across blocks when (logbitp (mir-block-id block) reachable) do
-          (loop for id across (hir-vector (mir-block-instructions block))
+          (loop for id across (hir-buffer-view (mir-block-instructions block))
                 for instruction = (mir-at (mir-function-instructions function) id)
                 for result = (mir-instruction-result instruction)
                 when result do (merge-set result (transfer instruction)))
@@ -139,9 +139,9 @@
       ;; Unconstructed bodies still read captured functions through their public ABI.
       (loop for target across (mir-function-capture-functions function) when target
             do (setf external (logior external (ash 1 target))))
-      (loop for block across (hir-vector (mir-function-blocks function))
+      (loop for block across (hir-buffer-view (mir-function-blocks function))
             when (logbitp (mir-block-id block) reachable) do
-        (loop for id across (hir-vector (mir-block-instructions block))
+        (loop for id across (hir-buffer-view (mir-block-instructions block))
               for instruction = (mir-at (mir-function-instructions function) id)
               for kind = (mir-instruction-kind instruction)
               for args = (mir-instruction-operands instruction) do
@@ -164,7 +164,7 @@
   "Propagate local code identities through closed positional inputs and primary returns."
   ;; Preserve the local escape analysis as an independent upper bound. In
   ;; particular, passing a function object still exposes its public entry.
-  (let* ((functions (hir-vector (mir-unit-functions unit)))
+  (let* ((functions (hir-buffer-view (mir-unit-functions unit)))
          (count (length functions))
          (external (mir-external-functions functions (map 'simple-vector #'mir-function-identities functions)
                                            (mir-unit-load-time-functions unit)))
@@ -199,9 +199,9 @@
                                                                        :summaries summaries :finalize nil))
                        (reachable (mir-reachable-blocks function)))
                    (setf (svref identities id) known)
-                   (loop for block across (hir-vector (mir-function-blocks function))
+                   (loop for block across (hir-buffer-view (mir-function-blocks function))
                          when (logbitp (mir-block-id block) reachable) do
-                     (loop for index across (hir-vector (mir-block-instructions block))
+                     (loop for index across (hir-buffer-view (mir-block-instructions block))
                            for instruction = (mir-at (mir-function-instructions function) index)
                            for kind = (mir-instruction-kind instruction)
                            for args = (mir-instruction-operands instruction)
@@ -299,9 +299,9 @@
       (loop for function across functions for id from 0 for row across points
             for known across identities
             for reachable = (mir-reachable-blocks function) do
-        (loop for block across (hir-vector (mir-function-blocks function))
+        (loop for block across (hir-buffer-view (mir-function-blocks function))
               when (logbitp (mir-block-id block) reachable) do
-          (loop for index across (hir-vector (mir-block-instructions block))
+          (loop for index across (hir-buffer-view (mir-block-instructions block))
                 for instruction = (mir-at (mir-function-instructions function) index)
                 for args = (mir-instruction-operands instruction) do
             (case (mir-instruction-kind instruction)
@@ -328,7 +328,7 @@
 
 (defun mir-compute-cell-aliases (unit)
   "Track opaque cell identities through SSA and closure environment slots."
-  (let* ((functions (hir-vector (mir-unit-functions unit))) (count 0)
+  (let* ((functions (hir-buffer-view (mir-unit-functions unit))) (count 0)
          (sites (map 'simple-vector (lambda (function)
                                      (make-array (hir-buffer-count (mir-function-instructions function)) :initial-element nil)) functions))
          (points (map 'simple-vector (lambda (function)
@@ -337,7 +337,7 @@
          (arguments (map 'simple-vector (lambda (function) (make-array (mir-function-internal-prefix function) :initial-element 0)) functions))
          (identities (map 'simple-vector #'mir-function-identities functions)))
     (loop for function across functions for row across sites do
-      (loop for instruction across (hir-vector (mir-function-instructions function))
+      (loop for instruction across (hir-buffer-view (mir-function-instructions function))
             when (= 19 (mir-instruction-kind instruction))
               do (setf (svref row (mir-instruction-id instruction)) count) (incf count)))
     (loop while (mir-propagate-cell-aliases functions sites points captures arguments identities))
@@ -361,9 +361,9 @@
   (let ((outgoing (make-array (length functions) :initial-element nil)))
     (loop for function across functions for known across identities
           for id = (mir-function-id function) for reachable = (mir-reachable-blocks function)
-          do (loop for block across (hir-vector (mir-function-blocks function))
+          do (loop for block across (hir-buffer-view (mir-function-blocks function))
                    when (logbitp (mir-block-id block) reachable) do
-                     (loop for index across (hir-vector (mir-block-instructions block))
+                     (loop for index across (hir-buffer-view (mir-block-instructions block))
                            for instruction = (mir-at (mir-function-instructions function) index)
                            when (member (mir-instruction-kind instruction) '(7 15)) do
                              (let ((target (svref known (svref (mir-instruction-operands instruction) 0))))
@@ -371,7 +371,7 @@
     outgoing))
 
 (defun mir-compute-calls (unit)
-  (let* ((functions (hir-vector (mir-unit-functions unit))) (count (length functions))
+  (let* ((functions (hir-buffer-view (mir-unit-functions unit))) (count (length functions))
          (flow (mir-infer-function-flow unit))
          (identities (mir-function-flow-identities flow))
          (external (mir-function-flow-external flow))
@@ -414,7 +414,7 @@
           (setf (svref callers target) (logior (svref callers target) (ash 1 caller)))))
       (loop for function across functions for id from 0
             for points = (svref (mir-cell-aliases-points cell-aliases) id) do
-        (loop for instruction across (hir-vector (mir-function-instructions function))
+        (loop for instruction across (hir-buffer-view (mir-function-instructions function))
               when (= 20 (mir-instruction-kind instruction)) do
           (let ((bits (svref points (svref (mir-instruction-operands instruction) 0))))
             (dotimes (site (length cell-types))
@@ -439,9 +439,9 @@
                (merge-inputs (function facts packets known)
                  (let* ((id (mir-function-id function)) (reachable (mir-reachable-blocks function))
                         (cell-points (svref (mir-cell-aliases-points cell-aliases) id)))
-                   (loop for block across (hir-vector (mir-function-blocks function))
+                   (loop for block across (hir-buffer-view (mir-function-blocks function))
                          when (logbitp (mir-block-id block) reachable) do
-                     (loop for index across (hir-vector (mir-block-instructions block))
+                     (loop for index across (hir-buffer-view (mir-block-instructions block))
                            for instruction = (mir-at (mir-function-instructions function) index)
                            for args = (mir-instruction-operands instruction) do
                        (case (mir-instruction-kind instruction)

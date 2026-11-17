@@ -5,7 +5,7 @@
        (every (lambda (instruction)
                 (and (hir-policy-optimize-p (mir-instruction-policy instruction))
                      (< (hir-policy-quality (mir-instruction-policy instruction) :debug) 2)))
-              (hir-vector (mir-function-instructions function)))))
+              (hir-buffer-view (mir-function-instructions function)))))
 
 (defun mir-lifting-call-range (instruction packets)
   "Bound the user argument count before inserting hidden environment values."
@@ -21,7 +21,7 @@
 
 (defun mir-lifting-widths (unit calls)
   "Prove private captured entries and source argument counts safe for lifting."
-  (let* ((functions (hir-vector (mir-unit-functions unit)))
+  (let* ((functions (hir-buffer-view (mir-unit-functions unit)))
          (widths (make-array (length functions) :initial-element nil))
          (constructors (make-array (length functions) :initial-element 0))
          (uses (make-array (length functions) :initial-element 0)))
@@ -36,9 +36,9 @@
           for identities across (mir-call-analysis-identities calls)
           for packets across (mir-call-analysis-packets calls)
           for reachable = (mir-reachable-blocks function)
-          do (loop for block across (hir-vector (mir-function-blocks function))
+          do (loop for block across (hir-buffer-view (mir-function-blocks function))
                    when (logbitp (mir-block-id block) reachable)
-                     do (loop for id across (hir-vector (mir-block-instructions block))
+                     do (loop for id across (hir-buffer-view (mir-block-instructions block))
                               for instruction = (mir-at (mir-function-instructions function) id)
                               for kind = (mir-instruction-kind instruction)
                               for args = (mir-instruction-operands instruction)
@@ -62,7 +62,7 @@
 
 (defun mir-lift-function (function widths identities cell-masks)
   "Thread each lifted function value's environment through its SSA copies."
-  (let* ((blocks (hir-vector (mir-function-blocks function)))
+  (let* ((blocks (hir-buffer-view (mir-function-blocks function)))
          (instructions (mir-function-instructions function))
          (original-parameters (map 'simple-vector #'mir-block-parameters blocks))
          (environments (make-array (length identities) :initial-element nil))
@@ -86,18 +86,18 @@
                                                        (push id extra) id)) 'simple-vector)))
                  (setf (mir-block-parameters block)
                        (concatenate 'simple-vector (mir-block-parameters block) (nreverse extra)))))
-      (loop for instruction across (hir-vector instructions)
+      (loop for instruction across (hir-buffer-view instructions)
             when (and (= (mir-instruction-kind instruction) 23) (svref widths (mir-instruction-data instruction)))
               do (setf (svref environments (mir-instruction-result instruction))
                        (make-array (svref widths (mir-instruction-data instruction)) :initial-element nil)))
-      (loop for instruction across (hir-vector instructions)
+      (loop for instruction across (hir-buffer-view instructions)
             when (and (= (mir-instruction-kind instruction) 24) (svref widths (car (mir-instruction-data instruction))))
               do (let* ((args (mir-instruction-operands instruction)) (fields (environment (svref args 0))))
                    (unless fields (mir-fail "Lifted closure initialization lacks its constructor"))
                    (setf (svref fields (cdr (mir-instruction-data instruction))) (svref args 1))))
       (loop with changed = t while changed do
         (setf changed nil)
-        (loop for instruction across (hir-vector instructions)
+        (loop for instruction across (hir-buffer-view instructions)
               for result = (mir-instruction-result instruction)
               when (and result (width result) (not (environment result))) do
                 (let* ((kind (mir-instruction-kind instruction)) (args (mir-instruction-operands instruction))
@@ -137,7 +137,7 @@
           (when (zerop (mir-block-id block))
             (when nil-instruction (append-instruction nil-instruction))
             (when unbound-instruction (append-instruction unbound-instruction)))
-          (loop for id across (hir-vector (mir-block-instructions block))
+          (loop for id across (hir-buffer-view (mir-block-instructions block))
                 for instruction = (mir-at instructions id)
                 for kind = (mir-instruction-kind instruction)
                 for args = (mir-instruction-operands instruction)
@@ -180,16 +180,16 @@
 (defun mir-lift-direct-environments (unit &key (parameter-budget 4096))
   (let* ((calls (mir-infer-calls unit)) (widths (mir-lifting-widths unit calls))
          (identities (mir-call-analysis-identities calls))
-         (cell-masks (map 'simple-vector #'mir-function-capture-cells (hir-vector (mir-unit-functions unit)))))
+         (cell-masks (map 'simple-vector #'mir-function-capture-cells (hir-buffer-view (mir-unit-functions unit)))))
     (unless (find-if #'identity widths) (return-from mir-lift-direct-environments unit))
-    (loop for function across (hir-vector (mir-unit-functions unit)) for known across identities
-          for extra = (loop for block across (hir-vector (mir-function-blocks function))
+    (loop for function across (hir-buffer-view (mir-unit-functions unit)) for known across identities
+          for extra = (loop for block across (hir-buffer-view (mir-function-blocks function))
                             sum (loop for parameter across (mir-block-parameters block)
                                       for target = (svref known parameter)
                                       sum (if (integerp target) (or (svref widths target) 0) 0)))
           when (> extra parameter-budget) do (return-from mir-lift-direct-environments unit))
     (mir-run-unit-pass unit
       (lambda (unit)
-        (loop for function across (hir-vector (mir-unit-functions unit)) for known across identities
+        (loop for function across (hir-buffer-view (mir-unit-functions unit)) for known across identities
               do (mir-lift-function function widths known cell-masks)))))
   unit)

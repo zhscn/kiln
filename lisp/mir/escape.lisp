@@ -18,7 +18,7 @@
 (defun mir-closure-storage-policy-p (function)
   (and (< (hir-policy-quality (mir-function-policy function) :debug) 2)
        (every (lambda (instruction) (< (hir-policy-quality (mir-instruction-policy instruction) :debug) 2))
-              (hir-vector (mir-function-instructions function)))))
+              (hir-buffer-view (mir-function-instructions function)))))
 
 (defun mir-closure-use-p (instruction index types)
   "Allow forwarding and valid non-retaining uses of a function object."
@@ -32,9 +32,9 @@
 
 (defun mir-frame-replacing-p (function)
   (let ((reachable (mir-reachable-blocks function)))
-    (loop for block across (hir-vector (mir-function-blocks function))
+    (loop for block across (hir-buffer-view (mir-function-blocks function))
           thereis (and (logbitp (mir-block-id block) reachable)
-                       (loop for id across (hir-vector (mir-block-instructions block))
+                       (loop for id across (hir-buffer-view (mir-block-instructions block))
                              for instruction = (mir-at (mir-function-instructions function) id)
                              thereis (and (= 8 (mir-instruction-kind instruction))
                                           (member (mir-instruction-data instruction) '(:tail-funcall :tail-funcall-function))))))))
@@ -42,7 +42,7 @@
 (defun mir-cyclic-blocks (function)
   (mir-analysis function :cyclic
     (lambda (function)
-      (let* ((blocks (hir-vector (mir-function-blocks function)))
+      (let* ((blocks (hir-buffer-view (mir-function-blocks function)))
              (outgoing (map 'simple-vector
                             (lambda (block) (map 'list #'mir-edge-target
                                                (mir-terminator-edges (mir-block-terminator block)))) blocks))
@@ -56,7 +56,7 @@
   "Select DFS back-edge targets: deleting them leaves an acyclic graph."
   (mir-analysis function :loop-polls
     (lambda (function)
-      (let* ((blocks (hir-vector (mir-function-blocks function)))
+      (let* ((blocks (hir-buffer-view (mir-function-blocks function)))
              (states (make-array (length blocks) :initial-element 0))
              (next (make-array (length blocks) :initial-element 0))
              (polls 0))
@@ -106,8 +106,8 @@
 
 (defun mir-compute-storage (function types packets &key borrows identities parameters functions)
   "Track local cons and closure identities whose references stay in this frame."
-  (let* ((instructions (hir-vector (mir-function-instructions function)))
-         (blocks (hir-vector (mir-function-blocks function)))
+  (let* ((instructions (hir-buffer-view (mir-function-instructions function)))
+         (blocks (hir-buffer-view (mir-function-blocks function)))
          (points (make-array (hir-buffer-count (mir-function-values function)) :initial-element 0))
          (offset (length instructions))
          (fields (make-array (+ offset (if parameters (mir-function-positional-count function) 0)) :initial-element nil))
@@ -124,7 +124,7 @@
     ;; Site N uses bit N+1, leaving unknown receivers distinguishable from
     ;; a union of known local objects when checking field stores.
     (loop for block across blocks when (logbitp (mir-block-id block) reachable) do
-      (loop for id across (hir-vector (mir-block-instructions block))
+      (loop for id across (hir-buffer-view (mir-block-instructions block))
             for instruction = (svref instructions id) do
         (when (or (mir-cons-allocation-p instruction) (member (mir-instruction-kind instruction) '(17 23)))
           (let ((bit (ash 1 (1+ id))))
@@ -213,7 +213,7 @@
       (loop while changed do
         (setf changed nil)
         (loop for block across blocks when (logbitp (mir-block-id block) reachable) do
-          (loop for id across (hir-vector (mir-block-instructions block))
+          (loop for id across (hir-buffer-view (mir-block-instructions block))
                 for instruction = (svref instructions id) for result = (mir-instruction-result instruction)
                 when result do (merge-points result (transfer instruction)))
           (loop for edge across (mir-terminator-edges (mir-block-terminator block)) do
@@ -221,7 +221,7 @@
                   for argument across (mir-edge-arguments edge)
                   do (merge-points parameter (svref points argument))))))
       (loop for block across blocks when (logbitp (mir-block-id block) reachable) do
-        (loop for id across (hir-vector (mir-block-instructions block))
+        (loop for id across (hir-buffer-view (mir-block-instructions block))
               for instruction = (svref instructions id) for kind = (mir-instruction-kind instruction)
               do (let ((summary (mir-known-borrow-call instruction borrows identities)))
                    (cond (summary
@@ -271,13 +271,13 @@
 
 (defun mir-select-stack-cells (unit plans aliases)
   "A cell may live on its owner's stack only if every capturing closure does."
-  (let* ((functions (hir-vector (mir-unit-functions unit))) (escaped 0))
+  (let* ((functions (hir-buffer-view (mir-unit-functions unit))) (escaped 0))
     (loop for function across functions for id from 0
           for points = (svref (mir-cell-aliases-points aliases) id)
           for reachable = (mir-reachable-blocks function) do
-      (loop for block across (hir-vector (mir-function-blocks function))
+      (loop for block across (hir-buffer-view (mir-function-blocks function))
             when (logbitp (mir-block-id block) reachable) do
-        (loop for index across (hir-vector (mir-block-instructions block))
+        (loop for index across (hir-buffer-view (mir-block-instructions block))
               for instruction = (mir-at (mir-function-instructions function) index)
               when (= (mir-instruction-kind instruction) 24) do
           (let* ((args (mir-instruction-operands instruction))
@@ -294,9 +294,9 @@
           for cyclic = (mir-cyclic-blocks function)
           when (and (mir-closure-storage-policy-p function)
                     (not (mir-frame-replacing-p function))) do
-      (loop for block across (hir-vector (mir-function-blocks function))
+      (loop for block across (hir-buffer-view (mir-function-blocks function))
             when (and (logbitp (mir-block-id block) reachable) (not (logbitp (mir-block-id block) cyclic))) do
-        (loop for index across (hir-vector (mir-block-instructions block))
+        (loop for index across (hir-buffer-view (mir-block-instructions block))
               for instruction = (mir-at (mir-function-instructions function) index)
               when (and (= 19 (mir-instruction-kind instruction))
                         (hir-policy-optimize-p (mir-instruction-policy instruction))
@@ -309,7 +309,7 @@
   (mir-unit-analysis unit :storage
     (lambda (unit)
       (let* ((calls (mir-infer-calls unit)) (borrows (mir-infer-borrows unit))
-             (functions (hir-vector (mir-unit-functions unit)))
+             (functions (hir-buffer-view (mir-unit-functions unit)))
              (plans (map 'simple-vector
                          (lambda (function)
                            (let ((id (mir-function-id function)))
@@ -385,9 +385,9 @@
                      (otherwise nil)))))
         (loop while changed do
           (setf changed nil)
-          (loop for block across (hir-vector (mir-function-blocks function))
+          (loop for block across (hir-buffer-view (mir-function-blocks function))
                 when (logbitp (mir-block-id block) reachable) do
-            (loop for id across (hir-vector (mir-block-instructions block))
+            (loop for id across (hir-buffer-view (mir-block-instructions block))
                   for instruction = (mir-at (mir-function-instructions function) id)
                   for result = (mir-instruction-result instruction)
                   when result do (merge-paths result (transfer instruction)))
@@ -395,9 +395,9 @@
               (loop for parameter across (mir-block-parameters (mir-at (mir-function-blocks function) (mir-edge-target edge)))
                     for argument across (mir-edge-arguments edge)
                     do (merge-paths parameter (svref paths argument))))))
-        (loop for block across (hir-vector (mir-function-blocks function))
+        (loop for block across (hir-buffer-view (mir-function-blocks function))
               when (logbitp (mir-block-id block) reachable) do
-          (loop for id across (hir-vector (mir-block-instructions block))
+          (loop for id across (hir-buffer-view (mir-block-instructions block))
                 for instruction = (mir-at (mir-function-instructions function) id)
                 for args = (mir-instruction-operands instruction) do
             (cond ((and (mir-borrow-call-p instruction) (member (mir-instruction-data instruction) '(rplaca rplacd)))
@@ -418,7 +418,7 @@
         (values returns effects nil)))))
 
 (defun mir-compute-borrows (unit)
-  (let* ((functions (hir-vector (mir-unit-functions unit))) (calls (mir-infer-calls unit))
+  (let* ((functions (hir-buffer-view (mir-unit-functions unit))) (calls (mir-infer-calls unit))
          (summaries (map 'simple-vector
                          (lambda (function)
                            (make-mir-parameter-summary :required (mir-function-required function)

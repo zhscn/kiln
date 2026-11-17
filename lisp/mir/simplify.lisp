@@ -2,7 +2,7 @@
 
 (defun mir-refinement-parameters (function aliases reachable)
   "Protect parameters carrying a tested value or its predicate operands."
-  (let* ((blocks (hir-vector (mir-function-blocks function)))
+  (let* ((blocks (hir-buffer-view (mir-function-blocks function)))
          (definitions (mir-value-definitions function))
          (origins (make-array (length aliases) :initial-element nil))
          (protected (make-array (length aliases) :initial-element nil)))
@@ -26,8 +26,8 @@
 
 (defun mir-block-parameter-plan (function &key preserve-refinements)
   "Find dominating replacements and parameters needed by actual operations."
-  (let* ((blocks (hir-vector (mir-function-blocks function)))
-         (values (hir-vector (mir-function-values function)))
+  (let* ((blocks (hir-buffer-view (mir-function-blocks function)))
+         (values (hir-buffer-view (mir-function-values function)))
          (aliases (map 'simple-vector #'mir-value-id values))
          (incoming (make-array (length blocks) :initial-element nil))
          (live-incoming (make-array (length blocks) :initial-element nil))
@@ -102,7 +102,7 @@
               (find-aliases protected))))
         ;; Edge arguments count as uses only if their destination is needed.
         ;; Instructions remain intact: effects and declaration checks are kept.
-        (loop for instruction across (hir-vector (mir-function-instructions function))
+        (loop for instruction across (hir-buffer-view (mir-function-instructions function))
               do (map nil #'mark (mir-instruction-operands instruction)))
         (loop for block across blocks
               do (map nil #'mark (mir-terminator-operands (mir-block-terminator block))))
@@ -116,8 +116,8 @@
 
 (defun mir-rewrite-block-parameters (function aliases live)
   "Remove redundant parameters and densely renumber the remaining SSA values."
-  (let* ((blocks (hir-vector (mir-function-blocks function)))
-         (old-values (hir-vector (mir-function-values function)))
+  (let* ((blocks (hir-buffer-view (mir-function-blocks function)))
+         (old-values (hir-buffer-view (mir-function-values function)))
          (parameters (map 'simple-vector #'mir-block-parameters blocks))
          (keep (make-array (length old-values) :initial-element nil))
          (numbers (make-array (length old-values) :initial-element nil))
@@ -132,8 +132,8 @@
                (or (svref numbers (svref aliases id))
                    (mir-fail "Removed MIR parameter ~D still has a use" id)))
              (rewrite (ids) (map 'simple-vector #'number ids)))
-      (loop for value across (hir-vector values) for id from 0 do (setf (mir-value-id value) id))
-      (loop for instruction across (hir-vector (mir-function-instructions function))
+      (loop for value across (hir-buffer-view values) for id from 0 do (setf (mir-value-id value) id))
+      (loop for instruction across (hir-buffer-view (mir-function-instructions function))
             do (setf (mir-instruction-operands instruction) (rewrite (mir-instruction-operands instruction)))
                (when (mir-instruction-result instruction)
                  (setf (mir-instruction-result instruction) (number (mir-instruction-result instruction)))))
@@ -153,9 +153,9 @@
 
 (defun mir-simplify-block-parameters (unit &key preserve-refinements)
   (let ((transformations nil))
-    (loop for function across (hir-vector (mir-unit-functions unit))
+    (loop for function across (hir-buffer-view (mir-unit-functions unit))
           do (multiple-value-bind (aliases live) (mir-block-parameter-plan function :preserve-refinements preserve-refinements)
-               (when (loop for value across (hir-vector (mir-function-values function)) for id from 0
+               (when (loop for value across (hir-buffer-view (mir-function-values function)) for id from 0
                            thereis (and (= -1 (mir-value-position value))
                                         (or (/= id (svref aliases id)) (not (svref live id)))))
                  (push (cons function (lambda (function) (mir-rewrite-block-parameters function aliases live)))
@@ -165,9 +165,9 @@
 
 (defun mir-prune-unreachable-blocks (unit function)
   "Remove dead CFG bodies and compact their block, value, instruction and region IDs."
-  (let* ((blocks (hir-vector (mir-function-blocks function)))
+  (let* ((blocks (hir-buffer-view (mir-function-blocks function)))
          (instructions (mir-function-instructions function))
-         (values (hir-vector (mir-function-values function)))
+         (values (hir-buffer-view (mir-function-values function)))
          (live (make-array (length blocks) :initial-element nil))
          (work (make-hir-buffer)) (count 0))
     (hir-push 0 work)
@@ -184,7 +184,7 @@
       (loop for block across blocks for old from 0 when (svref live old) do
         (setf (svref block-map old) (hir-buffer-count new-blocks))
         (hir-push block new-blocks)
-        (loop for id across (hir-vector (mir-block-instructions block))
+        (loop for id across (hir-buffer-view (mir-block-instructions block))
               for instruction = (mir-at instructions id)
               when (member (mir-instruction-kind instruction) '(27 29 30 32 34 35))
                 do (setf (gethash (mir-binding-entry-id instruction) regions) (hash-table-count regions))))
@@ -196,11 +196,11 @@
       (labels ((value (id) (or (svref value-map id) (mir-fail "Live MIR use lost its definition")))
                (value-vector (ids) (map 'simple-vector #'value ids))
                (region (id) (or (gethash id regions) (mir-fail "Live MIR region lost its entry"))))
-        (loop for block across (hir-vector new-blocks) for id from 0
+        (loop for block across (hir-buffer-view new-blocks) for id from 0
               for body = (make-hir-buffer) for term = (mir-block-terminator block) do
           (setf (mir-block-id block) id
                 (mir-block-parameters block) (value-vector (mir-block-parameters block)))
-          (loop for old across (hir-vector (mir-block-instructions block))
+          (loop for old across (hir-buffer-view (mir-block-instructions block))
                 for instruction = (mir-at instructions old) for kind = (mir-instruction-kind instruction) do
                   (setf (mir-instruction-id instruction) (hir-buffer-count new-instructions)
                         (mir-instruction-operands instruction) (value-vector (mir-instruction-operands instruction)))

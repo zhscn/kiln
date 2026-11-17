@@ -3,7 +3,7 @@
 (defun mir-cons-origins (function packets)
   "Track a definite cons site; possible-object sets alone cannot exclude NIL."
   (let* ((origins (make-array (hir-buffer-count (mir-function-values function)) :initial-element :unseen))
-         (blocks (hir-vector (mir-function-blocks function)))
+         (blocks (hir-buffer-view (mir-function-blocks function)))
          (reachable (mir-reachable-blocks function)) (changed t))
     (labels ((merge-origin (id origin)
                (let ((joined (mir-function-identity-join (svref origins id) origin)))
@@ -30,7 +30,7 @@
       (loop while changed do
         (setf changed nil)
         (loop for block across blocks when (logbitp (mir-block-id block) reachable) do
-          (loop for id across (hir-vector (mir-block-instructions block))
+          (loop for id across (hir-buffer-view (mir-block-instructions block))
                 for instruction = (mir-at (mir-function-instructions function) id)
                 when (mir-instruction-result instruction)
                   do (merge-origin (mir-instruction-result instruction) (transfer instruction)))
@@ -43,13 +43,13 @@
 (defun mir-scalar-policy-p (function)
   (and (< (hir-policy-quality (mir-function-policy function) :debug) 2)
        (every (lambda (instruction) (< (hir-policy-quality (mir-instruction-policy instruction) :debug) 2))
-              (hir-vector (mir-function-instructions function)))))
+              (hir-buffer-view (mir-function-instructions function)))))
 
 (defun mir-scalar-candidates (function proof origins types packets)
   "Require every use to forward a virtual object or access its definite fields."
   (unless (and (mir-scalar-policy-p function)
                (not (find-if (lambda (instruction) (member (mir-instruction-kind instruction) '(30 32 34 35)))
-                             (hir-vector (mir-function-instructions function)))))
+                             (hir-buffer-view (mir-function-instructions function)))))
     (return-from mir-scalar-candidates nil))
   (let ((candidates (mir-storage-analysis-stack proof))
         (points (mir-storage-analysis-points proof)))
@@ -69,8 +69,8 @@
                                       (integerp origin)
                                       (= (svref points (svref args 0)) (ash 1 (1+ origin))))))))
                    (otherwise nil)))))
-      (loop for block across (hir-vector (mir-function-blocks function)) do
-        (loop for id across (hir-vector (mir-block-instructions block))
+      (loop for block across (hir-buffer-view (mir-function-blocks function)) do
+        (loop for id across (hir-buffer-view (mir-block-instructions block))
               for instruction = (mir-at (mir-function-instructions function) id) do
           (loop for argument across (mir-instruction-operands instruction) for index from 0
                 for bits = (logand candidates (svref points argument))
@@ -90,7 +90,7 @@
 (defun mir-promote-cons-fields (function candidates origins)
   "Append field SSA parameters and replace accesses using each block's state."
   (let* ((instructions (mir-function-instructions function))
-         (blocks (hir-vector (mir-function-blocks function)))
+         (blocks (hir-buffer-view (mir-function-blocks function)))
          (indices (make-array (hir-buffer-count instructions) :initial-element nil))
          (width (* 2 (length candidates)))
          (nil-id (mir-add-value function :obj 0 0))
@@ -111,7 +111,7 @@
       (loop for block across blocks
             for state = (if (zerop (mir-block-id block)) (make-array width :initial-element nil-id)
                             (subseq (mir-block-parameters block) (- (length (mir-block-parameters block)) width)))
-            for body = (hir-vector (mir-block-instructions block))
+            for body = (hir-buffer-view (mir-block-instructions block))
             for rebuilt = (make-hir-buffer) do
         (when (zerop (mir-block-id block)) (hir-push nil-instruction rebuilt))
         (loop for id across body for instruction = (mir-at instructions id)
@@ -133,7 +133,7 @@
                      (replace-operation instruction 0 #())
                      (replace-operation instruction 9 (vector nil-id)))))
           (hir-push id rebuilt))
-        (loop for id across (hir-vector rebuilt) for position from 0
+        (loop for id across (hir-buffer-view rebuilt) for position from 0
               for result = (mir-instruction-result (mir-at instructions id))
               when result do (setf (mir-value-position (mir-at (mir-function-values function) result)) position))
         (setf (mir-block-instructions block) rebuilt)
@@ -143,7 +143,7 @@
 
 (defun mir-scalar-replace (unit)
   (let ((transformations nil))
-    (loop for function across (hir-vector (mir-unit-functions unit)) when (mir-scalar-policy-p function) do
+    (loop for function across (hir-buffer-view (mir-unit-functions unit)) when (mir-scalar-policy-p function) do
       (let* ((calls (mir-infer-calls unit)) (id (mir-function-id function))
              (packets (svref (mir-call-analysis-packets calls) id))
              (origins (mir-cons-origins function packets))

@@ -4,9 +4,9 @@
   "Collect proven unary predicates without changing their argument evaluations."
   (let ((types (mir-infer-types function unit)) (folds nil)
         (reachable (mir-reachable-blocks function)))
-    (loop for block across (hir-vector (mir-function-blocks function))
+    (loop for block across (hir-buffer-view (mir-function-blocks function))
           when (logbitp (mir-block-id block) reachable)
-            do (loop for id across (hir-vector (mir-block-instructions block))
+            do (loop for id across (hir-buffer-view (mir-block-instructions block))
                      for instruction = (mir-at (mir-function-instructions function) id)
                      for operands = (mir-instruction-operands instruction)
                      when (and (= (mir-instruction-kind instruction) 6) (= (length operands) 1)
@@ -19,9 +19,9 @@
 
 (defun mir-replace-type-predicates (function folds)
   (let ((instructions (mir-function-instructions function)))
-    (loop for block across (hir-vector (mir-function-blocks function))
+    (loop for block across (hir-buffer-view (mir-function-blocks function))
           for rebuilt = (make-hir-buffer)
-          do (loop for id across (hir-vector (mir-block-instructions block))
+          do (loop for id across (hir-buffer-view (mir-block-instructions block))
                    for instruction = (mir-at instructions id) for fold = (assoc id folds)
                    do (when fold
                         (let* ((constant (hir-buffer-count instructions))
@@ -36,7 +36,7 @@
                                 (mir-instruction-data instruction) nil
                                 (mir-instruction-effects instruction) (svref *mir-instruction-effects* 9))))
                       (hir-push id rebuilt))
-             (loop for id across (hir-vector rebuilt) for position from 0
+             (loop for id across (hir-buffer-view rebuilt) for position from 0
                    for result = (mir-instruction-result (mir-at instructions id))
                    when result do (setf (mir-value-position (mir-at (mir-function-values function) result)) position))
              (setf (mir-block-instructions block) rebuilt)))
@@ -48,7 +48,7 @@
         (definitions (mir-value-definitions function))
         (packets (mir-infer-value-facts function unit))
         (reachable (mir-reachable-blocks function)) (folds nil))
-    (loop for block across (hir-vector (mir-function-blocks function))
+    (loop for block across (hir-buffer-view (mir-function-blocks function))
           for term = (mir-block-terminator block)
           when (and (logbitp (mir-block-id block) reachable)
                     (= (mir-terminator-kind term) 1)
@@ -79,7 +79,7 @@
   ;; Gather a round from one analysis snapshot before changing revisions.
   ;; These rewrites preserve behavior, so all proofs remain valid within the
   ;; round. Recompute summaries next round to discover newly precise facts.
-  (loop for plans = (loop for function across (hir-vector (mir-unit-functions unit))
+  (loop for plans = (loop for function across (hir-buffer-view (mir-unit-functions unit))
                          for folds = (mir-type-predicate-folds function unit)
                          for branches = (mir-type-branch-folds function unit)
                          when (or folds branches) collect (list function folds branches))

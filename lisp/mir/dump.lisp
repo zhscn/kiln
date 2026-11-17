@@ -5,7 +5,7 @@
   (verify-mir unit)
   (let ((*print-circle* t) (*print-level* 8) (*print-length* 24))
     (format stream "~&load-time-functions ~S~%" (mir-unit-load-time-functions unit))
-    (loop for function across (hir-vector (mir-unit-functions unit))
+    (loop for function across (hir-buffer-view (mir-unit-functions unit))
           do (format stream "~&function ~D ~S required=~D optional=~D rest=~S key-p=~S keys=~S allow-other-keys=~S revision=~D~%"
                      (mir-function-id function) (mir-function-name function)
                      (mir-function-required function) (mir-function-optional function) (mir-function-rest function) (mir-function-key-p function) (coerce (mir-function-keys function) 'list)
@@ -14,9 +14,9 @@
                      (mir-function-argument-cells function))
              (format stream "  captures ~S cells=~S function-targets=~S~%" (mir-function-captures function)
                      (mir-function-capture-cells function) (mir-function-capture-functions function))
-             (loop for block across (hir-vector (mir-function-blocks function))
+             (loop for block across (hir-buffer-view (mir-function-blocks function))
                    do (format stream "  block ~D ~S~%" (mir-block-id block) (mir-block-parameters block))
-                      (loop for id across (hir-vector (mir-block-instructions block))
+                      (loop for id across (hir-buffer-view (mir-block-instructions block))
                             for instruction = (mir-at (mir-function-instructions function) id)
                             do (format stream "    ~D: ~S <- ~D ~S ~S effects=~D source=~S policy=~D~%"
                                        id (mir-instruction-result instruction) (mir-instruction-kind instruction)

@@ -204,8 +204,8 @@
 (defun mir-lir-live-values (function)
   "Drop unused copy chains and block arguments before choosing representations."
   (let ((live (make-array (hir-buffer-count (mir-function-values function)) :initial-element nil))
-        (instructions (hir-vector (mir-function-instructions function)))
-        (blocks (hir-vector (mir-function-blocks function))))
+        (instructions (hir-buffer-view (mir-function-instructions function)))
+        (blocks (hir-buffer-view (mir-function-blocks function))))
     (labels ((mark (id) (unless (svref live id) (setf (svref live id) t))))
       (loop for instruction across instructions
             unless (mir-lir-double-forward-source instruction)
@@ -227,11 +227,11 @@
 
 (defun mir-lir-double-plan (function)
   "Keep raw SSA doubles and request boxed companions only at object uses."
-  (let* ((values (hir-vector (mir-function-values function)))
+  (let* ((values (hir-buffer-view (mir-function-values function)))
          (doubles (make-array (length values) :initial-element nil))
          (boxed (make-array (length values) :initial-element nil))
-         (instructions (hir-vector (mir-function-instructions function)))
-         (blocks (hir-vector (mir-function-blocks function)))
+         (instructions (hir-buffer-view (mir-function-instructions function)))
+         (blocks (hir-buffer-view (mir-function-blocks function)))
          (high-debug (or (>= (hir-policy-quality (mir-function-policy function) :debug) 2)
                          (some (lambda (instruction)
                                  (>= (hir-policy-quality (mir-instruction-policy instruction) :debug) 2))
@@ -657,8 +657,8 @@
                                    (if (mir-lir-transient-p (mir-value-id value)) (new-var :raw)
                                        (or (mir-lir-known-count (mir-value-id value)) (new-var :raw)))))
                     (:count (new-var :raw)) (otherwise (new-var))))
-                (hir-vector (mir-function-values function))))
-         (blocks (hir-vector (mir-function-blocks function)))
+                (hir-buffer-view (mir-function-values function))))
+         (blocks (hir-buffer-view (mir-function-blocks function)))
          (loop-polls (mir-loop-poll-blocks function))
          (labels (map 'simple-vector (lambda (block) (declare (ignore block)) (new-block)) blocks))
          (edge-blocks nil) (dispatches nil) (base-regions nil)
@@ -689,7 +689,7 @@
                (setf *regions* (mir-lir-active-regions active base-regions)))
              (when (or (zerop (mir-block-id block)) (logbitp (mir-block-id block) loop-polls))
                (emit-poll :stack (zerop (mir-block-id block))))
-             (loop for id across (hir-vector (mir-block-instructions block))
+             (loop for id across (hir-buffer-view (mir-block-instructions block))
                    for instruction = (mir-at (mir-function-instructions function) id)
                    unless (member (mir-instruction-kind instruction) '(31 33 36))
                      do (mir-lir-instruction instruction arguments count))
@@ -751,7 +751,7 @@
   (mir-simplify-block-parameters unit))
 
 (defun mir-lower-toplevel (hir)
-  (let* ((unit (mir-optimize-unit (hir-to-mir hir))) (*mir-lir-functions* (hir-vector (mir-unit-functions unit)))
+  (let* ((unit (mir-optimize-unit (hir-to-mir hir))) (*mir-lir-functions* (hir-buffer-view (mir-unit-functions unit)))
          (functions *mir-lir-functions*)
          (*mir-lir-load-time-cells* (map 'simple-vector
                                         (lambda (id) (declare (ignore id)) (fresh-label "kiln_mir_ltv_"))
