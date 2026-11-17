@@ -319,6 +319,12 @@
       "url": "https://github.com/tfeb/conduit-packages.git",
       "revision": "eeea22a5bbf63c437e6ae936c962cf5c3bdae99b",
       "role": "corpus-dependency"
+    },
+    {
+      "name": "duologue",
+      "url": "https://github.com/mmontone/duologue.git",
+      "revision": "ea1ada244a81da65f85b548823c9a6d7c9c145e1",
+      "role": "corpus-dependency"
     }
   ]
 }
