@@ -608,42 +608,65 @@ fn loop_polls(edges: &[Vec<usize>]) -> Vec<bool> {
     polls
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Default)]
-struct State {
-    initialized: HashSet<String>,
-    view: Option<String>,
+// Block entries repeatedly copy and intersect definite-assignment facts.
+// Number variables once per function so these operations copy bits rather
+// than allocating a hash table and a String for every initialized variable.
+#[derive(Clone, Debug)]
+struct State<'a> {
+    variables: &'a HashMap<&'a str, usize>,
+    initialized: Vec<u64>,
+    view: Option<&'a str>,
 }
 
-impl State {
+impl<'a> State<'a> {
+    fn new(variables: &'a HashMap<&'a str, usize>) -> Self {
+        Self {
+            variables,
+            initialized: vec![0; variables.len().div_ceil(64)],
+            view: None,
+        }
+    }
+    fn initialize(&mut self, name: &str) {
+        let index = self.variables[name];
+        self.initialized[index / 64] |= 1 << (index % 64);
+    }
     fn merge(&mut self, other: &Self) -> bool {
-        let old_len = self.initialized.len();
-        self.initialized
-            .retain(|name| other.initialized.contains(name));
+        debug_assert!(std::ptr::eq(self.variables, other.variables));
+        let mut changed = false;
+        for (word, other) in self.initialized.iter_mut().zip(&other.initialized) {
+            let intersection = *word & other;
+            changed |= *word != intersection;
+            *word = intersection;
+        }
         let view_changed = self.view.is_some() && self.view != other.view;
         if view_changed {
             self.view = None;
         }
-        old_len != self.initialized.len() || view_changed
+        changed || view_changed
     }
     fn use_var(&self, name: &str) -> Result<()> {
-        if !self.initialized.contains(name) {
+        if !self
+            .variables
+            .get(name)
+            .is_some_and(|&index| self.initialized[index / 64] & (1 << (index % 64)) != 0)
+        {
             return Err(format!("variable {name} is not initialized on every path"));
         }
         Ok(())
     }
     fn use_view(&self, name: &str) -> Result<()> {
         self.use_var(name)?;
-        if self.view.as_deref() != Some(name) {
+        if self.view != Some(name) {
             return Err(format!("multiple-value view {name} has expired"));
         }
         Ok(())
     }
-    fn step(&mut self, inst: &Instruction, f: &Function) {
+    fn step(&mut self, inst: &'a Instruction, f: &Function) {
         match inst {
             Instruction::Runtime {
                 result, operation, ..
             } => {
-                self.initialized.insert(result.clone());
+                self.initialize(result);
                 if operation.descriptor().safepoint {
                     self.view = None;
                 }
@@ -656,24 +679,24 @@ impl State {
             | Instruction::AllocateInstance { result: dst, .. }
             | Instruction::AllocateSequence { result: dst, .. }
             | Instruction::Vector { result: dst, .. } => {
-                self.initialized.insert(dst.clone());
+                self.initialize(dst);
                 self.view = None;
             }
             Instruction::FixnumChecked {
                 result, overflow, ..
             } => {
-                self.initialized.insert(result.clone());
-                self.initialized.insert(overflow.clone());
+                self.initialize(result);
+                self.initialize(overflow);
             }
             Instruction::Set(dst, _) => {
-                self.initialized.insert(dst.clone());
+                self.initialize(dst);
             }
             Instruction::Values(dst, _)
             | Instruction::Call { result: dst, .. }
             | Instruction::Numeric { result: dst, .. }
             | Instruction::CallSpread { result: dst, .. } => {
-                self.initialized.insert(dst.clone());
-                self.view = Some(dst.clone());
+                self.initialize(dst);
+                self.view = Some(dst);
             }
             Instruction::MvMove { result, .. }
             | Instruction::ValuesFromList { result, .. }
@@ -682,11 +705,11 @@ impl State {
                 result: Some(result),
                 ..
             } => {
-                self.initialized.insert(result.clone());
-                self.view = Some(result.clone());
+                self.initialize(result);
+                self.view = Some(result);
             }
             Instruction::MvPush { result, .. } | Instruction::MvSave { result, .. } => {
-                self.initialized.insert(result.clone());
+                self.initialize(result);
                 self.view = None;
             }
             Instruction::Poll => self.view = None,
@@ -701,7 +724,7 @@ impl State {
             | Instruction::Closure {
                 result, storage, ..
             } => {
-                self.initialized.insert(result.clone());
+                self.initialize(result);
                 if matches!(storage, Storage::Heap) {
                     self.view = None;
                 }
@@ -1302,21 +1325,27 @@ fn function(f: &Function, module: &Module, functions: &HashSet<&str>) -> Result<
             break flow;
         }
     };
+    let variables = f
+        .vars
+        .iter()
+        .enumerate()
+        .map(|(index, (name, _))| (name.as_str(), index))
+        .collect();
     let mut entries = vec![None; f.blocks.len()];
-    let mut initial = State::default();
+    let mut initial = State::new(&variables);
     if let Some(rest) = &f.rest {
-        initial.initialized.insert(rest.variable.clone());
+        initial.initialize(&rest.variable);
     }
     entries[0] = Some(initial);
     let mut work = VecDeque::from([0]);
     let mut queued = vec![false; f.blocks.len()];
     queued[0] = true;
-    fn propagate(
-        entries: &mut [Option<State>],
+    fn propagate<'a>(
+        entries: &mut [Option<State<'a>>],
         work: &mut VecDeque<usize>,
         queued: &mut [bool],
         target: usize,
-        state: &State,
+        state: &State<'a>,
     ) {
         let changed = if let Some(entry) = &mut entries[target] {
             entry.merge(state)

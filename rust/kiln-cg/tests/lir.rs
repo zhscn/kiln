@@ -114,6 +114,36 @@ fn representations_constants_and_declarations_are_checked_before_lowering() {
 }
 
 #[test]
+fn definite_initialization_intersects_variables_across_bitset_words() {
+    let vars = (0..130).map(|i| format!("(v{i} obj)")).collect::<String>();
+    let assignments = |missing: Option<usize>| {
+        (0..130)
+            .filter(|i| Some(*i) != missing)
+            .map(|i| format!("(set v{i} (nil))"))
+            .collect::<String>()
+    };
+    let program = |missing| {
+        format!(
+            "(lir-module \"wide\" (init \"f\") (function \"f\" (vars (flag word) {vars}) \
+         (block entry (set flag (word 1)) (branch flag left right)) \
+         (block left {} (jump done)) (block right {} (jump done)) \
+         (block done (return ({})))))",
+            assignments(None),
+            assignments(missing),
+            (0..130).map(|i| format!("v{i} ")).collect::<String>()
+        )
+    };
+    compile(&program(None)).unwrap();
+    for missing in [0, 63, 64, 127, 128, 129] {
+        let error = compile(&program(Some(missing))).unwrap_err();
+        assert!(
+            error.contains(&format!("variable v{missing} is not initialized")),
+            "{error}"
+        );
+    }
+}
+
+#[test]
 fn cfg_and_definite_initialization_use_all_predecessors_and_loop_entry() {
     reject("(block entry (return (a)))", "not initialized");
     reject("(block entry (set a a) (return (a)))", "not initialized");
