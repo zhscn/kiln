@@ -1,6 +1,7 @@
 # Vendored modules
 
-Copies of SICL-ecosystem modules that kiln patches. Most are target code,
+Copies of upstream modules that kiln patches. ASDF/UIOP provides optional target-side
+build-system support; the other modules come from the SICL ecosystem. Most are target code,
 compiled into kiln's modules; Invistra and its printer dependencies also provide
 the host-side FORMAT directive compiler. Common-macros is a host library (kiln's
 front end, in the host and in the compiler module) and Khazern and
@@ -12,6 +13,7 @@ shows exactly what kiln changed. Changes are not sent upstream for now.
 
 | Module | Upstream | Commit | License |
 |---|---|---|---|
+| ASDF/UIOP | https://gitlab.common-lisp.net/asdf/asdf | 29d098f9121c804af0d525f0f64318bc069591db (3.3.7.4) | MIT (`ASDF/header.lisp`) |
 | Clostrophilia | https://github.com/robert-strandh/Clostrophilia | 9d0e86c734bdba3e6c009b8cab222c2d0e81f29b (2026-08-29) | BSD (`Clostrophilia/LICENSE-BSD`) |
 | Salmagundi | https://github.com/s-expressionists/Salmagundi | f03296d46a1b189a3b723eb2dcdfc7c5af38163a (2025-09-25) | BSD (`Salmagundi/LICENSE-BSD`) |
 | Predicament | https://github.com/robert-strandh/Predicament | 715b3ae57ac8aa9b7ff07eb5ad864485d29aacbd (2025-06-02) | `Predicament/LICENSE.text` |
@@ -560,3 +562,9 @@ Under `#+kiln`:
   Incompatible options signal `simple-error` during macro expansion.
 - BOA constructors allocate from the complete layout, retaining typed sequence
   offsets and name markers as well as slot descriptors.
+
+## ASDF/UIOP patches
+
+- Recognizes kiln and its Unicode character support.
+- Uses public process environment, working-directory, command-line and exit
+  interfaces. User arguments follow the executable name directly.

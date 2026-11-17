@@ -73,12 +73,13 @@ This is designed to abstract away the implementation specific quit forms."
     #+lispworks (lispworks:quit :status code :confirm nil :return nil :ignore-errors-p t)
     #+mcl (progn code (ccl:quit)) ;; or should we use FFI to call libc's exit(3) ?
     #+mkcl (mk-ext:quit :exit-code code)
+    #+kiln (kiln.sys:exit code)
     #+sbcl #.(let ((exit (find-symbol* :exit :sb-ext nil))
                    (quit (find-symbol* :quit :sb-ext nil)))
                (cond
                  (exit `(,exit :code code :abort (not finish-output)))
                  (quit `(,quit :unix-status code :recklessly-p (not finish-output)))))
-    #-(or abcl allegro clasp clisp clozure cmucl ecl gcl genera lispworks mcl mkcl sbcl scl xcl)
+    #-(or abcl allegro clasp clisp clozure cmucl ecl gcl genera kiln lispworks mcl mkcl sbcl scl xcl)
     (not-implemented-error 'quit "(called with exit code ~S)" code))
 
   (defun die (code format &rest arguments)
@@ -237,7 +238,8 @@ depending on whether *LISP-INTERACTION* is set, enter debugger or die"
     #+mkcl (loop :for i :from 0 :below (mkcl:argc) :collect (mkcl:argv i))
     #+sbcl sb-ext:*posix-argv*
     #+xcl system:*argv*
-    #-(or abcl allegro clasp clisp clozure cmucl ecl gcl genera lispworks mcl mezzano mkcl sbcl scl xcl)
+    #+kiln (kiln.sys:command-line-arguments)
+    #-(or abcl allegro clasp clisp clozure cmucl ecl gcl genera kiln lispworks mcl mezzano mkcl sbcl scl xcl)
     (not-implemented-error 'raw-command-line-arguments))
 
   (defun command-line-arguments (&optional (arguments (raw-command-line-arguments)))
@@ -247,7 +249,7 @@ if we are not called from a directly executable image."
     (block nil
       #+abcl (return arguments)
       ;; SBCL and Allegro already separate user arguments from implementation arguments.
-      #-(or sbcl allegro)
+      #-(or sbcl allegro kiln)
       (unless (eq *image-dumped-p* :executable)
         ;; LispWorks command-line processing isn't transparent to the user
         ;; unless you create a standalone executable; in that case,

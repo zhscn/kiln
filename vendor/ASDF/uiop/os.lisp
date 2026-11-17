@@ -116,7 +116,8 @@ use getenvp to return NIL in such a case."
                 (ccl:%get-cstring value))))
     #+mkcl (#.(or (find-symbol* 'getenv :si nil) (find-symbol* 'getenv :mk-ext nil)) x)
     #+sbcl (sb-ext:posix-getenv x)
-    #-(or abcl allegro clasp clisp clozure cmucl cormanlisp ecl gcl genera lispworks mcl mezzano mkcl sbcl scl xcl)
+    #+kiln (kiln.sys:getenv x)
+    #-(or abcl allegro clasp clisp clozure cmucl cormanlisp ecl gcl genera kiln lispworks mcl mezzano mkcl sbcl scl xcl)
     (not-implemented-error 'getenv))
 
   (defsetf getenv (x) (val)
@@ -201,7 +202,7 @@ then returning the non-empty string value of the variable"
      '(:abcl (:acl :allegro) (:ccl :clozure) :clisp (:corman :cormanlisp)
        (:cmu :cmucl :cmu) :clasp :ecl :gcl
        (:lwpe :lispworks-personal-edition) (:lw :lispworks)
-       :mcl :mezzano :mkcl :sbcl :scl (:smbx :symbolics) :xcl)))
+       :kiln :mcl :mezzano :mkcl :sbcl :scl (:smbx :symbolics) :xcl)))
 
   (defvar *implementation-type* (implementation-type)
     "The type of Lisp implementation used, as a short UIOP-standardized keyword")
@@ -339,6 +340,7 @@ suitable for use as a directory name to segregate Lisp FASLs, C dynamic librarie
         #+mkcl (mk-ext:getcwd)
         #+sbcl (sb-ext:parse-native-namestring (sb-unix:posix-getcwd/))
         #+xcl (extensions:current-directory)
+        #+kiln (kiln.sys:getcwd)
         (not-implemented-error 'getcwd)))
 
   (defun chdir (x)
