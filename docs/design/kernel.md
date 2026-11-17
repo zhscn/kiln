@@ -46,6 +46,7 @@ kernel 先给出简单的版本，后面的模块替换或扩充。钩子是 `ki
 - 位运算：`logeqv`、`lognand`、`lognor`、`logandc1/2`、`logorc1/2`、`logcount`、`boole`。
 - `random`、`*random-state*`、`make-random-state`：随机状态是一个结构，存一个 32 位的 xorshift128 生成器（`lisp/target/clos/random.lisp`）。
 - 常量：超出 fixnum 范围的字面量编译成静态 bignum，double-float、ratio 和 complex 编译成静态对象，single-float 是立即数。
+- `kiln.sys:single-float-bits`、`double-float-bits` 与 `bits-single-float`、`bits-double-float` 在浮点数和无符号 IEEE binary32/binary64 位模式之间转换，保留负零和 NaN payload；输入类型与位宽不符时发出 `type-error`。`float-infinity-p`、`float-nan-p` 按位分类，接受浮点数。这些公开接口使可移植库不必依赖对象布局或编译器私有原语。
 - 还没有：硬件浮点 trap 的配置接口、NaN 和无穷的读写。
 
 ## 字符和字符串

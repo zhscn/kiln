@@ -587,6 +587,35 @@
          (and (= (logand (%primop :double-float-high-bits value) #x7fffffff) #x7ff00000)
               (zerop (%primop :double-float-low-bits value))))))
 
+(defun kiln.sys:single-float-bits (value)
+  (unless (%primop :single-float-p value)
+    (error 'type-error :datum value :expected-type 'single-float))
+  (%primop :single-float-bits value))
+
+(defun kiln.sys:double-float-bits (value)
+  (unless (%primop :double-float-p value)
+    (error 'type-error :datum value :expected-type 'double-float))
+  (logior (ash (%primop :double-float-high-bits value) 32)
+          (%primop :double-float-low-bits value)))
+
+(defun kiln.sys:bits-single-float (bits)
+  (unless (typep bits '(unsigned-byte 32))
+    (error 'type-error :datum bits :expected-type '(unsigned-byte 32)))
+  (%primop :make-single-float-bits bits))
+
+(defun kiln.sys:bits-double-float (bits)
+  (unless (typep bits '(unsigned-byte 64))
+    (error 'type-error :datum bits :expected-type '(unsigned-byte 64)))
+  (%primop :make-double-float-bits (ldb (byte 32 32) bits) (ldb (byte 32 0) bits)))
+
+(defun kiln.sys:float-infinity-p (value)
+  (check-type value float)
+  (infinite-float-p value))
+
+(defun kiln.sys:float-nan-p (value)
+  (check-type value float)
+  (and (non-finite-float-p value) (not (infinite-float-p value))))
+
 (defun non-finite-number-p (value)
   (if (%primop :complexp value)
       (or (non-finite-float-p (realpart value)) (non-finite-float-p (imagpart value)))
