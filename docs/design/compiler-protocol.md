@@ -67,7 +67,7 @@ Rust 的运行期入口使用 `packet::load_lir` 或 `compile_lir_program`，拒
 
 逻辑程序 schema 与 wire 编码分开：文件需要长度、索引和版本封套，进程内一次性请求可以直接构造 Rust 拥有的记录，避免编码后立即解码。两者最终进入同一操作解析、验证和降级代码。schema 的变化仍受版本与目标指纹约束，不能形成两套操作含义。
 
-当前 `kiln_rt_compile_program` 接收结构化 Lisp 程序、literal 向量和期望目标指纹。在无 safepoint 的窗口复制为 Rust 自有记录，核验目标后直接构造 KIR；之后不访问程序的原始对象地址。`kiln_rt_compile_packet` 将 octet 向量复制成 native bytes，经过封套校验和解码进入同一程序路径。两者都是单次批量调用，不逐节点 FFI，也不在降级期间回调 Lisp。
+当前 `kiln_rt_compile_program` 接收结构化 Lisp 程序、literal 向量和期望目标指纹。在无 safepoint 的窗口复制为 Rust 自有记录，核验目标后进入独立 LIR 的解析、验证和降级；之后不访问程序的原始对象地址。`kiln_rt_compile_packet` 将 octet 向量复制成 native bytes，经过封套校验和解码进入同一程序路径。两者都是单次批量调用，不逐节点 FFI，也不在降级期间回调 Lisp。
 
 后续的 native span 或 record-builder API 沿用此 schema 和所有权规则；移动堆内部地址不能作为长时间 Rust 借用。序列化不是一次性编译的必经阶段。
 
@@ -85,8 +85,8 @@ Rust 的 `Vec`、`String`、`Result` 和引用不进入 ABI。工作区使用 pa
 
 请求建立时，Lisp 将现存对象放入受 GC 扫描的 literal 向量。image 适配器在
 无 safepoint 窗口读取 Lisp 对象表示并建立 Rust 自有请求；解析、验证和降级只使用
-记录及 literal ID，不查询 Lisp 环境。安装时将 literal 写入已登记的静态 root 槽。
-调用帧保持 literal 向量存活，当前单 mutator 合同禁止编译期间执行 Lisp GC 或回调。
+记录及 literal ID，不查询 Lisp 环境。安装时先将 literal 写入尚未登记的数据槽，全部校验通过后再登记静态 roots。
+调用帧保持 literal 向量存活。请求读取和安装期间不触发 Lisp GC 或回调；失败路径完成原始对象访问后，可以通过 safepoint 分配诊断向量。
 
 Lisp 负责语义依赖及缓存版本，Rust 校验目标和载荷，准备尚未登记的代码与数据，
 验证并绑定全部 literal，取得 init 后才统一登记代码、roots 和导出符号。代码安装不等于 Lisp 定义发布：定义初始化由调用方执行
