@@ -588,6 +588,10 @@ Under `#+kiln`:
 
 ## ASDF/UIOP patches
 
+- Uses NIL for an unspecific pathname type, so extensionless ASDF metadata
+  files retain their names on kiln's physical pathname implementation.
+
+
 - Recognizes kiln and its Unicode character support.
 - Uses public process environment, working-directory, command-line and exit
   interfaces. User arguments follow the executable name directly.

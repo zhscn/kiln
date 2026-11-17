@@ -297,7 +297,7 @@ def main():
                 else:
                     if name != 'asdf':
                         raise ValueError('asdf mode probes the build-system bootstrap; select asdf')
-                    result = kiln_run(args, asdf_bootstrap(args), output / 'kiln.log')
+                    result = kiln_run(args, f'(progn {asdf_bootstrap(args)} (load {lisp(ROOT / "tests/library-integration/asdf.lisp")}))', output / 'kiln.log')
                     if result['debugger_entered']:
                         result['status'] = 'blocked'
             result['revision'] = project['revision']
