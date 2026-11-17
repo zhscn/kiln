@@ -22,6 +22,7 @@ kiln 是一个现代 Common Lisp 实现：开发时是完整的活 image，交�
 | [lir.md](design/lir.md) | LIR 后端输入语言：布局无关的低层操作、函数和调用、多值、动态范围、常量表、目标描述 |
 | [codegen.md](design/codegen.md) | KIR 语法、kiln-cg（JIT、目标文件、多模块、模块信息、运行期编译） |
 | [gc.md](design/gc.md) | MMTk binding、root、栈图、编译器的 GC 规则、内联分配、栈和栈段 |
+| [library-testing.md](design/library-testing.md) | 第三方库样本、ASDF 探测、数值正确性和适配迭代成本 |
 | [compiler-performance.md](design/compiler-performance.md) | 编译延迟、可重复基准、数据布局与增量计算的实施顺序 |
 | [front-end.md](design/front-end.md) | Eclector 到自有 HIR、顶层形式处理、编译期环境（cross-client、image-client）、inline、确定性 |
 | [lowering.md](design/lowering.md) | MIR 到 LIR：表示证明、参数、多值、动态区域、存储、原语与 Rust 降级边界 |

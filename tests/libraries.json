@@ -1,0 +1,194 @@
+{
+  "schema_version": 1,
+  "projects": [
+    {
+      "name": "asdf",
+      "url": "https://gitlab.common-lisp.net/asdf/asdf.git",
+      "revision": "29d098f9121c804af0d525f0f64318bc069591db",
+      "role": "build-system"
+    },
+    {
+      "name": "alexandria",
+      "url": "https://gitlab.common-lisp.net/alexandria/alexandria.git",
+      "revision": "f283e25efbe9f4323419a138b22ad2fc027f6641",
+      "role": "utilities-and-macros",
+      "system": "alexandria",
+      "source_probe": true,
+      "smoke_form": "(progn (assert (equal '(2 3 4) (mapcar (alexandria:compose #'1+ #'identity) '(1 2 3)))) (assert (equal '(1 2 3 4) (alexandria:flatten '(1 (2 (3)) 4)))) (assert (= 2 (alexandria:median '(3 1 2)))) t)"
+    },
+    {
+      "name": "fiveam",
+      "url": "https://github.com/sionescu/fiveam.git",
+      "revision": "e43d6c8e7da5a80d5c33e8ca018fb1619c5b0293",
+      "role": "conditions-and-tests",
+      "system": "fiveam"
+    },
+    {
+      "name": "closer-mop",
+      "url": "https://codeberg.org/pcostanza/closer-mop.git",
+      "revision": "04f89c12b4a327ddf556648721c97633241abe34",
+      "role": "mop-portability",
+      "system": "closer-mop"
+    },
+    {
+      "name": "cl-ppcre",
+      "url": "https://github.com/edicl/cl-ppcre.git",
+      "revision": "a2ea581c23fdc184168423adbd4b4c1f48d42743",
+      "role": "closures-and-generated-code",
+      "system": "cl-ppcre",
+      "source_probe": true,
+      "smoke_form": "(progn (assert (= 2 (cl-ppcre:scan \"a+b\" \"xxaaab\"))) (assert (equal '(\"a\" \"b\" \"c\") (cl-ppcre:split \",\" \"a,b,c\"))) (assert (string= \"x1x2\" (cl-ppcre:regex-replace-all \"[a-z]\" \"a1b2\" \"x\"))) t)"
+    },
+    {
+      "name": "jzon",
+      "url": "https://github.com/Zulu-Inuoe/jzon.git",
+      "revision": "18959fbef1af5dde022f45f91c24f94e99e6abcb",
+      "role": "parsing-and-hash-tables",
+      "system": "com.inuoe.jzon"
+    },
+    {
+      "name": "flexi-streams",
+      "url": "https://github.com/edicl/flexi-streams.git",
+      "revision": "4951d575b8f73270802a03cc5812b8310409caa9",
+      "role": "gray-streams-and-io",
+      "system": "flexi-streams"
+    },
+    {
+      "name": "babel",
+      "url": "https://github.com/cl-babel/babel.git",
+      "revision": "4eaf3f228be4f6860ccc0b0fbb4c1781a1ee6597",
+      "role": "unicode-and-octet-arrays",
+      "system": "babel"
+    },
+    {
+      "name": "iterate",
+      "url": "https://gitlab.common-lisp.net/iterate/iterate.git",
+      "revision": "d27d7ff4821b9d8b011afaaa866d7993942430f4",
+      "role": "code-walking-and-macros",
+      "system": "iterate",
+      "source_probe": true,
+      "smoke_form": "(progn (assert (equal '(1 4 9) (iterate:iter (iterate:for x :in '(1 2 3)) (iterate:collect (* x x))))) (assert (= 55 (iterate:iter (iterate:for x :from 1 :to 10) (iterate:sum x)))) t)"
+    },
+    {
+      "name": "fset",
+      "url": "https://github.com/slburson/fset.git",
+      "revision": "1af9d2084d94457a2be39d8a6017f760a622c37c",
+      "role": "persistent-collections",
+      "system": "fset"
+    },
+    {
+      "name": "local-time",
+      "url": "https://github.com/dlowe-net/local-time.git",
+      "revision": "59d93f7fdaa45b7cad6c26ac4494e8efb9e16e02",
+      "role": "time-and-filesystem",
+      "system": "local-time"
+    },
+    {
+      "name": "lisp-stat",
+      "url": "https://github.com/Lisp-Stat/lisp-stat.git",
+      "revision": "9ca391f960d743506ed73fe35ed43ee0f099cc64",
+      "role": "statistical-integration",
+      "system": "lisp-stat"
+    },
+    {
+      "name": "statistics",
+      "url": "https://github.com/Lisp-Stat/statistics.git",
+      "revision": "aa0baf4f204eae516cc4fda24722b147b5e76d4d",
+      "role": "statistical-accuracy",
+      "system": "statistics"
+    },
+    {
+      "name": "numerical-utilities",
+      "url": "https://github.com/Lisp-Stat/numerical-utilities.git",
+      "revision": "e58b393f22a493ea497a46f38350e8ef5e1df12f",
+      "role": "numerical-algorithms",
+      "system": "num-utils"
+    },
+    {
+      "name": "special-functions",
+      "url": "https://github.com/Lisp-Stat/special-functions.git",
+      "revision": "05b04a0ef84b4d63424509ec485bccd71255bf36",
+      "role": "reference-data-and-floating-point",
+      "system": "special-functions"
+    },
+    {
+      "name": "float-features",
+      "url": "https://github.com/Shinmera/float-features.git",
+      "revision": "cd5dab00d2f4a562d65f46b3fc1cecec308e2443",
+      "role": "floating-point-portability",
+      "system": "float-features"
+    },
+    {
+      "name": "maxima",
+      "url": "https://git.code.sf.net/p/maxima/code",
+      "revision": "7ac0ea369fbcc6623e730254f874f68d3cb4dc90",
+      "role": "symbolic-algebra-and-bignums"
+    },
+    {
+      "name": "awesome-cl",
+      "url": "https://github.com/CodyReichert/awesome-cl.git",
+      "revision": "153e31090f1323f0f85487577bad24c75d07f745",
+      "role": "selection-source"
+    },
+    {
+      "name": "alexandria-plus",
+      "url": "https://github.com/Symbolics/alexandria-plus.git",
+      "revision": "5112646c4bf1918cc22680eb8566df754088a017",
+      "role": "corpus-dependency"
+    },
+    {
+      "name": "array-operations",
+      "url": "https://github.com/Lisp-Stat/array-operations.git",
+      "revision": "4b7685a6058130fa08c801238b3fbb700b2a3d7b",
+      "role": "corpus-dependency"
+    },
+    {
+      "name": "select",
+      "url": "https://github.com/Lisp-Stat/select.git",
+      "revision": "065deaa4c335f7bb1202715e76216c3fc8179f38",
+      "role": "corpus-dependency"
+    },
+    {
+      "name": "stat-generics",
+      "url": "https://github.com/Lisp-Stat/stat-generics.git",
+      "revision": "a5a990456f4ce804e7822aafe882a70c64cab46a",
+      "role": "corpus-dependency"
+    },
+    {
+      "name": "parachute",
+      "url": "https://codeberg.org/shinmera/parachute.git",
+      "revision": "c704a926ac215a25364a36b5e1ca73473864e7e3",
+      "role": "corpus-dependency"
+    },
+    {
+      "name": "fiasco",
+      "url": "https://github.com/joaotavora/fiasco.git",
+      "revision": "bb47d2fef4eb24cc16badc1c9a73d73c3a7e18f5",
+      "role": "corpus-dependency"
+    },
+    {
+      "name": "misc-extensions",
+      "url": "https://github.com/slburson/misc-extensions.git",
+      "revision": "c35c739e0180b828d73c10247cce6edf313e8086",
+      "role": "corpus-dependency"
+    },
+    {
+      "name": "clunit2",
+      "url": "https://codeberg.org/cage/clunit2.git",
+      "revision": "9bbacba383f69a76580d899d1e3d8d300aa639d5",
+      "role": "corpus-dependency"
+    },
+    {
+      "name": "cl-variates",
+      "url": "https://gitlab.common-lisp.net/cl-variates/cl-variates.git",
+      "revision": "4e7548754d8a8731a42487fae31174db4bf36d47",
+      "role": "corpus-dependency"
+    },
+    {
+      "name": "hu.dwim.stefil",
+      "url": "https://github.com/hu-dwim/hu.dwim.stefil.git",
+      "revision": "256474e6ea23a6654cb859624f8c04c0b7469197",
+      "role": "corpus-dependency"
+    }
+  ]
+}
