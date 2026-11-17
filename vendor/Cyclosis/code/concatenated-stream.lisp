@@ -49,6 +49,15 @@ read from each of the constituent streams."))
 (defmethod stream-read-char ((stream concatenated-stream))
   (concatenated-stream-read-element stream stream-read-char))
 
+(defmethod stream-unread-char ((stream concatenated-stream) character)
+  ;; Unreading must reach the constituent, since callers may resume reading
+  ;; it directly after discarding this composite stream.
+  (let ((streams (stream-input-streams stream)))
+    (unless streams (error 'stream-error :stream stream))
+    (stream-unread-char (first streams) character)
+    (pop (input-cursor stream)))
+  nil)
+
 (defmethod stream-read-char-no-hang ((stream concatenated-stream))
   (concatenated-stream-read-element stream stream-read-char-no-hang))
 

@@ -338,6 +338,10 @@ Under `#+kiln` (simple vectors and strings stay native):
 
 ## Cyclosis patches
 
+- Concatenated streams forward unread characters to their current constituent,
+  so the unread character survives when a temporary composite is discarded.
+
+
 - Character input peeking returns the unread buffer before consulting the
   underlying stream. String input positions exclude that buffered
   character; seeking discards it, and WITH-INPUT-FROM-STRING reports the
