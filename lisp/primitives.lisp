@@ -848,7 +848,7 @@ KNOWN-FIXNUM and NONNEGATIVE require proofs about I; the length check remains."
     :number-compare :number-eql
     (:to-single-float t) (:to-double-float t) (:numerator t) (:denominator t)
     (:sqrt t) (:exp t) (:log t) (:sin t) (:cos t) (:tan t) (:atan t)
-    (:sinh t) (:cosh t) (:tanh t)
+    (:sinh t) (:cosh t) (:tanh t) (:atanh t)
     (:rational t) :atan2 :hypot :number-expt))
 (define-primop :type-error-type (x) (emit-error +err-bad-type+ x) (nil-value))
 (define-primop :lisp-error (x) (emit-fatal-error +err-lisp-error+ x) (nil-value))

@@ -344,6 +344,7 @@ pub const OP_HYPOT: u64 = 24;
 pub const OP_SINH: u64 = 25;
 pub const OP_COSH: u64 = 26;
 pub const OP_TANH: u64 = 27;
+pub const OP_ATANH: u64 = 28;
 
 /// Applies a float function, keeping the argument's float format
 /// (rationals give single-floats, CLHS 12.1.4.1.1).
@@ -417,7 +418,8 @@ pub unsafe extern "C" fn kiln_rt_number_op(ctx: *mut Context, op: u64, a: u64, b
             };
         }
         let x = number_arg(ctx, a);
-        let unary = (OP_TO_SINGLE..=OP_RATIONAL).contains(&op);
+        let unary = (OP_TO_SINGLE..=OP_RATIONAL).contains(&op)
+            || (OP_SINH..=OP_ATANH).contains(&op);
         let y = if unary { Num::Int(BigInt::zero()) } else { number_arg(ctx, b) };
         if (op == OP_DIV || (OP_TRUNCATE..=OP_ROUND).contains(&op)) && is_zero(&y) {
             error_with(ctx, ERR_DIVISION_BY_ZERO, a);
@@ -468,6 +470,7 @@ pub unsafe extern "C" fn kiln_rt_number_op(ctx: *mut Context, op: u64, a: u64, b
             OP_SINH => float_fn(&x, f64::sinh),
             OP_COSH => float_fn(&x, f64::cosh),
             OP_TANH => float_fn(&x, f64::tanh),
+            OP_ATANH => float_fn(&x, f64::atanh),
             _ => crate::rtfun::error_exit("kiln_rt_number_op: unknown operation"),
         };
         write(ctx, &result)
