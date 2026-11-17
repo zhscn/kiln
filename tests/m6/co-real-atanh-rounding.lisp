@@ -6,4 +6,8 @@
 (assert (= (float-sign (atanh -0d0)) -1d0))
 (assert (typep (atanh 1/2) 'single-float))
 (assert (typep (atanh 0.5d0) 'double-float))
+(dolist (pair '((0.9827284275322304d0 2.371583614415883d0)
+                (0.03531254506018124d0 0.035327234015308566d0)))
+  (dolist (sign '(1d0 -1d0))
+    (assert (= (atanh (* sign (first pair))) (* sign (second pair))))))
 (print :real-atanh-rounding)

@@ -356,6 +356,19 @@ fn float_fn(x: &Num, f: fn(f64) -> f64) -> Num {
     }
 }
 
+#[link(name = "m")]
+unsafe extern "C" {
+    #[link_name = "atanh"]
+    fn libm_atanh(x: f64) -> f64;
+}
+
+fn real_atanh(x: f64) -> f64 {
+    // Rust's atanh expands log1p(2*x/(1-x)); near -1, that ratio
+    // rounds close to -1 and loses digits before log1p sees it.
+    // libm reduces by magnitude and preserves the odd symmetry.
+    unsafe { libm_atanh(x) }
+}
+
 fn hypot(x: &Num, y: &Num) -> Num {
     if format_of(x).max(format_of(y)) == Format::Double {
         Num::Double(to_f64(x).hypot(to_f64(y)))
@@ -470,7 +483,7 @@ pub unsafe extern "C" fn kiln_rt_number_op(ctx: *mut Context, op: u64, a: u64, b
             OP_SINH => float_fn(&x, f64::sinh),
             OP_COSH => float_fn(&x, f64::cosh),
             OP_TANH => float_fn(&x, f64::tanh),
-            OP_ATANH => float_fn(&x, f64::atanh),
+            OP_ATANH => float_fn(&x, real_atanh),
             _ => crate::rtfun::error_exit("kiln_rt_number_op: unknown operation"),
         };
         write(ctx, &result)
@@ -574,6 +587,20 @@ mod tests {
             compare(&Num::Double(f64::NAN), &Num::Double(f64::NAN)),
             None
         );
+    }
+
+    #[test]
+    fn inverse_hyperbolic_tangent_keeps_signed_accuracy() {
+        for (x, reference) in [
+            (0.9827284275322304, 2.371583614415883),
+            (0.03531254506018124, 0.035327234015308566),
+            (0.2902613110736827, 0.29885159252037635),
+        ] {
+            assert_eq!(real_atanh(x), reference);
+            assert_eq!(real_atanh(-x), -reference);
+        }
+        assert_eq!(real_atanh(-0.0).to_bits(), (-0.0f64).to_bits());
+        assert_eq!(real_atanh(f64::from_bits(1)).to_bits(), 1);
     }
 
     #[test]
