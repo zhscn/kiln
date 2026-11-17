@@ -320,9 +320,9 @@
 ;; Rationals and floats compare exactly (CLHS 12.1.4.1).
 (defun compare (a b) (check-reals a b) (%primop :number-compare a b))
 (defun two-arg-< (a b) (< (compare a b) 0))
-(defun two-arg-> (a b) (> (compare a b) 0))
+(defun two-arg-> (a b) (= (compare a b) 1))
 (defun two-arg-<= (a b) (<= (compare a b) 0))
-(defun two-arg->= (a b) (>= (compare a b) 0))
+(defun two-arg->= (a b) (let ((order (compare a b))) (or (= order 0) (= order 1))))
 (defun two-arg-= (a b)
   (unless-complex (a b)
     (and (= (realpart a) (realpart b)) (= (imagpart a) (imagpart b)))

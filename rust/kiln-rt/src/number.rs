@@ -206,13 +206,37 @@ fn arith(op: u64, x: &Num, y: &Num) -> Num {
     }
 }
 
-/// Exact comparison: a float compares as the rational it denotes.
-fn compare(x: &Num, y: &Num) -> Ordering {
-    match (x, y) {
-        (Num::Int(a), Num::Int(b)) => a.cmp(b),
-        (Num::Single(a), Num::Single(b)) => a.partial_cmp(b).unwrap_or(Ordering::Equal),
-        (Num::Double(a), Num::Double(b)) => a.partial_cmp(b).unwrap_or(Ordering::Equal),
-        _ => to_rational(x).cmp(&to_rational(y)),
+/// Finite mixed comparisons stay exact; NaN is unordered and infinities
+/// must not pass through conversion to a rational.
+fn compare(x: &Num, y: &Num) -> Option<Ordering> {
+    fn non_finite(x: &Num) -> Option<f64> {
+        let f = match x {
+            Num::Single(f) => *f as f64,
+            Num::Double(f) => *f,
+            _ => return None,
+        };
+        (!f.is_finite()).then_some(f)
+    }
+    match (non_finite(x), non_finite(y)) {
+        (Some(a), _) if a.is_nan() => None,
+        (_, Some(b)) if b.is_nan() => None,
+        (Some(a), Some(b)) => a.partial_cmp(&b),
+        (Some(a), None) => Some(if a.is_sign_negative() {
+            Ordering::Less
+        } else {
+            Ordering::Greater
+        }),
+        (None, Some(b)) => Some(if b.is_sign_negative() {
+            Ordering::Greater
+        } else {
+            Ordering::Less
+        }),
+        _ => Some(match (x, y) {
+            (Num::Int(a), Num::Int(b)) => a.cmp(b),
+            (Num::Single(a), Num::Single(b)) => a.partial_cmp(b).unwrap(),
+            (Num::Double(a), Num::Double(b)) => a.partial_cmp(b).unwrap(),
+            _ => to_rational(x).cmp(&to_rational(y)),
+        }),
     }
 }
 
@@ -337,7 +361,7 @@ unsafe fn number_arg(ctx: *mut Context, v: u64) -> Num {
 
 /// Number operation `op` on the reals `a` and `b`. Division operators
 /// return the quotient and store the remainder in `ctx.values[0]` (two
-/// values). COMPARE returns -1, 0 or 1 and EQL T or NIL. Called through a
+/// values). COMPARE returns -1, 0, 1 or 2 (unordered), and EQL T or NIL. Called through a
 /// trampoline; `fp` is its frame pointer.
 ///
 /// # Safety
@@ -375,7 +399,7 @@ pub unsafe extern "C" fn kiln_rt_number_op(ctx: *mut Context, op: u64, a: u64, b
                 (*ctx).values_live = 0;
                 return qv;
             }
-            OP_COMPARE => return ((compare(&x, &y) as i64) << 1) as u64,
+            OP_COMPARE => return ((compare(&x, &y).map_or(2, |order| order as i64)) << 1) as u64,
             OP_TO_SINGLE => Num::Single(to_f32(&x)),
             OP_TO_DOUBLE => Num::Double(to_f64(&x)),
             OP_NUMERATOR => match &x {
@@ -465,5 +489,64 @@ pub unsafe fn write_number(out: &mut String, v: u64) {
             }
             None => out.push_str("#<NOT A NUMBER>"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn non_finite_comparison_never_coerces_to_rational_zero() {
+        let finite = [
+            Num::Int(BigInt::one() << 2000),
+            Num::Ratio(BigRational::new(1.into(), 3.into())),
+            Num::Single(0.0),
+            Num::Double(-1.0),
+        ];
+        for x in &finite {
+            for infinity in [Num::Single(f32::INFINITY), Num::Double(f64::INFINITY)] {
+                assert_eq!(compare(x, &infinity), Some(Ordering::Less));
+                assert_eq!(compare(&infinity, x), Some(Ordering::Greater));
+            }
+            assert_eq!(
+                compare(x, &Num::Double(f64::NEG_INFINITY)),
+                Some(Ordering::Greater)
+            );
+            for nan in [Num::Single(f32::NAN), Num::Double(f64::NAN)] {
+                assert_eq!(compare(x, &nan), None);
+                assert_eq!(compare(&nan, x), None);
+            }
+        }
+        assert_eq!(
+            compare(&Num::Single(f32::INFINITY), &Num::Double(f64::INFINITY)),
+            Some(Ordering::Equal)
+        );
+        assert_eq!(
+            compare(&Num::Single(f32::NEG_INFINITY), &Num::Double(f64::INFINITY)),
+            Some(Ordering::Less)
+        );
+        assert_eq!(
+            compare(&Num::Double(f64::NAN), &Num::Double(f64::NAN)),
+            None
+        );
+    }
+
+    #[test]
+    fn finite_mixed_comparison_retains_exact_precision() {
+        assert_eq!(
+            compare(
+                &Num::Int((BigInt::one() << 53) + 1),
+                &Num::Double(9007199254740992.0)
+            ),
+            Some(Ordering::Greater)
+        );
+        assert_eq!(
+            compare(
+                &Num::Ratio(BigRational::new(1.into(), 10.into())),
+                &Num::Double(0.1)
+            ),
+            Some(Ordering::Less)
+        );
     }
 }

@@ -1816,7 +1816,7 @@ fn scalar_operations_preserve_signed_arithmetic_shifts_and_float_payloads() {
     check_object_results(
         text,
         22,
-        "22\n-3\n-2\n5\n-17\n-22\n16\n-20\n-9\n0\n1\n-2\n-4\n-3\n-2\n1\n1\n1\n-1\n0\n1\n0\n1\n",
+        "22\n-3\n-2\n5\n-17\n-22\n16\n-20\n-9\n0\n1\n-2\n-4\n-3\n-2\n1\n1\n1\n-1\n0\n1\n2\n1\n",
     );
     reject(
         "(block e (set a (fixnum 1)) (set x (word-shift-left a a)) (return (a)))",

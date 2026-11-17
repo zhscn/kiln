@@ -1248,7 +1248,10 @@ impl<M: Module> FuncLowering<'_, M> {
                 let zero = b.ins().iconst(I64, 0);
                 let positive = b.ins().iconst(I64, 1);
                 let nonnegative = b.ins().select(greater, positive, zero);
-                b.ins().select(less, negative, nonnegative)
+                let ordered = b.ins().select(less, negative, nonnegative);
+                let unordered = b.ins().fcmp(FloatCC::Unordered, x, y);
+                let unordered_result = b.ins().iconst(I64, 2);
+                b.ins().select(unordered, unordered_result, ordered)
             }
             Expr::Bin(op, x, y) => {
                 let x = self.expr(b, x)?;

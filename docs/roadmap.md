@@ -142,8 +142,8 @@
 
 第三方库仍需补齐以下接口并缩小语义差异：
 
-- 为 float-features 提供 kiln 的浮点位模式、特殊值、舍入与异常控制适配；
-  special-functions 和 Jzon 的部分测试依赖这些非 ANSI 接口。
+- 补齐 float-features 的舍入模式和异常屏蔽接口，并统一通用运算与 MIR
+  未装箱运算的控制行为。位模式转换及 NaN、无穷分类使用公开的 `kiln.sys` 接口。
 - 定位 Babel 测试源码在普通 READ 与编译期 CST 路径之间的差异，以及
   misc-extensions 编译中的类型错误；后者阻塞 FSet 测试。
 - 核对 CL-PPCRE 的捕获组和大小写匹配差异，并单独分析长时间运行的测试。

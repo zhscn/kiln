@@ -255,7 +255,7 @@ LIR 和 KIR 一样使用可赋值的变量，不是 SSA：MIR 退出 SSA 时将�
 
 机器字操作覆盖加、减、乘、带符号商与余数、按位运算、有符号比较及三种移位。`word-shift-right` 做算术右移，`word-shift-right-logical` 补零；计数为机器字，生成方保证在 0–63 内。除法要求除数非零，并排除最小机器字除以 -1。fixnum 的比较、位运算、奇偶检查、折半、商与余数、移位使用对象输入；移位计数也是 fixnum，范围为 0–62。生成方负责 fixnum 类型及结果范围事实，Rust 选择带 tag 的计算方式。
 
-`single-float-tag` 与 `single-float-bits` 在对象和 32 位 IEEE 模式之间转换。`f64-from-bits` 与 `f64-bits` 在机器字和未装箱 binary64 之间按位转换，保留负零和 NaN payload；它们不做数值转换。`f64-compare` 返回 -1、0 或 1，unordered 返回 0，延续 runtime 数值比较的三路约定。普通 `f64-add/sub/mul/div` 接收并返回 `f64`。不同表示不能隐式混用，操作表定义参数和结果类型，验证器在降级前检查。
+`single-float-tag` 与 `single-float-bits` 在对象和 32 位 IEEE 模式之间转换。`f64-from-bits` 与 `f64-bits` 在机器字和未装箱 binary64 之间按位转换，保留负零和 NaN payload；它们不做数值转换。`f64-compare` 返回 -1、0 或 1，unordered 返回 2，与 runtime 数值比较一致。无序结果不满足任何有序比较或相等判断。普通 `f64-add/sub/mul/div` 接收并返回 `f64`。不同表示不能隐式混用，操作表定义参数和结果类型，验证器在降级前检查。
 
 这些操作不分配、不覆盖多值区，不引入 Lisp 异常边。无效的机器除法及移位输入不属于支持的操作域；语言错误须由生成方在进入纯操作前分派。
 
