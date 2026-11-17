@@ -213,8 +213,9 @@
                    nil)
                   (5 (code-char (fasl-read-uint stream)))
                   (6 (let ((bytes (make-array (fasl-read-uint stream))))
-                       (dotimes (index (length bytes) bytes)
-                         (setf (svref bytes index) (read-byte stream)))))
+                       (unless (= (read-sequence bytes stream) (length bytes))
+                         (error 'end-of-file :stream stream))
+                       bytes))
                   (t (error "Invalid FASL record encoding."))))))
       (unless need-value
         (when (zerop (fill-pointer frames)) (return value))
