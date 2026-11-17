@@ -89,11 +89,26 @@
                          (<= (1- (length (mir-instruction-operands instruction)))
                              (mir-parameter-summary-maximum summary)))) summary))))))
 
+(defmacro mir-do-storage-fields ((id fields receivers &optional result) &body body)
+  "Visit existing fields selected by a receiver bitmap, in field order."
+  (let ((table (gensym "FIELDS")) (bits (gensym "BITS"))
+        (limit (gensym "LIMIT")))
+    `(let* ((,table ,fields) (,limit (length ,table)) (,bits ,receivers))
+       ;; Bit zero denotes an external object, with no local fields to visit.
+       (when (minusp ,bits)
+         (setf ,bits (logand ,bits (1- (ash 1 (1+ ,limit))))))
+       (setf ,bits (logandc2 ,bits 1))
+       (loop while (not (zerop ,bits))
+             for ,id = (- (integer-length (logand ,bits (- ,bits))) 2)
+             while (< ,id ,limit) do
+         (when (svref ,table ,id) ,@body)
+         (setf ,bits (logand ,bits (1- ,bits))))
+       ,result)))
+
 (defun mir-storage-field (fields receivers tail)
   (let ((result (logand receivers 1)))
-    (dotimes (id (length fields) result)
-      (when (and (svref fields id) (logbitp (1+ id) receivers))
-        (setf result (logior result (if tail (cdr (svref fields id)) (car (svref fields id)))))))))
+    (mir-do-storage-fields (id fields receivers result)
+      (setf result (logior result (if tail (cdr (svref fields id)) (car (svref fields id))))))))
 
 (defun mir-storage-resolve (fields points path)
   (dolist (selector path points)
@@ -150,13 +165,12 @@
                ;; receive other stack objects even when its own extent is local.
                (when (and (not self) (or (logbitp 0 receivers) (not (zerop (logand receivers rest-sites)))))
                  (setf escaped (logior escaped value)))
-               (dotimes (id (length fields))
-                 (when (and (svref fields id) (logbitp (1+ id) receivers))
-                   (let* ((pair (svref fields id)) (old (if tail (cdr pair) (car pair)))
-                          (joined (logior old (if self (ash 1 (1+ id)) value))))
-                     (unless (= old joined)
-                       (if tail (setf (cdr pair) joined) (setf (car pair) joined))
-                       (setf changed t))))))
+               (mir-do-storage-fields (id fields receivers)
+                 (let* ((pair (svref fields id)) (old (if tail (cdr pair) (car pair)))
+                        (joined (logior old (if self (ash 1 (1+ id)) value))))
+                   (unless (= old joined)
+                     (if tail (setf (cdr pair) joined) (setf (car pair) joined))
+                     (setf changed t)))))
              (local-call (instruction summary)
                (let ((args (mir-instruction-operands instruction)) (result 1))
                  (dolist (effect (mir-parameter-summary-effects summary))
@@ -260,9 +274,8 @@
       (setf changed t)
       (loop while changed do
         (let ((before escaped))
-          (dotimes (id (length fields))
-            (when (and (svref fields id) (logbitp (1+ id) escaped))
-              (setf escaped (logior escaped (car (svref fields id)) (cdr (svref fields id))))))
+          (mir-do-storage-fields (id fields escaped)
+            (setf escaped (logior escaped (car (svref fields id)) (cdr (svref fields id)))))
           (setf changed (/= before escaped))))
       (make-mir-storage-analysis :points points :fields fields :escaped escaped
                                  :stack (logand sites (lognot escaped))
