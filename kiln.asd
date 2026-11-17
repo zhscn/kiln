@@ -47,6 +47,7 @@
                (:file "hir/analyze")
                (:file "hir/eval")
                (:file "mir/data")
+               (:file "mir/pass")
                (:file "mir/verify")
                (:file "mir/build")
                (:file "mir/values")

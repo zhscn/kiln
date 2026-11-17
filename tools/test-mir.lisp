@@ -25,10 +25,10 @@
     (flet ((compute (f) (declare (ignore f)) (incf computations)))
       (assert (= 1 (mir-analysis function :test #'compute)))
       (assert (= 1 (mir-analysis function :test #'compute)))
-      (mir-run-pass unit function #'identity :preserves '(:test))
-      (assert (= 1 (mir-analysis function :test #'compute)))
+      (mir-run-pass unit function #'identity :changes '(:instructions))
+      (assert (= 2 (mir-analysis function :test #'compute)))
       (mir-run-pass unit function #'identity)
-      (assert (= 2 (mir-analysis function :test #'compute))))))
+      (assert (= 3 (mir-analysis function :test #'compute))))))
 
 (let* ((unit (mir-test-unit '(if (identity t) 1 2)))
        (function (mir-at (mir-unit-functions unit) 0))

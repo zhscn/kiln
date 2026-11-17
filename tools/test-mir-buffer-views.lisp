@@ -19,7 +19,7 @@
   (flet ((view (function) (declare (ignore function)) (hir-buffer-view buffer)))
     (let ((before (mir-analysis function :view-one #'view)))
       (assert (eq before (mir-analysis function :view-two #'view)))
-      (mir-run-pass unit function #'identity :preserves '(:buffer-views))
+      (mir-run-pass unit function #'identity :changes '(:instructions))
       (assert (not (eq before (mir-analysis function :view-three #'view)))))))
 
 ;; Independent verification must see raw same-length edits, even if a read

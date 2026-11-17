@@ -104,7 +104,7 @@
                 (setf (mir-instruction-data (car entry)) (cdr entry)
                       (mir-instruction-operands (car entry))
                       (subseq (mir-instruction-operands (car entry)) 0 2))))) transformations))))
-    (mir-run-passes unit (nreverse transformations)))
+    (mir-run-passes unit (nreverse transformations) :changes '(:instructions)))
   unit)
 
 (defun mir-value-call-plan (instruction definitions)
@@ -151,5 +151,5 @@
               (dolist (entry selected)
                 (setf (mir-instruction-data (car entry)) (cadr entry)
                       (mir-instruction-operands (car entry)) (third entry))))) transformations))))
-    (mir-run-passes unit (nreverse transformations)))
+    (mir-run-passes unit (nreverse transformations) :changes '(:instructions)))
   unit)
