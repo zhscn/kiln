@@ -60,6 +60,20 @@
               (mir-function-values function))
     id))
 
+(defvar *mir-edit-unit* nil)
+(defvar *mir-edit-functions* nil)
+(defvar *mir-edit-analysis-cache* nil)
+
+(defun mir-edit-analysis (owner name compute)
+  "Share dependencies within one read query, never across edits in a callback."
+  (let* ((root (null *mir-edit-analysis-cache*))
+         (*mir-edit-analysis-cache* (or *mir-edit-analysis-cache* (make-hash-table :test 'eq)))
+         (*hir-buffer-views* (if root (make-hash-table :test 'eq) *hir-buffer-views*))
+         (entries (or (gethash owner *mir-edit-analysis-cache*)
+                      (setf (gethash owner *mir-edit-analysis-cache*) (make-hash-table :test 'eq)))))
+    (multiple-value-bind (result present) (gethash name entries)
+      (if present result (setf (gethash name entries) (funcall compute owner))))))
+
 (defun mir-analysis-buffer-views (analyses revision)
   (let ((entry (gethash :buffer-views analyses)))
     (if (and entry (= (car entry) revision)) (cdr entry)
@@ -69,6 +83,8 @@
 
 (defun mir-analysis (function name compute)
   "Cache an analysis at the current revision; COMPUTE receives FUNCTION."
+  (when (or (eq *mir-edit-functions* :all) (eq *mir-edit-functions* function))
+    (return-from mir-analysis (mir-edit-analysis function name compute)))
   (let ((entry (gethash name (mir-function-analyses function))))
     (if (and entry (= (car entry) (mir-function-revision function))) (cdr entry)
         (let* ((*hir-buffer-views*
@@ -81,6 +97,8 @@
 
 (defun mir-unit-analysis (unit name compute)
   "Cache against the unit epoch advanced before every graph rewrite."
+  (when (eq unit *mir-edit-unit*)
+    (return-from mir-unit-analysis (mir-edit-analysis unit name compute)))
   (let ((entry (gethash name (mir-unit-analyses unit))))
     (if (and entry (= (car entry) (mir-unit-revision unit))) (cdr entry)
         (let* ((*hir-buffer-views*

@@ -1,7 +1,6 @@
 (in-package #:kiln.compiler)
 
 (defvar *mir-check-pass-contracts* nil)
-(defvar *mir-edit-unit* nil)
 
 (defparameter *mir-change-kinds* '(:instructions :values :control-flow :bindings))
 
@@ -34,7 +33,7 @@
 
 (defun mir-function-signature (function)
   "Snapshot entry and capture layout fields independently of mutable vectors."
-  (list (mir-function-required function) (mir-function-optional function)
+  (list (mir-function-id function) (mir-function-required function) (mir-function-optional function)
         (mir-function-rest function) (mir-function-key-p function)
         (copy-seq (mir-function-keys function)) (mir-function-allow-other-keys function)
         (copy-seq (mir-function-captures function)) (mir-function-capture-cells function)
@@ -98,7 +97,7 @@
                                (list (identity-token edge) (mir-edge-target edge))))))))
       (list (cons :instructions (instructions)) (cons :values (values-state))
             (cons :control-flow (control-flow))
-            (cons :bindings (list (data (mir-function-bindings function)) (mir-function-binding-cells function)
+            (cons :bindings (list (mir-function-id function) (data (mir-function-bindings function)) (mir-function-binding-cells function)
                                   (mir-function-policy function) (identity-token (mir-function-name function))
                                   (identity-token (mir-function-source function))
                                   (identity-token (mir-function-debug-name function))))))))
@@ -110,7 +109,13 @@
                          collect (cons entry (mir-pass-body-state entry identities))))))
     (incf (mir-unit-revision unit))
     (mir-invalidate-function function changes)
-    (let ((*mir-edit-unit* unit) (*hir-buffer-views* nil)) (funcall transform function))
+    (let ((*mir-edit-unit* unit) (*mir-edit-functions* function)
+          (*mir-edit-analysis-cache* nil) (*hir-buffer-views* nil))
+      (funcall transform function))
+    ;; A callback can run an explicit verifier or compute current graph facts.
+    ;; None of its intermediate results may escape into the next stable revision.
+    (incf (mir-unit-revision unit))
+    (mir-invalidate-function function changes)
     (dolist (saved before)
       (let* ((entry (car saved)) (after (mir-pass-body-state entry identities)))
         (dolist (state (cdr saved))
@@ -144,7 +149,7 @@
             do (unless (eq (car saved) entry) (mir-fail "MIR function replacement requires a unit pass"))
                (mir-verify-function-layout unit entry)
                (unless (equalp (cdr saved) (mir-function-signature entry))
-                 (mir-fail "MIR entry or capture layout changes require a unit pass")))
+                 (mir-fail "MIR function identity, entry or capture changes require a unit pass")))
       (mir-verify-load-time-functions unit)
       ;; Iterate the unit's order, not the hash table, for deterministic diagnostics.
       (loop for function across (hir-vector (mir-unit-functions unit))
@@ -161,6 +166,9 @@
   "Invalidate the whole unit before a coordinated signature and caller rewrite."
   (when (eq unit *mir-edit-unit*) (mir-fail "Nested MIR edits require a separate unit"))
   (mir-invalidate-unit unit)
-  (let ((*mir-edit-unit* unit) (*hir-buffer-views* nil)) (funcall transform unit))
+  (let ((*mir-edit-unit* unit) (*mir-edit-functions* :all)
+        (*mir-edit-analysis-cache* nil) (*hir-buffer-views* nil))
+    (funcall transform unit))
+  (mir-invalidate-unit unit)
   (verify-mir unit)
   unit)

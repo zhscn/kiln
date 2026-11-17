@@ -62,7 +62,7 @@
 
 (defun mir-lift-function (function widths identities cell-masks)
   "Thread each lifted function value's environment through its SSA copies."
-  (let* ((blocks (hir-buffer-view (mir-function-blocks function)))
+  (let* ((reachable (mir-reachable-blocks function)) (blocks (hir-buffer-view (mir-function-blocks function)))
          (instructions (mir-function-instructions function))
          (original-parameters (map 'simple-vector #'mir-block-parameters blocks))
          (environments (make-array (length identities) :initial-element nil))
@@ -168,7 +168,7 @@
                   for count = (width parameter)
                   when count do
                     (let ((fields (environment source)))
-                      (unless (or fields (not (logbitp (mir-block-id block) (mir-reachable-blocks function))))
+                      (unless (or fields (not (logbitp (mir-block-id block) reachable)))
                         (mir-fail "Lifted edge lacks its environment"))
                       (dotimes (slot count)
                         (push (if fields (svref fields slot)
