@@ -575,3 +575,9 @@ Under `#+kiln`:
 
 Recognizes kiln and checks the normalized features provided by its current
 Linux x86-64 runtime.
+
+## trivial-gray-streams patches
+
+Imports kiln's Cyclosis Gray stream classes and character/binary protocols.
+Sequence and file-position methods bridge the portable protocol to Cyclosis,
+including the portable fallback result for sequence operations.

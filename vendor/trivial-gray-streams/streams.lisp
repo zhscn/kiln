@@ -332,3 +332,16 @@
 ;; deprecated
 (defclass trivial-gray-stream-mixin () ())
 
+
+#+kiln
+(progn
+  (defmethod cyclosis:stream-read-sequence
+      ((stream fundamental-input-stream) sequence &optional (start 0) end)
+    (or-fallback (stream-read-sequence stream sequence start (or end (length sequence)))))
+  (defmethod cyclosis:stream-write-sequence
+      ((stream fundamental-output-stream) sequence &optional (start 0) end)
+    (or-fallback (stream-write-sequence stream sequence start (or end (length sequence)))))
+  (defmethod cyclosis:stream-file-position ((stream fundamental-stream))
+    (stream-file-position stream))
+  (defmethod (setf cyclosis:stream-file-position) (position (stream fundamental-stream))
+    (setf (stream-file-position stream) position)))

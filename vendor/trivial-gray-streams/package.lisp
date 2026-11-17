@@ -55,6 +55,7 @@
             (defpackage impl-specific-gray
               (:use :cl)
               (:import-from
+               #+kiln :cyclosis
                #+sbcl :sb-gray
                #+allegro :excl
                #+cmu :ext
@@ -64,7 +65,7 @@
                #+(or abcl genera) :gray-streams
                #+mezzano :mezzano.gray
                #+dotcl :dotcl-gray
-               #-(or sbcl allegro cmu clisp openmcl lispworks ecl clasp mkcl abcl mocl genera mezzano dotcl clamiga) ...
+               #-(or sbcl allegro cmu clisp openmcl lispworks ecl clasp mkcl abcl mocl genera mezzano dotcl clamiga kiln) ...
                ,@gray-class-symbols
                ,@gray-function-symbols)
               (:export
