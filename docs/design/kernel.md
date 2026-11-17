@@ -47,7 +47,9 @@ kernel 先给出简单的版本，后面的模块替换或扩充。钩子是 `ki
 - `random`、`*random-state*`、`make-random-state`：随机状态是一个结构，存一个 32 位的 xorshift128 生成器（`lisp/target/clos/random.lisp`）。
 - 常量：超出 fixnum 范围的字面量编译成静态 bignum，double-float、ratio 和 complex 编译成静态对象，single-float 是立即数。
 - `kiln.sys:single-float-bits`、`double-float-bits` 与 `bits-single-float`、`bits-double-float` 在浮点数和无符号 IEEE binary32/binary64 位模式之间转换，保留负零和 NaN payload；输入类型与位宽不符时发出 `type-error`。`float-infinity-p`、`float-nan-p` 按位分类，接受浮点数。这些公开接口使可移植库不必依赖对象布局或编译器私有原语。
-- 还没有：硬件浮点 trap 的配置接口、NaN 和无穷的读写。
+- `kiln.sys:with-rounding-mode` 以字面量 `:nearest`、`:positive`、`:negative`、`:zero` 选择四则运算与浮点转换的舍入方向。`kiln.sys:with-float-traps-masked` 接受字面量异常列表或 T，动态屏蔽异常。默认启用 invalid、divide-by-zero、overflow，underflow、inexact、denormalized-operand 默认关闭；精确有理数除零始终发出 condition。配置存放在 special 变量中，嵌套绑定、错误展开与跨栈退出均由既有动态环境恢复，不改变 OS 线程的硬件 FPU 状态。
+- 受控运算先按当前模式完成浮点类型传染，再以精确有理数计算四则运算结果，用整数商余数一次舍入到 binary32/binary64，包括次正规数、负零和定向溢出。MIR 对控制区域使用同一条软件路径；默认有限运算仍使用未装箱算术，非有限结果转入统一的异常检查路径。受控路径会分配并计算精确数，适合显式要求舍入控制的区域，成本高于默认路径。初等函数仍使用 runtime 的近似实现，不承诺按指定方向舍入；`exp`、`expt` 的软件上溢检查服从异常屏蔽。
+- 还没有：开启 underflow、inexact、denormalized-operand trap 的接口，以及 NaN 和无穷的读写。
 
 ## 字符和字符串
 

@@ -142,8 +142,9 @@
 
 第三方库仍需补齐以下接口并缩小语义差异：
 
-- 补齐 float-features 的舍入模式和异常屏蔽接口，并统一通用运算与 MIR
-  未装箱运算的控制行为。位模式转换及 NaN、无穷分类使用公开的 `kiln.sys` 接口。
+- 将浮点控制扩展到初等函数的定向舍入，并提供开启 underflow、inexact、
+  denormalized-operand trap 的接口。四则运算和转换已有动态软件控制，
+  MIR 未装箱路径遵守同一契约。
 - 定位 Babel 测试源码在普通 READ 与编译期 CST 路径之间的差异，以及
   misc-extensions 编译中的类型错误；后者阻塞 FSet 测试。
 - 核对 CL-PPCRE 的捕获组和大小写匹配差异，并单独分析长时间运行的测试。

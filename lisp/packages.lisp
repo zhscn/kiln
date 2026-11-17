@@ -44,7 +44,7 @@
            #:source-line #:print-frame #:print-backtrace #:exit
            #:getenv #:getcwd #:command-line-arguments
            #:single-float-bits #:double-float-bits #:bits-single-float #:bits-double-float
-           #:float-infinity-p #:float-nan-p
+           #:float-infinity-p #:float-nan-p #:with-float-traps-masked #:with-rounding-mode
            ;; The back-end protocol (lisp/target/eval/server.lisp).
            #:serve
            ;; Assumptions and dependency tracking (lisp/target/assumptions.lisp,

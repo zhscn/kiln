@@ -62,3 +62,11 @@ HIR 词法准备收集 `load-time-value`，MIR 为其建立独立初始化函数
 - 单参数的 `print` 是给没有流的早期测试用的原语（带流参数的 `print` 调用打印器的 `print`），直接调用 runtime 的打印函数（先打印对象再换行，不经过 `*standard-output*` 和 `print-object`）。编进运行中 image 的代码不用它。
 
 **`%primop`**：`(kiln.sys:%primop :名字 参数...)` 是 kernel 代码访问底层操作的唯一入口（单一入口加关键字操作码，和 SICL 的做法一样）。它对前端来说是普通的函数调用，HIR 转换验证第一个参数是 keyword 字面量，MIR 发射时查 primop 表（`*primops*`），展开成内联代码，所以前端不需要改。例如分配和读写实例、`:identity-hash`、`:hash-mix`、`:fd-read`、`:sys`、`:jit`、浮点的位模式。
+
+## 浮点控制与未装箱算术
+
+只证明操作数是 double-float，不能证明当前采用默认舍入模式。MIR 降级在
+浮点四则运算处读取 context 中的动态控制状态；显式控制区域调用 kernel 的
+统一受控运算，再恢复未装箱结果。默认路径直接计算 binary64，非有限结果转入
+同一检查路径，以区分输入无穷、无效运算和有限参数上溢。负号与 ABS 只修改
+符号位，不需要数值舍入。调用慢路径时，装箱参数遵守正常调用和 GC 栈图协议。

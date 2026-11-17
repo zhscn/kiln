@@ -297,21 +297,27 @@
 (defun mir-lir-double-call (name operands)
   (let* ((bits (map 'list #'mir-lir-double-bits operands))
          (left (first bits)) (right (second bits)))
-    (when (and right (eq name '/))
-      (let ((zero (new-block)) (divide (new-block)))
-        (br `(:eq (:and ,right #x7fffffffffffffff) 0) zero divide)
-        (start-block zero)
-        (emit-error +err-division-by-zero+ (emit-box-double-bits left))
-        (jump divide) (start-block divide)))
-    (copy-to-var
-     (if right
-         `(,(ecase name (+ :f64-add) (- :f64-sub) (* :f64-mul) (/ :f64-div)) ,left ,right)
-         (ecase name
-           (- `(:xor ,left ,(- #x8000000000000000)))
-           (abs `(:and ,left #x7fffffffffffffff))
-           (1+ `(:f64-add ,left #x3ff0000000000000))
-           (1- `(:f64-sub ,left #x3ff0000000000000))))
-     :f64)))
+    (when (and (not right) (member name '(- abs)))
+      (return-from mir-lir-double-call
+        (copy-to-var (if (eq name '-) `(:xor ,left ,(- #x8000000000000000))
+                        `(:and ,left #x7fffffffffffffff)) :f64)))
+    (unless right
+      (setq right #x3ff0000000000000 name (ecase name (1+ '+) (1- '-))))
+    (let ((result (new-var :f64)) (fast (new-block)) (slow (new-block)) (done (new-block))
+          (active (emit-symbol-value (constant-object 'kiln.kernel::*float-control-active*))))
+      (br `(:ne ,active ,(nil-value)) slow fast)
+      (start-block fast)
+      (emit `(:set ,result (,(ecase name (+ :f64-add) (- :f64-sub) (* :f64-mul) (/ :f64-div)) ,left ,right)))
+      ;; Non-finite results need the same invalid/overflow checks as boxed
+      ;; arithmetic, even in the default nearest rounding mode.
+      (br `(:eq (:and ,result #x7ff0000000000000) #x7ff0000000000000) slow done)
+      (start-block slow)
+      (let* ((a (emit-box-double-bits left)) (b (emit-box-double-bits right))
+             (value (emit-slow-call 'kiln.kernel::controlled-real-arithmetic (constant-object name) a b)))
+        (emit `(:set ,result (:field-load ,kiln.kir::+packet-field-double-bits+ ,value))))
+      (jump done)
+      (start-block done)
+      result)))
 
 (defun mir-lir-dead-pure-value-p (id)
   (let ((definition (svref *mir-lir-definitions* id)))
