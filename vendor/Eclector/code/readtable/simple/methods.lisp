@@ -83,6 +83,7 @@
         (if non-terminating-p
             :non-terminating-macro
             :terminating-macro))
+  (remhash char (dispatch-macro-characters readtable))
   (setf (gethash char (macro-characters readtable))
         function)
   t)
@@ -125,13 +126,40 @@
   (if (eq syntax-type :constituent)
       (remhash char (syntax-types readtable))
       (setf (gethash char (syntax-types readtable)) syntax-type))
+  (unless (member syntax-type '(:terminating-macro :non-terminating-macro))
+    (remhash char (macro-characters readtable))
+    (remhash char (dispatch-macro-characters readtable)))
   syntax-type)
+
+(defmethod (setf eclector.readtable:syntax-from-char)
+    (from-char to-char (to-readtable readtable) (from-readtable readtable))
+  ;; Capture the source before changing the destination: both tables and
+  ;; both characters may be identical. Dispatchers close over their table,
+  ;; so copying the function alone would keep reading the source table.
+  (let ((syntax (eclector.readtable:syntax-type from-readtable from-char))
+        (function (gethash from-char (macro-characters from-readtable)))
+        (dispatch (gethash from-char (dispatch-macro-characters from-readtable))))
+    (setf (eclector.readtable:syntax-type to-readtable to-char) syntax)
+    (cond (dispatch
+           (eclector.readtable:make-dispatch-macro-character
+            to-readtable to-char (eq syntax :non-terminating-macro))
+           (maphash (lambda (sub-char function)
+                      (setf (gethash sub-char (gethash to-char (dispatch-macro-characters to-readtable)))
+                            function))
+                    dispatch))
+          (function
+           (eclector.readtable:set-macro-character
+            to-readtable to-char function (eq syntax :non-terminating-macro)))))
+  from-char)
 
 (defmethod eclector.readtable:copy-readtable-into
     ((from-readtable readtable) (to-readtable readtable))
+  (when (eq from-readtable to-readtable)
+    (return-from eclector.readtable:copy-readtable-into to-readtable))
   (fill (ascii-syntax-types to-readtable) :constituent)
   (clrhash (syntax-types to-readtable))
   (clrhash (macro-characters to-readtable))
+  (clrhash (dispatch-macro-characters to-readtable))
   (maphash (lambda (key value)
              (setf (eclector.readtable:syntax-type to-readtable key) value))
            (syntax-types from-readtable))

@@ -35,3 +35,15 @@
 (assert (char= (fset::make-char 42 2) (code-char 554)))
 (let ((characters (list #\A (code-char 554) #\B)))
   (assert (equal characters (fset:convert 'list (fset:convert 'fset:seq characters)))))
+
+(let ((name (gensym "RELOAD-READTABLE")))
+  (unwind-protect
+       (let ((form `(named-readtables:defreadtable ,name
+                      (:merge :standard)
+                      (:dispatch-macro-char #\# #\# #'list))))
+         (eval form)
+         (let ((original (named-readtables:find-readtable name)))
+           (eval form)
+           (assert (eq original (named-readtables:find-readtable name)))
+           (assert (eq (get-dispatch-macro-character #\# #\# original) #'list))))
+    (named-readtables:unregister-readtable name)))

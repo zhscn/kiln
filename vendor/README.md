@@ -510,6 +510,11 @@ Under `#+kiln`:
 
 ## Eclector patches
 
+- Syntax replacement removes obsolete macro and dispatch entries. Copying a
+  dispatching character copies its subtable and creates a dispatcher bound
+  to the destination. Copying into an existing readtable clears its previous
+  dispatch state; copying a readtable to itself preserves it.
+
 - Decimal float tokens use conservative binary bounds to avoid constructing
   enormous exact decimal powers for certain underflow or overflow. Bounded
   representative rationals retain the existing conversion and trap behavior;
