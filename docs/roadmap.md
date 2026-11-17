@@ -140,6 +140,18 @@
 浮点异常、复数类型关系、条件类型名和宏解构等规范边界应按具体行为核对，
 避免把套件期望直接当作实现缺口。
 
+第三方库仍需补齐以下接口并缩小语义差异：
+
+- 为 float-features 提供 kiln 的浮点位模式、特殊值、舍入与异常控制适配；
+  special-functions 和 Jzon 的部分测试依赖这些非 ANSI 接口。
+- 定位 Babel 测试源码在普通 READ 与编译期 CST 路径之间的差异，以及
+  misc-extensions 编译中的类型错误；后者阻塞 FSet 测试。
+- 核对 CL-PPCRE 的捕获组和大小写匹配差异，并单独分析长时间运行的测试。
+- 核对 Flexi-streams 的八位字节到字符串转换，以及 Iterate 在编译期发出错误时
+  与测试框架错误捕获范围之间的差异。
+- 完整 Lisp-Stat 还需交互、网络及外部库依赖；数值核心测试与综合系统加载分别验证。
+  Maxima 的 MK-DEFSYSTEM 加载包装层也需要 kiln 适配。
+
 与 CL 不一致的行为：
 - `print`（编译器原语）：AOT 模块里先打印对象再换行，不经过 `*standard-output*`、`print-object` 和打印变量。要等测试的期望输出统一迁移。
 - `y-or-n-p`：一次无效回答之后会多提示一次；`clear-input` 对 POSIX 流不起作用。
