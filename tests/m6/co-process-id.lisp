@@ -1,0 +1,6 @@
+(let ((pid (kiln.sys:getpid)))
+  (assert (typep pid '(integer 1 *)))
+  (assert (= pid (kiln.sys:getpid)))
+  (with-open-file (stream "/proc/self/stat")
+    (assert (= pid (read stream)))))
+(print :process-id)

@@ -212,6 +212,9 @@ program、packet 和 literal 向量必须作为普通活跃对象进入栈图。
 返回负 EINVAL。索引 0 是可执行文件名。该查询不分配 Lisp 对象、不触发 safepoint，
 通过既有系统服务调用约定执行。字符串解码及结果列表由 Lisp 构造。
 
+操作 25 返回当前进程 ID，结果是已标记的非负 fixnum，忽略 `a`、`b`、`c`。
+它不分配 Lisp 对象、不触发 safepoint；恢复 image 后查询恢复进程的 ID。
+
 ## 实数比较结果
 
 `kiln_rt_number_op` 的 COMPARE 操作返回已标记的 fixnum：-1、0、1

@@ -12,6 +12,10 @@
   "Return the process working directory as an absolute directory pathname."
   (current-directory))
 
+(defun kiln.sys:getpid ()
+  "Return the current process ID."
+  (sys 25 0))
+
 (defun kiln.sys:command-line-arguments ()
   "Return process arguments, beginning with the executable name."
   (loop for index from 0 for value = (sys-string 24 index)

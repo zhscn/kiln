@@ -15,6 +15,7 @@
 
 `kiln.sys:getenv` 返回环境变量的字符串值，缺失时返回 NIL，空值保留为空字符串。
 `kiln.sys:getcwd` 返回进程当前目录的绝对目录 pathname。
+`kiln.sys:getpid` 返回当前进程 ID。
 `kiln.sys:command-line-arguments` 返回当前进程的参数列表，首项为可执行文件名；
 这些查询在恢复快照后仍读取当前进程，不保存构建期的环境值。
 
