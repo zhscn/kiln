@@ -1,0 +1,352 @@
+###############################################################################
+# Global configuration
+###############################################################################
+
+variables:
+  # Just let the runner fetch and update the submodules for us.
+  GIT_SUBMODULE_STRATEGY: normal
+  I_AGREE_TO_ALLEGRO_EXPRESS_LICENSE: "yes"
+  CI_DEBUG_TRACE: 0
+  ALLOW_FAILURE: false
+  # set the architecture, for CMUCL
+  SET_ARCH: "false"
+
+# Split regression testing into a separate stage than upgrade tests. The
+# upgrade tests tend to run slower and are generally less important than
+# regression tests for most changes.
+stages:
+  - build
+  - regression
+  - upgrade
+
+# This is needed otherwise the jobs won't always be added to MR pipelines. We
+# can just say when: always because this is run as a child pipeline and only
+# triggered under the desired conditions.
+workflow:
+  rules:
+    - when: always
+
+###############################################################################
+# Build jobs
+###############################################################################
+
+.on_cl_net:
+  rules:
+    - if: '$CI_SERVER_URL == "https://gitlab.common-lisp.net"'
+
+.on_sift_net:
+  tags:
+    - docker
+  rules:
+    - if: '$CI_SERVER_URL == "https://git.sift.net"'
+
+# Every implementation runs in the Common Lisp Foundation's image,
+# containers.common-lisp.net/cl-docker-images/$l:$IMAGE_TAG (the templates'
+# default IMAGE; the same images are clfoundation/$l on Docker Hub).  They
+# are rebuilt weekly, so IMAGE_TAG latest follows each implementation's
+# current release.  To pin one, set IMAGE_TAG in its matrix entry.
+.matrix_common_lisp:
+  parallel:
+    matrix:
+      - l: [sbcl, ccl, abcl, clisp, ecl, cmucl]
+
+      - l: allegro
+
+      - l: allegro
+        variant: modern
+
+.matrix_regression_pass:
+  parallel:
+    matrix:
+      - l: [sbcl, ccl, abcl, clisp, cmucl, clasp]
+
+      - l: allegro
+
+      - l: allegro
+        variant: modern
+
+.matrix_regression_fail:
+  parallel:
+    matrix:
+      - l: [ecl]
+
+      # Implementations waiting on upstream changes, each also in the CLF
+      # images (containers.common-lisp.net/cl-docker-images/$l).  Uncomment
+      # an entry once what it waits on has landed; move it to
+      # .matrix_regression_pass when it runs clean.
+      #
+      # clasp: needs !218 (Clasp bytecode and FASO support in
+      # uiop:compile-file*, and Clasp's options in test/run-tests.sh).
+      # - l: clasp
+      #
+      # dotcl: needs !252 (dotcl support in UIOP), the dotcl case in
+      # test/run-tests.sh and test/script-support.lisp, and dotcl's fix for
+      # merge-pathnames keeping :back after a directory name.
+      # - l: dotcl
+      #
+      # egcl: needs EGCL support in UIOP and the test harness, and an EGCL
+      # release after atgreen/evergreen#874 (0.0.11 loses class-allocated
+      # slots when this ASDF is loaded over its own; fixed on EGCL's main).
+      # - l: egcl
+
+.matrix_upgrade_pass:
+  parallel:
+    matrix:
+      - l: [sbcl, ccl, abcl, ecl, clisp, cmucl]
+
+      - l: allegro
+
+      - l: allegro
+        variant: modern
+
+.matrix_upgrade_fail:
+  parallel:
+    matrix: []
+
+.build_ASDF:
+  stage: build
+  image:
+    name: containers.common-lisp.net/cl-docker-images/sbcl:latest
+    # entrypoint: ["/bin/bash"]
+  script:
+    # - echo "Running custom entrypoint."
+    - make
+  artifacts:
+    when: always
+    paths:
+      - build/asdf.lisp
+
+build_ASDF_sift:
+  extends:
+    - .build_ASDF
+    - .on_sift_net
+
+build_ASDF_cl_net:
+  extends:
+    - .build_ASDF
+    - .on_cl_net
+
+.build_docs:
+  stage: build
+  image:
+    name: buildpack-deps:trixie
+  script:
+    - apt-get update
+    - apt-get install -y --no-install-recommends texinfo texlive
+    - make -C doc
+  artifacts:
+    when: always
+    paths:
+      - doc/asdf.html
+      - doc/asdf.info
+      - doc/asdf.pdf
+      - doc/*.log
+
+build_docs_sift:
+  extends:
+    - .build_docs
+    - .on_sift_net
+
+build_docs_cl_net:
+  extends:
+    - .build_docs
+    - .on_cl_net
+
+# test-vars:
+#   stage: build
+#   script:
+#     - echo "CI_SERVER_URL=$CI_SERVER_URL"
+#     - echo "CI_SERVER_HOST=$CI_SERVER_HOST"
+
+
+# test_entrypoint_override:
+#   stage: build
+#   rules:
+#     - when: always
+#   image:
+#     name: rpgoldman/sbcl:trixie
+#     entrypoint: ["/bin/bash", "-c", "echo 'Custom entrypoint worked'"]
+#   script:
+#     - echo "If you see this, entrypoint override is allowed"
+#     - echo "Check above for 'Entrypoint override disabled' warning"
+
+###############################################################################
+# Regression tests
+###############################################################################
+
+.Regression test template:
+  stage: regression
+  rules:
+    - when: never
+  image:
+    name: $IMAGE
+    entrypoint: [""]
+  variables:
+    RUNNER_SCRIPT_TIMEOUT: 60m
+    IMAGE_TAG: latest
+    IMAGE: containers.common-lisp.net/cl-docker-images/$l:$IMAGE_TAG
+  script:
+    - export l=$l$variant
+    - make
+    - make test
+  artifacts:
+    when: always
+    paths:
+      - build/results
+  needs: []
+  retry:
+    max: 2
+    when:
+      - job_execution_timeout
+
+# Regression test:
+#   extends: .Regression test template
+#   parallel:
+#     matrix:
+#       - l: [abcl, ccl, clisp, cmucl, ecl, sbcl]
+#         IMAGE_TAG: latest
+#       - l: clasp
+#         IMAGE_TAG: "b14e329f49998275579926da2a737885ceb2cea7"
+#       # drop ancient ABCL version
+#       # - l: abcl
+#       #   IMAGE_TAG: 1.7.1-jdk8
+#       - l: allegro
+#         IMAGE: rpgoldman/allegro11express
+#       - l: allegro
+#         IMAGE: rpgoldman/allegro11express
+#         variant: modern
+
+.regression_test:
+  rules:
+    - when: always
+  extends:
+    - .Regression test template
+    - .matrix_regression_pass
+  image:
+    name: $IMAGE
+    entrypoint: [""]
+
+regression_test_sift:
+  extends:
+    - .regression_test
+    - .on_sift_net
+
+regression_test_cl_net:
+  extends:
+    - .regression_test
+    - .on_cl_net
+
+
+.regression_tests_with_known_failures:
+  rules:
+    - when: always               # can't be run because of timeout.
+  allow_failure: true
+  # variables:
+  #   RUNNER_SCRIPT_TIMEOUT: 90m
+  extends:
+    - .regression_test
+    - .matrix_regression_fail
+
+regression_test_fail_sift:
+  extends:
+    - .regression_tests_with_known_failures
+    - .on_sift_net
+
+regression_test_fail_cl_net:
+  extends:
+    - .regression_tests_with_known_failures
+    - .on_cl_net
+
+
+###############################################################################
+# Upgrade tests
+###############################################################################
+
+.Upgrade test template:
+  stage: upgrade
+  rules:
+    - when: never
+    - if: $RUN_UPGRADE_TESTS
+  image:
+    name: $IMAGE
+    entrypoint: [""]
+  variables:
+    IMAGE_TAG: latest
+    IMAGE: containers.common-lisp.net/cl-docker-images/$l:$IMAGE_TAG
+  script:
+    - export l=$l$variant
+    - make
+    - make test-upgrade
+  artifacts:
+    when: always
+    paths:
+      - build/results/$l-upgrade.text
+  needs: []
+
+.upgrade_test:
+  extends:
+    - .Upgrade test template
+    - .matrix_upgrade_pass
+
+upgrade_test_sift:
+  extends:
+    - .upgrade_test
+    - .on_sift_net
+
+upgrade_test_cl_net:
+  extends:
+    - .upgrade_test
+    - .on_cl_net
+
+.upgrade_tests_with_known_failures:
+  allow_failure: true
+  extends:
+    - .Upgrade test template
+    - .matrix_upgrade_fail
+
+upgrade_test_fail_sift:
+  extends:
+    - .upgrade_tests_with_known_failures
+    - .on_sift_net
+
+upgrade_test_fail_cl_net:
+  extends:
+    - .upgrade_tests_with_known_failures
+    - .on_cl_net
+
+.REQUIRE upgrade test template:
+  extends: .Upgrade test template
+  # disable temporarily
+  # rules:
+  #   - if: $RUN_UPGRADE_TESTS
+  #     when: never
+  #   - when: on_success
+
+.REQUIRE_upgrade_test:
+  extends:
+    - .REQUIRE upgrade test template
+    - .matrix_common_lisp
+  variables:
+    ASDF_UPGRADE_TEST_TAGS: REQUIRE
+
+REQUIRE_upgrade_test_sift:
+  extends:
+    - .REQUIRE_upgrade_test
+    - .on_sift_net
+
+REQUIRE_upgrade_test_cl_net:
+  extends:
+    - .REQUIRE_upgrade_test
+    - .on_cl_net
+
+
+
+REQUIRE upgrade test known failure:
+  extends: .REQUIRE upgrade test template
+  variables:
+    ASDF_UPGRADE_TEST_TAGS: REQUIRE
+  parallel:
+    matrix:
+      # - l: [clasp]
+      #   IMAGE_TAG: "b14e329f49998275579926da2a737885ceb2cea7"
+  allow_failure: true
