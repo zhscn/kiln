@@ -283,6 +283,42 @@
         "mt19937.lisp": "fcdc8c27de321fb7a8b98f42138c79c32e23f41cf4a6b49b8e38970dd6df8613",
         "mt19937.asd": "04ca7e7af13f40ef9bbae37deff51b30cacd6d4d0905eaf68b10ebc26ffaa356"
       }
+    },
+    {
+      "name": "mgl-pax",
+      "url": "https://github.com/melisgl/mgl-pax.git",
+      "revision": "7ed66c6e815922dc9fefbe104f43e66c7ec1a14d",
+      "role": "corpus-dependency"
+    },
+    {
+      "name": "data-frame",
+      "url": "https://github.com/Lisp-Stat/data-frame.git",
+      "revision": "4a0b488932f1bcf56a2f7834a418201c4258b557",
+      "role": "corpus-dependency"
+    },
+    {
+      "name": "distributions",
+      "url": "https://github.com/Lisp-Stat/distributions.git",
+      "revision": "f0e45cb1835b357b588a1804f31ad94245bb6c76",
+      "role": "corpus-dependency"
+    },
+    {
+      "name": "dfio",
+      "url": "https://github.com/Lisp-Stat/dfio.git",
+      "revision": "96398b9a3edd13560298d91e35383971f482d902",
+      "role": "corpus-dependency"
+    },
+    {
+      "name": "dexador",
+      "url": "https://github.com/fukamachi/dexador.git",
+      "revision": "6289b8a3a6da19d7a45481dd1f51364ce5190864",
+      "role": "corpus-dependency"
+    },
+    {
+      "name": "conduit-packages",
+      "url": "https://github.com/tfeb/conduit-packages.git",
+      "revision": "eeea22a5bbf63c437e6ae936c962cf5c3bdae99b",
+      "role": "corpus-dependency"
     }
   ]
 }
