@@ -145,13 +145,11 @@
 - 将浮点控制扩展到初等函数的定向舍入，并提供开启 underflow、inexact、
   denormalized-operand trap 的接口。四则运算和转换已有动态软件控制，
   MIR 未装箱路径遵守同一契约。
-- 定位 Babel 测试源码在普通 READ 与编译期 CST 路径之间的差异，以及
-  misc-extensions 编译中的类型错误；后者阻塞 FSet 测试。
-- 核对 CL-PPCRE 的捕获组和大小写匹配差异，并单独分析长时间运行的测试。
-- 核对 Flexi-streams 的八位字节到字符串转换，以及 Iterate 在编译期发出错误时
-  与测试框架错误捕获范围之间的差异。
-- 完整 Lisp-Stat 还需交互、网络及外部库依赖；数值核心测试与综合系统加载分别验证。
-  Maxima 的 MK-DEFSYSTEM 加载包装层也需要 kiln 适配。
+- 完整 Lisp-Stat 的数据框和网络依赖需要线程、子进程及外部库接口。
+  clavier 的依赖闭包涉及 Bordeaux-Threads；在支持并发 Lisp 线程前，不能声明
+  `:thread-support` 或用空操作替代其线程 API。数值核心与综合系统分别验证。
+- Maxima 的外部命令、网络和图形功能需要相应的运行期接口。大规模矩阵操作
+  使用的长参数列表还受当前调用参数上限约束；core 与 share 套件分别验证。
 
 与 CL 不一致的行为：
 - `print`（编译器原语）：AOT 模块里先打印对象再换行，不经过 `*standard-output*`、`print-object` 和打印变量。要等测试的期望输出统一迁移。
