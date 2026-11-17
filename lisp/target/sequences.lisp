@@ -477,9 +477,43 @@ other, the shorter's length and the rest of the longer after it."
 
 (defun remove-if-not (pred seq &rest args)
   (apply #'remove-if (complement pred) seq args))
-(defun delete (item seq &rest args) (apply #'remove item seq args))
-(defun delete-if (pred seq &rest args) (apply #'remove-if pred seq args))
-(defun delete-if-not (pred seq &rest args) (apply #'remove-if-not pred seq args))
+(defun delete-list-if (predicate sequence key start end count from-end)
+  (let* ((length (length sequence)) (end (or end length))
+         (marked (when from-end (make-array length :element-type 'bit :initial-element 0)))
+         (removed 0) (head sequence) (previous nil))
+    ;; Select the rightmost matches before unlinking any of the original cells.
+    (when from-end
+      (let ((cells (make-array length)))
+        (loop for cell on sequence for index from 0 do (setf (aref cells index) cell))
+        (loop for index downfrom (1- length) to 0
+              when (and (<= start index) (< index end)
+                        (or (null count) (< removed count))
+                        (let ((value (car (aref cells index))))
+                          (funcall predicate (if key (funcall key value) value))))
+                do (setf (aref marked index) 1) (incf removed))))
+    (loop for cell on sequence for index from 0
+          do (if (if from-end (= 1 (aref marked index))
+                     (and (<= start index) (< index end)
+                          (or (null count) (< removed count))
+                          (funcall predicate (if key (funcall key (car cell)) (car cell)))))
+                 (progn
+                   (unless from-end (incf removed))
+                   (if previous (setf (cdr previous) (cdr cell)) (setf head (cdr cell))))
+                 (setf previous cell)))
+    head))
+
+(defun delete-if (predicate sequence &key key (start 0) end count from-end)
+  (if (listp sequence)
+      (delete-list-if predicate sequence key start end count from-end)
+      (remove-if predicate sequence :key key :start start :end end :count count :from-end from-end)))
+
+(defun delete (item sequence &key test test-not key (start 0) end count from-end)
+  (delete-if (lambda (value) (satisfies-test item value test test-not nil)) sequence
+             :key key :start start :end end :count count :from-end from-end))
+
+(defun delete-if-not (predicate sequence &rest arguments)
+  (apply #'delete-if (complement predicate) sequence arguments))
+
 (defun remove-duplicates (seq &key test test-not key from-end (start 0) end)
   (let* ((end (or end (length seq)))
          (region (seq-list seq start end))
