@@ -70,7 +70,10 @@
       "role": "code-walking-and-macros",
       "system": "iterate",
       "source_probe": true,
-      "smoke_form": "(progn (assert (equal '(1 4 9) (iterate:iter (iterate:for x :in '(1 2 3)) (iterate:collect (* x x))))) (assert (= 55 (iterate:iter (iterate:for x :from 1 :to 10) (iterate:sum x)))) t)"
+      "smoke_form": "(progn (assert (equal '(1 4 9) (iterate:iter (iterate:for x :in '(1 2 3)) (iterate:collect (* x x))))) (assert (= 55 (iterate:iter (iterate:for x :from 1 :to 10) (iterate:sum x)))) t)",
+      "patches": [
+        "tests/library-patches/iterate-compile-time-errors.patch"
+      ]
     },
     {
       "name": "fset",

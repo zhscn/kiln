@@ -85,6 +85,15 @@ kiln 顺序执行原生 `compile-file` 和 FASL `load`，随后运行小型功�
 写入进度日志，超时后仍可找到正在处理的文件。报告保留主仓库修订、目标可执行
 文件校验和、堆配置、源码校验和和 FASL 大小。源码路径只出现在本地测量产物中。
 
+## 编译期错误的捕获
+
+检测宏展开失败的测试，应在运行期 handler 内显式调用 `eval` 或 `compile`，
+使实际编译发生在 handler 的动态范围内。将非法宏直接写在 `ignore-errors`
+的子形式中，会依赖实现何时编译 EVAL 的输入；编译型 EVAL 可以在建立这个
+handler 之前展开宏。[编译器异常约定](https://www.lispworks.com/documentation/HyperSpec/Body/03_be.htm)
+允许编译期间报告宏展开错误。Iterate 的目标测试适配保留错误检测，显式界定
+被捕获的编译操作。
+
 ## 数值验证
 
 [Lisp-Stat 的安装说明](https://lisp-stat.dev/docs/getting-started/installation/)以 SBCL 为开发和支持平台，并指出 CCL 存在未修复的数值
