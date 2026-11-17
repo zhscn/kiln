@@ -148,8 +148,9 @@
 - 完整 Lisp-Stat 的数据框和网络依赖需要线程、子进程及外部库接口。
   clavier 的依赖闭包涉及 Bordeaux-Threads；在支持并发 Lisp 线程前，不能声明
   `:thread-support` 或用空操作替代其线程 API。数值核心与综合系统分别验证。
-- Maxima 的外部命令、网络和图形功能需要相应的运行期接口。大规模矩阵操作
-  使用的长参数列表还受当前调用参数上限约束；core 与 share 套件分别验证。
+- Maxima 的 `system` 需要外部命令执行接口，网络和图形功能也需要相应的运行期接口。
+  当前调用参数上限为 1024；Maxima 通过 `apply(matrix, ...)` 构造 10000 行矩阵时
+  会超过这一上限。core 与 share 套件分别验证。
 
 与 CL 不一致的行为：
 - `print`（编译器原语）：AOT 模块里先打印对象再换行，不经过 `*standard-output*`、`print-object` 和打印变量。要等测试的期望输出统一迁移。
