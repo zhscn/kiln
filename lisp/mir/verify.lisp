@@ -74,6 +74,9 @@
       (mir-compute-function-identities function)))
 
 (defun mir-verify-closure-initialization (unit function)
+  (unless (find-if (lambda (instruction) (member (mir-instruction-kind instruction) '(23 24)))
+                   (hir-buffer-view (mir-function-instructions function)))
+    (return-from mir-verify-closure-initialization nil))
   (let* ((instructions (hir-buffer-view (mir-function-instructions function)))
          (definitions (make-array (hir-buffer-count (mir-function-values function)) :initial-element nil))
          (fields (make-array (length instructions) :initial-element 0))

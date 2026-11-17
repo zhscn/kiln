@@ -1,0 +1,15 @@
+;;;; Run after tools/env.lisp and (ql:quickload "kiln").
+(in-package #:kiln.compiler)
+(let* ((forms (front-end-forms '((identity 1))))
+       (unit (hir-to-mir (toplevel-form-ast (first forms)))))
+  (assert (null (mir-verify-closure-initialization unit (mir-at (mir-unit-functions unit) 0)))))
+(let* ((forms (front-end-forms '((let ((x (identity 1))) (lambda () x)))))
+       (unit (hir-to-mir (toplevel-form-ast (first forms))))
+       (function (mir-at (mir-unit-functions unit) 0))
+       (instructions (hir-vector (mir-function-instructions function))))
+  (assert (find 23 instructions :key #'mir-instruction-kind))
+  ;; Removing all writes must not make an allocated closure appear complete.
+  (loop for instruction across instructions when (= 24 (mir-instruction-kind instruction))
+        do (setf (mir-instruction-kind instruction) 40))
+  (assert (handler-case (progn (mir-verify-closure-initialization unit function) nil) (mir-error () t))))
+(format t "Closure initialization skips unrelated bodies and rejects unwritten captures.~%")
