@@ -592,5 +592,5 @@ including the portable fallback result for sequence operations.
 
 Uses kiln's public IEEE binary32/binary64 conversion and classification
 interfaces. Infinity constants use actual IEEE infinities, and the portable
-binary16 codecs also run on kiln's single-float representation. Rounding-mode
-control still requires an implementation-specific interface.
+binary16 codecs also run on kiln's single-float representation. Rounding and
+trap-masking macros use kiln's dynamically scoped software float controls.

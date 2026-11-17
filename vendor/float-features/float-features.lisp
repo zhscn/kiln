@@ -45,6 +45,8 @@
   (/= float float))
 
 (defmacro with-float-traps-masked (traps &body body)
+  #+kiln `(kiln.sys:with-float-traps-masked ,traps ,@body)
+  #-kiln (locally
   (let ((traps (etypecase traps
                  ((eql T) '(:underflow :overflow :inexact :invalid :divide-by-zero :denormalized-operand))
                  (list traps))))
@@ -128,9 +130,12 @@
     #-(or abcl ccl clasp clisp cmucl ecl mezzano sbcl)
     (declare (ignore traps))
     #-(or abcl ccl clasp clisp cmucl ecl mezzano sbcl)
-    `(progn ,@body)))
+    `(progn ,@body))
+  ))
 
 (defmacro with-rounding-mode (mode &body body)
+  #+kiln `(kiln.sys:with-rounding-mode ,mode ,@body)
+  #-kiln (locally
   #+(or ccl cmucl mezzano sbcl)
   (let ((previous (gensym "PREVIOUS"))
         (mode #+ccl
@@ -173,9 +178,10 @@
          #+sbcl
          (sb-int:set-floating-point-modes :rounding-mode ,previous))))
   #-(or ccl cmucl mezzano sbcl)
-  (declare (ignore traps))
+  (declare (ignore mode))
   #-(or ccl cmucl mezzano sbcl)
-  `(error "Implementation not supported."))
+  `(error "Implementation not supported.")
+  ))
 
 (declaim (inline short-float-bits
                  single-float-bits
