@@ -66,7 +66,9 @@
     (apply #'$run_testsuite
            (append (when tests (list (list '(mequal) '$tests tests)))
                    (when (kiln.sys:getenv "KILN_MAXIMA_SHARE")
-                     (list (list '(mequal) '$share_tests t)))
+                     (list (list '(mequal) '$share_tests
+                                 (if (equal (kiln.sys:getenv "KILN_MAXIMA_SHARE") "only")
+                                     '$only t))))
                    (when (kiln.sys:getenv "KILN_MAXIMA_DISPLAY_ALL")
                      (list (list '(mequal) '$display_all t))))))
   (format t "~&MAXIMA-TEST-OP-COMPLETED~%")

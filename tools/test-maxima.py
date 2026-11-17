@@ -14,6 +14,19 @@ libraries = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(libraries)
 
 
+def test_summary(text):
+    """Keep failures named even when the upstream operation returns normally."""
+    clean = re.findall(r'No unexpected errors found out of ([\d,]+) tests\.', text)
+    failed = re.findall(r'([\d,]+) tests? failed out of ([\d,]+) total tests?\.', text)
+    failures = {}
+    for filename, numbers in re.findall(
+            r'^\s+([^\n]+\.mac) problems?:\s*\n\s*\(([\d\s]+)\)', text, re.M):
+        failures[Path(filename).name] = [int(n) for n in numbers.split()]
+    return dict(tests_without_unexpected_errors=[int(n.replace(',', '')) for n in clean],
+                failed_totals=[dict(failed=int(a.replace(',', '')), total=int(b.replace(',', '')))
+                               for a, b in failed], failures=failures)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--corpus', type=Path, default=Path.home() / 'package/kiln-library-tests')
@@ -25,7 +38,10 @@ def main():
     parser.add_argument('--heap', default='FixedHeapSize:8589934592')
     parser.add_argument('--build-only', action='store_true')
     parser.add_argument('--test', help='one upstream core test file, for example rtest1')
-    parser.add_argument('--share', action='store_true')
+    suites = parser.add_mutually_exclusive_group()
+    suites.add_argument('--share', action='store_true', help='run core and share suites')
+    suites.add_argument('--share-only', action='store_true', help='run share without repeating core')
+    parser.add_argument('--run-name', help='separate logs while reusing the compiler-specific build cache')
     parser.add_argument('--verbose-tests', action='store_true', help='show each test input and result')
     args = parser.parse_args()
     args.kiln = args.kiln.resolve()
@@ -38,6 +54,12 @@ def main():
     key = hashlib.sha256(args.kiln.read_bytes()).hexdigest()
     output = args.output.resolve() / key
     output.mkdir(parents=True, exist_ok=True)
+    suite = 'share-only' if args.share_only else ('core-and-share' if args.share else 'core')
+    run_name = args.run_name or (f'{suite}-{args.test}' if args.test else suite)
+    if not re.fullmatch(r'[A-Za-z0-9_.-]+', run_name) or run_name in ('.', '..'):
+        parser.error('run name must contain only letters, digits, underscores, dots or hyphens')
+    run_output = output / 'runs' / run_name
+    run_output.mkdir(parents=True, exist_ok=True)
     target_config = output / 'autoconf-variables.lisp'
     if not target_config.exists() or target_config.read_bytes() != config.read_bytes():
         target_config.write_bytes(config.read_bytes())
@@ -45,7 +67,7 @@ def main():
                LC_ALL='C', LANG='C', LANGUAGE='C',
                KILN_MAXIMA_SOURCE=str(source) + '/', KILN_MAXIMA_BUILD=str(output) + '/',
                MAXIMA_PREFIX=str(source), MAXIMA_LAYOUT_AUTOTOOLS='false',
-               MAXIMA_USERDIR=str(output / 'user'), MAXIMA_OBJDIR=str(output / 'objects'))
+               MAXIMA_USERDIR=str(run_output / 'user'), MAXIMA_OBJDIR=str(run_output / 'objects'))
     for name in ('KILN_IMAGE', 'KILN_SAVE_IMAGE', 'KILN_MAXIMA_BUILD_ONLY',
                  'KILN_MAXIMA_TEST', 'KILN_MAXIMA_SHARE', 'KILN_MAXIMA_DISPLAY_ALL'):
         env.pop(name, None)
@@ -53,23 +75,24 @@ def main():
         env['KILN_MAXIMA_BUILD_ONLY'] = '1'
     if args.test:
         env['KILN_MAXIMA_TEST'] = args.test
-    if args.share:
-        env['KILN_MAXIMA_SHARE'] = '1'
+    if args.share or args.share_only:
+        env['KILN_MAXIMA_SHARE'] = 'only' if args.share_only else '1'
     if args.verbose_tests:
         env['KILN_MAXIMA_DISPLAY_ALL'] = '1'
-    progress = output / 'progress.log'
+    progress = run_output / 'progress.log'
     form = f'''(let ((out (open {libraries.lisp(progress)} :direction :output
                                     :if-exists :supersede)))
       (unwind-protect
            (let ((*standard-output* out) (*error-output* out))
              (load {libraries.lisp(ROOT / 'tools/test-maxima.lisp')}))
         (close out)))'''
-    log = output / 'server.log'
+    log = run_output / 'server.log'
     result = libraries.run([str(args.kiln)], log, args.timeout, env=env,
                            input=libraries.kiln_request(form), cwd=output)
     server_text = log.read_text(errors='replace')
     text = progress.read_text(errors='replace') if progress.exists() else ''
     result.update(compiler_sha256=key, revision=project['revision'],
+                  suite=suite, selected_test=args.test, heap=args.heap,
                   progress_log=str(progress),
                   patches={name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
                            for name in project.get('patches', [])},
@@ -78,15 +101,15 @@ def main():
                   build_completed='MAXIMA-BUILD-COMPLETED' in text,
                   startup_checks_completed='MAXIMA-STARTUP-CHECKS-COMPLETED' in text,
                   test_op_completed='MAXIMA-TEST-OP-COMPLETED' in text)
-    totals = re.findall(r'No unexpected errors found out of ([\d,]+) tests\.', text)
-    result['tests_without_unexpected_errors'] = [int(n.replace(',', '')) for n in totals]
+    result.update(test_summary(text))
     if result['status'] == 'completed' and (
             '(:ok 1 ' not in server_text or not result['startup_checks_completed']
             or (not args.build_only and (not result['test_op_completed']
                                         or not any(result['tests_without_unexpected_errors'])))
+            or result['failed_totals'] or result['failures']
             or 'Error summary:' in text or 'Caused an error break:' in text):
         result['status'] = 'failed'
-    (output / 'report.json').write_text(json.dumps(result, indent=2) + '\n')
+    (run_output / 'report.json').write_text(json.dumps(result, indent=2) + '\n')
     print(f"maxima: {result['status']} ({progress})")
     return int(result['status'] != 'completed')
 

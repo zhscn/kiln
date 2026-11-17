@@ -124,11 +124,13 @@ Maxima 使用自身构建系统，单独按其构建说明建立 SBCL 参照。�
 ```sh
 python3 tools/test-maxima.py --kiln build/boot/kiln1 --test rtest1
 python3 tools/test-maxima.py --kiln build/boot/kiln1
-python3 tools/test-maxima.py --kiln build/boot/kiln1 --share
+python3 tools/test-maxima.py --kiln build/boot/kiln1 --share-only
 ```
 
 `--build-only` 只构建并验证启动接口，`--test` 选择单个 core 测试文件，`--share`
-增加 share 套件。报告要求出现完整的测试摘要和操作完成标记；正常退出不能覆盖
+增加 share 套件，`--share-only` 单独运行 share。编译缓存按可执行文件校验和共享，
+各次运行的日志和报告按 `--run-name` 分开保存；报告保留失败文件及题号。
+报告要求出现完整的测试摘要和操作完成标记；正常退出不能覆盖
 测试失败、文件加载中断或没有实际执行测试的情况。进度日志在运行期间写入磁盘。
 
 
