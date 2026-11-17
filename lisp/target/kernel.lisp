@@ -1058,8 +1058,19 @@
     (cond ((string-equal name "Null") (code-char 0))
           ((string-equal name "Linefeed") (code-char 10))
           ((string-equal name "Escape") (code-char 27))
-          (t (let ((entry (rassoc name *character-names* :test #'string-equal)))
-               (and entry (code-char (car entry))))))))
+          (t
+           (or (and (> (length name) 1) (char-equal (char name 0) #\U)
+                    (let ((start (if (char= (char name 1) #\+) 2 1)) (code 0))
+                      (when (< start (length name))
+                        (block hexadecimal
+                          (loop for index from start below (length name)
+                                for digit = (digit-char-p (char name index) 16)
+                                do (unless digit (return-from hexadecimal nil))
+                                   (setf code (+ (* code 16) digit))
+                                   (when (>= code char-code-limit) (return-from hexadecimal nil)))
+                          (code-char code)))))
+               (let ((entry (rassoc name *character-names* :test #'string-equal)))
+                 (and entry (code-char (car entry)))))))))
 
 (defun character-designator-p (object)
   (or (characterp object)
