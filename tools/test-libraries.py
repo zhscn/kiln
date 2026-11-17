@@ -135,7 +135,10 @@ def kiln_system(project, projects, args, output):
     text = progress.read_text(errors='replace') if progress.exists() else ''
     failed = re.findall(r'^\s*(?:Fail|Failed):\s*(\d+)', text, re.M)
     result['reported_failed_checks'] = sum(map(int, failed)) if failed else None
-    if any(int(count) for count in failed) or 'Some tests failed.' in text:
+    unexpected = re.findall(r'^\s*(\d+) unexpected failures?:', text, re.M)
+    result['reported_unexpected_failures'] = sum(map(int, unexpected)) if unexpected else None
+    if (any(int(count) for count in failed + unexpected)
+            or 'Some tests failed.' in text):
         result['status'] = 'failed'
     result.update(load_completed='LIBRARY-ASDF-LOAD-COMPLETED' in text,
                   test_op_completed='LIBRARY-ASDF-TEST-OP-COMPLETED' in text)
