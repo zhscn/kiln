@@ -1,0 +1,13 @@
+diff --git a/tests/tstpkg.lisp b/tests/tstpkg.lisp
+index f766802..8245bd0 100644
+--- a/tests/tstpkg.lisp
++++ b/tests/tstpkg.lisp
+@@ -5,7 +5,7 @@
+   (:use #:cl
+         #:clunit
+ 	#:let-plus
+-        #:online-statistics
++        #:streaming-statistics
+         #:num-utils.arithmetic
+ 	#:num-utils.num=)
+   (:import-from #:alexandria #:iota #:curry #:length=)
