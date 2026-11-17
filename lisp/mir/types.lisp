@@ -62,32 +62,46 @@
     (dotimes (index (length cells) result)
       (when (logbitp (1+ index) bits) (setf result (mir-type-join result (svref cells index)))))))
 
+(defun mir-compute-value-use-blocks (function)
+  "Index blocks whose instructions or outgoing edges read each SSA value."
+  (let* ((users (make-array (hir-buffer-count (mir-function-values function)) :initial-element nil))
+         (seen (make-array (length users) :initial-element -1))
+         (reachable (mir-reachable-blocks function)))
+    (loop for block across (hir-buffer-view (mir-function-blocks function))
+          for block-id = (mir-block-id block)
+          when (logbitp block-id reachable) do
+      (flet ((note-value (id)
+               (unless (= (svref seen id) block-id)
+                 (setf (svref seen id) block-id)
+                 (push block-id (svref users id)))))
+        (loop for id across (hir-buffer-view (mir-block-instructions block)) do
+          (map nil #'note-value (mir-instruction-operands (mir-at (mir-function-instructions function) id))))
+        (loop for edge across (mir-terminator-edges (mir-block-terminator block)) do
+          (map nil #'note-value (mir-edge-arguments edge)))))
+    users))
+
+(defun mir-value-use-blocks (function)
+  ;; Verification must see raw edits even when no pass advanced the revision.
+  (if *mir-verification-identities*
+      (mir-compute-value-use-blocks function)
+      (mir-analysis function :value-use-blocks #'mir-compute-value-use-blocks)))
+
 (defun mir-type-use-blocks (function)
-  "Index blocks that read each SSA type or bundle fact at this revision."
+  "Add implicit comparison reads to the ordinary SSA transfer dependencies."
   (mir-analysis function :type-use-blocks
     (lambda (function)
-      (let* ((definitions (mir-value-definitions function))
-             (users (make-array (length definitions) :initial-element nil))
-             (seen (make-array (length definitions) :initial-element 0))
-             (reachable (mir-reachable-blocks function)))
+      (let ((users (map 'simple-vector #'copy-list (mir-value-use-blocks function)))
+            (definitions (mir-value-definitions function))
+            (reachable (mir-reachable-blocks function)))
         (loop for block across (hir-buffer-view (mir-function-blocks function))
-              for block-id = (mir-block-id block)
-              when (logbitp block-id reachable) do
-          (labels ((note-value (id)
-                     (unless (= (svref seen id) (1+ block-id))
-                       (setf (svref seen id) (1+ block-id))
-                       (push block-id (svref users id))))
-                   (note-vector (ids) (map nil #'note-value ids)))
-            (loop for id across (hir-buffer-view (mir-block-instructions block)) do
-              (note-vector (mir-instruction-operands (mir-at (mir-function-instructions function) id))))
-            (let ((term (mir-block-terminator block)))
-              (loop for edge across (mir-terminator-edges term) do (note-vector (mir-edge-arguments edge)))
-              ;; Edge refinement reads comparison operands independently of
-              ;; the Boolean result, which may already have a stable type.
-              (when (= (mir-terminator-kind term) 1)
-                (let ((predicate (svref definitions
-                                        (mir-primary-origin (svref (mir-terminator-operands term) 0) definitions))))
-                  (when predicate (note-vector (mir-instruction-operands predicate))))))))
+              for block-id = (mir-block-id block) for term = (mir-block-terminator block)
+              when (and (logbitp block-id reachable) (= (mir-terminator-kind term) 1)) do
+          ;; The Boolean type can stay unchanged while comparison operands widen.
+          (let ((predicate (svref definitions
+                                  (mir-primary-origin (svref (mir-terminator-operands term) 0) definitions))))
+            (when predicate
+              (loop for id across (mir-instruction-operands predicate) do
+                (pushnew block-id (svref users id))))))
         users))))
 
 (defun mir-compute-types (function &key summaries value-summaries functions inputs captures cell-types cell-points (finalize t))

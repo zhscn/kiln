@@ -1,0 +1,57 @@
+;;;; Run after tools/env.lisp and (ql:quickload "kiln").
+(in-package #:kiln.compiler)
+
+(defun mir-backward-identity-chain (count conflict)
+  (let* ((function (make-mir-function)) (blocks (mir-function-blocks function))
+         (instructions (mir-function-instructions function)))
+    (dotimes (id count) (hir-push (make-mir-block :id id) blocks))
+    (dotimes (id count)
+      (unless (zerop id)
+        (setf (mir-block-parameters (mir-at blocks id))
+              (vector (mir-add-value function :obj id -1)))))
+    (labels ((emit (block kind args data)
+               (let* ((id (hir-buffer-count instructions))
+                      (position (hir-buffer-count (mir-block-instructions block)))
+                      (result (mir-add-value function :obj (mir-block-id block) position)))
+                 (hir-push (make-mir-instruction :id id :kind kind :result result :operands args :data data) instructions)
+                 (hir-push id (mir-block-instructions block)) result)))
+      (let* ((entry (mir-at blocks 0)) (seed (emit entry 5 #() 0)))
+        (dotimes (id count)
+          (let* ((block (mir-at blocks id))
+                 (value (if (zerop id) seed (svref (mir-block-parameters block) 0))))
+            (setf (mir-block-terminator block)
+                  (if (= id 1)
+                      (if conflict
+                          (make-mir-terminator :kind 0 :edges
+                            (vector (make-mir-edge :target (1- count)
+                                      :arguments (vector (emit block 5 #() 1)))))
+                          (make-mir-terminator :kind 2 :operands (vector value)))
+                      (make-mir-terminator :kind 0 :edges
+                        (vector (make-mir-edge :target (if (zerop id) (1- count) (1- id))
+                                              :arguments (vector value))))))))))
+    function))
+
+(dolist (conflict '(nil t))
+  (let* ((function (mir-backward-identity-chain 512 conflict))
+         (original (symbol-function 'mir-at)) (reads 0) identities sets)
+    (unwind-protect
+         (progn
+           (setf (symbol-function 'mir-at)
+                 (lambda (buffer id) (incf reads) (funcall original buffer id)))
+           (setf identities (mir-function-identities function)
+                 sets (mir-contained-functions function))
+           ;; Backward block numbering must not turn propagation quadratic.
+           (assert (< reads (* 30 512))))
+      (setf (symbol-function 'mir-at) original))
+    (loop for block across (hir-buffer-view (mir-function-blocks function))
+          unless (zerop (mir-block-id block)) do
+      (let ((id (svref (mir-block-parameters block) 0)))
+        (assert (eql (if conflict :unknown 0) (svref identities id)))
+        (assert (= (if conflict 3 1) (svref sets id)))))))
+(format t "Identity and containment propagation follows dependencies across backward edges and conflicts.~%")
+
+(let* ((function (mir-backward-identity-chain 8 nil))
+       (cached (mir-value-use-blocks function)))
+  (assert (eq cached (mir-value-use-blocks function)))
+  (let ((*mir-verification-identities* (make-hash-table :test 'eq)))
+    (assert (not (eq cached (mir-value-use-blocks function))))))
