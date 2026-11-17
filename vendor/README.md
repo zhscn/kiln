@@ -415,7 +415,8 @@ Under `#+kiln`:
 - Arithmetic termination tests run after committing iteration variables.
   Sequential clauses commit and test individually; AND groups prepare and
   commit all parallel steps before these tests, preserving epilogue values
-  without exposing new values to parallel step expressions.
+  without exposing new values to parallel step expressions. Subsequent arithmetic
+  steps use the current loop variable, including assignments made by the body.
 
 
 - No complexes or pathnames among the initial values of accumulation

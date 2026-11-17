@@ -235,13 +235,17 @@
   (nconc (when (and (var-spec (var clause)) initialp)
            `((setq ,(var-spec (var clause)) ,(var-spec (next-var clause)))))
          (unless initialp
-           `((incf ,(var-spec (next-var clause)) ,(by-ref clause))))))
+           `((setq ,(var-spec (next-var clause))
+                   (+ ,(if (var-spec (var clause)) (var-spec (var clause)) (var-spec (next-var clause)))
+                      ,(by-ref clause)))))))
 
 (defmethod step-intro-forms ((clause for-as-arithmetic-down) initialp)
   (nconc (when (and (var-spec (var clause)) initialp)
            `((setq ,(var-spec (var clause)) ,(var-spec (next-var clause)))))
          (unless initialp
-           `((decf ,(var-spec (next-var clause)) ,(by-ref clause))))))
+           `((setq ,(var-spec (next-var clause))
+                   (- ,(if (var-spec (var clause)) (var-spec (var clause)) (var-spec (next-var clause)))
+                      ,(by-ref clause)))))))
 
 (defmethod step-test-forms ((clause for-as-arithmetic-up) initialp)
   (declare (ignore initialp))
