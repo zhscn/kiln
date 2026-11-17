@@ -138,7 +138,8 @@
       "role": "symbolic-algebra-and-bignums",
       "patches": [
         "tests/library-patches/maxima-kiln-defsystem.patch",
-        "tests/library-patches/maxima-kiln-runtime.patch"
+        "tests/library-patches/maxima-kiln-runtime.patch",
+        "tests/library-patches/maxima-kiln-unicode.patch"
       ]
     },
     {

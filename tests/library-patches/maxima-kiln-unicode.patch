@@ -1,0 +1,11 @@
+--- a/src/globals.lisp
++++ b/src/globals.lisp
+@@ -16,7 +16,7 @@
+ ;; Park it here since this file is required by most, although not all, of the other Lisp files.
+ ;; See also function DISPLAY2D-UNICODE-ENABLED in src/init-cl.lisp.
+ 
+-#+(or unicode sb-unicode openmcl-unicode-strings abcl (and allegro ics))
++#+(or kiln unicode sb-unicode openmcl-unicode-strings abcl (and allegro ics))
+ (pushnew :lisp-unicode-capable *features*)
+ 
+ ;; Determine which of the CL floating point types are distinct types in this
