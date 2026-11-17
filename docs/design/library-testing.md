@@ -115,6 +115,23 @@ Maxima 使用自身构建系统，单独按其构建说明建立 SBCL 参照。�
 失败，不能只根据进程退出码判断通过。Maxima 的任意精度计算补充机器浮点测试，
 但不能代替底层浮点原语的边界测试。
 
+`tools/test-maxima.py` 在 kiln 上调用 MK-DEFSYSTEM，检查 `compile-file` 的失败返回值，
+然后初始化运行期、验证平台接口并运行上游 core 套件。先配置 corpus 中的 Maxima
+源码树，生成 `src/autoconf-variables.lisp`；也可用 `--configuration` 指定同一源码
+版本的配置。编译产物按 kiln 可执行文件校验和隔离，增量编译遵守 MK 的依赖顺序。
+启动不加载用户初始化文件，用户目录和运行期编译目录放在测试输出中。
+
+```sh
+python3 tools/test-maxima.py --kiln build/boot/kiln1 --test rtest1
+python3 tools/test-maxima.py --kiln build/boot/kiln1
+python3 tools/test-maxima.py --kiln build/boot/kiln1 --share
+```
+
+`--build-only` 只构建并验证启动接口，`--test` 选择单个 core 测试文件，`--share`
+增加 share 套件。报告要求出现完整的测试摘要和操作完成标记；正常退出不能覆盖
+测试失败、文件加载中断或没有实际执行测试的情况。进度日志在运行期间写入磁盘。
+
+
 ## 控制迭代成本
 
 分别记录进程启动、源码编译、FASL 加载和测试运行。kiln 的目标 FASL 保存 LIR，
