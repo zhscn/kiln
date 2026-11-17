@@ -17,6 +17,7 @@
   (asdf:initialize-source-registry
    `(:source-registry
      (:directory ,(truename root))
+     (:tree ,(merge-pathnames "vendor/trivial-features/" (truename root)))
      (:tree ,(merge-pathnames "vendor/Khazern/" (truename root)))
      (:tree ,(merge-pathnames "vendor/Common-macros/" (truename root)))
      (:tree ,(merge-pathnames "vendor/Eclector/" (truename root)))

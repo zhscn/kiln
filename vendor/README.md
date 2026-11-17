@@ -13,6 +13,8 @@ shows exactly what kiln changed. Changes are not sent upstream for now.
 
 | Module | Upstream | Commit | License |
 |---|---|---|---|
+| trivial-features | https://github.com/trivial-features/trivial-features | 828246a1c1efdcad94c1ba2f2a210bb9cb4cde3e | MIT |
+| trivial-gray-streams | https://github.com/trivial-gray-streams/trivial-gray-streams | 257d73ec36958beb7d49eba5567d5409827197b7 | MIT |
 | ASDF/UIOP | https://gitlab.common-lisp.net/asdf/asdf | 29d098f9121c804af0d525f0f64318bc069591db (3.3.7.4) | MIT (`ASDF/header.lisp`) |
 | Clostrophilia | https://github.com/robert-strandh/Clostrophilia | 9d0e86c734bdba3e6c009b8cab222c2d0e81f29b (2026-08-29) | BSD (`Clostrophilia/LICENSE-BSD`) |
 | Salmagundi | https://github.com/s-expressionists/Salmagundi | f03296d46a1b189a3b723eb2dcdfc7c5af38163a (2025-09-25) | BSD (`Salmagundi/LICENSE-BSD`) |
@@ -568,3 +570,8 @@ Under `#+kiln`:
 - Recognizes kiln and its Unicode character support.
 - Uses public process environment, working-directory, command-line and exit
   interfaces. User arguments follow the executable name directly.
+
+## trivial-features patches
+
+Recognizes kiln and checks the normalized features provided by its current
+Linux x86-64 runtime.
