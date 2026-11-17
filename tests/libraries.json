@@ -80,7 +80,10 @@
       "url": "https://github.com/slburson/fset.git",
       "revision": "1af9d2084d94457a2be39d8a6017f760a622c37c",
       "role": "persistent-collections",
-      "system": "fset"
+      "system": "fset",
+      "patches": [
+        "tests/library-patches/fset-kiln-single-thread.patch"
+      ]
     },
     {
       "name": "local-time",
