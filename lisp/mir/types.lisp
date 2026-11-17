@@ -217,17 +217,24 @@
         (when (eq (svref types id) :unseen) (setf (svref types id) t))))
     (values types packets)))
 
+(defun mir-local-type-facts (function)
+  "Share the two results of one local type and multiple-value fixed point."
+  (mir-analysis function :type-facts
+    (lambda (function)
+      (multiple-value-bind (types packets) (mir-compute-types function)
+        (cons types packets)))))
+
 (defun mir-infer-types (function &optional unit)
   "Return SSA types, using local call summaries when UNIT is supplied."
   (if unit
       (svref (mir-call-analysis-types (mir-infer-calls unit)) (mir-function-id function))
-      (mir-analysis function :types #'mir-compute-types)))
+      (car (mir-local-type-facts function))))
 
 (defun mir-infer-value-facts (function &optional unit)
   "Return bundle facts indexed by SSA value ID."
   (if unit
       (svref (mir-call-analysis-packets (mir-infer-calls unit)) (mir-function-id function))
-      (mir-analysis function :values (lambda (function) (nth-value 1 (mir-compute-types function))))))
+      (cdr (mir-local-type-facts function))))
 
 (defun mir-check-proven-p (instruction types)
   (and (= (mir-instruction-kind instruction) 11)
