@@ -9,4 +9,11 @@
 (let ((result (/ #c(1d0 2d0) #c(3f0 4f0))))
   (assert (typep result '(complex double-float)))
   (assert (< (abs (- result #c(0.44d0 0.08d0))) 1d-16)))
+(assert (handler-case
+            (progn (/ #c(1d300 1d300) #c(1d-300 1d-300)) nil)
+          (floating-point-overflow () t)))
+(let ((result (kiln.sys:with-float-traps-masked (:overflow)
+                (/ #c(1d300 1d300) #c(1d-300 1d-300)))))
+  (assert (kiln.sys:float-infinity-p (realpart result)))
+  (assert (zerop (imagpart result))))
 (print :complex-division-scale)

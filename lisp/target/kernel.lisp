@@ -1132,8 +1132,10 @@
                    (r-br (rational br)) (r-bi (rational bi))
                    (denominator (+ (* r-br r-br) (* r-bi r-bi))))
               (return-from complex-/
-                (complex (float (/ (+ (* r-ar r-br) (* r-ai r-bi)) denominator) prototype)
-                         (float (/ (- (* r-ai r-br) (* r-ar r-bi)) denominator) prototype)))))
+                (check-floating-overflow
+                 '/ (complex (float (/ (+ (* r-ar r-br) (* r-ai r-bi)) denominator) prototype)
+                             (float (/ (- (* r-ai r-br) (* r-ar r-bi)) denominator) prototype))
+                 a b))))
           (setf ar (float ar prototype) ai (float ai prototype)
                 br (float br prototype) bi (float bi prototype))))
       (complex-division-ratio ar ai br bi))))
