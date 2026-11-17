@@ -1,6 +1,6 @@
 {
   "description": "Shared-base compile-file, load and GC-stress workload",
-  "measured_on": "2026-11-16",
+  "measured_on": "2026-11-17",
   "cpu": "AMD Ryzen 9 7940HS (8 cores, 16 threads)",
   "sbcl": "2.6.10-1.fc45",
   "cranelift": "0.137.1",
@@ -34,47 +34,47 @@
     "tests/m6/co-mir-value-calls.lisp": "7bcd1ec748511f2eb80cd954fde1fa053566a29a1c7d0c58a4e8336f1c60b938",
     "tests/m6/co-mir-dead-blocks.lisp": "1c6fd9830f8cbfb08b96d1d711c3329945d747bf1dbae526501397e437e881a6"
   },
-  "base_key": "123f19063224409ce66e9546b82212d27661351c50411467adbbe30cc0deee04",
+  "base_key": "acaae65ba1c88b584dc0bf6467c11ce9e0c779f205bb1ed9808a5b9ad7f31a47",
   "metrics": {
-    "seconds": 10.112703246006276,
-    "disk_bytes": 359150525,
-    "disk_allocated_bytes": 359235584,
-    "base_bytes": 358026325
+    "seconds": 6.58774989199992,
+    "disk_bytes": 341193530,
+    "disk_allocated_bytes": 341278720,
+    "base_bytes": 340116949
   },
   "cold_metrics": {
-    "build_seconds": 89.33671057500032,
-    "snapshot_seconds": 5.98284352599876
+    "build_seconds": 68.18179604100078,
+    "snapshot_seconds": 2.8382096869991074
   },
   "test_medians": {
     "tests/m6/clos-unboxed-double-locals.lisp": {
-      "compile_seconds": 0.7983396779964096,
-      "load_seconds": 0.7846128670062171,
-      "stress_seconds": 0.6361203960041166
+      "compile_seconds": 0.46342239799923846,
+      "load_seconds": 0.467017640999984,
+      "stress_seconds": 0.4118538290003926
     },
     "tests/m6/co-mir-array-calls.lisp": {
-      "compile_seconds": 0.6246896189986728,
-      "load_seconds": 0.5630722530040657,
-      "stress_seconds": 0.48865260500315344
+      "compile_seconds": 0.37463650400059123,
+      "load_seconds": 0.36153358699993987,
+      "stress_seconds": 0.3449742419998074
     },
     "tests/m6/co-mir-dead-blocks.lisp": {
-      "compile_seconds": 0.38990111400198657,
-      "load_seconds": 0.4810952459956752,
-      "stress_seconds": 0.41245136400539195
+      "compile_seconds": 0.26562230300078227,
+      "load_seconds": 0.3148005929997453,
+      "stress_seconds": 0.29860177699993073
     },
     "tests/m6/co-mir-debug.lisp": {
-      "compile_seconds": 0.4729679550000583,
-      "load_seconds": 0.5921041080000577,
-      "stress_seconds": 0.5865133369952673
+      "compile_seconds": 0.3166771290016186,
+      "load_seconds": 0.41667270100151654,
+      "stress_seconds": 0.40506654499949946
     },
     "tests/m6/co-mir-value-calls.lisp": {
-      "compile_seconds": 0.5336585780023597,
-      "load_seconds": 0.7567567989972304,
-      "stress_seconds": 0.6218900749954628
+      "compile_seconds": 0.34453783800017845,
+      "load_seconds": 0.46484137999868835,
+      "stress_seconds": 0.42737868600124784
     },
     "tests/m6/co-mir-vector-checks.lisp": {
-      "compile_seconds": 0.4455754849986988,
-      "load_seconds": 0.4389799930067966,
-      "stress_seconds": 0.3788735659982194
+      "compile_seconds": 0.2918322959994839,
+      "load_seconds": 0.29384445200048503,
+      "stress_seconds": 0.2830588960005116
     }
   }
 }
