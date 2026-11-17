@@ -1,0 +1,41 @@
+diff --git a/lisp-utils/defsystem.lisp b/lisp-utils/defsystem.lisp
+index 95ef10c..f83de5d 100644
+--- a/lisp-utils/defsystem.lisp
++++ b/lisp-utils/defsystem.lisp
+@@ -9,6 +9,13 @@
+ 
+ (in-package "CL-USER")
+ 
++#+kiln
++(eval-when (:compile-toplevel :load-toplevel :execute)
++  ;; MK:DEFSYSTEM's portable REQUIRE branch uses the legacy LISP package.
++  ;; Keep that spelling in a compatibility package owned by this loader.
++  (unless (find-package "LISP")
++    (defpackage "LISP" (:use "COMMON-LISP") (:export "REQUIRE"))))
++
+ ;;; ECL started with its bytecodes compiler would make upstream derive
+ ;;; the bytecode fasl type. Load the C compiler first.
+ #+ecl
+diff --git a/src/maxima.system b/src/maxima.system
+index f71ae41..8abfb0f 100644
+--- a/src/maxima.system
++++ b/src/maxima.system
+@@ -103,6 +103,9 @@
+       *load-truename*))
+ 
+ (defun maxima-binary-pathname ()
++  #+kiln
++  (make-pathname :name "binary-kiln"
++                 :directory (pathname-directory (maxima-build-directory)))
+   #+clisp
+   "binary-clisp"
+   #+cmu
+@@ -129,7 +132,7 @@
+ 		 :directory (pathname-directory (maxima-build-directory)))
+   #+ecl
+   "binary-ecl"
+-  #-(or clisp cmu scl sbcl gcl allegro openmcl abcl lispworks ecl)
++  #-(or kiln clisp cmu scl sbcl gcl allegro openmcl abcl lispworks ecl)
+   "binary-unknownlisp")
+ 
+ ;; Files are compiled in the order they are listed here. Once a file

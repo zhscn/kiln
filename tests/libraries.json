@@ -128,7 +128,10 @@
       "name": "maxima",
       "url": "https://git.code.sf.net/p/maxima/code",
       "revision": "7ac0ea369fbcc6623e730254f874f68d3cb4dc90",
-      "role": "symbolic-algebra-and-bignums"
+      "role": "symbolic-algebra-and-bignums",
+      "patches": [
+        "tests/library-patches/maxima-kiln-defsystem.patch"
+      ]
     },
     {
       "name": "awesome-cl",
