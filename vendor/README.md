@@ -412,6 +412,12 @@ Under `#+kiln`:
 
 ## Khazern patches
 
+- Arithmetic termination tests run after committing iteration variables.
+  Sequential clauses commit and test individually; AND groups prepare and
+  commit all parallel steps before these tests, preserving epilogue values
+  without exposing new values to parallel step expressions.
+
+
 - No complexes or pathnames among the initial values of accumulation
   variables, and no complex numeric types (kiln has neither yet):
   `#-kiln`.

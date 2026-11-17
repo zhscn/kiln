@@ -92,6 +92,13 @@ non-NIL for the step forms completed before the body forms.")
     (declare (ignore clause initialp))
     nil))
 
+(defgeneric step-test-forms (clause initialp)
+  (:documentation "Returns termination tests that require committed iteration variables.
+Sequential groups run these after each clause; parallel groups run them after all assignments.")
+  (:method (clause initialp)
+    (declare (ignore clause initialp))
+    nil))
+
 (defgeneric body-forms (clause)
   (:documentation "This generic function returns forms for CLAUSE that should go in body, after
 the introduction step forms.")

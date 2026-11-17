@@ -186,7 +186,8 @@ deduced based on the type."
 (defmethod step-outro-forms ((clause sequential-superclause) initialp)
   (mapcan (lambda (clause)
             (nconc (step-intro-forms clause initialp)
-                   (step-outro-forms clause initialp)))
+                   (step-outro-forms clause initialp)
+                   (step-test-forms clause initialp)))
           (subclauses clause)))
 
 (defmethod wrap-forms ((clause sequential-superclause) forms)
@@ -206,6 +207,10 @@ deduced based on the type."
 (defmethod step-outro-forms ((clause parallel-superclause) initialp)
   (mapcan (lambda (clause)
             (step-outro-forms clause initialp))
+          (subclauses clause)))
+
+(defmethod step-test-forms ((clause parallel-superclause) initialp)
+  (mapcan (lambda (clause) (step-test-forms clause initialp))
           (subclauses clause)))
 
 (defmethod wrap-forms ((clause parallel-superclause) forms)
