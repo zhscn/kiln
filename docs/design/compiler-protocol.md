@@ -85,10 +85,10 @@ Rust 的 `Vec`、`String`、`Result` 和引用不进入 ABI。工作区使用 pa
 记录及 literal ID，不查询 Lisp 环境。安装时将 literal 写入已登记的静态 root 槽。
 调用帧保持 literal 向量存活，当前单 mutator 合同禁止编译期间执行 Lisp GC 或回调。
 
-Lisp 负责语义依赖及缓存版本，Rust 校验目标和载荷、编译代码并登记元数据，
-绑定 literal 后返回 init。代码安装不等于 Lisp 定义发布：定义初始化由调用方执行
+Lisp 负责语义依赖及缓存版本，Rust 校验目标和载荷，准备尚未登记的代码与数据，
+验证并绑定全部 literal，取得 init 后才统一登记代码、roots 和导出符号。代码安装不等于 Lisp 定义发布：定义初始化由调用方执行
 init 完成。当前同步入口没有取消或显式释放已安装代码的协议；成功代码随 image
-存活。编译期请求的临时 Rust 记录在调用结束时释放，不承诺并发 mutator 或并发发布。
+存活。编译期请求和未发布元数据由 Rust 所有，失败时释放；共享代码 arena 已保留的容量不保证回收。未登记产物不会留下 roots 或导出符号，不承诺并发 mutator 或并发发布。
 
 SBCL 只提交可移植常量图，不传递宿主 tagged word。stage0 写二进制请求并调用 kiln-cg 子进程；kiln image 使用进程内入口，literal ID 保持 `eq` 身份。两条路径共享程序契约和后端验证、降级；宿主与 image 分别实现编码适配，直接程序入口不经过字节解码。
 

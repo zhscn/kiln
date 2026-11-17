@@ -135,6 +135,14 @@ impl cranelift_jit::JITMemoryProvider for SharedArena {
 pub struct Loaded {
     pub module: JITModule,
     pub out: Output,
+    _registered: (),
+}
+
+/// Owns code and native metadata that have not entered runtime registries.
+struct Prepared {
+    module: JITModule,
+    out: Output,
+    memory: Memory,
 }
 
 /// Compiles `kir` into `memory` (all code and data in one region, so that
@@ -142,6 +150,10 @@ pub struct Loaded {
 /// roots and exports with the runtime. Imports are the runtime's functions
 /// and what loaded modules export.
 pub fn load(kir: &kir::Module, opts: &Options, memory: Memory) -> Result<Loaded, String> {
+    Ok(prepare(kir, opts, memory)?.publish())
+}
+
+fn prepare(kir: &kir::Module, opts: &Options, memory: Memory) -> Result<Prepared, String> {
     let mut builder = JITBuilder::with_isa(jit_isa()?, default_libcall_names());
     match memory {
         Memory::Own(reserve) => builder.memory_provider(Box::new(
@@ -176,70 +188,77 @@ pub fn load(kir: &kir::Module, opts: &Options, memory: Memory) -> Result<Loaded,
     let mut module = JITModule::new(builder);
     let out = codegen::compile(&mut module, kir, opts)?;
     module.finalize_definitions().map_err(|e| e.to_string())?;
-    let callsites: Vec<CallSiteRecord> = out
-        .callsites
-        .iter()
-        .map(|cs| CallSiteRecord {
-            func: module.get_finalized_function(cs.func) as usize,
-            ret_off: cs.ret_off,
-            handler_off: cs.handler_off,
-            frame_offset: cs.frame_offset,
-            _pad: 0,
-        })
-        .collect();
-    // The runtime keeps the offsets: the records point into them.
-    let maps: Vec<kiln_rt::gc::StackMapRecord> = out
-        .stackmaps
-        .iter()
-        .map(|sm| kiln_rt::gc::StackMapRecord {
-            func: module.get_finalized_function(sm.func) as usize,
-            ret_off: sm.ret_off,
-            count: sm.offsets.len() as u32,
-            offsets: sm.offsets.as_ptr(),
-        })
-        .collect();
-    let roots: Vec<usize> = out
-        .roots
-        .iter()
-        .map(|(id, off)| module.get_finalized_data(*id).0 as usize + *off as usize)
-        .collect();
-    // The records point into `out`'s site bytes, which `Loaded` keeps;
-    // code::register copies them.
-    let debug: Vec<kiln_rt::debug::FuncDebugRecord> = out
-        .debug
-        .iter()
-        .map(|d| {
-            let data = |id, addend: i64| (module.get_finalized_data(id).0 as i64 + addend) as u64;
-            let (info, flags) = match d.info {
-                None => (0, 0),
-                Some(DebugInfo::Word(n)) => (n as u64, 0),
-                Some(DebugInfo::Data(id, addend)) => (data(id, addend), 0),
-                Some(DebugInfo::Indirect(id, off)) => {
-                    (data(id, off), kiln_rt::debug::FLAG_INDIRECT)
+    Ok(Prepared { module, out, memory })
+}
+
+impl Prepared {
+    fn publish(self) -> Loaded {
+        let Self { module, out, memory } = self;
+        let callsites: Vec<CallSiteRecord> = out
+            .callsites
+            .iter()
+            .map(|cs| CallSiteRecord {
+                func: module.get_finalized_function(cs.func) as usize,
+                ret_off: cs.ret_off,
+                handler_off: cs.handler_off,
+                frame_offset: cs.frame_offset,
+                _pad: 0,
+            })
+            .collect();
+        // The runtime keeps the offsets: the records point into them.
+        let maps: Vec<kiln_rt::gc::StackMapRecord> = out
+            .stackmaps
+            .iter()
+            .map(|sm| kiln_rt::gc::StackMapRecord {
+                func: module.get_finalized_function(sm.func) as usize,
+                ret_off: sm.ret_off,
+                count: sm.offsets.len() as u32,
+                offsets: sm.offsets.as_ptr(),
+            })
+            .collect();
+        let roots: Vec<usize> = out
+            .roots
+            .iter()
+            .map(|(id, off)| module.get_finalized_data(*id).0 as usize + *off as usize)
+            .collect();
+        // The records point into `out`'s site bytes, which `Loaded` keeps;
+        // code::register copies them.
+        let debug: Vec<kiln_rt::debug::FuncDebugRecord> = out
+            .debug
+            .iter()
+            .map(|d| {
+                let data = |id, addend: i64| (module.get_finalized_data(id).0 as i64 + addend) as u64;
+                let (info, flags) = match d.info {
+                    None => (0, 0),
+                    Some(DebugInfo::Word(n)) => (n as u64, 0),
+                    Some(DebugInfo::Data(id, addend)) => (data(id, addend), 0),
+                    Some(DebugInfo::Indirect(id, off)) => {
+                        (data(id, off), kiln_rt::debug::FLAG_INDIRECT)
+                    }
+                };
+                kiln_rt::debug::FuncDebugRecord {
+                    start: module.get_finalized_function(d.func) as usize,
+                    len: d.len as u64,
+                    info,
+                    flags,
+                    sites: d.sites.as_ptr(),
+                    nsites: d.sites.len() as u64,
                 }
+            })
+            .collect();
+        match memory {
+            Memory::Own(_) => kiln_rt::register_code(&callsites, &maps, &roots, &debug),
+            Memory::Shared => kiln_rt::code::register(&callsites, &maps, &roots, &debug),
+        }
+        for (name, r) in &out.exports {
+            let addr = match r {
+                Ref::Func(id) => module.get_finalized_function(*id) as usize,
+                Ref::Data(id) => module.get_finalized_data(*id).0 as usize,
             };
-            kiln_rt::debug::FuncDebugRecord {
-                start: module.get_finalized_function(d.func) as usize,
-                len: d.len as u64,
-                info,
-                flags,
-                sites: d.sites.as_ptr(),
-                nsites: d.sites.len() as u64,
-            }
-        })
-        .collect();
-    match memory {
-        Memory::Own(_) => kiln_rt::register_code(&callsites, &maps, &roots, &debug),
-        Memory::Shared => kiln_rt::code::register(&callsites, &maps, &roots, &debug),
+            kiln_rt::register_export(name, addr);
+        }
+        Loaded { module, out, _registered: () }
     }
-    for (name, r) in &out.exports {
-        let addr = match r {
-            Ref::Func(id) => module.get_finalized_function(*id) as usize,
-            Ref::Data(id) => module.get_finalized_data(*id).0 as usize,
-        };
-        kiln_rt::register_export(name, addr);
-    }
-    Ok(Loaded { module, out })
 }
 
 impl Loaded {
@@ -423,7 +442,8 @@ unsafe fn install_module(
             return Err("literal patch has no static root".into());
         }
     }
-    let loaded = load(kir, &Options { dump_clif: false }, Memory::Shared)?;
+    let prepared = prepare(kir, &Options { dump_clif: false }, Memory::Shared)?;
+    let loaded = &prepared;
     let n = header_length(unsafe { header(literals) });
     if n > 0 {
         let id = loaded
@@ -446,7 +466,8 @@ unsafe fn install_module(
         let elements = (untag(literals) + 8) as *const u64;
         unsafe { *(words as *mut u64).add(*word as usize) = *elements.add(*literal) };
     }
-    let inits = loaded.inits();
+    let init = *loaded.out.inits.first().ok_or("no init function")?;
+    let init = loaded.module.get_finalized_data(init).0 as u64 + kiln_rt::object::TAG_GENERAL;
     if std::env::var("KILN_TIME").is_ok() {
         let source = input_size.map_or_else(
             || "structured program".to_string(),
@@ -457,12 +478,11 @@ unsafe fn install_module(
     if std::env::var("KILN_PERF_MAP").is_ok() {
         append_perf_map(&loaded.module);
     }
-    // The memory stays: the code is part of the image now.
+    // No fallible validation remains after registration. Successful code
+    // and its literal roots now live as long as the image.
+    let loaded = prepared.publish();
     std::mem::forget(loaded);
-    inits
-        .first()
-        .copied()
-        .ok_or_else(|| "no init function".into())
+    Ok(init)
 }
 
 /// Lines of perf's map (/tmp/perf-PID.map) for the functions of `module`:
@@ -498,5 +518,37 @@ fn append_perf_map(module: &JITModule) {
         .open(&path)
     {
         let _ = f.write_all(perf_map_lines(module).as_bytes());
+    }
+}
+
+#[cfg(test)]
+mod publication_tests {
+    use super::*;
+
+    fn source() -> kir::Module {
+        kir::parse_module(&crate::sexp::parse_one(
+            r#"(module "publication" (init "publication_root") (data "publication_root" (words 0)) (root "publication_root" 0))"#,
+        ).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn prepared_roots_are_registered_only_when_published() {
+        let pending = prepare(&source(), &Options { dump_clif: false }, Memory::Own(1 << 20)).unwrap();
+        let id = pending.out.data["publication_root"];
+        let address = pending.module.get_finalized_data(id).0 as usize;
+        assert!(!kiln_rt::gc::static_roots().contains(&address));
+        let loaded = pending.publish();
+        assert!(kiln_rt::gc::static_roots().contains(&address));
+        // Published roots and code share the image lifetime.
+        std::mem::forget(loaded);
+    }
+
+    #[test]
+    fn dropping_prepared_code_leaves_no_registered_roots() {
+        let pending = prepare(&source(), &Options { dump_clif: false }, Memory::Own(1 << 20)).unwrap();
+        let id = pending.out.data["publication_root"];
+        let address = pending.module.get_finalized_data(id).0 as usize;
+        drop(pending);
+        assert!(!kiln_rt::gc::static_roots().contains(&address));
     }
 }
