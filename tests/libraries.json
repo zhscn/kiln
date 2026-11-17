@@ -325,6 +325,72 @@
       "url": "https://github.com/mmontone/duologue.git",
       "revision": "ea1ada244a81da65f85b548823c9a6d7c9c145e1",
       "role": "corpus-dependency"
+    },
+    {
+      "name": "clavier",
+      "url": "https://github.com/mmontone/clavier.git",
+      "revision": "72d4a5fd085f2d611fc0408b3b6a64fdfdf6ed20",
+      "role": "corpus-dependency"
+    },
+    {
+      "name": "chronicity",
+      "url": "https://github.com/chaitanyagupta/chronicity.git",
+      "revision": "5841d1548cad0ca6917d8e68933124a5af68f5ec",
+      "role": "corpus-dependency"
+    },
+    {
+      "name": "cl-ansi-text",
+      "url": "https://github.com/pnathan/cl-ansi-text.git",
+      "revision": "9825f96392daef4d7c0feaabbe71352edf379e27",
+      "role": "corpus-dependency"
+    },
+    {
+      "name": "cl-fad",
+      "url": "https://github.com/edicl/cl-fad.git",
+      "revision": "714257f064cbe326855701be1aa5ef1199f3c676",
+      "role": "corpus-dependency"
+    },
+    {
+      "name": "cl-str",
+      "url": "https://github.com/vindarel/cl-str.git",
+      "revision": "69ef8b4111398ecf530b1303d8644976d1517c53",
+      "role": "corpus-dependency"
+    },
+    {
+      "name": "cl-interpol",
+      "url": "https://github.com/edicl/cl-interpol.git",
+      "revision": "d4f49d45257be1512db238a5c740e69a5964e93b",
+      "role": "corpus-dependency"
+    },
+    {
+      "name": "cl-colors2",
+      "url": "https://codeberg.org/cage/cl-colors2.git",
+      "revision": "0aedbea4c2531eb7a802f333bf6403c9b51e50b2",
+      "role": "corpus-dependency"
+    },
+    {
+      "name": "cl-unicode",
+      "url": "https://github.com/edicl/cl-unicode.git",
+      "revision": "07e7ff58913fb31f78f500e1be84ee2270bb6e30",
+      "role": "corpus-dependency"
+    },
+    {
+      "name": "cl-change-case",
+      "url": "https://github.com/rudolfochrist/cl-change-case.git",
+      "revision": "3a8cce03592119fe24da87271ccf9b7473814200",
+      "role": "corpus-dependency"
+    },
+    {
+      "name": "parse-number",
+      "url": "https://github.com/sharplispers/parse-number.git",
+      "revision": "cb9e48758a51ddf3296b56c41ce0006617b00916",
+      "role": "corpus-dependency"
+    },
+    {
+      "name": "bordeaux-threads",
+      "url": "https://github.com/sionescu/bordeaux-threads.git",
+      "revision": "a44d59ee2452b360369750a675d673abb2175e0f",
+      "role": "corpus-dependency"
     }
   ]
 }
