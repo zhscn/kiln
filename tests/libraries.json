@@ -139,7 +139,8 @@
       "patches": [
         "tests/library-patches/maxima-kiln-defsystem.patch",
         "tests/library-patches/maxima-kiln-runtime.patch",
-        "tests/library-patches/maxima-kiln-unicode.patch"
+        "tests/library-patches/maxima-kiln-unicode.patch",
+        "tests/library-patches/maxima-kiln-default-encoding.patch"
       ]
     },
     {

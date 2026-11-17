@@ -1,0 +1,13 @@
+--- a/share/stringproc/stringproc.lisp
++++ b/share/stringproc/stringproc.lisp
+@@ -353,8 +353,8 @@
+      sb-impl::*default-external-format*
+      #+cmucl
+      stream:*default-external-format*
+-     #+lispworks :default
+-     #-(or ecl ccl gcl sbcl cmucl lispworks)
++     #+(or kiln lispworks) :default
++     #-(or kiln ecl ccl gcl sbcl cmucl lispworks)
+      (stream-external-format *standard-output*))))
+ 
+ 
