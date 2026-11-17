@@ -180,3 +180,12 @@ symbol macro 与编译器宏。`:input` 保存输入，完成时的 `:output` �
 `tools/test.sh --cross` 覆盖交叉 AOT 的静态字面量和模块初始化。
 解释执行、image 编译和交叉 AOT 的通过情况不能互相替代。任一测试组失败或
 进程异常时，ANSI 驱动完成其他组后返回非零状态。
+
+## ASDF 与 UIOP
+
+ASDF/UIOP 随源码分发，按上游脚本生成 bundle。`tools/load-asdf.lisp` 可作为
+`require` 的显式加载路径；初始化时使用 HIR 求值，库的 `compile-file` 与 FASL
+加载仍使用原生编译。ASDF 将 image 内置的 Closer-MOP 兼容接口登记为预加载系统，
+避免从文件系统覆盖这组运行期绑定。第三方库的版本、适配与测试流程见
+[library-testing.md](library-testing.md)。UIOP 的环境查询和退出接口已接入；
+环境修改、改变工作目录、子进程和动态库接口仍需平台实现。
