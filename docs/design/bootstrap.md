@@ -140,3 +140,17 @@ kiln/
 ├── deps.lock          依赖的固定版本
 └── kiln.asd           SBCL 端的 ASDF 系统
 ```
+
+ANSI 结果可用 `ANSI_REPORT_NAMES=1` 输出失败名称和每个跳过项的禁用 note，
+再按所选组逐项比较接受基线：
+
+```sh
+ANSI_REPORT_NAMES=1 tools/ansi-test.sh types-and-classes structures eval-and-compile
+python3 tools/check-ansi-baseline.py build/ansi-test \
+  types-and-classes structures eval-and-compile --report build/ansi-comparison.json
+```
+
+比较器要求每个指定组都有完整结果，核对失败名、跳过名、跳过原因和求值模式；
+新增失败、原有失败消失或跳过集合变化均报告差异并返回非零。命名结果还须与
+计数一致，不能以失败总数未变代替逐项检查。测试套件版本仍按
+`tests/ansi-baseline.json` 固定，变更套件时重新与 SBCL 对照。

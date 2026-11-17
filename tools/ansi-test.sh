@@ -10,6 +10,7 @@
 #   ANSI_EVAL       "native" (default) or "hir" (shared HIR evaluator)
 #   KILN_BUILD_PIPELINE  "mir" for runtime compilation (default: image setting)
 #   ANSI_OUTPUT_DIR output directory (default: build/ansi-test)
+#   ANSI_REPORT_NAMES include failure names and disabled-note skip reasons
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -123,7 +124,19 @@ if [[ ! -f "$IMAGE" || "$KILN_COMPILER" -nt "$IMAGE" || "$0" -nt "$IMAGE" ]]; th
                    (failed (length regression-test::*failed-tests*))
                    (total (length (cdr regression-test::*entries*))))
               (format t "~&ANSI-RESULT ~D ~D ~D~%"
-                      passed failed (- total passed failed)))))
+                      passed failed (- total passed failed)))
+            (when (ansi-getenv "ANSI_REPORT_NAMES")
+              (format t "~&ANSI-DETAILS ~A~%" (or eval-mode "native"))
+              (dolist (name regression-test::*failed-tests*)
+                (format t "~&ANSI-FAILURE-NAME ~A~%" name))
+              (dolist (entry (cdr regression-test::*entries*))
+                (when (regression-test::has-disabled-note entry)
+                  (dolist (note (regression-test::entry-notes entry))
+                    (let ((object (if (regression-test::note-p note) note
+                                      (gethash note regression-test::*notes*))))
+                      (when (and object (regression-test::note-disabled object))
+                        (format t "~&ANSI-SKIP-NAME ~A ~A~%"
+                                (regression-test::name entry) (regression-test::note-name object))))))))))
         (let ((*default-pathname-defaults* *ansi-test-dir*)
               (*package* (find-package :cl-test)))
           (kiln.sys:serve)))))
