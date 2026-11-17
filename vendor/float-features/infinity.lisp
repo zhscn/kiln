@@ -1,6 +1,8 @@
+;;; kiln port: infinities use IEEE encodings rather than finite limits.
 (in-package #:org.shirakumo.float-features)
 
 (defconstant SHORT-FLOAT-POSITIVE-INFINITY
+  #+kiln (kiln.sys:bits-single-float #x7F800000)
   #+ccl 1S++0
   #+clasp EXT:SHORT-FLOAT-POSITIVE-INFINITY
   #+cmucl EXTENSIONS:SHORT-FLOAT-POSITIVE-INFINITY
@@ -10,10 +12,11 @@
   #+sbcl SB-EXT:SHORT-FLOAT-POSITIVE-INFINITY
   #+lispworks 1S++0
   #+allegro (coerce excl:*infinity-single* 'short-float)
-  #-(or ccl clasp cmucl ecl mezzano mkcl sbcl lispworks allegro)
+  #-(or ccl clasp cmucl ecl mezzano mkcl sbcl lispworks allegro kiln)
   MOST-POSITIVE-SHORT-FLOAT)
 
 (defconstant SHORT-FLOAT-NEGATIVE-INFINITY
+  #+kiln (kiln.sys:bits-single-float #xFF800000)
   #+ccl -1S++0
   #+clasp EXT:SHORT-FLOAT-NEGATIVE-INFINITY
   #+cmucl EXTENSIONS:SHORT-FLOAT-NEGATIVE-INFINITY
@@ -23,10 +26,11 @@
   #+sbcl SB-EXT:SHORT-FLOAT-NEGATIVE-INFINITY
   #+lispworks -1S++0
   #+allegro (coerce excl:*negative-infinity-single* 'short-float)
-  #-(or ccl clasp cmucl ecl mezzano mkcl sbcl lispworks allegro)
+  #-(or ccl clasp cmucl ecl mezzano mkcl sbcl lispworks allegro kiln)
   MOST-NEGATIVE-SHORT-FLOAT)
 
 (defconstant SINGLE-FLOAT-POSITIVE-INFINITY
+  #+kiln (kiln.sys:bits-single-float #x7F800000)
   #+abcl EXTENSIONS:SINGLE-FLOAT-POSITIVE-INFINITY
   #+allegro excl:*infinity-single*
   #+ccl 1F++0
@@ -37,10 +41,11 @@
   #+mkcl MKCL:SINGLE-FLOAT-POSITIVE-INFINITY
   #+sbcl SB-EXT:SINGLE-FLOAT-POSITIVE-INFINITY
   #+lispworks 1F++0
-  #-(or abcl allegro ccl clasp cmucl ecl mezzano mkcl sbcl lispworks)
+  #-(or abcl allegro ccl clasp cmucl ecl mezzano mkcl sbcl lispworks kiln)
   MOST-POSITIVE-SINGLE-FLOAT)
 
 (defconstant SINGLE-FLOAT-NEGATIVE-INFINITY
+  #+kiln (kiln.sys:bits-single-float #xFF800000)
   #+abcl EXTENSIONS:SINGLE-FLOAT-NEGATIVE-INFINITY
   #+allegro excl:*negative-infinity-single*
   #+ccl -1F++0
@@ -51,10 +56,11 @@
   #+mkcl MKCL:SINGLE-FLOAT-NEGATIVE-INFINITY
   #+sbcl SB-EXT:SINGLE-FLOAT-NEGATIVE-INFINITY
   #+lispworks -1F++0
-  #-(or abcl allegro ccl clasp cmucl ecl mezzano mkcl sbcl lispworks)
+  #-(or abcl allegro ccl clasp cmucl ecl mezzano mkcl sbcl lispworks kiln)
   MOST-NEGATIVE-SINGLE-FLOAT)
 
 (defconstant DOUBLE-FLOAT-POSITIVE-INFINITY
+  #+kiln (kiln.sys:bits-double-float #x7FF0000000000000)
   #+abcl EXTENSIONS:DOUBLE-FLOAT-POSITIVE-INFINITY
   #+allegro excl:*infinity-double*
   #+ccl 1D++0
@@ -65,10 +71,11 @@
   #+mkcl MKCL:DOUBLE-FLOAT-POSITIVE-INFINITY
   #+sbcl SB-EXT:DOUBLE-FLOAT-POSITIVE-INFINITY
   #+lispworks 1D++0
-  #-(or abcl allegro ccl clasp cmucl ecl mezzano mkcl sbcl lispworks)
+  #-(or abcl allegro ccl clasp cmucl ecl mezzano mkcl sbcl lispworks kiln)
   MOST-POSITIVE-DOUBLE-FLOAT)
 
 (defconstant DOUBLE-FLOAT-NEGATIVE-INFINITY
+  #+kiln (kiln.sys:bits-double-float #xFFF0000000000000)
   #+abcl EXTENSIONS:DOUBLE-FLOAT-NEGATIVE-INFINITY
   #+allegro excl:*negative-infinity-double*
   #+ccl -1D++0
@@ -79,10 +86,11 @@
   #+mkcl MKCL:DOUBLE-FLOAT-NEGATIVE-INFINITY
   #+sbcl SB-EXT:DOUBLE-FLOAT-NEGATIVE-INFINITY
   #+lispworks -1D++0
-  #-(or abcl allegro ccl clasp cmucl ecl mezzano mkcl sbcl lispworks)
+  #-(or abcl allegro ccl clasp cmucl ecl mezzano mkcl sbcl lispworks kiln)
   MOST-NEGATIVE-DOUBLE-FLOAT)
 
 (defconstant LONG-FLOAT-POSITIVE-INFINITY
+  #+kiln (kiln.sys:bits-double-float #x7FF0000000000000)
   #+ccl 1L++0
   #+clasp EXT:LONG-FLOAT-POSITIVE-INFINITY
   #+cmucl EXTENSIONS:LONG-FLOAT-POSITIVE-INFINITY
@@ -91,10 +99,11 @@
   #+mkcl EXT:LONG-FLOAT-POSITIVE-INFINITY
   #+sbcl SB-EXT:LONG-FLOAT-POSITIVE-INFINITY
   #+lispworks 1L++0
-  #-(or ccl clasp cmucl ecl mezzano mkcl sbcl lispworks)
+  #-(or ccl clasp cmucl ecl mezzano mkcl sbcl lispworks kiln)
   MOST-POSITIVE-LONG-FLOAT)
 
 (defconstant LONG-FLOAT-NEGATIVE-INFINITY
+  #+kiln (kiln.sys:bits-double-float #xFFF0000000000000)
   #+ccl -1L++0
   #+clasp EXT:LONG-FLOAT-NEGATIVE-INFINITY
   #+cmucl EXTENSIONS:LONG-FLOAT-NEGATIVE-INFINITY
@@ -103,5 +112,5 @@
   #+mkcl EXT:LONG-FLOAT-NEGATIVE-INFINITY
   #+sbcl SB-EXT:LONG-FLOAT-NEGATIVE-INFINITY
   #+lispworks -1L++0
-  #-(or ccl clasp cmucl ecl mezzano mkcl sbcl lispworks)
+  #-(or ccl clasp cmucl ecl mezzano mkcl sbcl lispworks kiln)
   MOST-NEGATIVE-LONG-FLOAT)

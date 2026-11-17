@@ -64,7 +64,7 @@ def registry(projects, corpus, target=False):
         if name in ('asdf', 'awesome-cl'):
             continue
         path = (ROOT / 'vendor' / name if target and name in
-                ('trivial-features', 'trivial-gray-streams') else corpus / name)
+                ('trivial-features', 'trivial-gray-streams', 'float-features') else corpus / name)
         entries.append(f'(:directory {lisp(str(path) + "/")})')
     directories = ' '.join(entries)
     return f'(asdf:initialize-source-registry \'(:source-registry {directories} :inherit-configuration))'

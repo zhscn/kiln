@@ -1,3 +1,4 @@
+;;; kiln port: public IEEE bit interfaces and special-value predicates.
 (in-package #:org.shirakumo.float-features)
 
 (eval-when (:compile-toplevel :load-toplevel)
@@ -8,6 +9,7 @@
                  float-nan-p))
 
 (defun float-infinity-p (float)
+  #+kiln (kiln.sys:float-infinity-p float)
   #+abcl (system:float-infinity-p float)
   #+allegro (excl:infinityp float)
   #+ccl (ccl::infinity-p float)
@@ -16,7 +18,7 @@
   #+ecl (ext:float-infinity-p float)
   #+mezzano (mezzano.extensions:float-infinity-p float)
   #+sbcl (sb-ext:float-infinity-p float)
-  #-(or abcl allegro ccl clasp cmucl ecl mezzano sbcl)
+  #-(or abcl allegro ccl clasp cmucl ecl mezzano sbcl kiln)
   (etypecase float
     (short-float (or (= float SHORT-FLOAT-NEGATIVE-INFINITY)
                      (= float SHORT-FLOAT-POSITIVE-INFINITY)))
@@ -28,6 +30,7 @@
                     (= float LONG-FLOAT-POSITIVE-INFINITY)))))
 
 (defun float-nan-p (float)
+  #+kiln (kiln.sys:float-nan-p float)
   #+abcl (system:float-nan-p float)
   #+allegro (and (excl:nanp float) t)
   #+ccl (and (ccl::nan-or-infinity-p float)
@@ -38,7 +41,7 @@
   #+mezzano (mezzano.extensions:float-nan-p float)
   #+sbcl (sb-ext:float-nan-p float)
   #+lispworks (sys::nan-p float)
-  #-(or abcl allegro ccl clasp cmucl ecl mezzano sbcl lispworks)
+  #-(or abcl allegro ccl clasp cmucl ecl mezzano sbcl lispworks kiln)
   (/= float float))
 
 (defmacro with-float-traps-masked (traps &body body)
@@ -185,6 +188,7 @@
 
 (declaim (ftype (function (T) (unsigned-byte 32)) single-float-bits))
 (defun single-float-bits (float)
+  #+kiln (kiln.sys:single-float-bits float)
   #+abcl
   (ldb (byte 32 0) (system:single-float-bits float))
   #+allegro
@@ -208,7 +212,7 @@
   (mezzano.extensions:single-float-to-ieee-binary32 float)
   #+sbcl
   (ldb (byte 32 0) (sb-kernel:single-float-bits float))
-  #-(or abcl allegro ccl clasp cmucl ecl-float-bit-translations lispworks mezzano sbcl)
+  #-(or abcl allegro ccl clasp cmucl ecl-float-bit-translations lispworks mezzano sbcl kiln)
   (progn float (error "Implementation not supported.")))
 
 (declaim (ftype (function (T) (unsigned-byte 16)) short-float-bits))
@@ -216,7 +220,7 @@
   (declare (ignorable float))
   #+mezzano
   (mezzano.extensions:short-float-to-ieee-binary16 float)
-  #+(or ecl sbcl cmucl allegro ccl
+  #+(or kiln ecl sbcl cmucl allegro ccl
         (and 64-bit lispworks))
   (let* ((bits (single-float-bits float))
          (sign (ldb (byte 1 31) bits))
@@ -252,11 +256,12 @@
   ;; clisp short-float is 1+8+16
   ;; 32bit lispworks 5+ is 1+8+??, lw4 only has double
   ;; not sure about others?
-  #- (or mezzano ecl sbcl cmucl allegro ccl (and 64-bit lispworks))
+  #- (or kiln mezzano ecl sbcl cmucl allegro ccl (and 64-bit lispworks))
   (progn float (error "Implementation not supported.")))
 
 (declaim (ftype (function (T) (unsigned-byte 64)) double-float-bits))
 (defun double-float-bits (float)
+  #+kiln (kiln.sys:double-float-bits float)
   #+abcl
   (logior (system::double-float-low-bits float)
           (ash (system::double-float-high-bits float) 32))
@@ -290,7 +295,7 @@
   (ldb (byte 64 0)
        (logior (sb-kernel:double-float-low-bits float)
                (ash (sb-kernel:double-float-high-bits float) 32)))
-  #-(or abcl allegro ccl clasp cmucl ecl-float-bit-translations lispworks mezzano sbcl)
+  #-(or abcl allegro ccl clasp cmucl ecl-float-bit-translations lispworks mezzano sbcl kiln)
   (progn float (error "Implementation not supported.")))
 
 (declaim (ftype (function (T) (unsigned-byte 128)) long-float-bits))
@@ -303,6 +308,7 @@
 
 (declaim (ftype (function (T) single-float) bits-single-float))
 (defun bits-single-float (bits)
+  #+kiln (kiln.sys:bits-single-float bits)
   #+abcl
   (system:make-single-float bits)
   #+allegro
@@ -328,7 +334,7 @@
   #+sbcl
   (sb-kernel:make-single-float
    (sb-c::mask-signed-field 32 (the (unsigned-byte 32) bits)))
-  #-(or abcl allegro ccl clasp cmucl ecl-float-bit-translations lispworks mezzano sbcl)
+  #-(or abcl allegro ccl clasp cmucl ecl-float-bit-translations lispworks mezzano sbcl kiln)
   (progn bits (error "Implementation not supported.")))
   
 (declaim (ftype (function (T) short-float) bits-short-float))
@@ -336,7 +342,7 @@
   (declare (ignorable bits))
   #+mezzano
   (mezzano.extensions:ieee-binary16-to-short-float bits)
-  #+(or ecl sbcl cmucl allegro ccl (and 64-bit lispworks))
+  #+(or kiln ecl sbcl cmucl allegro ccl (and 64-bit lispworks))
   (let ((sign (ldb (byte 1 15) bits))
         (exp (ldb (byte 5 10) bits))
         (sig (ldb (byte 10 0) bits)))
@@ -373,11 +379,12 @@
             (logior (ash sign 31)
                     (ash (+ exp #.(+ 127 -15)) 23)
                     (ash sig #.(- 23 10))))))))
-  #-(or allegro ccl cmucl ecl mezzano sbcl (and 64-bit lispworks))
+  #-(or kiln allegro ccl cmucl ecl mezzano sbcl (and 64-bit lispworks))
   (progn bits (error "Implementation not supported.")))
 
 (declaim (ftype (function (T) double-float) bits-double-float))
 (defun bits-double-float (bits)
+  #+kiln (kiln.sys:bits-double-float bits)
   #+abcl
   (system:make-double-float bits)
   #+allegro
@@ -410,7 +417,7 @@
   (sb-kernel:make-double-float
    (sb-c::mask-signed-field 32 (ldb (byte 32 32) (the (unsigned-byte 64) bits)))
    (ldb (byte 32 0) bits))
-  #-(or abcl allegro ccl clasp cmucl ecl-float-bit-translations lispworks mezzano sbcl)
+  #-(or abcl allegro ccl clasp cmucl ecl-float-bit-translations lispworks mezzano sbcl kiln)
   (progn bits (error "Implementation not supported.")))
 
 (declaim (ftype (function (T) long-float) bits-long-float))

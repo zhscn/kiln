@@ -1,7 +1,7 @@
 # Vendored modules
 
 Copies of upstream modules that kiln patches. ASDF/UIOP provides optional target-side
-build-system support; the other modules come from the SICL ecosystem. Most are target code,
+build-system support; the other modules provide runtime libraries and compiler components. Most are target code,
 compiled into kiln's modules; Invistra and its printer dependencies also provide
 the host-side FORMAT directive compiler. Common-macros is a host library (kiln's
 front end, in the host and in the compiler module) and Khazern and
@@ -15,6 +15,7 @@ shows exactly what kiln changed. Changes are not sent upstream for now.
 |---|---|---|---|
 | trivial-features | https://github.com/trivial-features/trivial-features | 828246a1c1efdcad94c1ba2f2a210bb9cb4cde3e | MIT |
 | trivial-gray-streams | https://github.com/trivial-gray-streams/trivial-gray-streams | 257d73ec36958beb7d49eba5567d5409827197b7 | MIT |
+| float-features | https://github.com/Shinmera/float-features | cd5dab00d2f4a562d65f46b3fc1cecec308e2443 | zlib |
 | ASDF/UIOP | https://gitlab.common-lisp.net/asdf/asdf | 29d098f9121c804af0d525f0f64318bc069591db (3.3.7.4) | MIT (`ASDF/header.lisp`) |
 | Clostrophilia | https://github.com/robert-strandh/Clostrophilia | 9d0e86c734bdba3e6c009b8cab222c2d0e81f29b (2026-08-29) | BSD (`Clostrophilia/LICENSE-BSD`) |
 | Salmagundi | https://github.com/s-expressionists/Salmagundi | f03296d46a1b189a3b723eb2dcdfc7c5af38163a (2025-09-25) | BSD (`Salmagundi/LICENSE-BSD`) |
@@ -586,3 +587,10 @@ Linux x86-64 runtime.
 Imports kiln's Cyclosis Gray stream classes and character/binary protocols.
 Sequence and file-position methods bridge the portable protocol to Cyclosis,
 including the portable fallback result for sequence operations.
+
+## float-features patches
+
+Uses kiln's public IEEE binary32/binary64 conversion and classification
+interfaces. Infinity constants use actual IEEE infinities, and the portable
+binary16 codecs also run on kiln's single-float representation. Rounding-mode
+control still requires an implementation-specific interface.
