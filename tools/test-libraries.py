@@ -133,18 +133,23 @@ def kiln_system(project, projects, args, output):
     result = kiln_run(args, f'(progn {asdf_bootstrap(args)} (eval (read-from-string {lisp(code)})))',
                       output / 'kiln.log')
     text = progress.read_text(errors='replace') if progress.exists() else ''
-    failed = re.findall(r'^\s*(?:Fail|Failed):\s*(\d+)', text, re.M)
-    details = re.findall(r'^Failure (\d+):', text, re.M)
-    result['reported_failed_checks'] = (sum(map(int, failed)) + len(details)
-                                        if failed or details else None)
-    unexpected = re.findall(r'^\s*(\d+) unexpected failures?:', text, re.M)
-    result['reported_unexpected_failures'] = sum(map(int, unexpected)) if unexpected else None
-    if (details or any(int(count) for count in failed + unexpected)
-            or 'Some tests failed.' in text):
-        result['status'] = 'failed'
+    apply_test_summary(result, text)
     result.update(load_completed='LIBRARY-ASDF-LOAD-COMPLETED' in text,
                   test_op_completed='LIBRARY-ASDF-TEST-OP-COMPLETED' in text)
     return result
+
+
+def apply_test_summary(result, text):
+    failed = re.findall(r'^\s*(?:Fail|Failed):\s*(\d+)', text, re.M)
+    details = re.findall(r'^Failure (\d+):', text, re.M)
+    unexpected = re.findall(r'^\s*(\d+) unexpected failures?:', text, re.M)
+    result['reported_failed_checks'] = (sum(map(int, failed)) + len(details)
+                                        if failed or details else None)
+    result['reported_unexpected_failures'] = sum(map(int, unexpected)) if unexpected else None
+    result['reported_failure_names'] = re.findall(r'^Failure \d+:.*? when running (.+)$', text, re.M)
+    if (details or any(int(count) for count in failed + unexpected)
+            or 'Some tests failed.' in text):
+        result['status'] = 'failed'
 
 
 def kiln_run(args, form, output):
@@ -271,6 +276,7 @@ def main():
                     result = run(['sbcl', '--non-interactive', '--load', str(script)], output / 'sbcl.log', args.timeout)
                     result['upstream_test_op_requested'] = args.tests
                     log = (output / 'sbcl.log').read_text(errors='replace')
+                    apply_test_summary(result, log)
                     if result['status'] == 'completed' and 'LIBRARY-COMPLETE' not in log:
                         result['status'] = 'failed'
                     load_seconds = re.search(r'^LIBRARY-LOAD-SECONDS (\S+)', log, re.M)
