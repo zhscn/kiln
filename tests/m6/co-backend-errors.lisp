@@ -19,7 +19,7 @@
         (:function "entry" (:block e (:return ())))) #() (kiln.lir:target-fingerprint))
     :compile-program)))
 (let* ((program '(:lir-module "unicode" (:init "entry")
-                   (:function "entry" (:block e (:unknown-λ)))))
+                   (:function "entry" (:block e (:|unknown-λ|)))))
        (condition (backend-test-error
                     (kiln.sys:%primop :compile-program program #() (kiln.lir:target-fingerprint)) :compile-program)))
   (format t "~S~%" (not (null (search "λ" (kiln.lir:backend-error-message condition))))))
