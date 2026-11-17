@@ -1,0 +1,5 @@
+(assert (eql (code-char 0) (name-char "Null")))
+(assert (eql (name-char "Nul") (name-char "Null")))
+(assert (eql (name-char "NULL") (read-from-string "#\\Null")))
+(assert (eql (name-char "nul") (read-from-string "#\\Nul")))
+(print :null-character)

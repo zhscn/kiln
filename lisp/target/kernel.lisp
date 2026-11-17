@@ -1055,7 +1055,8 @@
 
 (defun name-char (name)
   (let ((name (string name)))
-    (cond ((string-equal name "Linefeed") (code-char 10))
+    (cond ((string-equal name "Null") (code-char 0))
+          ((string-equal name "Linefeed") (code-char 10))
           ((string-equal name "Escape") (code-char 27))
           (t (let ((entry (rassoc name *character-names* :test #'string-equal)))
                (and entry (code-char (car entry))))))))
