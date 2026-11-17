@@ -252,6 +252,31 @@ fn is_zero(x: &Num) -> bool {
 /// Quotient (an integer) and remainder of a division with the rounding
 /// of OP (TRUNCATE, FLOOR, CEILING or ROUND).
 fn divide(op: u64, x: &Num, y: &Num) -> (BigInt, Num) {
+    if let (Num::Int(a), Num::Int(b)) = (x, y) {
+        // Reducing a/b first computes a GCD that integer division never needs.
+        let (mut q, mut r) = a.div_rem(b);
+        if !r.is_zero() {
+            let same_sign = r.is_negative() == b.is_negative();
+            let adjustment = match op {
+                OP_FLOOR if !same_sign => -1,
+                OP_CEILING if same_sign => 1,
+                OP_ROUND => {
+                    let twice_remainder = r.abs() << 1;
+                    if twice_remainder > b.abs()
+                        || (twice_remainder == b.abs() && q.is_odd())
+                    {
+                        if same_sign { 1 } else { -1 }
+                    } else {
+                        0
+                    }
+                }
+                _ => 0,
+            };
+            q += adjustment;
+            r -= b * adjustment;
+        }
+        return (q, Num::Int(r));
+    }
     let format = format_of(x).max(format_of(y));
     let q = if format == Format::Rational {
         let r = to_rational(x) / to_rational(y);
@@ -546,6 +571,33 @@ mod tests {
             compare(&Num::Double(f64::NAN), &Num::Double(f64::NAN)),
             None
         );
+    }
+
+    #[test]
+    fn integer_division_obeys_rounding_and_reconstruction() {
+        for a in -37i64..=37 {
+            for b in (-13i64..=13).filter(|b| *b != 0) {
+                for op in [OP_TRUNCATE, OP_FLOOR, OP_CEILING, OP_ROUND] {
+                    let (q, r) = divide(op, &Num::Int(a.into()), &Num::Int(b.into()));
+                    let Num::Int(r) = r else { panic!("integer remainder expected") };
+                    assert_eq!(&q * b + &r, BigInt::from(a));
+                    let ratio = a as f64 / b as f64;
+                    let reference = match op {
+                        OP_TRUNCATE => ratio.trunc(),
+                        OP_FLOOR => ratio.floor(),
+                        OP_CEILING => ratio.ceil(),
+                        _ => ratio.round_ties_even(),
+                    };
+                    assert_eq!(q, BigInt::from(reference as i64));
+                }
+            }
+        }
+        let divisor = (BigInt::one() << 8192) + 17;
+        let quotient = (BigInt::one() << 4096) + 3;
+        let numerator = &divisor * &quotient + 7;
+        let (q, r) = divide(OP_TRUNCATE, &Num::Int(numerator), &Num::Int(divisor));
+        assert_eq!(q, quotient);
+        assert!(matches!(r, Num::Int(r) if r == BigInt::from(7)));
     }
 
     #[test]
