@@ -21,7 +21,10 @@
       "url": "https://github.com/sionescu/fiveam.git",
       "revision": "e43d6c8e7da5a80d5c33e8ca018fb1619c5b0293",
       "role": "conditions-and-tests",
-      "system": "fiveam"
+      "system": "fiveam",
+      "patches": [
+        "tests/library-patches/fiveam-readable-error-report.patch"
+      ]
     },
     {
       "name": "closer-mop",

@@ -1,0 +1,14 @@
+diff --git a/src/run.lisp b/src/run.lisp
+index c882d0d..293208d 100644
+--- a/src/run.lisp
++++ b/src/run.lisp
+@@ -170,7 +170,8 @@ run."))
+ (defmethod run-test-lambda ((test test-case))
+   (with-run-state (result-list)
+     (bind-run-state ((current-test test))
+-      (labels ((abort-test (e &optional (reason (format nil "Unexpected Error: ~S~%~A." e e)))
++      (labels ((abort-test (e &optional (reason (let ((*print-readably* nil))
++                                                   (format nil "Unexpected Error: ~S~%~A." e e))))
+                  (add-result 'unexpected-test-failure
+                              :test-expr nil
+                              :test-case test
