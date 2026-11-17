@@ -1,0 +1,10 @@
+;;;; Run after tools/env.lisp and (ql:quickload "kiln").
+(in-package #:cl-user)
+(let* ((program '(:lir-module "api" (:init "body")
+                  (:function "body" (:block entry (:return ())))))
+       (bytes (kiln.lir:encode-program program)))
+  (assert (plusp (length bytes)))
+  (assert (= (aref bytes 16) 2))
+  (assert (handler-case (progn (kiln.lir:encode-program '(:module "legacy")) nil) (error () t)))
+  (assert (= (kiln.lir:target-fingerprint) kiln.kir::+backend-target-fingerprint+)))
+(format t "The public LIR encoder fixes the production payload and rejects compatibility input.~%")

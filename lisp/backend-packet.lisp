@@ -138,19 +138,3 @@
     (unless bytes (error "Cannot encode backend program."))
     (return-from encode-backend-packet bytes))
   #-kiln (portable-backend-packet program language))
-
-(defun module-packet (module &optional literals)
-  "Returns the independent program packet and its complete literal bindings."
-  (multiple-value-bind (program bindings) (normalize-lir-module module literals)
-    (values (encode-backend-packet program +packet-lir-payload+) bindings)))
-
-(defun write-module-packet (module stream)
-  "Writes the program's canonical binary encoding to STREAM."
-  (multiple-value-bind (program literals) (normalize-lir-module module)
-    (unless (zerop (length literals))
-      (error "File module requires external literal bindings."))
-    #+kiln
-    (when (kiln.sys::%write-backend-packet program stream)
-      (return-from write-module-packet module))
-    (portable-backend-packet program +packet-lir-payload+ stream))
-  module)

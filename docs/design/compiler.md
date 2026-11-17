@@ -61,7 +61,7 @@ KIR 变成 kiln-cg 内部的数据结构；`kiln-cg dump FILE.lir` 将输入记�
 `compile-module` 构造带词法准备结果的 HIR，再经 `hir-to-mir`、MIR pass 和发射器
 产生语义操作。现有私有构建器沿用 `kiln.kir` 的 `kmodule` 和块操作；
 `normalize-lir-module` 将其转成独立 LIR。构建器和诊断 KIR 都不是新的跨语言契约。
-文件通过 `write-module-packet` 输出 LIR，运行期通过结构化程序或 packet 入口提交。
+生产调用方通过 `kiln.lir` API 输出 LIR，运行期提交结构化程序或 packet。
 
 修改按职责落在相应层：
 

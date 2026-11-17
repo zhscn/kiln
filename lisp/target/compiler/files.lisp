@@ -32,7 +32,7 @@
       (let ((name (kiln.kir::kir-name "file-" (incf *native-compile-count*))))
         (multiple-value-bind (module literals)
             (compile-module (list form) name :session session :image t)
-          (multiple-value-bind (packet bindings) (kiln.kir::module-packet module literals)
+          (multiple-value-bind (packet bindings) (kiln.lir:module-packet module literals)
             (kiln.kernel::fasl-add-module packet bindings)))))
     (list kiln.kernel::*fasl-count* (nreverse kiln.kernel::*fasl-records*))))
 

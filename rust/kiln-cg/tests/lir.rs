@@ -24,14 +24,18 @@ fn independent_payload_is_typed_and_does_not_accept_kir_escape_hatches() {
     let text = source("(block entry (set a (fixnum 12)) (return (a)))");
     let ast = sexp::parse_one(&text).unwrap();
     let bytes = packet::encode(&ast, packet::schema::LIR_PAYLOAD).unwrap();
-    let from_packet = packet::load(&bytes).unwrap();
-    let from_owned_snapshot = packet::compile_program(&ast).unwrap();
+    let from_packet = packet::load_lir(&bytes).unwrap();
+    let from_owned_snapshot = packet::compile_lir_program(&ast).unwrap();
     assert_eq!(
         format!("{from_packet:?}"),
         format!("{from_owned_snapshot:?}")
     );
     assert!(packet::load(&packet::encode(&ast, packet::schema::KIR_PAYLOAD).unwrap()).is_err());
     let kir = sexp::parse_one(r#"(module "raw" (init "entry"))"#).unwrap();
+    assert!(packet::compile_lir_program(&kir).is_err());
+    assert!(packet::load_lir(&packet::encode(&kir, packet::schema::KIR_PAYLOAD).unwrap()).is_err());
+    // The production boundary rejects the tag even if its contents are valid LIR.
+    assert!(packet::load_lir(&packet::encode(&ast, packet::schema::KIR_PAYLOAD).unwrap()).is_err());
     assert!(packet::load(&packet::encode(&kir, packet::schema::LIR_PAYLOAD).unwrap()).is_err());
     for body in [
         "(block entry (set a (load x 0)) (return (a)))",

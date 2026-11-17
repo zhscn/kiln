@@ -337,7 +337,7 @@ unsafe fn compile_packet(packet: u64, literals: u64) -> Result<u64, String> {
             u8::try_from(fixnum_value(word)).map_err(|_| "request contains a non-octet".to_string())
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let kir = crate::packet::load(&bytes)?;
+    let kir = crate::packet::load_lir(&bytes)?;
     unsafe { install_module(&kir, literals, Some(bytes.len()), t) }
 }
 
@@ -372,7 +372,7 @@ pub unsafe extern "C" fn kiln_rt_compile_program(
             return Err("literals must be a simple vector".into());
         }
         let program = unsafe { crate::packet_heap::snapshot_program(program) }?;
-        let kir = crate::packet::compile_program(&program)?;
+        let kir = crate::packet::compile_lir_program(&program)?;
         unsafe { install_module(&kir, literals, None, t) }
     })();
     match result {

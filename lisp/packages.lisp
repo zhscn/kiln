@@ -11,7 +11,7 @@
 
 (defpackage #:kiln.kir
   (:use #:cl #:kiln.abi)
-  (:documentation "Building and printing KIR, the interchange format with kiln-cg.")
+  (:documentation "Private semantic builder and diagnostic KIR printer. Production uses kiln.lir.")
   (:export #:kmodule #:make-kmodule #:kmodule-name
            #:*module* #:*func*
            #:module-import-func #:module-import-data #:module-data
@@ -19,6 +19,11 @@
            #:with-function #:new-var #:new-block #:new-slot
            #:emit #:start-block #:current-block-terminated-p
            #:print-module))
+
+(defpackage #:kiln.lir
+  (:use #:cl)
+  (:documentation "Production LIR requests: normalization, encoding and target identity.")
+  (:export #:module-program #:module-packet #:encode-program #:write-module #:target-fingerprint))
 
 (defpackage #:kiln.sys
   (:use)
@@ -62,7 +67,7 @@
   (:use #:cl #:kiln.abi #:kiln.kir)
   (:local-nicknames (#:cmd #:common-macro-definitions)
                     (#:clo #:clostrum))
-  (:documentation "The compiler: front end, HIR, lowering to KIR.")
+  (:documentation "Common Lisp front end, HIR evaluation, MIR analysis and LIR generation.")
   (:export #:front-end #:make-session #:compile-module #:kiln-compile-error
            #:use-host-macros))
 

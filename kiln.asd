@@ -28,6 +28,7 @@
                (:file "lir-closures")
                (:file "lir-stack")
                (:file "lir-regions")
+               (:file "lir-api")
                (:file "hir/data")
                (:file "hir/consumer")
                (:file "lower")

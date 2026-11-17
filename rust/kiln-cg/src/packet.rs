@@ -371,6 +371,21 @@ pub fn encode(program: &Sexp, language: u32) -> Result<Vec<u8>, String> {
     builder.finish(root, language)
 }
 
+/// Production packet entry: compatibility KIR cannot bypass LIR verification.
+pub fn load_lir(bytes: &[u8]) -> Result<crate::kir::Module, String> {
+    let request = decode(bytes)?;
+    if request.language != LIR_PAYLOAD {
+        return Err("production compilation requires the LIR payload".into());
+    }
+    compile_lir_program(&request.program)
+}
+
+/// Production owned-program entry. The parser rejects compatibility modules.
+pub fn compile_lir_program(program: &Sexp) -> Result<crate::kir::Module, String> {
+    crate::lir::program::compile(program)
+}
+
+/// Diagnostic/file dispatcher, including explicitly tagged compatibility KIR.
 pub fn load(bytes: &[u8]) -> Result<crate::kir::Module, String> {
     let request = decode(bytes)?;
     match request.language {
@@ -380,8 +395,7 @@ pub fn load(bytes: &[u8]) -> Result<crate::kir::Module, String> {
     }
 }
 
-/// Both the owned image snapshot and diagnostic text use this dispatcher;
-/// serialized requests additionally check their explicit language tag.
+/// Diagnostic text dispatcher. Image compilation uses the strict LIR entry.
 pub fn compile_program(program: &Sexp) -> Result<crate::kir::Module, String> {
     if matches!(program, Sexp::List(xs) if matches!(xs.first(), Some(Sexp::Sym(name)) if name == "lir-module"))
     {

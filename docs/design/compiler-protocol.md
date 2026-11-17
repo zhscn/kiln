@@ -2,6 +2,15 @@
 
 生产编译使用 payload 2，保存独立的类型化 LIR；后端使用独立解析器、CFG 验证器和 Rust 降级器，操作契约见 [lir.md](lir.md)。payload 1 保留兼容 KIR 输入。本文描述现有 LIR 的编码、调用和资源生命周期；它是编译器专用单向协议，不依赖通用 Rust 宿主模块、对象借用或 Lisp 回调网关。
 
+## 生产入口
+
+Lisp 调用方使用 `kiln.lir:module-program`、`module-packet`、`encode-program`、
+`write-module` 和 `target-fingerprint`。这些入口固定生成独立 LIR，不暴露语言标签
+选择。`kiln.kir` 的构建器、通用编码器及诊断打印属于内部实现。
+
+Rust 的运行期入口使用 `packet::load_lir` 或 `compile_lir_program`，拒绝兼容 KIR。
+命令行的通用文件与文本分派仍支持显式的兼容输入；它们不供 image 的生产编译使用。
+
 ## 已实现的封套
 
 `protocol/lir-schema.def` 定义记录种类和版本，`tools/gen-lir-schema.py` 生成 Lisp 与 Rust 常量，`--check` 检查副本。`kiln-cg abi-description` 从运行时错误码生成 `lisp/abi.lisp`；`kiln-cg target-description` 生成 `lisp/backend-target.lisp`；目标描述提供参数和返回值的数量上限，以及独立 LIR 纯运算和写入操作的类型签名，供 Lisp 编译器使用。数量检查直接采用语义上限，不由 Lisp 组合寄存器数与传递区容量。目标指纹涵盖共享布局与语义展开器、runtime 对象、数值、动态退出、错误接口、context 定义及 runtime 导出接口、参数寄存器数、共享 schema、LIR 类型和操作定义及其解码规则，以及目标架构、系统，采用严格的构建匹配，不承诺布局相同时跨构建兼容。修改这些定义后重新生成目标描述。

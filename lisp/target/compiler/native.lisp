@@ -49,9 +49,9 @@ running image, in the null lexical environment."
           (compile-module (front-end-forms `((setq *compiled-function* (function ,definition)))
                                            session)
                           name :session session :image t :pipeline pipeline))
-      (multiple-value-bind (program bindings) (kiln.kir::normalize-lir-module module literals)
+      (multiple-value-bind (program bindings) (kiln.lir:module-program module literals)
         (let ((init (kiln.sys:%primop :compile-program program bindings
-                                            kiln.kir::+backend-target-fingerprint+)))
+                                            (kiln.lir:target-fingerprint))))
           (unless init
             (error "kiln-cg could not compile ~S." definition))
           (let ((*compiled-function* nil))

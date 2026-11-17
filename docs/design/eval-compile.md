@@ -63,7 +63,7 @@ compiler 模块的 `lisp/target/compiler/native.lisp` 把 `kiln.kernel::*compile
 1. `native-compile` 独占借用一个 session（`image-client`），然后：
    - 用 `front-end-forms` 处理 `(setq *compiled-function* (function LAMBDA))`（和 `front-end` 一样，只是直接处理形式，不读文件）；
    - 用 `compile-module :image t` 降级；
-   - 用 `normalize-lir-module` 得到独立 LIR 和完整的 literal 绑定；
+   - 用 `kiln.lir:module-program` 得到独立 LIR 和完整的 literal 绑定；
    - 把程序、字面量向量和目标指纹交给 `(%primop :compile-program program literals target)`，即 kiln-cg 的 `kiln_rt_compile_program`（[codegen.md](codegen.md)）。它返回 init 函数对象，程序编译失败时返回 NIL，`native-compile` 据此报错。
 2. `native-compile` 动态绑定 `*compiled-function*`，调用 init 函数，取出编好的函数。
 
