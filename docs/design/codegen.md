@@ -18,7 +18,7 @@ kiln-launcher               staticlib，提供 C main，链接 kiln-rt 和 kiln-
 
 Lisp 编译器输出布局无关的 LIR（[lir.md](lir.md)），通过[结构化编译协议](compiler-protocol.md)交接。kiln-cg 按 kiln-rt 的布局把 LIR 降级成内部 KIR，再调用 Cranelift。本文描述内部 KIR 及其诊断文本接口，分层理由见 [compiler.md](compiler.md)。
 
-`target/debug/kiln-cg jit kernel.kir prog.kir` 运行程序，加 `--dump-clif` 查看生成的 CLIF；`kiln-cg obj ... -o prog.o` 生成目标文件。
+`target/debug/kiln-cg jit kernel.lir prog.lir` 运行程序，加 `--dump-clif` 查看生成的 CLIF；`kiln-cg obj ... -o prog.o` 生成目标文件。
 
 编译器中的模块对象还记录 `replayable-p`，供顶层原生产物缓存判断初始化函数是否可重复执行。引入 `load-time-value` 单元的降级会清除此标志，保持不同编译结果的静态 cell 独立；该元数据不写入 KIR 文本。
 
@@ -88,7 +88,7 @@ Lisp 编译器输出布局无关的 LIR（[lir.md](lir.md)），通过[结构化
 ## 多模块
 
 - 共享定义：`(shared ...)` 列出本模块里可能被别的模块以相同内容定义的数据和函数：symbol 对象、它的名字字符串和未定义函数对象、`(setf f)` 的 cell、包名字符串、`kiln_undefined_function`。其他名字（函数、常量、`load-time-value` 的 cell、init 函数）都带模块名前缀，不会冲突。所以 symbol 在模块之间保持同一身份。
-- kiln-cg 一次接受多个 KIR 文件，先合并成一个模块：导入去重，共享定义只保留第一份，其他名字重复就报错，root 去重，各模块的 init 函数按给出的顺序执行。runtime 登记静态 root 时也会去重。
+- kiln-cg 一次接受多个 LIR 文件，各自验证、降级成 KIR 后合并成一个模块：导入去重，共享定义只保留第一份，其他名字重复就报错，root 去重，各模块的 init 函数按给出的顺序执行。runtime 登记静态 root 时也会去重。
 - 分别生成的目标文件之间的链接（共享定义用 weak 链接、launcher 汇总多个模块信息）还没有做，kiln 的模块总是一起交给 kiln-cg。
 
 ## 模块信息

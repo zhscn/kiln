@@ -93,9 +93,9 @@ compiler 模块载入后，`eval` 也走原生编译（`native-eval`，挂在 `k
 - 宏形式先展开一层再判断。展开定义宏之前记下定义的名字（`definition-name`），交给前端（`*eval-definition*`），调试信息和依赖追踪按它命名（[debugging.md](debugging.md)、[dependencies.md](dependencies.md)）。
 - 其他形式作为顶层形式编译，然后调用。
 
-每个形式至少多花几毫秒的编译时间，交互时察觉不到。对只为展开宏或只运行几次的代码，编译时间占主导：这样的 `compile` 要把 `*compile-function*` 绑成 NIL，构造 HIR 求值闭包。交叉编译的编译期求值用 HIR 求值器（构造宿主闭包），不经过 `compile`。
+原生编译的延迟随形式和优化工作量变化。对只为展开宏或只运行几次的代码，编译时间可能占主导：这样的 `compile` 要把 `*compile-function*` 绑成 NIL，构造 HIR 求值闭包。交叉编译的编译期求值用 HIR 求值器（构造宿主闭包），不经过 `compile`。
 
-`symbol-macrolet` 在字节码和原生前端都拒绝常量、全局特殊变量，以及对自身绑定的 `special` 声明；内层自由声明和新变量绑定仍可遮蔽外层 symbol macro。HIR 语法错误属于 `program-error`，同时保留编译器的错误信息和源码位置。
+`symbol-macrolet` 在 HIR 求值和原生编译共用的前端拒绝常量、全局特殊变量，以及对自身绑定的 `special` 声明；内层自由声明和新变量绑定仍可遮蔽外层 symbol macro。HIR 语法错误属于 `program-error`，同时保留编译器的错误信息和源码位置。
 
 ## 原生 `compile-file` 和 FASL
 

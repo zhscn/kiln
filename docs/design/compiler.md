@@ -29,7 +29,7 @@
 
 **MIR 留在 Lisp。** 类型传播、区间 widening、cons 和闭包的逃逸证明、局部函数身份都依赖求值顺序及路径合流。树形 HIR 需要每个分析分别解释 `tagbody`、`block`、`catch`、`unwind-protect` 的退出与合流；MIR 将它们统一为 CFG 的边，供分析共同使用。MIR 留在 Lisp 的理由：
 
-- 类型系统只有一份：MIR 直接调用 ctype 的 `typep`/`subtypep`，不在别处再实现一套 CL 类型格和标准函数知识库。
+- 类型展开与类型工具留在 Lisp：前端解析声明和类型别名，MIR 使用共享类型域及标准函数规则，不在 Rust 再实现一套 CL 类型知识库。
 - 类型驱动的改写可以用 Lisp 写：类型推导之后生成 Lisp 形式，经 HIR 转换拼回 MIR（SBCL 的 deftransform 就是这种做法），并记录依赖。
 - 编译器是 kiln 上最大的 Lisp 程序。它的数据结构和分析速度直接推动 kiln 本身的优化（[compiler-performance.md](compiler-performance.md)）。
 - 活 image 里可以重定义、调试编译器（kiln-server、`*trace-toplevel*`），库可以扩展优化。
@@ -56,14 +56,23 @@ Lisp 部分照旧在两处运行：SBCL 上交叉编译（写 stage0），kiln �
 
 KIR 变成 kiln-cg 内部的数据结构；`kiln-cg dump FILE.lir` 将输入记录打印为可读形式；旧文本入口用于诊断和迁移对照。
 
-## 迁移
+## 实现入口与扩展规则
 
-1. **LIR 和 Rust 降级**：定义 LIR（[lir.md](lir.md)），kiln-cg 实现二进制文件和内存入口、LIR 验证及 LIR → KIR。先完成编译器专用的缓冲区所有权和 literal roots，通用双向 interop 不在前置范围。现有 Lisp 降级改为输出 LIR：`primitives.lisp`、`lower.lisp`、`values.lisp` 里展开 tag、偏移、动态环境条目和多值的代码移到 Rust，`abi.lisp` 换成 Rust 生成的目标描述。验证：保持发射顺序的部分逐字节比较新旧 KIR；合法的布局与控制流展开差异通过执行与元数据验证，`tools/test.sh` 三遍、ANSI 测试和自举照常。
-2. **MIR 骨架**：HIR → MIR 构造、SSA 验证器和 MIR → LIR 发射覆盖参数、动态环境、多值与非局部退出（[mir.md](mir.md)）。仅导入能够映射到具体绑定、操作和作用域的有效事实；结构改变后失效的证明重新分析或保守回退，不能直接照搬 HIR 标记。保守路径只用于开发验证。MIR 是原生编译的唯一中端；HIR 只保留词法语义准备和求值。
-3. **分析迁到 MIR**：类型和区间传播、逃逸和存储选择、局部函数的调用摘要和 lambda lifting、double 拆箱，逐项在 MIR 上重写；HIR 的原生树分析与降级已经删除；`analyze-hir` 只准备自由变量、cell、词法退出和加载期初始化。
-4. **新的优化**：类型驱动的改写、高阶序列函数的展开、跨迭代的对象图、更多机器值表示；seal 后的 WPO。
+`compile-module` 构造带词法准备结果的 HIR，再经 `hir-to-mir`、MIR pass 和发射器
+产生语义操作。现有私有构建器沿用 `kiln.kir` 的 `kmodule` 和块操作；
+`normalize-lir-module` 将其转成独立 LIR。构建器和诊断 KIR 都不是新的跨语言契约。
+文件通过 `write-module-packet` 输出 LIR，运行期通过结构化程序或 packet 入口提交。
 
-LIR 将语言证明与后端布局分开。MIR 只产生表示已确定的操作，Rust 独立验证操作、roots 和控制流；Lisp 自举中的逐模块比较检查编译器自身的确定性。
+修改按职责落在相应层：
+
+- 语法、环境查询、声明展开及词法绑定在 HIR 前端处理，保留编译期效果及定义依赖。
+- 类型、调用、逃逸和表示证明在 MIR 计算；变换经 pass 接口修改图并失效受影响分析。
+- 新增跨语言操作先定义 LIR 的参数、结果、效果与非法输入行为，再实现两端适配和契约测试。
+- 布局、ABI、roots、调用及异常展开由 Rust 实现；Rust 不根据 Lisp 环境重新选择语义优化。
+
+HIR 求值器和公共发射工具继续复用。原生编译只接受 MIR，不恢复另一条生产分析路径。
+保守重算可以作为可靠的分析失效策略；细化缓存不得绕过语义证明、结构验证或 roots 检查。
+性能预算用于发现回退，API 的职责和所有权由契约及测试保持。
 
 ## 待定
 
@@ -76,10 +85,9 @@ LIR 将语言证明与后端布局分开。MIR 只产生表示已确定的操作
 
 语义差分必须不扩大 SBCL 已知基线，项目回归与自举确定性必须成立。编译延迟及运行期基准继续按 [性能预算](compiler-performance.md#小函数与切换预算) 优化；性能工作与旧路径清理分别推进。MIR 必须提供自己的类型、存储和调用证明，保守回退不能替代这些分析。HIR 求值器共用的词法准备和 LIR 公共发射工具各自保留，语义分析不再依赖 HIR 原生消费者。
 
-ANSI 验收通过 `KILN_BUILD_PIPELINE=mir tools/ansi-test.sh` 选择运行期编译路径；
-`KILN_COMPILER` 指定被测可执行文件，`ANSI_OUTPUT_DIR` 可将不同版本的日志和
-prelude image 隔离保存。每个测试组从 image 入口设置路径，并输出
-`ANSI-PIPELINE mir` 供验收检查。编译请求会动态绑定路径变量，因此独立一次
-`eval` 中的赋值不能选择后续请求的路径；模块由 MIR 构建也不能替代此设置。
+ANSI 使用 `KILN_COMPILER` 指定被测可执行文件，`ANSI_EVAL=native|hir` 选择
+原生编译或 HIR 求值路径，`ANSI_OUTPUT_DIR` 隔离日志和 prelude image。
+`ANSI_REPORT_NAMES=1` 输出逐项结果，由 `tools/check-ansi-baseline.py` 对照指定分组
+的失败名称、跳过项及原因。模块的构建路径不能代替运行期求值模式的选择。
 
 Rust 后端仍由 Cargo 构建，各自举阶段共用：LIR 和二进制闭合验证 Lisp 编译器及其导出稳定性，不证明 Rust 后端能自举。Rust 降级另以旧 KIR 对照、独立协议样本和端到端执行验证。

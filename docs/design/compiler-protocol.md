@@ -1,6 +1,6 @@
 # LIR 编译协议
 
-生产编译使用 payload 2，保存独立的类型化 LIR；后端使用独立解析器、CFG 验证器和 Rust 降级器，操作契约见 [lir.md](lir.md)。payload 1 保留兼容 KIR 输入。本文定义 LIR 的编码、调用和资源生命周期；它是编译器专用单向协议，不依赖通用 Rust 宿主模块、对象借用或 Lisp 回调网关。
+生产编译使用 payload 2，保存独立的类型化 LIR；后端使用独立解析器、CFG 验证器和 Rust 降级器，操作契约见 [lir.md](lir.md)。payload 1 保留兼容 KIR 输入。本文描述现有 LIR 的编码、调用和资源生命周期；它是编译器专用单向协议，不依赖通用 Rust 宿主模块、对象借用或 Lisp 回调网关。
 
 ## 已实现的封套
 
@@ -43,24 +43,15 @@
 
 节包括模块和入口、函数、变量及表示、基本块、操作及操作数、动态区域、常量对象图、初始化顺序、源码与调试描述、依赖引用。字符串采用带长度 UTF-8，浮点常量保存位模式。带环常量图按创建与填充记录编码。image literal 以整数 ID 引用请求外的受保护向量。
 
-操作表规定数值 opcode、操作数和结果类别、变长参数规则，以及调用、分配、GC、多值区破坏和退出效果。表是接口定义的唯一来源，生成 Lisp 编码常量与 Rust 解码声明；CL 函数的类型摘要和语义改写仍由 Lisp 维护。未知必需操作、长度溢出、无效 ID、非法布局或目标不匹配返回诊断。
+封套 schema 生成记录标签、字段和类别编号；独立操作由 Rust 的类型、解析器和验证器
+定义。`target-description` 导出纯运算及写入操作签名，Lisp 规范化器消费生成的描述。
+它尚未生成全部控制、分配和区域操作的两端实现。扩展操作时需要同步解析、验证、
+降级及 Lisp 构造，并添加契约测试。CL 类型摘要和语义改写仍由 Lisp 维护。
 
 编码器按稳定遍历顺序分配编号，规范化各区段顺序和填充字节，不依赖地址或哈希表迭代。当前 major/minor 均精确匹配；将来只有显式实现了可选节协商后才允许 minor 扩展。schema、runtime ABI 和后端管线版本分别校验。
 
-以下是解码后的示意记录，不是可直接提交的文本格式或已实现的 opcode 编号：
-
-```text
-header { schema: MAJOR.MINOR, target: ABI, module: "example" }
-variables [ {id: 0, repr: obj}, {id: 1, repr: word} ]
-operations [
-  { op: arg-count, dst: 1 },
-  { op: check-arity, count: 1, min: 1, max: 1 },
-  { op: arg-ref, dst: 0, index: 0 },
-  { op: return, values: [0] }
-]
-```
-
-`check-arity` 是 Lisp 选定的检查操作；后端实现错误路径与参数读取，不处理默认初始化式。类型测试例如 `test(repr-class=fixnum, value=v0)`，字段访问例如 `field-load(kind=cons, field=car, object=v0)`；范围证明不序列化为需要 Rust 再推导的类型格。
+独立 LIR 的实际语法与操作规则见 [lir.md](lir.md)。wire 层只编码这些结构，
+不会把未实现的语义操作自动展开成后端指令。
 
 ## 内存入口与所有权
 
@@ -70,17 +61,27 @@ operations [
 
 后续的 native span 或 record-builder API 沿用此 schema 和所有权规则；移动堆内部地址不能作为长时间 Rust 借用。序列化不是一次性编译的必经阶段。
 
-Rust 同步消费请求，返回结构化状态、诊断缓冲区或未发布的代码产物 handle。Rust 分配的缓冲区和产物只由配套释放入口销毁；不跨 ABI 传 `Vec`、`String`、`Result` 或 Rust 引用。所有 Rust 入口捕获可展开的 panic 并转换为内部编译故障；不允许 Rust unwind 穿过 C/Lisp 边界。输入错误不会留下已发布定义。
+当前两个编译入口同步消费请求，成功返回已安装代码的 init 函数对象，调用方随后
+执行 init。失败返回 NIL，并把诊断写到 stderr；没有公开的产物 handle 或诊断缓冲区。
+Rust 的 `Vec`、`String`、`Result` 和引用不进入 ABI。工作区使用 panic=abort，
+内部 panic 终止进程，不提供可恢复的 panic 诊断；Rust unwind 不跨 C/Lisp 边界。
+结构化编译诊断和失败安装清理的扩展见 [roadmap.md](../roadmap.md)。
 
 输入校验包括边界、签名、初始化、动态区域和短期多值使用；它不重复 Lisp 的类型或逃逸证明。Rust 低层展开仍对自身生成的 roots、栈槽和异常路径负责。解码器对深度、数量和分配设置上限，避免畸形输入导致溢出或无界递归。
 
 ## literal 与代码安装
 
-请求建立时，Lisp 将现存对象放入受 GC 扫描和更新的 literal 向量。runtime 保持该向量的作用域 root，Rust 仅操作 literal ID，不读取 tagged word 或查询 Lisp。纯降级阶段不保留对象地址；物化和安装阶段通过 runtime 解析 ID 并建立最终 roots，发布前保持可更新状态。
+请求建立时，Lisp 将现存对象放入受 GC 扫描的 literal 向量。image 适配器在
+无 safepoint 窗口读取 Lisp 对象表示并建立 Rust 自有请求；解析、验证和降级只使用
+记录及 literal ID，不查询 Lisp 环境。安装时将 literal 写入已登记的静态 root 槽。
+调用帧保持 literal 向量存活，当前单 mutator 合同禁止编译期间执行 Lisp GC 或回调。
 
-安装流程为：校验依赖版本与 ABI，解析 literals 和重定位，登记代码、异常表、栈图及持久 roots，再发布定义。请求 root 只能在成功转交所有权或彻底释放暂存产物后撤销。失败、取消和旧依赖失效都销毁未发布产物。初期同步安装，不承诺任意线程编译或并发定义发布。
+Lisp 负责语义依赖及缓存版本，Rust 校验目标和载荷、编译代码并登记元数据，
+绑定 literal 后返回 init。代码安装不等于 Lisp 定义发布：定义初始化由调用方执行
+init 完成。当前同步入口没有取消或显式释放已安装代码的协议；成功代码随 image
+存活。编译期请求的临时 Rust 记录在调用结束时释放，不承诺并发 mutator 或并发发布。
 
-SBCL 只提交可移植常量图，不传递宿主 tagged word。stage0 写二进制请求并调用 kiln-cg 子进程；kiln image 使用进程内入口，literal ID 保持 `eq` 身份。两条路径共享编码器和后端解码器。
+SBCL 只提交可移植常量图，不传递宿主 tagged word。stage0 写二进制请求并调用 kiln-cg 子进程；kiln image 使用进程内入口，literal ID 保持 `eq` 身份。两条路径共享程序契约和后端验证、降级；宿主与 image 分别实现编码适配，直接程序入口不经过字节解码。
 
 ## 文件、FASL、快照与缓存
 
@@ -92,6 +93,8 @@ SBCL 只提交可移植常量图，不传递宿主 tagged word。stage0 写二�
 
 ## 实施边界
 
-首期同时提供 schema、共享编码器、内存调用、文件驱动、解码验证、literal roots 和失败清理。结构化交接不是文本方案之后的可选优化。当前封套位宽与记录标签已经固定并有跨语言样本；LIR 操作编号、结构化诊断和独立产物接口随相应实现接入。
+现有生产入口包括结构化程序、二进制 packet、文件驱动和 literal 绑定。
+协议版本、目标指纹及非法输入由契约测试检查。新增入口或载荷不得绕过同一份
+LIR 验证与降级。未实现接口集中记录在路线图，不能作为当前调用方的前提。
 
 端到端测试默认编译并执行独立 LIR packet，JIT、GC 压力和 AOT 使用相同载荷。`.same-kir` 比较仍采用同一编译结果的诊断文本；测试构建同时保留 `.kir` 文件，避免再次编译改变会话状态。宿主构建器的 `*write-diagnostic-kir*` 和目标构建程序的 `KILN_DIAGNOSTIC_KIR` 可在写出二进制时生成这份诊断副本。

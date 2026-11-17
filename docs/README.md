@@ -16,7 +16,7 @@ kiln 是一个现代 Common Lisp 实现：开发时是完整的活 image，交�
 | [objects.md](design/objects.md) | 值的 tag、立即数、堆对象的 kind 和布局、静态对象、身份哈希 |
 | [abi.md](design/abi.md) | 调用约定、context 布局、动态环境条目、非局部退出和 unwinder、特殊变量、多值、poll 点 |
 | [abi-policy.md](design/abi-policy.md) | ABI 不承诺跨版本兼容、ABI 指纹、编译期依赖 |
-| [compiler.md](design/compiler.md) | 编译器分层：Lisp 的 HIR 和 MIR、LIR 边界、kiln-cg 的布局和 ABI 降级、被否决的方案、迁移步骤 |
+| [compiler.md](design/compiler.md) | 编译器分层：Lisp 的 HIR 和 MIR、LIR 边界、kiln-cg 的布局和 ABI 降级、职责来源、实现入口与扩展规则 |
 | [mir.md](design/mir.md) | Lisp 的 MIR：CFG 加 SSA、分析、类型驱动的改写、身份与存储证明、表示选择 |
 | [compiler-protocol.md](design/compiler-protocol.md) | 结构化 LIR 编译协议：二进制 schema、内存和文件入口、所有权、literal roots、持久化与兼容 |
 | [lir.md](design/lir.md) | LIR 后端输入语言：布局无关的低层操作、函数和调用、多值、动态范围、常量表、目标描述 |

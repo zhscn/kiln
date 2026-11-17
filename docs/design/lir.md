@@ -1,5 +1,9 @@
 # LIR：Lisp 编译器与 Rust 后端的输入契约
 
+编译器职责以 [compiler.md](compiler.md) 为准。Lisp 的 `kmodule` 是私有语义构建器，
+由规范化器转成这里的独立 LIR；其字段及诊断打印不构成后端公共接口。生产载荷
+扩展必须经过 LIR 类型和效果契约，兼容 KIR 输入不得成为生产路径的回退入口。
+
 文件模块、运行期 `compile`/`eval`、编译缓存和 FASL 均使用独立的 `lir-module` 载荷，经类型化解析、CFG 验证后由 Rust 构造 KIR。Lisp 构建器先生成语义操作和控制流，再由规范化器建立带类型的变量、区域和多值视图；Rust 决定对象布局、分配和调用序列。[结构化封套](compiler-protocol.md)支持文件与运行期交接。可读 KIR 和兼容载荷保留为诊断及兼容输入，下面先说明这些输入的契约，再说明独立 LIR。分层见 [compiler.md](compiler.md)。
 
 兼容载荷的 `guarded-class-test` 由后端生成一般对象检查和 header 类测试，对任意 Lisp 值安全。兼容输入仍接受单独的 header 类测试，生成方必须确保只有一般对象到达该操作。独立 LIR 的 `test` 将安全检查与表示类测试作为同一操作处理。
