@@ -103,7 +103,7 @@
                              (svref packets (svref (mir-terminator-operands term) 0)) expansions)))
     result))
 
-(defun mir-contained-functions (function)
+(defun mir-compute-contained-functions (function)
   "Overapproximate local functions carried by each scalar or saved bundle."
   (let* ((sets (make-array (hir-buffer-count (mir-function-values function)) :initial-element 0))
          (blocks (hir-buffer-view (mir-function-blocks function)))
@@ -148,6 +148,12 @@
                 for argument across (mir-edge-arguments edge)
                 do (merge-set parameter (svref sets argument))))))
     sets))
+
+(defun mir-contained-functions (function)
+  ;; This result depends on the body and capture layout, not call summaries.
+  (if *mir-verification-identities*
+      (mir-compute-contained-functions function)
+      (mir-analysis function :contained-functions #'mir-compute-contained-functions)))
 
 (defun mir-external-functions (functions identities &optional (entries #()))
   "Find functions that may be invoked outside the known local call sites."
