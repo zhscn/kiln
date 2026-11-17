@@ -98,6 +98,7 @@ def host_script(project, projects, args, output):
   (format t "~&LIBRARY-LOAD-SECONDS ~F~%"
           (/ (- (get-internal-real-time) start) internal-time-units-per-second)))
 {('(eval (read-from-string ' + lisp(project['smoke_form']) + ')) (format t "~&LIBRARY-SMOKE-COMPLETED~%")') if project.get('smoke_form') else ''}
+{('(load ' + lisp(ROOT / project['check_file']) + ')') if project.get('check_file') else ''}
 {'(asdf:test-system ' + system + ') (format t "~&LIBRARY-TEST-OP-COMPLETED~%")' if args.tests else ''}
 (format t "~&LIBRARY-COMPLETE~%")
 '''
@@ -128,6 +129,7 @@ def kiln_system(project, projects, args, output):
          :ignore-inherited-configuration))
       (asdf:load-system {system})
       (format progress "~&LIBRARY-ASDF-LOAD-COMPLETED~%") (force-output progress)
+      {('(load ' + lisp(ROOT / project['check_file']) + ')') if project.get('check_file') else ''}
       {'(asdf:test-system ' + system + ') (format progress "~&LIBRARY-ASDF-TEST-OP-COMPLETED~%")' if args.tests else ''}
       t) (close progress)))'''
     result = kiln_run(args, f'(progn {asdf_bootstrap(args)} (eval (read-from-string {lisp(code)})))',

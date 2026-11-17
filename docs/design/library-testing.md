@@ -45,6 +45,8 @@ python3 tools/test-libraries.py asdf asdf --kiln build/boot/kiln1 \
 `--tests` 调用上游的 ASDF `test-op`。有些上游测试只打印失败而不向 ASDF 发出
 错误，因此报告的 `test_op_completed` 仅表示操作正常返回，还必须核对上游摘要。
 缺失测试依赖与主库加载失败分别记录。
+清单中的 `check_file` 在主库加载后执行，宿主与目标共用同一组兼容性断言；
+实现专用分支只检查对应的平台契约。
 
 ASDF 探测默认使用 vendored ASDF/UIOP，`--asdf-directory` 可选择其他副本。
 它显式识别 kiln，使用 `kiln.sys` 的进程查询和退出接口；环境修改、子进程、

@@ -1,0 +1,19 @@
+diff --git a/src/named-readtables.lisp b/src/named-readtables.lisp
+index ee35a0a..bd2f520 100644
+--- a/src/named-readtables.lisp
++++ b/src/named-readtables.lisp
+@@ -439,8 +439,12 @@
+     (when (if subchar
+               (conflictp (%get-dispatch-macro-character char subchar from)
+                          (%get-dispatch-macro-character char subchar to))
+-              (conflictp (%get-macro-character char from)
+-                         (%get-macro-character char to)))
++              ;; Eclector creates a dispatcher closure for each readtable.
++              ;; Their dispatch entries are compared individually by the merge.
++              (and #+kiln (not (and (dispatch-macro-char-p char from)
++                                   (dispatch-macro-char-p char to)))
++                   (conflictp (%get-macro-character char from)
++                              (%get-macro-character char to))))
+       (cerror (format nil "Overwrite ~@C in ~A." char to)
+               'reader-macro-conflict
+               :from-readtable from

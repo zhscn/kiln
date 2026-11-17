@@ -83,7 +83,8 @@
       "system": "fset",
       "patches": [
         "tests/library-patches/fset-kiln-single-thread.patch"
-      ]
+      ],
+      "check_file": "tests/library-integration/fset.lisp"
     },
     {
       "name": "local-time",
@@ -251,7 +252,10 @@
       "name": "named-readtables",
       "url": "https://github.com/melisgl/named-readtables.git",
       "revision": "9b774b51a08124c41881f10b30fb33425a3e6085",
-      "role": "corpus-dependency"
+      "role": "corpus-dependency",
+      "patches": [
+        "tests/library-patches/named-readtables-kiln-dispatch.patch"
+      ]
     },
     {
       "name": "trivial-gray-streams",
