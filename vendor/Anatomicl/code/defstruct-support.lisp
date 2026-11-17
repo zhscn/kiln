@@ -51,9 +51,6 @@
           ;; Slots that have been mentioned in the lambda-list and perform
           ;; some kind of initialization.
           (bound-slots '())
-          ;; Slots that might be bound to a value or might be left uninitialized
-          ;; due to the lack of an initform.
-          (potentially-unbound-slots '())
           ;; Slots that have been made unbound by &aux
           (unbound-slots '()))
       (dolist (req requireds)
@@ -81,10 +78,8 @@
                    (push (list name (slot-initform slot))
                          reconstructed-lambda-list))
                   (t
-                   ;; Leave uninitialized.
-                   (push (list name ''%uninitialized%)
-                         reconstructed-lambda-list)
-                   (push name potentially-unbound-slots))))))
+                   ;; Without either initform, use the ordinary NIL default.
+                   (push (list name nil) reconstructed-lambda-list))))))
       (when rest
         (push '&rest reconstructed-lambda-list)
         (push rest reconstructed-lambda-list)
@@ -119,10 +114,8 @@
                    (push (list (list keyword name) (slot-initform slot))
                          reconstructed-lambda-list))
                   (t
-                   ;; Leave uninitialized.
-                   (push (list (list keyword name) ''%uninitialized%)
-                         reconstructed-lambda-list)
-                   (push name potentially-unbound-slots)))))
+                   ;; Without either initform, use the ordinary NIL default.
+                   (push (list (list keyword name) nil) reconstructed-lambda-list)))))
         (when allow-other-keys-p
           (push '&allow-other-keys reconstructed-lambda-list)))
       (when auxs
@@ -156,10 +149,6 @@
                      collect (cond ((not (find name bound-slots))
                                     ;; Slot initialized by initform.
                                     (generate-slot-initialization-form client description layout object slot (slot-initform slot)))
-                                    ((find name potentially-unbound-slots)
-                                     ;; Slot may or may not have a value.
-                                     `(unless (eq ,name '%uninitialized%)
-                                        ,(generate-slot-initialization-form client description layout object slot name)))
                                     (t
                                      ;; Slot initialized by argument.
                                      (generate-slot-initialization-form client description layout object slot name))))

@@ -575,6 +575,11 @@ Under `#+kiln`:
 
 ## Anatomicl patches
 
+- BOA optional and keyword parameters default to NIL when neither the
+  argument nor its slot supplies an initform. Explicit slot initforms remain
+  defaults, and AUX parameters without initforms retain suppressed initialization.
+
+
 - Typed structures require `:named` when requesting a predicate, and named
   vector structures require an element type that admits every symbol.
   Incompatible options signal `simple-error` during macro expansion.
