@@ -34,7 +34,7 @@
          (positions (make-array (length values) :initial-element nil))
          (live-work (make-hir-buffer))
          (live (make-array (length values) :initial-element nil)))
-    (multiple-value-bind (reachable dominators) (mir-control-flow function)
+    (multiple-value-bind (reachable dominators) (mir-cached-control-flow function)
       (loop for block across blocks do
         (loop for parameter across (mir-block-parameters block) for index from 0
               do (setf (svref positions parameter) index))

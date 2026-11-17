@@ -36,6 +36,20 @@
                           (setf (svref dominators i) value changed t)))))
     (values reachable dominators)))
 
+(defun mir-record-control-flow (function reachable dominators)
+  (let ((revision (mir-function-revision function)) (analyses (mir-function-analyses function))
+        (facts (cons reachable dominators)))
+    (setf (gethash :control-flow analyses) (cons revision facts)
+          (gethash :reachable analyses) (cons revision reachable))
+    facts))
+
+(defun mir-cached-control-flow (function)
+  (let ((facts (mir-analysis function :control-flow
+                 (lambda (function)
+                   (multiple-value-bind (reachable dominators) (mir-control-flow function)
+                     (mir-record-control-flow function reachable dominators))))))
+    (values (car facts) (cdr facts))))
+
 (defun mir-reachable-blocks (function)
   "Cache the reachable block bitset at the function's current revision."
   (mir-analysis function :reachable
@@ -504,12 +518,15 @@
         (unless (= rest-lists (if (mir-function-tail-p function) 1 0))
           (mir-fail "MIR entry rest-list disagrees with signature"))
         (unless (= checks 1) (mir-fail "MIR entry requires one arity check")))
-      (mir-verify-closure-initialization unit function)
-      (mir-verify-cells function)
-      (mir-verify-internal-calls unit function)
       (unless (every #'identity seen-instructions) (mir-fail "Unowned MIR instruction"))
       (unless (every #'identity seen-values) (mir-fail "Unowned MIR value"))
       (multiple-value-bind (reachable dominators) (mir-control-flow function)
+        ;; Publish only freshly computed facts; verification never trusts a
+        ;; previous optimization snapshot of a graph it is checking.
+        (mir-record-control-flow function reachable dominators)
+        (mir-verify-closure-initialization unit function)
+        (mir-verify-cells function)
+        (mir-verify-internal-calls unit function)
         (labels ((use (id block position)
                    (let* ((value (mir-at values id)) (owner (mir-value-block value)))
                      (when (logbitp block reachable)
@@ -526,7 +543,9 @@
               (loop for edge across (mir-terminator-edges term)
                     do (loop for operand across (mir-edge-arguments edge) do (use operand i (length body)))))))))
     (mir-verify-region-landings function)
-    (mir-compute-binding-regions function)
+    (let ((bindings (mir-compute-binding-regions function)))
+      (setf (gethash :binding-regions (mir-function-analyses function))
+            (cons (mir-function-revision function) bindings)))
     function))
 
 (defun mir-verify-load-time-functions (unit)

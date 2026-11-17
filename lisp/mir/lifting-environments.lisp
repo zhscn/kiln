@@ -216,7 +216,7 @@
 
 (defun mir-lifting-environment-use-failure (function candidates environments)
   (multiple-value-bind (reachable dominators)
-      (mir-control-flow function)
+      (mir-cached-control-flow function)
     (let* ((known (mir-function-identities function))
            (blocks (hir-vector (mir-function-blocks function)))
            (own (mir-function-id function))
