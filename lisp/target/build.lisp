@@ -57,17 +57,17 @@
                                                         :extra-symbols extra-symbols
                                                         :pipeline kiln.compiler::*compiler-pipeline*)
                   (setf lower-end (get-internal-real-time)))))))
-      (let ((text (equal (getenv "KILN_OUTPUT_FORMAT") "kir")))
+      (let ((text (equal (build-environment "KILN_OUTPUT_FORMAT") "kir")))
         (with-open-file (out (concatenate 'string name (if text ".kir" ".lir"))
                              :direction :output :if-exists :supersede
                              :element-type (if text 'character '(unsigned-byte 8)))
           (if text (kiln.kir:print-module module out)
               (kiln.lir:write-module module out)))
-        (when (and (not text) (getenv "KILN_DIAGNOSTIC_KIR"))
+        (when (and (not text) (build-environment "KILN_DIAGNOSTIC_KIR"))
           (with-open-file (out (concatenate 'string name ".kir")
                                :direction :output :if-exists :supersede)
             (kiln.kir:print-module module out)))))
-    (when (getenv "KILN_BUILD_TIMING")
+    (when (build-environment "KILN_BUILD_TIMING")
       (format t "build-timing ~A ~D ~D ~D ~D~%" name
               (- front-end-end phase-start)
               (- lower-end front-end-end)
@@ -89,22 +89,22 @@ SESSION has compiled."
       (unless (member (first entry) *build-modules* :test #'string=)
         (build-module entry manifest session start)))))
 
-(defun getenv (name)
+(defun build-environment (name)
   (let ((value (kiln.kernel::sys-string 10 (kiln.kernel::string-octets name))))
     (and (stringp value) (plusp (length value)) value)))
 
-(defun build-pipeline (&optional (name (getenv "KILN_BUILD_PIPELINE")))
+(defun build-pipeline (&optional (name (build-environment "KILN_BUILD_PIPELINE")))
   (cond ((or (null name) (equal name "") (equal name "mir")) :mir)
         (t (error "KILN_BUILD_PIPELINE must be mir, got ~S" name))))
 
 ;;; With KILN_SERVE set, the program serves the back-end protocol on its
 ;;; standard input and output instead.
-(if (getenv "KILN_SERVE")
+(if (build-environment "KILN_SERVE")
     (kiln.sys:serve)
     (let ((manifest (read-build-manifest))
           (session (kiln.compiler:make-session :client-class 'kiln.compiler::cross-client))
           (start (get-internal-real-time))
-          (image (getenv "KILN_SAVE_IMAGE")))
+          (image (build-environment "KILN_SAVE_IMAGE")))
       (dolist (entry manifest)
         (build-module entry manifest session start)
         (when (and image (string= (first entry) "compiler"))
