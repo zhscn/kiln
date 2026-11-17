@@ -2,6 +2,10 @@
 """Fetch a pinned library corpus and probe host tests, ASDF, or portable source compilation."""
 import argparse
 import hashlib
+import io
+import tarfile
+import tempfile
+import urllib.request
 import json
 import os
 import re
@@ -37,14 +41,32 @@ def revision(path):
 
 def checked_project(project, corpus):
     path = corpus / project['name']
-    if revision(path) != project['revision']:
+    if 'archive_url' in project:
+        for name, digest in project['source_sha256'].items():
+            if hashlib.sha256((path / name).read_bytes()).hexdigest() != digest:
+                raise ValueError(f'{path / name}: archive source differs from the pinned version')
+    elif revision(path) != project['revision']:
         raise ValueError(f'{path}: checkout differs from the pinned revision')
+    for patch in project.get('patches', []):
+        patch = ROOT / patch
+        applied = subprocess.run(['git', '-C', str(path), 'apply', '--reverse', '--check', str(patch)],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0
+        if not applied:
+            subprocess.run(['git', '-C', str(path), 'apply', '--check', str(patch)], check=True)
+            subprocess.run(['git', '-C', str(path), 'apply', str(patch)], check=True)
     return path
 
 
-def registry(projects, corpus):
-    directories = ' '.join(f'(:directory {lisp(str(corpus / p["name"]) + "/")})'
-                           for p in projects)
+def registry(projects, corpus, target=False):
+    entries = []
+    for project in projects:
+        name = project['name']
+        if name in ('asdf', 'awesome-cl'):
+            continue
+        path = (ROOT / 'vendor' / name if target and name in
+                ('trivial-features', 'trivial-gray-streams') else corpus / name)
+        entries.append(f'(:directory {lisp(str(path) + "/")})')
+    directories = ' '.join(entries)
     return f'(asdf:initialize-source-registry \'(:source-registry {directories} :inherit-configuration))'
 
 
@@ -85,6 +107,41 @@ def kiln_request(form):
     return f'(:eval 1 {lisp(form)})\n(:quit 2)\n'
 
 
+def asdf_bootstrap(args):
+    subprocess.run(['sh', './make-asdf.sh'], cwd=args.asdf_directory, check=True)
+    return f'''(progn (let ((kiln.kernel::*compile-function* nil)
+                     (kiln.kernel::*eval-function* nil))
+                 (load {lisp(args.asdf_directory / 'build/asdf.lisp')}))
+               (funcall (find-symbol "REGISTER-IMMUTABLE-SYSTEM" "ASDF") "closer-mop" :version "1.0.0"))'''
+
+
+def kiln_system(project, projects, args, output):
+    system = lisp(project['system'])
+    cache = str(args.output / 'fasl-cache' / args.compiler_key) + '/'
+    progress = output / 'progress.log'
+    code = f'''(let ((progress (open {lisp(progress)} :direction :output :if-exists :supersede)))
+      (unwind-protect (let ((*standard-output* progress) (*error-output* progress))
+      {registry(projects, args.corpus, target=True)}
+      (asdf:initialize-output-translations
+       `(:output-translations
+         (t (,(format nil "~A~X/" {lisp(cache)} (kiln.lir:target-fingerprint)) :implementation))
+         :ignore-inherited-configuration))
+      (asdf:load-system {system})
+      (format progress "~&LIBRARY-ASDF-LOAD-COMPLETED~%") (force-output progress)
+      {'(asdf:test-system ' + system + ') (format progress "~&LIBRARY-ASDF-TEST-OP-COMPLETED~%")' if args.tests else ''}
+      t) (close progress)))'''
+    result = kiln_run(args, f'(progn {asdf_bootstrap(args)} (eval (read-from-string {lisp(code)})))',
+                      output / 'kiln.log')
+    text = progress.read_text(errors='replace') if progress.exists() else ''
+    failed = re.findall(r'^\s*(?:Fail|Failed):\s*(\d+)', text, re.M)
+    result['reported_failed_checks'] = sum(map(int, failed)) if failed else None
+    if any(int(count) for count in failed) or 'Some tests failed.' in text:
+        result['status'] = 'failed'
+    result.update(load_completed='LIBRARY-ASDF-LOAD-COMPLETED' in text,
+                  test_op_completed='LIBRARY-ASDF-TEST-OP-COMPLETED' in text)
+    return result
+
+
 def kiln_run(args, form, output):
     env = dict(os.environ, KILN_SERVE='1', MMTK_GC_TRIGGER=args.heap)
     env.pop('KILN_IMAGE', None)
@@ -115,8 +172,8 @@ def source_probe(project, args, output):
     pairs = ' '.join(f'({lisp(p)} {lisp(fasls / (str(i) + ".fasl"))})' for i, p in enumerate(paths))
     progress = output / 'progress.log'
     form = f'''(progn (assert (eq kiln.compiler::*compiler-pipeline* :mir))
-(with-open-file (progress {lisp(progress)} :direction :output :if-exists :supersede)
-(dolist (entry '({pairs}))
+(let ((progress (open {lisp(progress)} :direction :output :if-exists :supersede)))
+(unwind-protect (dolist (entry '({pairs}))
   (format progress "~&LIBRARY-FILE-BEGIN ~A~%" (first entry))
   (force-output progress)
   (let ((start (get-internal-real-time)))
@@ -129,7 +186,8 @@ def source_probe(project, args, output):
         (format progress "~&LIBRARY-FILE-SECONDS ~A ~F ~F~%" (first entry)
                 (/ (- compiled start) internal-time-units-per-second)
                 (/ (- (get-internal-real-time) compiled) internal-time-units-per-second))
-        (force-output progress))))))
+        (force-output progress)))))
+(close progress)))
 (eval (read-from-string {lisp(project['smoke_form'])})))'''
     result = kiln_run(args, form, output / 'kiln.log')
     text = progress.read_text(errors='replace') if progress.exists() else ''
@@ -145,7 +203,7 @@ def source_probe(project, args, output):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('mode', choices=['fetch', 'sbcl', 'asdf', 'source'])
+    parser.add_argument('mode', choices=['fetch', 'sbcl', 'asdf', 'source', 'kiln'])
     parser.add_argument('projects', nargs='*')
     parser.add_argument('--corpus', type=Path, default=Path.home() / 'package/kiln-library-tests')
     parser.add_argument('--output', type=Path, default=ROOT / 'build/library-tests')
@@ -153,9 +211,11 @@ def main():
     parser.add_argument('--plan-directory', type=Path, help='host run directory containing PROJECT/sources.txt')
     parser.add_argument('--timeout', type=float, default=180)
     parser.add_argument('--heap', default='FixedHeapSize:8589934592')
+    parser.add_argument('--asdf-directory', type=Path, default=ROOT / 'vendor/ASDF')
     parser.add_argument('--tests', action='store_true', help='invoke upstream ASDF test-op; inspect its test summary too')
     args = parser.parse_args()
     args.corpus, args.output, args.kiln = args.corpus.resolve(), args.output.resolve(), args.kiln.resolve()
+    args.asdf_directory = args.asdf_directory.resolve()
     projects = json.loads(MANIFEST.read_text())['projects']
     names = args.projects or (['asdf'] if args.mode == 'asdf' else
                              [p['name'] for p in projects
@@ -169,8 +229,9 @@ def main():
         parser.error('source requires --plan-directory from a matching SBCL run')
     args.output.mkdir(parents=True, exist_ok=True)
     report = dict(mode=args.mode, projects={}, manifest_sha256=hashlib.sha256(MANIFEST.read_bytes()).hexdigest())
-    if args.mode in ('asdf', 'source'):
-        report.update(kiln=str(args.kiln), kiln_sha256=hashlib.sha256(args.kiln.read_bytes()).hexdigest(), heap=args.heap)
+    if args.mode in ('asdf', 'source', 'kiln'):
+        args.compiler_key = hashlib.sha256(args.kiln.read_bytes()).hexdigest()
+        report.update(kiln=str(args.kiln), kiln_sha256=args.compiler_key, heap=args.heap)
     for name in names:
         project = by_name[name]
         output = args.output / name
@@ -179,8 +240,17 @@ def main():
             if args.mode == 'fetch':
                 path = args.corpus / name
                 args.corpus.mkdir(parents=True, exist_ok=True)
-                if not path.exists():
-                    subprocess.run(['git', 'clone', '--no-checkout', '--depth', '1', project['url'], str(path)], check=True)
+                if not path.exists() and 'archive_url' in project:
+                    data = urllib.request.urlopen(project['archive_url'], timeout=args.timeout).read()
+                    if hashlib.sha256(data).hexdigest() != project['archive_sha256']:
+                        raise ValueError('archive checksum mismatch')
+                    with tempfile.TemporaryDirectory(dir=args.corpus) as temporary:
+                        with tarfile.open(fileobj=io.BytesIO(data), mode='r:gz') as archive:
+                            archive.extractall(temporary, filter='data')
+                        (Path(temporary) / project['archive_prefix']).rename(path)
+                elif not path.exists():
+                    shallow = ['--depth', '1'] if project.get('shallow', True) else []
+                    subprocess.run(['git', 'clone', '--no-checkout', *shallow, project['url'], str(path)], check=True)
                     if revision(path) != project['revision']:
                         subprocess.run(['git', '-C', str(path), 'fetch', '--depth', '1', 'origin', project['revision']], check=True)
                     subprocess.run(['git', '-C', str(path), 'checkout', '--detach', project['revision']], check=True)
@@ -219,14 +289,17 @@ def main():
                         result['status'] = 'blocked'
                 elif args.mode == 'source':
                     result = source_probe(project, args, output)
+                elif args.mode == 'kiln':
+                    result = kiln_system(project, projects, args, output)
                 else:
                     if name != 'asdf':
                         raise ValueError('asdf mode probes the build-system bootstrap; select asdf')
-                    subprocess.run(['sh', './make-asdf.sh'], cwd=path, check=True)
-                    result = kiln_run(args, f'(load {lisp(path / "build/asdf.lisp")})', output / 'kiln.log')
+                    result = kiln_run(args, asdf_bootstrap(args), output / 'kiln.log')
                     if result['debugger_entered']:
                         result['status'] = 'blocked'
             result['revision'] = project['revision']
+            result['patch_sha256'] = {name: hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
+                                      for name in project.get('patches', [])}
         except (OSError, ValueError, subprocess.SubprocessError) as error:
             result = dict(status='error', message=str(error))
         report['projects'][name] = result

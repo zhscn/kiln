@@ -7,7 +7,9 @@
 ## 样本与版本
 
 `tests/libraries.json` 固定样本的仓库和修订。样本从 awesome-cl 选择，按使用的
-语言机制分组，另列构建系统和测试框架等依赖。上游源码放在外部 corpus，
+语言机制分组，另列构建系统和测试框架等依赖。上游源码放在外部 corpus，归档发布的依赖另固定下载地址、归档和源码校验和。
+清单中的兼容补丁在原始修订上应用，报告记录补丁校验和；已有兼容修改不会重复应用。
+
 `tools/test-libraries.py fetch` 获取并检查版本，已有目录不会被重置。
 使用 `--corpus` 选择目录；测试输出留在忽略的 `build/` 目录。
 
@@ -44,9 +46,28 @@ python3 tools/test-libraries.py asdf asdf --kiln build/boot/kiln1 \
 错误，因此报告的 `test_op_completed` 仅表示操作正常返回，还必须核对上游摘要。
 缺失测试依赖与主库加载失败分别记录。
 
-ASDF 探测在 kiln 中直接载入未修改的上游构建入口；进入 debugger 即记录为
-阻塞，不通过添加其他实现的 feature 绕过实现检测。系统接口适配完成之前，
-可以对明确声明为可移植的样本进行源码探测：
+ASDF 探测默认使用 vendored ASDF/UIOP，`--asdf-directory` 可选择其他副本。
+它显式识别 kiln，使用 `kiln.sys` 的进程查询和退出接口；环境修改、子进程、
+动态库及可执行镜像导出仍需各自的平台实现。生成 bundle 后也可在 image 中执行：
+
+```lisp
+(require :asdf '("tools/load-asdf.lisp"))
+```
+
+加载器只在 ASDF 源码初始化期间选择 HIR 求值，返回后恢复调用方的原生编译设置。
+库的编译与测试直接经过目标 ASDF：
+
+```sh
+python3 tools/test-libraries.py kiln alexandria cl-ppcre iterate --tests \
+  --kiln build/boot/kiln1 --output build/libraries/target
+```
+
+独立进程分别记录主库加载和上游测试操作是否完成。出现错误或超时时保留进度日志。
+目标进程共享同一批次的 FASL 缓存，按编译器可执行文件校验和及后端指纹隔离；
+编译器改变后重新编译依赖。已内置的 Closer-MOP 兼容接口登记为不可重载的预加载系统。
+通用的测试操作正常返回仍不足以判断通过：工具额外检查 FiveAM、Parachute 等摘要
+中的失败数，其他框架的摘要仍需逐项核对。
+对明确声明为可移植的样本，可以用源码探测进一步隔离问题：
 
 ```sh
 python3 tools/test-libraries.py source alexandria cl-ppcre iterate \

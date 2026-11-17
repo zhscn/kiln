@@ -95,7 +95,10 @@
       "url": "https://github.com/Lisp-Stat/statistics.git",
       "revision": "aa0baf4f204eae516cc4fda24722b147b5e76d4d",
       "role": "statistical-accuracy",
-      "system": "statistics"
+      "system": "statistics",
+      "patches": [
+        "tests/library-patches/statistics-streaming-tests.patch"
+      ]
     },
     {
       "name": "numerical-utilities",
@@ -189,6 +192,94 @@
       "url": "https://github.com/hu-dwim/hu.dwim.stefil.git",
       "revision": "256474e6ea23a6654cb859624f8c04c0b7469197",
       "role": "corpus-dependency"
+    },
+    {
+      "name": "anaphora",
+      "url": "https://github.com/spwhitton/anaphora.git",
+      "revision": "bcf0f7485eec39415be1b2ec6ca31cf04a8ab5c5",
+      "role": "corpus-dependency"
+    },
+    {
+      "name": "let-plus",
+      "url": "https://github.com/sharplispers/let-plus.git",
+      "revision": "455e657e077235829b197f7ccafd596fcda69e30",
+      "role": "corpus-dependency"
+    },
+    {
+      "name": "trivial-features",
+      "url": "https://github.com/trivial-features/trivial-features.git",
+      "revision": "828246a1c1efdcad94c1ba2f2a210bb9cb4cde3e",
+      "role": "corpus-dependency"
+    },
+    {
+      "name": "documentation-utils",
+      "url": "https://codeberg.org/shinmera/documentation-utils.git",
+      "revision": "cd5b506c7aa555dea0cc0785f36256348c9e839d",
+      "role": "corpus-dependency"
+    },
+    {
+      "name": "form-fiddle",
+      "url": "https://codeberg.org/shinmera/form-fiddle.git",
+      "revision": "a4481ccd10a01bcc89bcc66c2e7c9b260332a82b",
+      "role": "corpus-dependency"
+    },
+    {
+      "name": "trivial-indent",
+      "url": "https://codeberg.org/shinmera/trivial-indent.git",
+      "revision": "b181b48c7e311f6c5e84421909d5abce2db5b618",
+      "role": "corpus-dependency"
+    },
+    {
+      "name": "trivial-custom-debugger",
+      "url": "https://github.com/phoe/trivial-custom-debugger.git",
+      "revision": "802473c75d9db625b8f37b05c95dde47b67c52fa",
+      "role": "corpus-dependency"
+    },
+    {
+      "name": "named-readtables",
+      "url": "https://github.com/melisgl/named-readtables.git",
+      "revision": "9b774b51a08124c41881f10b30fb33425a3e6085",
+      "role": "corpus-dependency"
+    },
+    {
+      "name": "trivial-gray-streams",
+      "url": "https://github.com/trivial-gray-streams/trivial-gray-streams.git",
+      "revision": "257d73ec36958beb7d49eba5567d5409827197b7",
+      "role": "corpus-dependency"
+    },
+    {
+      "name": "trivial-backtrace",
+      "url": "https://github.com/gwkkwg/trivial-backtrace.git",
+      "revision": "7f90b4a4144775cca0728791e4b92ac2557b07a1",
+      "role": "corpus-dependency"
+    },
+    {
+      "name": "asdf-flv",
+      "url": "https://github.com/didierverna/asdf-flv.git",
+      "revision": "3f1de416f7f40a39c47f08335c710a884ece36b3",
+      "role": "corpus-dependency"
+    },
+    {
+      "name": "rt",
+      "url": "http://git.kpe.io/rt.git",
+      "revision": "a6a7503a0b47953bc7579c90f02a6dba1f6e4c5a",
+      "shallow": false,
+      "role": "corpus-dependency"
+    },
+    {
+      "name": "mt19937",
+      "archive_url": "https://beta.quicklisp.org/archive/mt19937/2011-02-19/mt19937-1.1.1.tgz",
+      "archive_sha256": "bb076745fc1f589f9f2a0f824d1f5340f6036920117901f67cbef008961986c7",
+      "archive_prefix": "mt19937-1.1.1",
+      "revision": "1.1.1",
+      "role": "corpus-dependency",
+      "source_sha256": {
+        "benchmark.lisp": "28f4cf256c5ac14f7050705141645175069f7e29bcbb9b97311a0040a051c5e9",
+        "example.lisp": "7aee093373c99bd4c97147f7b6d7a053df71d524a0b70c9885d7ce576c23b305",
+        "README": "7d9e8ca1a03d060aa16c524d4d3af3c79fa07b6c9e511428926b70631a3b3612",
+        "mt19937.lisp": "fcdc8c27de321fb7a8b98f42138c79c32e23f41cf4a6b49b8e38970dd6df8613",
+        "mt19937.asd": "04ca7e7af13f40ef9bbae37deff51b30cacd6d4d0905eaf68b10ebc26ffaa356"
+      }
     }
   ]
 }
