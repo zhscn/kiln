@@ -49,6 +49,7 @@ kiln 是一个现代 Common Lisp 实现：开发时是完整的活 image，交�
 | [clostrophilia.md](research/clostrophilia.md) | 2026-11 | Clostrophilia 的规模、要实现方提供的东西、缺陷 |
 | [modern-practices.md](research/modern-practices.md) | 2026-11 | 可借鉴的现代编译器实践（含项目工具和包管理的问题分析）和暂不采用的做法 |
 | [mir-compilation.md](research/mir-compilation.md) | 2026-11-16 | HIR → MIR 的阶段耗时、LIR 与 Cranelift 对照、分析和降级热点、共享 base 测试预算 |
+| [mir-analysis-optimization.md](research/mir-analysis-optimization.md) | 2026-11-17 | MIR 分析复用、类型与多值表示、原生编译吞吐和共享 base 预算 |
 | [performance.md](research/performance.md) | 2026-11 | 编译延迟、SBCL 对照、专项测量与 GC 观察 |
 | [dotnet-runtime-async.md](research/dotnet-runtime-async.md) | 2026-11 | .NET 的 runtime async 和对 kiln 拷栈方案的启发 |
 | [swift-abi.md](research/swift-abi.md) | 2026-11 | Swift 的 ABI 稳定化和 kiln 的对照 |
