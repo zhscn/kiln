@@ -110,6 +110,6 @@
                  (apply original function arguments)))
          (mir-infer-calls unit)
          (assert (= (hash-table-count counts) (hir-buffer-count (mir-unit-functions unit))))
-         ;; One solve and one finalization, with no unrelated round trips.
-         (maphash (lambda (function count) (declare (ignore function)) (assert (= count 2))) counts))
+         ;; One solve also supplies the published result, without unrelated round trips.
+         (maphash (lambda (function count) (declare (ignore function)) (assert (= count 1))) counts))
     (setf (symbol-function 'mir-compute-types) original)))

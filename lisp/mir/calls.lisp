@@ -484,6 +484,7 @@
                                           :inputs (svref inputs id) :captures (svref capture-inputs id)
                                           :cell-types cell-types :cell-points (svref (mir-cell-aliases-points cell-aliases) id)
                                           :finalize nil)
+                     (setf (svref types id) facts (svref packets id) packet-facts)
                      (let ((old (svref summaries id)))
                        (multiple-value-bind (joined expansions)
                            (mir-widen-summary old (mir-return-type function facts) (svref changes id))
@@ -517,12 +518,12 @@
           (when (eq (svref cell-types site) :unseen)
             (setf (svref cell-types site) t) (enqueue-users (svref cell-readers site))))
         (solve)
-        (dotimes (id count)
-          (multiple-value-bind (facts packet-facts)
-              (mir-compute-types (svref functions id) :summaries summaries :value-summaries value-summaries
-                                 :functions (svref identities id) :inputs (svref inputs id) :captures (svref capture-inputs id)
-                                 :cell-types cell-types :cell-points (svref (mir-cell-aliases-points cell-aliases) id))
-            (setf (svref types id) facts (svref packets id) packet-facts)))
+        ;; Every changed input has notified its consumers before the queue
+        ;; empties. Keep those solved rows; only unseeded local values need
+        ;; the public-safe finalization performed by the local solver.
+        (loop for row across types do
+          (dotimes (id (length row))
+            (when (eq (svref row id) :unseen) (setf (svref row id) t))))
         (make-mir-call-analysis :identities identities :outgoing outgoing :components components
                                 :external external :inputs inputs :capture-inputs capture-inputs :cell-types cell-types :cell-aliases cell-aliases
                                 :summaries summaries :value-summaries value-summaries
