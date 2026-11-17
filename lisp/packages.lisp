@@ -23,7 +23,7 @@
 (defpackage #:kiln.lir
   (:use #:cl)
   (:documentation "Production LIR requests: normalization, encoding and target identity.")
-  (:export #:module-program #:module-packet #:encode-program #:write-module #:target-fingerprint))
+  (:export #:module-program #:module-packet #:encode-program #:write-module #:target-fingerprint #:runtime-signature))
 
 (defpackage #:kiln.sys
   (:use)

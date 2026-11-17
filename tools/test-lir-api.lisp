@@ -8,3 +8,9 @@
   (assert (handler-case (progn (kiln.lir:encode-program '(:module "legacy")) nil) (error () t)))
   (assert (= (kiln.lir:target-fingerprint) kiln.kir::+backend-target-fingerprint+)))
 (format t "The public LIR encoder fixes the production payload and rejects compatibility input.~%")
+
+(dolist (description kiln.kir::+backend-lir-runtime-operations+)
+  (multiple-value-bind (arity safepoint) (kiln.lir:runtime-signature (first description))
+    (assert (= arity (second description)))
+    (assert (eq safepoint (third description)))))
+(assert (handler-case (progn (kiln.lir:runtime-signature :invented-runtime-call) nil) (error () t)))

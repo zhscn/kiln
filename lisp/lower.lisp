@@ -104,6 +104,8 @@ so local names carry the module's name; shared ones (symbols) do not."
 
 (defun emit-runtime-op (operation arguments)
   "Submits a runtime service with evaluated object operands."
+  (unless (= (length arguments) (kiln.lir:runtime-signature operation))
+    (fail "Wrong argument count for runtime operation ~S" operation))
   (let ((result (new-var)) (arguments (mapcar #'copy-to-var arguments)))
     (emit `(:runtime-op ,result ,operation ,arguments ,(handler) ,@(call-loc)))
     result))

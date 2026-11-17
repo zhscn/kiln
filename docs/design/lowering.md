@@ -28,7 +28,7 @@ MIR 的区域关系决定正常退出、本地退出和异常落地需要恢复�
 
 ## Runtime 服务
 
-普通 runtime 服务提交 `runtime-op`，包含操作名、已求值对象、动态 handler 和源码位置。Rust 的闭合表定义调用名称、参数数量、签名和 safepoint 效果，补齐 imports，并为身份哈希保留缓存快路径。Lisp 发射不声明这些函数的 ABI，也不选择哪些服务需要 safepoint trampoline。生产路径的帧指针操作表达为后端 token，不在 Lisp 中构造地址。
+普通 runtime 服务提交 `runtime-op`，包含操作名、已求值对象、动态 handler 和源码位置。Rust 的闭合表定义调用名称、参数数量、签名和 safepoint 效果，补齐 imports，并为身份哈希保留缓存快路径。Lisp 发射与规范化使用生成的服务描述检查名称和参数数量，不声明这些函数的 ABI，也不选择哪些服务需要 safepoint trampoline。生产路径的帧指针操作表达为后端 token，不在 Lisp 中构造地址。
 
 GC、packet 编码和跨栈 Lisp 调用可能 safepoint 或覆盖传递区；独立 LIR 验证器使旧多值视图失效并传播异常边。其余服务遵守当前 runtime 的 NoSafepoint 合同，保留传递区内容。运行期编译的批量快照、代码安装和 literal 绑定期间不调用 Lisp。
 

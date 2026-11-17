@@ -518,6 +518,11 @@ pub fn target_description() -> String {
         text.push_str("))");
     }
     text.push_str("))\n");
+    text.push_str("(defparameter +backend-lir-runtime-operations+\n  '(");
+    for (name, arguments, safepoint) in crate::lir::program::RuntimeOperation::descriptors() {
+        write!(text, "\n    (:{name} {arguments} {})", if *safepoint { "t" } else { "nil" }).unwrap();
+    }
+    text.push_str("))\n");
     text
 }
 

@@ -234,6 +234,8 @@
       ((:move-values :publish-values :save-values :values-list :push-values :list-values :restore-values)
        (lir-value-statement state statement))
       (:runtime-op
+       (unless (= (length (third args)) (kiln.lir:runtime-signature (second args)))
+         (lir-function-error state "wrong operand count for runtime operation ~S" (second args)))
        (lir-check-handler state (fourth args))
        (lir-emit state `(:runtime ,(first args) ,(second args)
                           ,(mapcar (lambda (argument) (lir-operand state argument :obj)) (third args))

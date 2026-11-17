@@ -13,6 +13,9 @@ macro_rules! operations {
         pub enum RuntimeOperation { $( $variant, )* }
         impl RuntimeOperation {
             pub(crate) const ALL: &'static [Self] = &[$(Self::$variant,)*];
+            pub fn descriptors() -> &'static [(&'static str, usize, bool)] {
+                &[$(($name, $args, $safepoint),)*]
+            }
             pub(crate) fn parse(name:&str) -> Option<Self> {match name { $($name=>Some(Self::$variant),)* _=>None }}
             pub(crate) fn descriptor(self) -> Descriptor {match self { $(Self::$variant=>Descriptor {entry:$entry,arguments:$args,safepoint:$safepoint},)*}}
         }

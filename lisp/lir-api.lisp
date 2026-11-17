@@ -29,3 +29,9 @@
       (return-from write-module module))
     (kiln.kir::portable-backend-packet program kiln.kir::+packet-lir-payload+ stream))
   module)
+
+(defun runtime-signature (name)
+  "Return object-argument count and safepoint effect from the Rust descriptor."
+  (let ((description (assoc name kiln.kir::+backend-lir-runtime-operations+)))
+    (unless description (error "Unknown backend runtime operation ~S." name))
+    (values (second description) (third description))))

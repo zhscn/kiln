@@ -1434,3 +1434,10 @@ fn progv_expansion_owns_dependencies_and_restoration_cannot_call() {
     );
     assert!(parse("catch", "(dynamic-enter entry catch a0 a1 h)").is_err());
 }
+
+#[test]
+fn generated_target_contract_matches_the_checked_in_lisp_description() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../lisp/backend-target.lisp");
+    assert_eq!(std::fs::read_to_string(path).unwrap(), kiln_cg::packet::target_description());
+}
