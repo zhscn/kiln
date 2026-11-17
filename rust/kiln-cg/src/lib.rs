@@ -1,6 +1,5 @@
-//! kiln-cg as a library: KIR → machine code with Cranelift, for the
-//! command-line tool (main.rs) and for code compiled into a running image
-//! (`kiln_rt_compile_packet` and the legacy `kiln_rt_jit`, jit.rs).
+//! Production LIR validation and lowering, internal KIR code generation, and
+//! owned image compilation. Compatibility KIR belongs to diagnostic dispatch.
 
 pub mod codegen;
 pub mod jit;

@@ -126,6 +126,10 @@ kiln-cg 的输出只取决于 KIR：函数里 landing block（`try_call` 的异�
 
 当前一次性原生编译使用 `kiln_rt_compile_program`：复制结构化记录并核验目标，直接构造内存 KIR。序列化载荷使用 `kiln_rt_compile_packet`，接收 simple-vector octets 和 literal 向量，复制、校验并解码后进入同一操作路径。下述 `kiln_rt_jit` 是保留的文本兼容入口。封套版本与所有权见 [compiler-protocol.md](compiler-protocol.md)。
 
-kiln-cg 作为库链进 `libkiln_launcher.a`，运行期的入口是 `kiln_rt_jit`（`rust/kiln-cg/src/jit.rs`）：解析 KIR，编进内存，登记调用点、栈图、static root 和调试记录，把字面量向量的元素写进模块的字面量字，返回 init 函数对象（还没调用）。KIR 编不过时打印原因并返回 NIL。只有引用了它的程序（含 compiler 模块的程序）链接时才带进 Cranelift。
+kiln-cg 作为库链进 `libkiln_launcher.a`。生产入口 `kiln_rt_compile_program` 和
+`kiln_rt_compile_packet` 在验证独立 LIR 后准备代码，完成 literal 绑定后才登记调用点、
+栈图、roots 和导出符号。成功返回未执行的 init 函数，失败返回结构化诊断，见
+[compiler-protocol.md](compiler-protocol.md)。`kiln_rt_jit` 只保留为诊断兼容入口，读取
+KIR 文本并按旧约定返回 init 或 NIL。包含运行期编译的程序链接 Cranelift。
 
 编进运行中 image 的代码要和 image 共用一些定义（未定义函数的入口、funcallable instance 的跳板），所以这类模块把它们写成 `import-data`。kiln-cg 链接时按名字解析：每个模块导出 `kiln_rt::EXPORTED_NAMES` 中它定义的那些名字（模块信息的 `exports`），kiln-rt 记下地址。Lisp 这一侧的做法见 [eval-compile.md](eval-compile.md)。

@@ -23,7 +23,9 @@
 (defpackage #:kiln.lir
   (:use #:cl)
   (:documentation "Production LIR requests: normalization, encoding and target identity.")
-  (:export #:module-program #:module-packet #:encode-program #:write-module #:target-fingerprint #:runtime-signature))
+  (:export #:module-program #:module-packet #:encode-program #:write-module #:target-fingerprint #:runtime-signature
+           #:require-init #:backend-error #:backend-error-operation #:backend-error-stage
+           #:backend-error-message #:backend-error-truncated-p))
 
 (defpackage #:kiln.sys
   (:use)

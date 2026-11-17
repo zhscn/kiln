@@ -132,10 +132,10 @@ impl cranelift_jit::JITMemoryProvider for SharedArena {
 }
 
 /// Code compiled into memory, with its tables registered with the runtime.
+#[non_exhaustive]
 pub struct Loaded {
     pub module: JITModule,
     pub out: Output,
-    _registered: (),
 }
 
 /// Owns code and native metadata that have not entered runtime registries.
@@ -188,12 +188,20 @@ fn prepare(kir: &kir::Module, opts: &Options, memory: Memory) -> Result<Prepared
     let mut module = JITModule::new(builder);
     let out = codegen::compile(&mut module, kir, opts)?;
     module.finalize_definitions().map_err(|e| e.to_string())?;
-    Ok(Prepared { module, out, memory })
+    Ok(Prepared {
+        module,
+        out,
+        memory,
+    })
 }
 
 impl Prepared {
     fn publish(self) -> Loaded {
-        let Self { module, out, memory } = self;
+        let Self {
+            module,
+            out,
+            memory,
+        } = self;
         let callsites: Vec<CallSiteRecord> = out
             .callsites
             .iter()
@@ -227,7 +235,8 @@ impl Prepared {
             .debug
             .iter()
             .map(|d| {
-                let data = |id, addend: i64| (module.get_finalized_data(id).0 as i64 + addend) as u64;
+                let data =
+                    |id, addend: i64| (module.get_finalized_data(id).0 as i64 + addend) as u64;
                 let (info, flags) = match d.info {
                     None => (0, 0),
                     Some(DebugInfo::Word(n)) => (n as u64, 0),
@@ -257,7 +266,7 @@ impl Prepared {
             };
             kiln_rt::register_export(name, addr);
         }
-        Loaded { module, out, _registered: () }
+        Loaded { module, out }
     }
 }
 
@@ -306,76 +315,150 @@ unsafe fn jit_text(text: u64, literals: u64) -> Result<u64, String> {
     unsafe { install_module(&kir, literals, Some(src.len()), t) }
 }
 
-/// Compile an indexed packet from a simple vector of octets. This entry
-/// copies the request before decoding and never calls a Lisp safepoint.
-/// The caller's Lisp frame roots the literal vector until its elements
-/// have been installed into registered static root slots.
-///
-/// # Safety
-/// `packet` and `literals` must be valid Lisp objects. The current runtime
-/// has one mutator; no Lisp GC or callback may run during this call.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn kiln_rt_compile_packet(
-    _ctx: *mut Context,
-    packet: u64,
-    literals: u64,
-) -> u64 {
-    let result = unsafe { compile_packet(packet, literals) };
-    match result {
-        Ok(init) => init,
-        Err(error) => {
-            eprintln!("kiln_rt_compile_packet: {error}");
-            kiln_rt::object::nil()
+#[derive(Clone, Copy, Debug)]
+enum CompilationStage {
+    Request,
+    Program,
+    Install,
+}
+
+struct CompilationError {
+    stage: CompilationStage,
+    message: String,
+}
+impl CompilationError {
+    fn new(stage: CompilationStage, message: impl Into<String>) -> Self {
+        Self {
+            stage,
+            message: message.into(),
         }
     }
 }
 
-unsafe fn compile_packet(packet: u64, literals: u64) -> Result<u64, String> {
+fn diagnostic_words(error: CompilationError) -> Vec<u64> {
+    use crate::packet::schema::*;
+    let stage = match error.stage {
+        CompilationStage::Request => DIAGNOSTIC_STAGE_REQUEST,
+        CompilationStage::Program => DIAGNOSTIC_STAGE_PROGRAM,
+        CompilationStage::Install => DIAGNOSTIC_STAGE_INSTALL,
+    };
+    let mut chars: Vec<_> = error
+        .message
+        .chars()
+        .take(DIAGNOSTIC_MAX_CHARS as usize + 1)
+        .collect();
+    let truncated = chars.len() > DIAGNOSTIC_MAX_CHARS as usize;
+    chars.truncate(DIAGNOSTIC_MAX_CHARS as usize);
+    let mut words = Vec::with_capacity(chars.len() + 3);
+    words.extend([
+        u64::from(DIAGNOSTIC_VERSION) << 1,
+        u64::from(stage) << 1,
+        u64::from(truncated) << 1,
+    ]);
+    words.extend(chars.into_iter().map(|c| u64::from(u32::from(c)) << 1));
+    words
+}
+
+unsafe fn compilation_result(
+    ctx: *mut Context,
+    fp: usize,
+    result: Result<u64, CompilationError>,
+) -> u64 {
+    use kiln_rt::object::{KIND_SIMPLE_VECTOR, LENGTH_SHIFT, TAG_GENERAL};
+    match result {
+        Ok(init) => init,
+        Err(error) => {
+            // Only native scalars remain live when this allocation may collect.
+            let words = diagnostic_words(error);
+            let address = unsafe {
+                kiln_rt::gc::kiln_rt_alloc(
+                    ctx,
+                    (words.len() as u64 + 1) * 8,
+                    KIND_SIMPLE_VECTOR | ((words.len() as u64) << LENGTH_SHIFT),
+                    fp,
+                )
+            };
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    words.as_ptr(),
+                    (address + 8) as *mut u64,
+                    words.len(),
+                );
+            }
+            address + TAG_GENERAL
+        }
+    }
+}
+
+/// Compile a production packet. Error diagnostics can allocate at a safepoint.
+/// # Safety
+/// Called through a safepoint trampoline; request and literal objects are caller roots.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kiln_rt_compile_packet(
+    ctx: *mut Context,
+    packet: u64,
+    literals: u64,
+    fp: usize,
+) -> u64 {
+    unsafe { compilation_result(ctx, fp, compile_packet(packet, literals)) }
+}
+
+unsafe fn compile_packet(packet: u64, literals: u64) -> Result<u64, CompilationError> {
     use kiln_rt::object::{
         KIND_MASK, KIND_SIMPLE_VECTOR, fixnum_value, header, header_length, is_fixnum, is_general,
         untag,
     };
     let t = std::time::Instant::now();
-    if !is_general(packet) || unsafe { header(packet) } & KIND_MASK != KIND_SIMPLE_VECTOR {
-        return Err("request must be a simple vector of octets".into());
-    }
-    if !is_general(literals) || unsafe { header(literals) } & KIND_MASK != KIND_SIMPLE_VECTOR {
-        return Err("literals must be a simple vector".into());
-    }
-    let n = header_length(unsafe { header(packet) });
-    if n > crate::packet::schema::MAX_BYTES as usize {
-        return Err("request too large".into());
-    }
-    let words = unsafe { std::slice::from_raw_parts((untag(packet) + 8) as *const u64, n) };
-    let bytes = words
-        .iter()
-        .map(|&word| {
-            if !is_fixnum(word) {
-                return Err("request contains a non-octet".to_string());
-            }
-            u8::try_from(fixnum_value(word)).map_err(|_| "request contains a non-octet".to_string())
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let kir = crate::packet::load_lir(&bytes)?;
-    unsafe { install_module(&kir, literals, Some(bytes.len()), t) }
+    let request = || {
+        if !is_general(packet) || unsafe { header(packet) } & KIND_MASK != KIND_SIMPLE_VECTOR {
+            return Err("request must be a simple vector of octets".to_string());
+        }
+        if !is_general(literals) || unsafe { header(literals) } & KIND_MASK != KIND_SIMPLE_VECTOR {
+            return Err("literals must be a simple vector".to_string());
+        }
+        let n = header_length(unsafe { header(packet) });
+        if n > crate::packet::schema::MAX_BYTES as usize {
+            return Err("request too large".into());
+        }
+        let words = unsafe { std::slice::from_raw_parts((untag(packet) + 8) as *const u64, n) };
+        let bytes = words
+            .iter()
+            .map(|&word| {
+                if !is_fixnum(word) {
+                    return Err("request contains a non-octet".to_string());
+                }
+                u8::try_from(fixnum_value(word))
+                    .map_err(|_| "request contains a non-octet".to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let decoded = crate::packet::decode(&bytes)?;
+        if decoded.language != crate::packet::schema::LIR_PAYLOAD {
+            return Err("production compilation requires the LIR payload".into());
+        }
+        Ok((decoded.program, bytes.len()))
+    };
+    let (program, size) =
+        request().map_err(|e| CompilationError::new(CompilationStage::Request, e))?;
+    let kir = crate::packet::compile_lir_program(&program)
+        .map_err(|e| CompilationError::new(CompilationStage::Program, e))?;
+    unsafe { install_module(&kir, literals, Some(size), t) }
+        .map_err(|e| CompilationError::new(CompilationStage::Install, e))
 }
 
-/// Direct image adapter for the same backend program schema used in packets.
-/// It snapshots records once rather than round-tripping through a Lisp byte vector.
-///
+/// Snapshot a single-use production program before compilation and installation.
 /// # Safety
-/// Arguments must be valid Lisp values. Like the packet compiler, this
-/// entry assumes one mutator and performs no Lisp safepoint or callback.
+/// Called through a safepoint trampoline; no old Lisp address survives diagnostic allocation.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn kiln_rt_compile_program(
-    _ctx: *mut Context,
+    ctx: *mut Context,
     program: u64,
     literals: u64,
     target: u64,
+    fp: usize,
 ) -> u64 {
     use kiln_rt::object::*;
-    let result = (|| {
-        let t = std::time::Instant::now();
+    let t = std::time::Instant::now();
+    let request = || {
         let target = if is_fixnum(target) {
             u64::try_from(fixnum_value(target)).map_err(|_| "invalid target fingerprint")?
         } else if is_general(target) && unsafe { header(target) } & KIND_MASK == KIND_BIGNUM {
@@ -390,17 +473,19 @@ pub unsafe extern "C" fn kiln_rt_compile_program(
         if !is_general(literals) || unsafe { header(literals) } & KIND_MASK != KIND_SIMPLE_VECTOR {
             return Err("literals must be a simple vector".into());
         }
-        let program = unsafe { crate::packet_heap::snapshot_program(program) }?;
-        let kir = crate::packet::compile_lir_program(&program)?;
-        unsafe { install_module(&kir, literals, None, t) }
-    })();
-    match result {
-        Ok(init) => init,
-        Err(error) => {
-            eprintln!("kiln_rt_compile_program: {error}");
-            nil()
-        }
-    }
+        unsafe { crate::packet_heap::snapshot_program(program) }
+    };
+    let result = request()
+        .map_err(|e| CompilationError::new(CompilationStage::Request, e))
+        .and_then(|program| {
+            crate::packet::compile_lir_program(&program)
+                .map_err(|e| CompilationError::new(CompilationStage::Program, e))
+        })
+        .and_then(|kir| {
+            unsafe { install_module(&kir, literals, None, t) }
+                .map_err(|e| CompilationError::new(CompilationStage::Install, e))
+        });
+    unsafe { compilation_result(ctx, fp, result) }
 }
 
 unsafe fn install_module(
@@ -431,11 +516,16 @@ unsafe fn install_module(
     } else if n != 0 {
         return Err("missing literal words".into());
     }
-    let patch_data: std::collections::HashMap<_,_> = kir.data.iter().map(|d| (d.name.as_str(),d)).collect();
+    let patch_data: std::collections::HashMap<_, _> =
+        kir.data.iter().map(|d| (d.name.as_str(), d)).collect();
     let patch_roots: std::collections::HashSet<_> = kir.roots.iter().cloned().collect();
     for (name, word, literal) in &kir.literal_patches {
-        let data = patch_data.get(name.as_str()).ok_or("literal patch has no data")?;
-        if *literal >= n || !matches!(&data.contents, kir::DataContents::Words(words) if (*word as usize) < words.len()) {
+        let data = patch_data
+            .get(name.as_str())
+            .ok_or("literal patch has no data")?;
+        if *literal >= n
+            || !matches!(&data.contents, kir::DataContents::Words(words) if (*word as usize) < words.len())
+        {
             return Err("literal patch out of range".into());
         }
         if !patch_roots.contains(&(name.clone(), *word)) {
@@ -461,7 +551,11 @@ unsafe fn install_module(
         }
     }
     for (name, word, literal) in &kir.literal_patches {
-        let id = loaded.out.data.get(name).ok_or("missing literal patch data")?;
+        let id = loaded
+            .out
+            .data
+            .get(name)
+            .ok_or("missing literal patch data")?;
         let (words, _) = loaded.module.get_finalized_data(*id);
         let elements = (untag(literals) + 8) as *const u64;
         unsafe { *(words as *mut u64).add(*word as usize) = *elements.add(*literal) };
@@ -525,6 +619,26 @@ fn append_perf_map(module: &JITModule) {
 mod publication_tests {
     use super::*;
 
+    #[test]
+    fn diagnostics_preserve_unicode_and_bound_allocation() {
+        use crate::packet::schema::*;
+        let words = diagnostic_words(CompilationError::new(CompilationStage::Program, "λ🙂"));
+        assert_eq!(
+            words,
+            vec![
+                u64::from(DIAGNOSTIC_VERSION) << 1,
+                u64::from(DIAGNOSTIC_STAGE_PROGRAM) << 1,
+                0,
+                0x3bb << 1,
+                0x1f642 << 1
+            ]
+        );
+        let text = "λ".repeat(DIAGNOSTIC_MAX_CHARS as usize + 10);
+        let words = diagnostic_words(CompilationError::new(CompilationStage::Request, text));
+        assert_eq!(words.len(), DIAGNOSTIC_MAX_CHARS as usize + 3);
+        assert_eq!(words[2], 2);
+    }
+
     fn source() -> kir::Module {
         kir::parse_module(&crate::sexp::parse_one(
             r#"(module "publication" (init "publication_root") (data "publication_root" (words 0)) (root "publication_root" 0))"#,
@@ -533,7 +647,12 @@ mod publication_tests {
 
     #[test]
     fn prepared_roots_are_registered_only_when_published() {
-        let pending = prepare(&source(), &Options { dump_clif: false }, Memory::Own(1 << 20)).unwrap();
+        let pending = prepare(
+            &source(),
+            &Options { dump_clif: false },
+            Memory::Own(1 << 20),
+        )
+        .unwrap();
         let id = pending.out.data["publication_root"];
         let address = pending.module.get_finalized_data(id).0 as usize;
         assert!(!kiln_rt::gc::static_roots().contains(&address));
@@ -545,7 +664,12 @@ mod publication_tests {
 
     #[test]
     fn dropping_prepared_code_leaves_no_registered_roots() {
-        let pending = prepare(&source(), &Options { dump_clif: false }, Memory::Own(1 << 20)).unwrap();
+        let pending = prepare(
+            &source(),
+            &Options { dump_clif: false },
+            Memory::Own(1 << 20),
+        )
+        .unwrap();
         let id = pending.out.data["publication_root"];
         let address = pending.module.get_finalized_data(id).0 as usize;
         drop(pending);

@@ -187,3 +187,20 @@ HIR 前端转换 lambda list 之后（`lisp/hir/convert.lisp`），每个 `&opti
 槽内已有 Lisp 对象的变量，不能用它把任意浮点位模式作为对象传回 Lisp。
 调试变量描述 `(:double-bits 名字)` 表示 binary64 位模式；调试器从两部分重建
 浮点对象，原始槽不作为 GC 引用扫描。
+
+## 运行期编译结果
+
+`kiln_rt_compile_program(ctx, program, literals, target, fp)` 和
+`kiln_rt_compile_packet(ctx, packet, literals, fp)` 通过 safepoint trampoline 调用。
+成功返回已安装代码的 init 函数对象，不执行 init。失败返回 simple-vector 诊断：
+前三个元素为格式版本、阶段和截断标志，其余元素为 Unicode scalar 的 fixnum。
+版本、阶段编号和最大字符数由 packet schema 生成；截断标志为 0 或 1。
+
+阶段区分请求快照／封套、LIR 程序验证与降级，以及机器码生成／literal 绑定。
+诊断最多保留 16384 个字符，分配一次 Lisp 向量，不包含其他堆引用。Lisp 的
+`kiln.lir:require-init` 将诊断转换为带请求种类、阶段、消息和截断标志的
+`kiln.lir:backend-error`，不再依赖 stderr 或 NIL 判断编译失败。
+
+请求复制、验证与降级期间不分配 Lisp 对象；失败诊断的分配可以 GC，调用方的
+program、packet 和 literal 向量必须作为普通活跃对象进入栈图。Rust 不在 GC 后
+读取旧请求地址。内部 panic 沿 panic=abort 策略结束进程，不转换成可恢复诊断。

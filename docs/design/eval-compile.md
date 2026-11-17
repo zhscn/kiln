@@ -64,7 +64,7 @@ compiler 模块的 `lisp/target/compiler/native.lisp` 把 `kiln.kernel::*compile
    - 用 `front-end-forms` 处理 `(setq *compiled-function* (function LAMBDA))`（和 `front-end` 一样，只是直接处理形式，不读文件）；
    - 用 `compile-module :image t` 降级；
    - 用 `kiln.lir:module-program` 得到独立 LIR 和完整的 literal 绑定；
-   - 把程序、字面量向量和目标指纹交给 `(%primop :compile-program program literals target)`，即 kiln-cg 的 `kiln_rt_compile_program`（[codegen.md](codegen.md)）。它返回 init 函数对象，程序编译失败时返回 NIL，`native-compile` 据此报错。
+   - 把程序、字面量向量和目标指纹交给 `(%primop :compile-program program literals target)`，即 kiln-cg 的 `kiln_rt_compile_program`（[codegen.md](codegen.md)）。成功结果经 `kiln.lir:require-init` 得到 init 函数；失败诊断转换为带请求种类、阶段、消息及截断标志的 `kiln.lir:backend-error`。
 2. `native-compile` 动态绑定 `*compiled-function*`，调用 init 函数，取出编好的函数。
 
 `compile` 的显式函数名（包括 setf 名字）传入调试元数据。匿名编译保持 lambda 名字。

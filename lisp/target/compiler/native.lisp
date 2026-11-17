@@ -50,10 +50,9 @@ running image, in the null lexical environment."
                                            session)
                           name :session session :image t :pipeline pipeline))
       (multiple-value-bind (program bindings) (kiln.lir:module-program module literals)
-        (let ((init (kiln.sys:%primop :compile-program program bindings
-                                            (kiln.lir:target-fingerprint))))
-          (unless init
-            (error "kiln-cg could not compile ~S." definition))
+        (let ((init (kiln.lir:require-init
+                      (kiln.sys:%primop :compile-program program bindings (kiln.lir:target-fingerprint))
+                      :compile-program)))
           (let ((*compiled-function* nil))
             (funcall init)
             *compiled-function*))))))

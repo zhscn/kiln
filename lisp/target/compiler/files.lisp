@@ -3,8 +3,7 @@
 (in-package #:kiln.compiler)
 
 (defun load-native-file (packet literals)
-  (let ((init (kiln.sys:%primop :compile-packet packet literals)))
-    (unless init (error "Cannot generate native code for compiled file."))
+  (let ((init (kiln.lir:require-init (kiln.sys:%primop :compile-packet packet literals) :compile-packet)))
     (funcall init)
     (import-source-definitions)
     (when *load-print* (format t "~&;; ~S loaded~%" init)))
