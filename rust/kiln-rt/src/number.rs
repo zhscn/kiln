@@ -315,6 +315,7 @@ pub const OP_RATIONAL: u64 = 21;
 /// Binary again.
 pub const OP_ATAN2: u64 = 22;
 pub const OP_EXPT: u64 = 23;
+pub const OP_HYPOT: u64 = 24;
 
 /// Applies a float function, keeping the argument's float format
 /// (rationals give single-floats, CLHS 12.1.4.1.1).
@@ -323,6 +324,14 @@ fn float_fn(x: &Num, f: fn(f64) -> f64) -> Num {
         Num::Double(f(to_f64(x)))
     } else {
         Num::Single(f(to_f64(x)) as f32)
+    }
+}
+
+fn hypot(x: &Num, y: &Num) -> Num {
+    if format_of(x).max(format_of(y)) == Format::Double {
+        Num::Double(to_f64(x).hypot(to_f64(y)))
+    } else {
+        Num::Single(to_f32(x).hypot(to_f32(y)))
     }
 }
 
@@ -427,6 +436,7 @@ pub unsafe extern "C" fn kiln_rt_number_op(ctx: *mut Context, op: u64, a: u64, b
                 }
             }
             OP_EXPT => expt(&x, &y),
+            OP_HYPOT => hypot(&x, &y),
             _ => crate::rtfun::error_exit("kiln_rt_number_op: unknown operation"),
         };
         write(ctx, &result)

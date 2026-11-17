@@ -56,6 +56,7 @@ operations! {
     Atan => ("atan", number, OP_ATAN, 1, 1),
     Rational => ("rational", number, OP_RATIONAL, 1, 1),
     Atan2 => ("atan2", number, OP_ATAN2, 2, 1),
+    Hypot => ("hypot", number, OP_HYPOT, 2, 1),
     Expt => ("number-expt", number, OP_EXPT, 2, 1),
 }
 

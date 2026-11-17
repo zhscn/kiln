@@ -133,6 +133,10 @@ image 编译中的调试记录原本作为一个整体放在 literal 向量中�
 
 `(numeric RESULT OP (ARG...) 选项...)` 执行具名的整数或实数操作，产生 `mv` 视图。操作表在 Rust 中绑定到 runtime 操作码、参数数量和返回值数量；整数与一般实数的 truncate、floor、ceiling、round 返回商与余数，其余操作返回一个值。Rust 安排 context、运行时调用及次值传递。所有参数为对象变量，验证器检查数量、表示和初始化，数值操作覆盖旧多值视图，并与 call 使用相同的区域、位置和异常边规则。除 `number-eql` 接受任意对象外，生成方应在语言语义要求的位置完成数字类型与除零检查；原语本身复用 runtime 数值入口的错误行为。
 
+`hypot` 使用输入的共同浮点精度计算欧几里得模长。复数 `abs` 的浮点路径通过
+这一操作避免平方溢出，以及多次缩放、平方和舍入在单位圆附近积累的误差。
+有理数复数仍沿用有理数求和与平方根路径。
+
 生产原语也使用具名操作，兼容载荷的 `numeric-op` 与独立 LIR 共用 Rust 展开。Lisp 不声明数值 runtime 调用签名，不携带数值操作码，也不读取余数槽或指定数值操作的返回个数。
 
 动态容器使用 `(alloc-sequence RESULT simple-vector|string LENGTH INITIAL)`，LENGTH 为未装箱机器字，INITIAL 为对象；字符串初值为字符。Rust 检查长度在目标 header 的范围内，并检查字符串初值的表示，随后保存输入、分配和填充。`(vector RESULT (ELEMENT...))` 从已求值的对象建立 simple-vector，允许 RESULT 与输入相同。输入对象跨慢路径保持 roots。分配使旧多值视图失效，异常边来自操作之前。

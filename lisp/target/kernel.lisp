@@ -1141,12 +1141,10 @@
   (let ((a (abs (realpart z))) (b (abs (imagpart z))))
     (if (rationalp a)
         (sqrt (+ (* a a) (* b b)))
-        ;; Scaled, so that the squares do not overflow.
-        (let ((m (max a b)))
-          (if (zerop m)
-              m
-              (let ((x (/ a m)) (y (/ b m)))
-                (* m (sqrt (+ (* x x) (* y y))))))))))
+        ;; A hand-scaled sum of squares can still round unit magnitudes
+        ;; upward, including after reciprocation. Use the float library's
+        ;; stable norm rather than accumulating several rounded operations.
+        (check-floating-overflow 'abs (%primop :hypot a b) z))))
 (defun complex-sqrt (z)
   (let* ((a (realpart z)) (b (imagpart z))
          (prototype (complex-float-prototype z))
