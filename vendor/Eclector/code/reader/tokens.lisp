@@ -159,6 +159,34 @@
                              (declare (dynamic-extent ,@function-names))
                              ,@body)))))
 
+(defun decimal-float (sign mantissa exponent type)
+  (when (zerop mantissa)
+    (return-from decimal-float (* sign (coerce 0 type))))
+  (multiple-value-bind (least most)
+      (case type
+        (short-float (values least-positive-short-float most-positive-short-float))
+        (single-float (values least-positive-single-float most-positive-single-float))
+        (double-float (values least-positive-double-float most-positive-double-float))
+        (long-float (values least-positive-long-float most-positive-long-float)))
+    (when (and least (= 2 (float-radix least)))
+      (let ((bits (integer-length mantissa)))
+        ;; For negative exponents, 10^E < 2^(3E). Below half the least
+        ;; positive float, a bounded representative has the same rounded
+        ;; result and still passes through COERCE's trap handling.
+        (when (minusp exponent)
+          (multiple-value-bind (significand power) (integer-decode-float least)
+            (when (<= (+ bits (* 3 exponent))
+                      (+ power (integer-length significand) -2))
+              (return-from decimal-float (* sign (coerce (/ (rational least) 4) type))))))
+        ;; For positive exponents, 10^E > 2^(3E). Use a bounded overflowing
+        ;; operand rather than materializing an enormous decimal power.
+        (when (plusp exponent)
+          (multiple-value-bind (significand power) (integer-decode-float most)
+            (when (>= (+ (1- bits) (* 3 exponent))
+                      (+ power (integer-length significand)))
+              (return-from decimal-float (* sign (coerce (* 2 (rational most)) type)))))))))
+  (* sign (coerce (* mantissa (expt 10 exponent)) type)))
+
 (defmethod interpret-token
     ((client t) (input-stream t) (token t) (escape-ranges t))
   (let ((read-base (state-value client '*read-base*))
@@ -215,12 +243,10 @@
                         :float-format default-format
                         :report 'use-replacement-float-format))
                      (setf type 'single-float))
-                   (let ((magnitude (* (decimal-mantissa)
-                                       (expt 10 (- (if exponentp
-                                                       (* exponent-sign (exponent))
-                                                       0)
-                                                   decimal-exponent)))))
-                     (* sign (coerce magnitude type))))))
+                   (decimal-float sign (decimal-mantissa)
+                                  (- (if exponentp (* exponent-sign (exponent)) 0)
+                                     decimal-exponent)
+                                  type))))
           (macrolet ((next-cond ((char-var &optional return-symbol-if-eoi
                                                      (colon-go-symbol t))
                                  &body clauses)

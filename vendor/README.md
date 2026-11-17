@@ -498,6 +498,11 @@ Under `#+kiln`:
 
 ## Eclector patches
 
+- Decimal float tokens use conservative binary bounds to avoid constructing
+  enormous exact decimal powers for certain underflow or overflow. Bounded
+  representative rationals retain the existing conversion and trap behavior;
+  values near floating-point boundaries retain exact conversion.
+
 - Simple readtables keep a per-instance ASCII syntax vector synchronized
   by syntax mutations, macro installation and copying. Non-ASCII queries
   retain the hash representation, and client methods remain extensible.
