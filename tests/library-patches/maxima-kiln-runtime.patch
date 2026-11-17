@@ -1,0 +1,82 @@
+diff --git a/src/command-line.lisp b/src/command-line.lisp
+index 9c7413d..62a33fe 100644
+--- a/src/command-line.lisp
++++ b/src/command-line.lisp
+@@ -155,6 +155,9 @@
+                  (cdr dashes)
+                  arglist))))
+     (remove-implementation-args
++     #+kiln
++     (rest (kiln.sys:command-line-arguments))
++
+      #+clisp
+      (rest ext:*args*)
+     
+diff --git a/src/globals.lisp b/src/globals.lisp
+index aaec357..ed68395 100644
+--- a/src/globals.lisp
++++ b/src/globals.lisp
+@@ -1581,6 +1581,7 @@
+   "Directories to search for maxima test suite")
+ 
+ (defvar *maxima-lispname*
++  #+kiln "kiln"
+   #+clisp "clisp"
+   #+cmu "cmucl"
+   #+sbcl "sbcl"
+@@ -1590,7 +1591,7 @@
+   #+abcl "abcl"
+   #+lispworks "lispworks"
+   #+ecl "ecl"
+-  #-(or clisp cmu sbcl gcl allegro openmcl abcl lispworks ecl) "unknownlisp")
++  #-(or kiln clisp cmu sbcl gcl allegro openmcl abcl lispworks ecl) "unknownlisp")
+ 
+ ;;; Locations of various types of files. These variables are discussed
+ ;;; in more detail in the file doc/implementation/dir_vars.txt. Since
+diff --git a/src/init-cl.lisp b/src/init-cl.lisp
+index 74a4d2a..0336036 100644
+--- a/src/init-cl.lisp
++++ b/src/init-cl.lisp
+@@ -692,7 +692,7 @@ maxima [options] --batch-string='batch_answers_from_file:false; ...'
+     (set-readtable-for-macsyma)
+     (setf *read-default-float-format* 'lisp::double-float))
+ 
+-  #+sbcl (setf *read-default-float-format* 'double-float)
++  #+(or sbcl kiln) (setf *read-default-float-format* 'double-float)
+ 
+   ;; GCL: disable readline symbol completion,
+   ;; leaving other functionality (line editing, anything else?) enabled.
+diff --git a/src/intl.lisp b/src/intl.lisp
+index fb8bc0f..0c56227 100644
+--- a/src/intl.lisp
++++ b/src/intl.lisp
+@@ -487,7 +487,8 @@
+ (declaim (inline getenv)
+ 	 (ftype (function (string) (or null string)) getenv))
+ (defun getenv (var)
+-  (let ((val #+CMU (cdr (assoc (intern var "KEYWORD") ext:*environment-list*))
++  (let ((val #+kiln (kiln.sys:getenv var)
++             #+CMU (cdr (assoc (intern var "KEYWORD") ext:*environment-list*))
+ 	     #+scl (cdr (assoc var ext:*environment-list* :test 'string=))
+ 	     #+SBCL (sb-ext:posix-getenv var)
+ 	     #+Allegro (system:getenv var)
+diff --git a/src/utils.lisp b/src/utils.lisp
+index f843ba4..3a4fe0e 100644
+--- a/src/utils.lisp
++++ b/src/utils.lisp
+@@ -21,6 +21,7 @@
+ ;;; Every function in this file is known about externally.
+ 
+ (defun maxima-getenv (envvar)
++  #+kiln (kiln.sys:getenv envvar)
+   #+gcl     (si::getenv envvar)
+   #+ecl     (si::getenv envvar)
+   #+allegro (system:getenv envvar)
+@@ -36,6 +37,7 @@
+ 
+ (defun bye (&optional (exit-code 0))
+   (declare (ignorable exit-code))
++  #+kiln (kiln.sys:exit exit-code)
+   #+scl       (ext:quit)
+   #+clisp              (ext:quit exit-code)
+   #+sbcl               (sb-ext:quit :unix-status exit-code)

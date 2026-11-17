@@ -137,7 +137,8 @@
       "revision": "7ac0ea369fbcc6623e730254f874f68d3cb4dc90",
       "role": "symbolic-algebra-and-bignums",
       "patches": [
-        "tests/library-patches/maxima-kiln-defsystem.patch"
+        "tests/library-patches/maxima-kiln-defsystem.patch",
+        "tests/library-patches/maxima-kiln-runtime.patch"
       ]
     },
     {
