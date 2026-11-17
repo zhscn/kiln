@@ -66,7 +66,7 @@ python3 tools/test-libraries.py kiln alexandria cl-ppcre iterate --tests \
 目标进程共享同一批次的 FASL 缓存，按编译器可执行文件校验和及后端指纹隔离；
 编译器改变后重新编译依赖。已内置的 Closer-MOP 兼容接口登记为不可重载的预加载系统。
 通用的测试操作正常返回仍不足以判断通过：工具额外检查 FiveAM、Parachute 等摘要
-中的失败数和 RT 的意外失败数，其他框架的摘要仍需逐项核对。
+中的失败数、Stefil 的失败详情和 RT 的意外失败数，其他框架的摘要仍需逐项核对。
 对明确声明为可移植的样本，可以用源码探测进一步隔离问题：
 
 ```sh
