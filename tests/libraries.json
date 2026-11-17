@@ -82,7 +82,7 @@
       "role": "persistent-collections",
       "system": "fset",
       "patches": [
-        "tests/library-patches/fset-kiln-single-thread.patch"
+        "tests/library-patches/fset-kiln-port.patch"
       ],
       "check_file": "tests/library-integration/fset.lisp"
     },

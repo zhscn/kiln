@@ -31,3 +31,7 @@
   (assert (= evaluations 2)))
 
 (assert (= (fset:size (fset:set 1 2 2)) 2))
+
+(assert (char= (fset::make-char 42 2) (code-char 554)))
+(let ((characters (list #\A (code-char 554) #\B)))
+  (assert (equal characters (fset:convert 'list (fset:convert 'fset:seq characters)))))

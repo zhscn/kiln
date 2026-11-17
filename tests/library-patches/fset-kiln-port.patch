@@ -1,0 +1,51 @@
+diff --git a/Code/port.lisp b/Code/port.lisp
+index b580aa2..d2400ec 100644
+--- a/Code/port.lisp
++++ b/Code/port.lisp
+@@ -14,6 +14,20 @@ (in-package :fset)
+ ;;; `without-interrupts'.  On kernel-threads implementations, we have to do
+ ;;; real locking.
+ 
++#+kiln
++(progn
++  ;; kiln currently executes Lisp on one mutator without concurrent Lisp
++  ;; threads. This adapter implements FSet's non-threaded configuration.
++  (defun make-lock (&optional name)
++    (declare (ignore name)) nil)
++  (defmacro with-lock ((lock &key (wait? t)) &body body)
++    (let ((lock-var (gensym "LOCK")) (wait-var (gensym "WAIT")))
++      `(let ((,lock-var ,lock) (,wait-var ,wait?))
++         (declare (ignore ,lock-var ,wait-var))
++         ,@body)))
++  (defmacro read-memory-barrier () nil)
++  (defmacro write-memory-barrier () nil))
++
+ #+allegro
+ (progn
+   (defun make-lock (&optional name)
+@@ -375,8 +389,8 @@ (defun base-char-p (x)
+ #+lispworks
+ (defun base-char-p (x) (lw:base-char-p x))
+ 
+-;;; SBCL has a distinct `extended-char' type but no `make-char'.
+-#+sbcl
++;;; Unicode implementations generate extended characters from code points.
++#+(or sbcl kiln clasp ecl)
+ (defun make-char (code bits)
+   ;; Kinda weird, but this is only used by the test suite to generate random chars.
+   (code-char (+ code (ash bits 8))))
+@@ -388,14 +402,6 @@ (defun make-char (code bits)
+   (declare (ignore bits))
+   (code-char code))
+ 
+-#+clasp
+-(defun make-char (code bits)
+-  (code-char (+ code (ash bits 8))))
+-
+-#+ecl
+-(defun make-char (code bits)
+-  (code-char (+ code (ash bits 8))))
+-
+ ;;; I'm one of these weird people who detests `loop' (except in its CLtL1 form).
+ (defmacro while (pred &body body)
+   `(do () ((not ,pred))
