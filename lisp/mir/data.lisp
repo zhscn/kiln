@@ -60,8 +60,21 @@
               (mir-function-values function))
     id))
 
-(defvar *mir-edit-unit* nil)
-(defvar *mir-edit-functions* nil)
+(defstruct mir-edit-scope unit function initial-functions)
+(defvar *mir-edit-scopes* nil)
+
+(defun mir-unit-editing-p (unit)
+  (find unit *mir-edit-scopes* :key #'mir-edit-scope-unit :test #'eq))
+
+(defun mir-function-editing-p (function)
+  (some (lambda (scope)
+          (or (eq function (mir-edit-scope-function scope))
+              (and (eq :all (mir-edit-scope-function scope))
+                   (or (find function (mir-edit-scope-initial-functions scope) :test #'eq)
+                       (let ((functions (mir-unit-functions (mir-edit-scope-unit scope))))
+                         (loop for index below (hir-buffer-count functions)
+                               thereis (eq function (svref (hir-buffer-data functions) index))))))))
+        *mir-edit-scopes*))
 (defvar *mir-edit-analysis-cache* nil)
 
 (defun mir-edit-analysis (owner name compute)
@@ -83,7 +96,7 @@
 
 (defun mir-analysis (function name compute)
   "Cache an analysis at the current revision; COMPUTE receives FUNCTION."
-  (when (or (eq *mir-edit-functions* :all) (eq *mir-edit-functions* function))
+  (when (mir-function-editing-p function)
     (return-from mir-analysis (mir-edit-analysis function name compute)))
   (let ((entry (gethash name (mir-function-analyses function))))
     (if (and entry (= (car entry) (mir-function-revision function))) (cdr entry)
@@ -97,7 +110,7 @@
 
 (defun mir-unit-analysis (unit name compute)
   "Cache against the unit epoch advanced before every graph rewrite."
-  (when (eq unit *mir-edit-unit*)
+  (when (mir-unit-editing-p unit)
     (return-from mir-unit-analysis (mir-edit-analysis unit name compute)))
   (let ((entry (gethash name (mir-unit-analyses unit))))
     (if (and entry (= (car entry) (mir-unit-revision unit))) (cdr entry)

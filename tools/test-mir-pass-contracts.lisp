@@ -85,3 +85,23 @@
               (progn (mir-run-pass unit function (lambda (function) (incf (mir-function-id function)))) nil)
             (mir-error () t))))
 (format t "Analysis queries during edits are fresh and cannot publish intermediate cache entries.~%")
+
+;; An independent nested compilation must preserve the outer edit scope.
+(dolist (unit-pass '(nil t))
+  (let* ((outer (mir-contract-test-unit)) (inner (mir-contract-test-unit))
+         (function (mir-at (mir-unit-functions outer) 0)))
+    (flet ((edit ()
+             (mir-run-unit-pass inner
+               (lambda (unit)
+                 (declare (ignore unit))
+                 (assert (handler-case
+                             (progn (mir-run-pass outer function #'identity) nil)
+                           (mir-error () t)))
+                 (mir-analysis function :nested-test (lambda (function) (declare (ignore function)) t))
+                 (mir-unit-analysis outer :nested-test (lambda (unit) (declare (ignore unit)) t))
+                 (assert (null (gethash :nested-test (mir-function-analyses function))))
+                 (assert (null (gethash :nested-test (mir-unit-analyses outer))))))))
+      (if unit-pass
+          (mir-run-unit-pass outer (lambda (unit) (declare (ignore unit)) (edit)))
+          (mir-run-pass outer function (lambda (function) (declare (ignore function)) (edit)))))))
+(format t "Nested independent edits retain outer scope guards and transient analysis contexts.~%")

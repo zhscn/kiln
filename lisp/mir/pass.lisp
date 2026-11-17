@@ -109,7 +109,7 @@
                          collect (cons entry (mir-pass-body-state entry identities))))))
     (incf (mir-unit-revision unit))
     (mir-invalidate-function function changes)
-    (let ((*mir-edit-unit* unit) (*mir-edit-functions* function)
+    (let ((*mir-edit-scopes* (cons (make-mir-edit-scope :unit unit :function function) *mir-edit-scopes*))
           (*mir-edit-analysis-cache* nil) (*hir-buffer-views* nil))
       (funcall transform function))
     ;; A callback can run an explicit verifier or compute current graph facts.
@@ -125,7 +125,7 @@
 
 (defun mir-run-passes (unit transformations &key (changes :all))
   "Apply (FUNCTION . TRANSFORM) body rewrites, then verify their shared contracts."
-  (when (eq unit *mir-edit-unit*) (mir-fail "Nested MIR edits require a separate unit"))
+  (when (mir-unit-editing-p unit) (mir-fail "Nested MIR edits require a separate unit"))
   (setf changes (mir-pass-changes changes))
   (unless transformations (return-from mir-run-passes unit))
   (let ((load-time-functions (copy-seq (mir-unit-load-time-functions unit)))
@@ -164,9 +164,12 @@
 
 (defun mir-run-unit-pass (unit transform)
   "Invalidate the whole unit before a coordinated signature and caller rewrite."
-  (when (eq unit *mir-edit-unit*) (mir-fail "Nested MIR edits require a separate unit"))
+  (when (mir-unit-editing-p unit) (mir-fail "Nested MIR edits require a separate unit"))
   (mir-invalidate-unit unit)
-  (let ((*mir-edit-unit* unit) (*mir-edit-functions* :all)
+  (let ((*mir-edit-scopes*
+          (cons (make-mir-edit-scope :unit unit :function :all
+                                    :initial-functions (hir-vector (mir-unit-functions unit)))
+                *mir-edit-scopes*))
         (*mir-edit-analysis-cache* nil) (*hir-buffer-views* nil))
     (funcall transform unit))
   (mir-invalidate-unit unit)
