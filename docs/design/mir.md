@@ -1,6 +1,6 @@
 # MIR：Lisp 语义中端
 
-MIR 是默认的原生编译中端。它从 HIR 构造 CFG，验证 SSA，完成语义分析与表示选择，再输出 LIR。HIR 求值器继续直接执行 HIR。分层和迁移见 [compiler.md](compiler.md)。
+MIR 是默认的原生编译中端。它从 HIR 构造 CFG，验证 SSA，完成语义分析与表示选择，再输出 LIR。HIR 求值器继续直接执行 HIR。分层与扩展边界见 [compiler.md](compiler.md)。
 
 MIR（mid-level IR）由 Lisp 从 HIR 构造，是控制流图加 SSA。它负责 Lisp 程序的分析、优化和表示选择，最后退出 SSA，输出 [LIR](lir.md)。MIR 不是通用的低级 SSA：对象身份、闭包、可写捕获、多值和动态范围在 MIR 里仍是可辨认的操作。机器层的通用优化留给 Cranelift。
 

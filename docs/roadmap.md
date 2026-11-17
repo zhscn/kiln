@@ -12,7 +12,7 @@
 | M3 | kernel：数值塔、Unicode 字符和字符串、`typep`、序列函数、多模块（[kernel.md](design/kernel.md)） | 完成 |
 | M4 | CLOS 引导和依赖 CLOS 的库：condition、哈希表、包、ctype、数组、结构、流、文件、打印、FORMAT、LOOP、reader（[clos.md](design/clos.md)、[stdlib.md](design/stdlib.md)、[io.md](design/io.md)） | 完成 |
 | M5 | 运行期 `eval`/`compile`/`load` 和 REPL；编译器在 kiln 上运行；编译器自举；原生 `compile`（[eval-compile.md](design/eval-compile.md)、[bootstrap.md](design/bootstrap.md)） | 完成 |
-| M6 | image 开发体验：堆快照（[heap-image.md](design/heap-image.md)）、原生 `eval`/`load`、帧的调试信息（[debugging.md](design/debugging.md)）、后端协议（[backend-protocol.md](design/backend-protocol.md)）、依赖追踪（[dependencies.md](design/dependencies.md)） | 前四项完成；剩下 AOT 模块的依赖和定义表、REPL 中断、SLYNK/Swank 接入 |
+| M6 | image 开发体验：堆快照（[heap-image.md](design/heap-image.md)）、原生 `eval`/`load`、帧的调试信息（[debugging.md](design/debugging.md)）、后端协议（[backend-protocol.md](design/backend-protocol.md)）、依赖追踪（[dependencies.md](design/dependencies.md)） | 定义与依赖记录已随 AOT/FASL 导入；REPL 中断、SLYNK/Swank 接入待完成 |
 | — | ANSI 兼容性：以 SBCL 行为为参照，维护标准接口并支持 ASDF/UIOP 和第三方库（见“标准库和 ANSI 覆盖”） | 进行中 |
 | — | 性能：降低编译延迟，优化数值、数组、流和字符串等运行期热点；见下文“性能” | 阶段一完成 |
 | — | seal、WPO 和 AOT 交付（[positioning.md](design/positioning.md)） | 未开始 |
@@ -32,7 +32,7 @@
 | 项 | 时机 | 理由 |
 |---|---|---|
 | 1 构建期初始化和堆快照 | 堆快照已做；seal 时写进目标文件 | 决定 seal 的语义和目标文件格式 |
-| 2 依赖追踪 | image 里求值的部分已做；AOT 模块和定义表一起做 | 影响编译器的数据结构，越早定越好 |
+| 2 依赖追踪 | image 定义与 AOT/FASL 的记录已接入，优化假设继续按使用点扩展 | 影响编译器的数据结构，越早定越好 |
 | 内存模型 | 写多线程的 Lisp 代码之前 | 影响 runtime 和库的接口 |
 | 5 并行编译和缓存 | 顶层原生产物缓存、image 会话复用和独立文件并行编译已接入 | 前端和降级仍重放编译期效果；独立文件使用隔离进程，原生产物按 LIR、literal 和依赖版本匹配 |
 | 3 内联缓存 | 常量槽名、常量类名构造器的调用点已接入 | 原生编译器载入后，热点构造器可晋升为机器码；泛函按 PCL 的路线优化判别函数本身；见 [specialization.md](design/specialization.md) |

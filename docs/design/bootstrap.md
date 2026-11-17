@@ -10,7 +10,7 @@
 
 ## 目标协议与自举范围
 
-自举默认写出 `.lir` 二进制封套，当前载荷是迁移中的兼容程序。SBCL 使用可移植编码器，kiln 使用 native 记录构造器，两者按同一规则分配编号并去重原子。布局无关的 LIR 操作继续在此协议上迁移。SBCL 写 stage0 文件后调用 kiln-cg 子进程，不通过 FFI 载入 Rust 库；kiln 的后续阶段也写相同格式。运行期原生编译使用同一 schema 的内存入口，见 [compiler-protocol.md](compiler-protocol.md)。
+自举默认写出 payload 2 的独立 LIR 二进制封套。SBCL 使用可移植编码器，kiln 使用 native 记录构造器，两者按同一规则分配编号并去重原子。各阶段都通过生产 LIR API 输出布局无关的操作。SBCL 写 stage0 文件后调用 kiln-cg 子进程，不通过 FFI 载入 Rust 库；kiln 的后续阶段也写相同格式。运行期原生编译使用同一 schema 的内存入口，见 [compiler-protocol.md](compiler-protocol.md)。
 
 Rust 后端由 Cargo 构建并在各阶段共用。LIR 逐字节闭合验证 Lisp 编译器、表示选择与导出的确定性，最终二进制闭合同时检查固定后端处理相同输入的确定性；这不证明 Rust 后端自身经过 Lisp 自举。后端另以独立样本、旧 KIR 对照和执行验证覆盖。
 
@@ -43,7 +43,7 @@ kiln0 ──运行构建程序──▶ stage1 ──kiln-cg──▶ kiln1 ─�
 构建程序 `lisp/target/build.lisp` 是一个普通的程序模块（名字是 `build`），在 compiler 模块之后，由 SBCL 在 stage0 里用同一个会话编译，所以 kiln1 完全由 kiln 编出。它在 kiln 上做的事和 SBCL 一样：一个 `cross-client` 会话，kernel 带上 CL 的全部外部符号，编 eval 和 compiler 模块之前调用 `prepare-compiler-session`（宿主宏、`defrule` 和 `define-syntax` 只在加载时定义、`host-inline-functions`，`lisp/cross.lisp`），按 `muffle-warning` 处理警告。它不依赖 SBCL 才有的东西：
 
 - **文件列表**放在清单 `modules.lisp-expr` 里，由 stage0 写出：每个模块的名字和源文件，格式就是 `front-end` 接受的格式（路径是 namestring，`:renames`、`:compile-time-too` 原样保留），作用类似 SBCL 的 `build-order.lisp-expr`。SBCL 会话里的 `kiln.compiler::module-files` 是展开时用 ASDF 的宿主宏；构建程序在编 eval 和 compiler 模块之前也注册同名的宿主宏，展开成清单里的文件列表。
-- **输出**默认写到当前目录的 `NAME.lir`。`KILN_OUTPUT_FORMAT=kir` 选择文本诊断格式；宿主 `bootstrap-stage0` 可用 `:output-format :kir` 选择相同的兼容路径。
+- **输出**默认写到当前目录的 `NAME.lir`。`KILN_OUTPUT_FORMAT=kir` 选择文本诊断格式；宿主 `bootstrap-stage0` 可用 `:output-format :kir` 选择相同的诊断路径。
 - 设了 `KILN_SERVE` 时，构建程序不做构建，改为在标准输入输出上运行后端协议（[backend-protocol.md](backend-protocol.md)）。
 - 设了 `KILN_SAVE_IMAGE` 时，编完五个模块就保存堆快照，然后照常编后面的程序。快照的 toplevel 重新读入清单，只编五个模块之后的条目。
 
@@ -130,7 +130,7 @@ kiln/
 │   │                  primitives、values、structures、macro-client、driver
 │   └── target/        目标端的 Lisp 源码：kernel、clos/、eval/、compiler/、build.lisp
 ├── rust/
-│   ├── kiln-cg/       KIR → Cranelift（JIT、目标文件、运行期 JIT 库）
+│   ├── kiln-cg/       LIR 验证／降级 → KIR → Cranelift
 │   ├── kiln-rt/       runtime：context、GC、unwinder、栈、数、系统调用、调试信息、快照
 │   └── kiln-launcher/ AOT 可执行文件的 C main
 ├── vendor/            打了补丁的 SICL 生态模块（vendor/README.md）
