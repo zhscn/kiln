@@ -313,11 +313,17 @@
            (1- `(:f64-sub ,left #x3ff0000000000000))))
      :f64)))
 
+(defun mir-lir-dead-pure-value-p (id)
+  (let ((definition (svref *mir-lir-definitions* id)))
+    (and (not (svref *mir-lir-live* id)) definition
+         (member (mir-instruction-kind definition) '(0 1 12 16 37)))))
+
 (defun mir-lir-instruction (instruction arguments argument-count)
   (let* ((*call-source* (mir-instruction-source instruction)) (*hir-policy* (mir-instruction-policy instruction))
          (kind (mir-instruction-kind instruction)) (result (mir-instruction-result instruction))
          (out (and result (mir-lir-value result))) (data (mir-instruction-data instruction))
          (args (map 'list #'mir-lir-value (mir-instruction-operands instruction))))
+    (when (and result (mir-lir-dead-pure-value-p result)) (return-from mir-lir-instruction))
     (when (and result (not (svref *mir-lir-live* result))
                (mir-lir-double-forward-source instruction))
       (return-from mir-lir-instruction))
@@ -652,11 +658,12 @@
          (*mir-lir-values*
            (map 'simple-vector
                 (lambda (value)
-                  (case (mir-value-representation value)
-                    (:bundle (cons (new-var)
-                                   (if (mir-lir-transient-p (mir-value-id value)) (new-var :raw)
-                                       (or (mir-lir-known-count (mir-value-id value)) (new-var :raw)))))
-                    (:count (new-var :raw)) (otherwise (new-var))))
+                  (unless (mir-lir-dead-pure-value-p (mir-value-id value))
+                    (case (mir-value-representation value)
+                      (:bundle (cons (new-var)
+                                     (if (mir-lir-transient-p (mir-value-id value)) (new-var :raw)
+                                         (or (mir-lir-known-count (mir-value-id value)) (new-var :raw)))))
+                      (:count (new-var :raw)) (otherwise (new-var)))))
                 (hir-buffer-view (mir-function-values function))))
          (blocks (hir-buffer-view (mir-function-blocks function)))
          (loop-polls (mir-loop-poll-blocks function))
