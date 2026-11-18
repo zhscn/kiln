@@ -197,7 +197,7 @@ dropped (they are unreachable)."
 (defun emit-lir-assignment (target value)
   (emit (list (if (and (kvar-p target) (kvar-p value)
                         (eq (svref target 2) (svref value 2)))
-                   :lir-copy
+                   :lir-set
                    :set)
               target value)))
 
@@ -244,8 +244,17 @@ entry block current. Unterminated blocks end with a trap."
                     (list* :block name
                            (or (and dispatches (gethash name dispatches))
                                (mapcar (lambda (statement)
-                                         (if (eq (first statement) :lir-copy)
-                                             (cons :set (rest statement))
+                                         (if (eq (first statement) :lir-set)
+                                             (let ((value (third statement)))
+                                               (list :set (second statement)
+                                                     (if (consp value)
+                                                         (cons (ecase (first value)
+                                                                 (:fixnum :fixnum-tag)
+                                                                 (:character :character-tag)
+                                                                 (:single-float :single-float-tag)
+                                                                 (:literal :literal-ref))
+                                                               (rest value))
+                                                         value)))
                                              statement))
                                        (kblock-stmts block))))))
                 (kfunc-blocks function)))))

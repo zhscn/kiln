@@ -22,7 +22,7 @@
 
 (defun lir-scan-value-statement (state statement)
   (case (first statement)
-    ((:set :lir-copy) (lir-record-alias state (second statement) (third statement)))
+    ((:set :lir-set) (lir-record-alias state (second statement) (third statement)))
     ((:move-values :invoke :invoke-known :invoke-list :numeric-op :list-values :restore-values :landed-values)
      (lir-pair-view state (second statement) (third statement))
      (lir-record-alias state (second statement) :unknown)

@@ -126,8 +126,8 @@
         ((eql field +packet-field-complex-imag+) :complex.imag)
         (t (error "Field ~S is not an object reference field" field))))
 
-(defun lir-expression-kind (state expression)
-  (or (lir-variable-kind state expression)
+(defun lir-expression-kind (state expression &optional (variable-kind (lir-variable-kind state expression)))
+  (or variable-kind
       (cond ((integerp expression) nil)
             ((eq expression :self) :obj)
             ((consp expression)
@@ -151,12 +151,13 @@
            (second (gethash (first expression) *lir-operation-signatures*)))))
 
 (defun lir-operand (state expression kind)
-  (if (and kind (eq (lir-variable-kind state expression) kind))
-      expression
-      (let ((value (lir-expression state expression kind))
-            (result (lir-new-temporary state kind)))
-        (lir-emit state `(:set ,result ,value))
-        result)))
+  (let ((variable-kind (lir-variable-kind state expression)))
+    (if (and variable-kind (eq variable-kind kind))
+        expression
+        (let ((value (lir-expression state expression kind variable-kind))
+              (result (lir-new-temporary state kind)))
+          (lir-emit state `(:set ,result ,value))
+          result))))
 
 (defun lir-pure-expression (state operation arguments)
   (let ((signature (gethash operation *lir-operation-signatures*)))
@@ -170,8 +171,9 @@
   (let ((kind (or (lir-expression-kind state left) (lir-expression-kind state right) :word)))
     (if (eq kind :f64) :word kind)))
 
-(defun lir-expression (state expression expected)
-  (let ((actual (lir-expression-kind state expression)))
+(defun lir-expression (state expression expected
+                       &optional (variable-kind (lir-variable-kind state expression)))
+  (let ((actual (lir-expression-kind state expression variable-kind)))
     (when (and actual (not (eq actual expected)))
       (return-from lir-expression
         (cond ((and (eq actual :f64) (eq expected :word))
@@ -179,7 +181,7 @@
               ((and (eq actual :word) (eq expected :f64))
                (lir-pure-expression state :f64-from-bits (list expression)))
               (t (lir-function-error state "expected ~S, got ~S from ~S" expected actual expression)))))
-    (cond ((lir-variable-kind state expression) expression)
+    (cond (variable-kind expression)
           ((integerp expression)
            (case expected
              (:word `(:word ,expression)) (:f64 `(:f64 ,expression))
@@ -341,7 +343,7 @@
            (lir-function-error state "wrong fixed allocation field count"))
          (lir-emit state `(:alloc ,(first args) ,kind :heap
                             ,(mapcar (lambda (argument type) (lir-operand state argument type)) (third args) types)))))
-      (:lir-copy
+      (:lir-set
        (lir-emit state (cons :set args)))
       (:set
        (let ((kind (lir-variable-kind state (first args))))
@@ -525,7 +527,7 @@
             (lir-scan-closure-statement state statement)
             (case (first statement)
               (:rest-list (unless prepare-storage (lir-record-rest state statement)))
-              ((:set :lir-copy) (lir-record-word-write state (second statement) (third statement)))
+              ((:set :lir-set) (lir-record-word-write state (second statement) (third statement)))
               (:receive-prefix
                (dolist (variable (append (second statement) (list (third statement))))
                  (lir-record-word-write state variable :unknown)))
