@@ -124,12 +124,14 @@ so local names carry the module's name; shared ones (symbols) do not."
 to their indices in the literal words; else NIL.")
 
 (defvar *image-literal-objects*)        ; the literals, newest first
+(defvar *image-literal-count*)
 
 (defun literal-word (x)
   `(:literal ,(or (gethash x *image-literals*)
-                  (progn (push x *image-literal-objects*)
-                         (setf (gethash x *image-literals*)
-                               (1- (length *image-literal-objects*)))))))
+                  (setf (gethash x *image-literals*)
+                        (prog1 *image-literal-count*
+                          (push x *image-literal-objects*)
+                          (incf *image-literal-count*))))))
 
 (defun word-operand (word)
   (cond ((integerp word) word)
@@ -145,9 +147,8 @@ to their indices in the literal words; else NIL.")
 (defun emit-literal-words ()
   "Defines the literal words of a module compiled into the running image;
 returns the literals, a vector."
-  (let ((n (length *image-literal-objects*)))
-    (kiln.kir::module-literal-table n)
-    (coerce (nreverse *image-literal-objects*) 'simple-vector)))
+  (kiln.kir::module-literal-table *image-literal-count*)
+  (coerce (nreverse *image-literal-objects*) 'simple-vector))
 
 (defun nil-word () `(:object-data ,(module-import-data "kiln_nil") :general))
 (defun t-word () `(:object-data ,(module-import-data "kiln_t") :general))
@@ -1130,6 +1131,7 @@ Returns the module and the vector of its literals."
                     module))
         (*image-literals* (and image (make-hash-table :test 'eq)))
         (*image-literal-objects* '())
+        (*image-literal-count* 0)
         (*module-label* (mangle module-name))
         (*counter* 0)
         (*constants* (make-hash-table :test 'eql))

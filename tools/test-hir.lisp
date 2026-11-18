@@ -215,7 +215,7 @@
        (*counter* 0) (*constants* (make-hash-table :test #'eql))
        (*string-constants* (make-hash-table :test #'equal)) (*image-literals* nil))
   (assert (equal (constant-word first) (constant-word second)))
-  (let ((*image-literals* (make-hash-table :test #'eq)) (*image-literal-objects* nil))
+  (let ((*image-literals* (make-hash-table :test #'eq)) (*image-literal-objects* nil) (*image-literal-count* 0))
     (assert (not (equal (constant-word first) (constant-word second))))
     (assert (= 2 (length *image-literal-objects*)))))
 
