@@ -1,14 +1,14 @@
 --- a/src/macsys.lisp
 +++ b/src/macsys.lisp
-@@ -821,7 +821,10 @@
-                   (loop for line = (read-line output-stream nil)
-                         while line do (format (or s *standard-output*) "~a~%" line))))
-
--    #-(or gcl ecl clisp cmu scl allegro sbcl openmcl abcl lispworks)
+@@ -817,2 +817,7 @@
+     #+abcl (extensions::run-shell-command (format nil "~{~a~^ ~}" args) :output (or s *standard-output*))
 +    #+kiln
-+    (kiln.sys:run-process (list "/bin/sh" "-c" (format nil "~{~a~^ ~}" args))
-+                          :output (or s *standard-output*))
++    (progn
++      (kiln.sys:run-process (list "/bin/sh" "-c" (format nil "~{~a~^ ~}" args))
++                            :output (or s *standard-output*))
++      nil)
+     #+lispworks (multiple-value-bind (output-stream error-stream pid)
+@@ -824,2 +829,2 @@
+-    #-(or gcl ecl clisp cmu scl allegro sbcl openmcl abcl lispworks)
 +    #-(or kiln gcl ecl clisp cmu scl allegro sbcl openmcl abcl lispworks)
        (merror (intl:gettext "system: not defined for this Lisp implementation (~m)") (lisp-implementation-type)))
-
- (defmfun $room (&optional (arg nil arg-p))
