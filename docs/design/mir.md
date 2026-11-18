@@ -21,6 +21,11 @@ MIR（mid-level IR）由 Lisp 从 HIR 构造，是控制流图加 SSA。它负�
 改写同步收缩所有入边，重新连续编号 SSA 值，并通过 pass 接口失效分析、验证
 支配关系及函数和捕获布局。cell 句柄和多值 bundle 按原表示处理。
 
+支配分析按逆后序计算立即支配者，并用支配树中的区间判断一个块是否支配另一个块。
+函数体改写声明控制流不变时，验证可复用支配树，仍检查 SSA 的定义与使用关系。
+显式验证重新读取控制流。没有分配候选的函数在降级时跳过存储分析；
+单函数单元没有内部调用边时，类型和多值事实直接使用局部分析。
+
 实现分为 `lisp/mir/data.lisp`、`verify.lisp`、`build.lisp`、`lower.lisp`、
 `values.lisp`、`types.lisp`、`calls.lisp`、`escape.lisp`、`predicates.lisp`、`lifting.lisp`、`scalar.lisp`、`simplify.lisp` 和 `dump.lisp`。编号索引复用可增长向量容器，语义值表示为 `obj`、`bundle`、参数计数 `count` 和内部 cell 句柄 `cell`。返回个数已知为 1 的 bundle 直接保存对象；需要保留次值的其他 bundle 使用
 保存载体和个数，跨调用后恢复，避免借用的多值区被后续调用覆盖。

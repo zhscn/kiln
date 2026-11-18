@@ -318,6 +318,14 @@
                          (logior (mir-storage-analysis-cells (svref plans id)) (ash 1 (1+ index)))))))
     plans))
 
+(defun mir-storage-candidate-p (function)
+  (mir-analysis function :storage-candidate
+    (lambda (function)
+      (some (lambda (instruction)
+              (or (member (mir-instruction-kind instruction) '(17 19 23))
+                  (mir-cons-allocation-p instruction)))
+            (hir-buffer-view (mir-function-instructions function))))))
+
 (defun mir-infer-storage (unit)
   (mir-unit-analysis unit :storage
     (lambda (unit)

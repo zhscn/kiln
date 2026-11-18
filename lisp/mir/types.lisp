@@ -238,6 +238,13 @@
       (multiple-value-bind (types packets) (mir-compute-types function)
         (cons types packets)))))
 
+(defun mir-local-analysis-only-p (unit function)
+  ;; A singleton without references to a unit-local entry has no internal
+  ;; call edges. Named calls still use the normal local transfer functions.
+  (and unit (= (hir-buffer-count (mir-unit-functions unit)) 1)
+       (notany (lambda (instruction) (member (mir-instruction-kind instruction) '(5 23)))
+               (hir-buffer-view (mir-function-instructions function)))))
+
 (defun mir-infer-types (function &optional unit)
   "Return SSA types, using local call summaries when UNIT is supplied."
   (if unit

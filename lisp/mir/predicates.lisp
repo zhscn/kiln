@@ -2,7 +2,7 @@
 
 (defun mir-type-predicate-folds (function unit)
   "Collect proven unary predicates without changing their argument evaluations."
-  (let ((types (mir-infer-types function unit)) (folds nil)
+  (let ((types nil) (folds nil)
         (reachable (mir-reachable-blocks function)))
     (loop for block across (hir-buffer-view (mir-function-blocks function))
           when (logbitp (mir-block-id block) reachable)
@@ -11,8 +11,10 @@
                      for operands = (mir-instruction-operands instruction)
                      when (and (= (mir-instruction-kind instruction) 6) (= (length operands) 1)
                                (hir-policy-optimize-p (mir-instruction-policy instruction))
-                               (not (mir-instruction-notinline instruction)))
-                       do (multiple-value-bind (truth known)
+                               (not (mir-instruction-notinline instruction))
+                               (hir-predicate-type (mir-instruction-data instruction)))
+                       do (unless types (setf types (mir-infer-types function unit)))
+                          (multiple-value-bind (truth known)
                               (hir-type-predicate (mir-instruction-data instruction) (svref types (svref operands 0)))
                             (when known (push (cons id truth) folds)))))
     folds))
@@ -44,26 +46,27 @@
 
 (defun mir-type-branch-folds (function unit)
   "Select successors only when the test's MIR type proves its truth value."
-  (let ((types (mir-infer-types function unit))
-        (definitions (mir-value-definitions function))
-        (packets (mir-infer-value-facts function unit))
+  (let ((types nil) (definitions nil) (packets nil)
         (reachable (mir-reachable-blocks function)) (folds nil))
     (loop for block across (hir-buffer-view (mir-function-blocks function))
           for term = (mir-block-terminator block)
           when (and (logbitp (mir-block-id block) reachable)
                     (= (mir-terminator-kind term) 1)
                     (hir-policy-optimize-p (mir-terminator-policy term)))
-            do (let* ((test (svref (mir-terminator-operands term) 0))
+            do (unless definitions (setf definitions (mir-value-definitions function)))
+               (let* ((test (svref (mir-terminator-operands term) 0))
                       (definition (svref definitions (mir-primary-origin test definitions))))
                  (multiple-value-bind (null-p known)
                      (cond ((and definition (= (mir-instruction-kind definition) 0))
                             (values (null (mir-instruction-data definition)) t))
                            ((and definition (= (mir-instruction-kind definition) 37))
+                            (unless packets (setf packets (mir-infer-value-facts function unit)))
                             (let ((fact (svref packets (svref (mir-instruction-operands definition) 0))))
                               (if (and (mir-values-fact-p fact) (mir-values-fact-count fact))
                                   (values (>= (mir-instruction-data definition) (mir-values-fact-count fact)) t)
                                   (values nil nil))))
-                           (t (hir-type-predicate 'null (svref types test))))
+                           (t (unless types (setf types (mir-infer-types function unit)))
+                              (hir-type-predicate 'null (svref types test))))
                    (when known (push (cons (mir-block-id block) (if null-p 1 0)) folds)))))
     folds))
 
@@ -80,8 +83,9 @@
   ;; These rewrites preserve behavior, so all proofs remain valid within the
   ;; round. Recompute summaries next round to discover newly precise facts.
   (loop for plans = (loop for function across (hir-buffer-view (mir-unit-functions unit))
-                         for folds = (mir-type-predicate-folds function unit)
-                         for branches = (mir-type-branch-folds function unit)
+                         for context = (unless (mir-local-analysis-only-p unit function) unit)
+                         for folds = (mir-type-predicate-folds function context)
+                         for branches = (mir-type-branch-folds function context)
                          when (or folds branches) collect (list function folds branches))
         while plans do
            (mir-run-passes unit
@@ -92,5 +96,6 @@
                                  (when folds (mir-replace-type-predicates function folds))
                                  (when branches
                                    (mir-replace-type-branches function branches)
-                                   (mir-prune-unreachable-blocks unit function)))))) plans)))
+                                   (mir-prune-unreachable-blocks unit function)))))) plans)
+             :changes (if (some #'third plans) :all '(:instructions :values))))
   unit)
