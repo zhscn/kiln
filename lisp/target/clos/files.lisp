@@ -132,6 +132,19 @@
         (i start))
     (when (< (in-start stream) (in-end stream))
       (discard-file-input stream))
+    ;; The native writer packs validated simple-vector octets directly.
+    ;; Bound each call so a large FASL packet needs only a small byte buffer.
+    (when (and (simple-vector-p octets) (kiln.kernel::fixnump start) (kiln.kernel::fixnump end)
+               (<= 0 start end (length octets))
+               (>= (- end start) +file-buffer-size+))
+      (flush-file-buffer stream)
+      (loop while (< i end)
+            for limit = (min end (+ i (* 8 +file-buffer-size+)))
+            for count = (check-sys stream
+                                   (kiln.sys:%primop :fd-write (descriptor stream) octets i limit))
+            do (note-written stream count)
+               (incf i count))
+      (return-from stream-write-octets octets))
     (loop while (< i end)
           do (when (= (out-end stream) +file-buffer-size+)
                (flush-file-buffer stream))
