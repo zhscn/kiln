@@ -202,31 +202,48 @@
                         (mir-check-proven-p instruction *mir-lir-types*))))
       (svref operands 0))))
 
-(defun mir-lir-live-values (function)
+(defun mir-lir-predecessor-index (function)
+  (let* ((blocks (hir-buffer-view (mir-function-blocks function)))
+         (incoming (make-array (length blocks) :initial-element nil))
+         (indices (make-array (hir-buffer-count (mir-function-values function)) :initial-element nil)))
+    (loop for block across blocks
+          do (loop for parameter across (mir-block-parameters block) for index from 0
+                   do (setf (svref indices parameter) index))
+             (loop for edge across (mir-terminator-edges (mir-block-terminator block))
+                   when (plusp (length (mir-edge-arguments edge)))
+                     do (push edge (svref incoming (mir-edge-target edge)))))
+    (cons incoming indices)))
+
+(defun mir-lir-live-values (function predecessors)
   "Drop unused copy chains and block arguments before choosing representations."
-  (let ((live (make-array (hir-buffer-count (mir-function-values function)) :initial-element nil))
-        (instructions (hir-buffer-view (mir-function-instructions function)))
-        (blocks (hir-buffer-view (mir-function-blocks function))))
-    (labels ((mark (id) (unless (svref live id) (setf (svref live id) t))))
+  (let* ((values (hir-buffer-view (mir-function-values function)))
+         (live (make-array (length values) :initial-element nil))
+         (instructions (hir-buffer-view (mir-function-instructions function)))
+         (blocks (hir-buffer-view (mir-function-blocks function)))
+         (incoming (car predecessors))
+         (parameter-index (cdr predecessors))
+         (work (make-hir-buffer)))
+    (labels ((mark (id)
+               (unless (svref live id)
+                 (setf (svref live id) t)
+                 (hir-push id work))))
       (loop for instruction across instructions
             unless (mir-lir-double-forward-source instruction)
               do (map nil #'mark (mir-instruction-operands instruction)))
       (loop for block across blocks
             do (map nil #'mark (mir-terminator-operands (mir-block-terminator block))))
-      (loop with changed = t while changed
-            do (setf changed nil)
-               (loop for instruction across instructions
-                     for source = (mir-lir-double-forward-source instruction)
-                     for result = (mir-instruction-result instruction)
-                     when (and source result (svref live result) (mark source)) do (setf changed t))
-               (loop for block across blocks
-                     do (loop for edge across (mir-terminator-edges (mir-block-terminator block))
-                              for parameters = (mir-block-parameters (mir-at (mir-function-blocks function) (mir-edge-target edge)))
-                              do (loop for source across (mir-edge-arguments edge) for target across parameters
-                                       when (and (svref live target) (mark source)) do (setf changed t))))))
+      (loop for cursor from 0 while (< cursor (hir-buffer-count work))
+            for id = (svref (hir-buffer-data work) cursor)
+            for index = (svref parameter-index id)
+            do (if index
+                   (dolist (edge (svref incoming (mir-value-block (svref values id))))
+                     (mark (svref (mir-edge-arguments edge) index)))
+                   (let* ((definition (svref *mir-lir-definitions* id))
+                          (source (and definition (mir-lir-double-forward-source definition))))
+                     (when source (mark source))))))
     live))
 
-(defun mir-lir-double-plan (function)
+(defun mir-lir-double-plan (function predecessors)
   "Keep raw SSA doubles and request boxed companions only at object uses."
   (let* ((values (hir-buffer-view (mir-function-values function)))
          (doubles (make-array (length values) :initial-element nil))
@@ -257,37 +274,38 @@
                             (and (not (svref observed origin)) definition
                                  (mir-lir-double-call-p definition)))))
               do (setf (svref doubles id) (new-var :f64))))
-    (labels ((require-object (id)
-               (when (and (svref doubles id) (not (svref boxed id)))
-                 (setf (svref boxed id) t)))
-             (forward-p (instruction)
-               (let ((source (mir-lir-double-forward-source instruction))
-                     (result (mir-instruction-result instruction)))
-                 (and source result (svref doubles source) (svref doubles result) source))))
-      (loop for instruction across instructions
-            unless (or (= 37 (mir-instruction-kind instruction))
-                       (mir-lir-double-call-p instruction) (forward-p instruction)
-                       (and (mir-lir-double-forward-source instruction)
-                            (not (svref *mir-lir-live* (mir-instruction-result instruction)))))
-              do (map nil #'require-object (mir-instruction-operands instruction)))
-      (loop for block across blocks
-            do (map nil #'require-object (mir-terminator-operands (mir-block-terminator block))))
-      ;; Object requirements follow the same copies as raw bits. Iterate for
-      ;; loop-carried bindings, including cycles with several block parameters.
-      (loop with changed = t while changed
-            do (setf changed nil)
-               (flet ((propagate (source target)
-                        (when (and (svref *mir-lir-live* target)
-                                   (or (not (svref doubles target)) (svref boxed target))
-                                   (require-object source))
-                          (setf changed t))))
-                 (loop for instruction across instructions for source = (forward-p instruction)
-                       when source do (propagate source (mir-instruction-result instruction)))
-                 (loop for block across blocks
-                       do (loop for edge across (mir-terminator-edges (mir-block-terminator block))
-                                for parameters = (mir-block-parameters (mir-at (mir-function-blocks function) (mir-edge-target edge)))
-                                do (loop for source across (mir-edge-arguments edge) for target across parameters
-                                         do (propagate source target)))))))
+    (unless (some #'identity doubles) (return-from mir-lir-double-plan (values doubles boxed)))
+    (let ((work (make-hir-buffer))
+          (incoming (car predecessors)) (parameter-index (cdr predecessors)))
+      (labels ((require-object (id)
+                 (when (and (svref doubles id) (not (svref boxed id)))
+                   (setf (svref boxed id) t)
+                   (hir-push id work)))
+               (forward-p (instruction)
+                 (let ((source (mir-lir-double-forward-source instruction))
+                       (result (mir-instruction-result instruction)))
+                   (and source result (svref doubles source) (svref doubles result) source))))
+        (loop for instruction across instructions
+              unless (or (= 37 (mir-instruction-kind instruction))
+                         (mir-lir-double-call-p instruction) (forward-p instruction)
+                         (and (mir-lir-double-forward-source instruction)
+                              (not (svref *mir-lir-live* (mir-instruction-result instruction)))))
+                do (map nil #'require-object (mir-instruction-operands instruction)))
+        (loop for block across blocks
+              do (map nil #'require-object (mir-terminator-operands (mir-block-terminator block)))
+                 (loop for id across (mir-block-parameters block)
+                       when (and (svref *mir-lir-live* id) (not (svref doubles id)))
+                         do (hir-push id work)))
+        (loop for cursor from 0 while (< cursor (hir-buffer-count work))
+              for id = (svref (hir-buffer-data work) cursor)
+              for index = (svref parameter-index id)
+              when (svref *mir-lir-live* id)
+                do (if index
+                       (dolist (edge (svref incoming (mir-value-block (svref values id))))
+                         (require-object (svref (mir-edge-arguments edge) index)))
+                       (let* ((definition (svref *mir-lir-definitions* id))
+                              (source (and definition (forward-p definition))))
+                         (when source (require-object source)))))))
     (values doubles boxed)))
 
 (defun mir-lir-double-bits (id)
@@ -698,7 +716,8 @@
                         (svref (mir-infer-storage unit) (mir-function-id function)))))
          (*mir-lir-carriers* (mir-bundle-carriers function))
          (*mir-lir-bundle-demand* (mir-bundle-plan-demand (mir-bundle-plan function)))
-         (*mir-lir-live* (mir-lir-live-values function))
+         (predecessors (mir-lir-predecessor-index function))
+         (*mir-lir-live* (mir-lir-live-values function predecessors))
          (*mir-lir-doubles* nil) (*mir-lir-boxed* nil)
          (*mir-lir-values*
            (let* ((values (hir-buffer-view (mir-function-values function)))
@@ -722,7 +741,7 @@
          (labels (map 'simple-vector (lambda (block) (declare (ignore block)) (new-block)) blocks))
          (edge-blocks nil) (dispatches nil) (base-regions nil)
          (arguments (make-array (mir-function-positional-count function))) (count (new-var :raw)))
-    (multiple-value-setq (*mir-lir-doubles* *mir-lir-boxed*) (mir-lir-double-plan function))
+    (multiple-value-setq (*mir-lir-doubles* *mir-lir-boxed*) (mir-lir-double-plan function predecessors))
     (dotimes (i (length arguments)) (setf (svref arguments i) (new-var)))
     (emit `(:receive-prefix ,(coerce arguments 'list) ,count))
     (when (and storage (not (zerop (mir-storage-analysis-rest storage))))
