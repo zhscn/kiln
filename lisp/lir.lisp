@@ -62,8 +62,13 @@
           `(:uninterned ,name ,(gethash label (lir-data-indices data)))))))
 
 (defun lir-data-object (data label object)
-  (when (stringp object)
-    (return-from lir-data-object (cons :string (map 'list #'char-code object))))
+  (cond ((stringp object)
+         (return-from lir-data-object (cons :string (map 'list #'char-code object))))
+        ((static-symbol-p object)
+         (let ((name (static-symbol-name object)) (package (static-symbol-package object)))
+           (return-from lir-data-object
+             (if package `(:symbol ,package ,name)
+                 `(:uninterned ,name ,(gethash label (lir-data-indices data))))))))
   (let ((kind (first object)) (fields (rest object)))
     (case kind
       (:static-string (cons :string fields))

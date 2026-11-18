@@ -8,22 +8,27 @@
 ;;; Convert those isolated dispatch blocks to landing declarations so
 ;;; the backend owns target routing and the runtime payload representation.
 
-(defun lir-prepare-landings (state blocks)
+(defun lir-prepare-landings (state blocks direct emitted)
   (let ((removed (make-lir-name-table))
         (landings (make-lir-name-table)))
-    (dolist (block blocks)
-      (let* ((statement (first (kblock-stmts block))) (condition (second statement)))
-        (when (and (eq (first statement) :br) (consp condition) (eq (first condition) :unwind-target-p))
-          (unless (null (rest (kblock-stmts block)))
-            (lir-function-error state "source handler needs an isolated dispatch block"))
-          (let ((region (second condition)) (landing (third statement)))
-            (when (or (gethash region (lir-function-region-landings state)) (gethash landing landings))
-              (lir-function-error state "duplicate source landing"))
-            (setf (gethash (kblock-name block) (lir-function-handler-regions state)) region
-                  (gethash region (lir-function-region-landings state)) landing
-                  (gethash landing landings) region
-                  (gethash (kblock-name block) removed) t
-                  (gethash (fourth statement) removed) t)))))
+    (flet ((note (region handler landing forward)
+             (when (or (gethash region (lir-function-region-landings state)) (gethash landing landings))
+               (lir-function-error state "duplicate source landing"))
+             (setf (gethash handler (lir-function-handler-regions state)) region
+                   (gethash region (lir-function-region-landings state)) landing
+                   (gethash landing landings) region
+                   (gethash handler removed) t
+                   (gethash forward removed) t)))
+      (if direct
+          (dolist (entry emitted)
+            (note (emitted-landing-slot entry) (emitted-landing-handler entry)
+                  (emitted-landing-target entry) (emitted-landing-forward entry)))
+          (dolist (block blocks)
+            (let* ((statement (first (kblock-stmts block))) (condition (second statement)))
+              (when (and (eq (first statement) :br) (consp condition) (eq (first condition) :unwind-target-p))
+                (unless (null (rest (kblock-stmts block)))
+                  (lir-function-error state "source handler needs an isolated dispatch block"))
+                (note (second condition) (kblock-name block) (third statement) (fourth statement)))))))
     (loop for block in blocks
           for name = (kblock-name block)
           for region = (gethash name landings)
@@ -72,7 +77,41 @@
                     (edge (third statement))
                     (dolist (arm (fourth statement)) (edge (second arm))))))))
     (values (remove-if-not (lambda (block) (gethash (kblock-name block) live)) source-blocks)
-            (remove-if-not (lambda (slot) (gethash (first slot) used)) source-slots))))
+            (remove-if-not (lambda (slot) (gethash (first slot) used)) source-slots)
+            live)))
+
+(defun lir-declare-emitted-regions (state entries slots live)
+  (let ((declarations (make-lir-name-table))
+        (rest-regions (lir-function-rest-regions state))
+        (result nil))
+    (dolist (entry (reverse entries))
+      (let ((name (emitted-region-slot entry)) (kind (emitted-region-kind entry))
+            (parents (emitted-region-parents entry)) (block (emitted-region-block entry))
+            (tag (emitted-region-tag entry)))
+        (when (and (gethash block live) (not (member name rest-regions :test #'eq)))
+          (let* ((parent (find-if-not (lambda (slot) (member slot rest-regions :test #'eq)) parents))
+                 (landing (gethash name (lir-function-region-landings state)))
+                 (object (gethash name (lir-function-stack-root-objects state)))
+                 (declaration (list* :region name kind (or parent :nil)
+                                     (cond (landing (list landing)) (object (list object)))))
+                 (old (gethash name declarations)))
+            (when (and old (not (equalp old declaration)))
+              (lir-function-error state "region has conflicting emitted parents"))
+            (when (and old (eq kind :bind)
+                       (not (equalp tag (gethash name (lir-function-region-tags state)))))
+              (lir-function-error state "binding region has conflicting symbols"))
+            (unless old
+              (push declaration result)
+              (setf (gethash name declarations) declaration))
+            (setf (gethash name (lir-function-region-kinds state)) kind
+                  (gethash name (lir-function-region-tags state)) tag)))))
+    (dolist (slot slots)
+      (destructuring-bind (name shape) slot
+        (when (and (eq (first shape) :dynamic-entry) (not (gethash name declarations)))
+          (let ((kind (second shape)) (landing (gethash name (lir-function-region-landings state))))
+            (setf (gethash name (lir-function-region-kinds state)) kind)
+            (push `(:region ,name ,kind :nil ,@(and landing (list landing))) result)))))
+    (nreverse result)))
 
 (defun lir-prepare-regions (state source-blocks slots)
   (let ((blocks (make-lir-name-table))

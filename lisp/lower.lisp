@@ -204,17 +204,17 @@ name of its package as a string."
   (let* ((label (symbol-label sym))
          (obj (kiln.kir::kir-name "kiln_sym_" label)))
     (unless (gethash obj (kiln.kir::kmodule-defined *module*))
-      (let ((name (string-data (kiln.kir::kir-name "kiln_name_" label) (module-symbol-name sym)))
+      (let* ((symbol-name (module-symbol-name sym))
+             (package (symbol-package sym))
+             (name (string-data (kiln.kir::kir-name "kiln_name_" label) symbol-name))
             (undef (kiln.kir::kir-name "kiln_undef_" label))
             (undef-setf (kiln.kir::kir-name "kiln_undef_setf_" label)))
         (module-data undef `(:static-builtin ,(require-builtin :undefined-function) (:object-data ,obj :general)))
         (module-data undef-setf `(:static-builtin ,(require-builtin :undefined-setf-function) (:object-data ,obj :general)))
-        (module-data obj `(:static-symbol (:object-data ,name :general)
-                                         ,(package-name-word (symbol-package sym))
-                                         (:object-data ,undef :general)
-                                         ,(if (keywordp sym) `(:object-data ,obj :general) '(:unbound))
-                                         ,(nil-word)
-                                         (:object-data ,undef-setf :general)))
+        (module-data obj (kiln.kir::make-static-symbol
+                          :name symbol-name :package (and package (target-package-name package))
+                          :name-label name :package-word (package-name-word package)
+                          :undefined-label undef :undefined-setf-label undef-setf))
         (module-shared name)
         (module-shared undef)
         (module-shared undef-setf)
@@ -382,6 +382,17 @@ one (bindings have none)."
       (emit `(:stack-roots-leave ,(region-slot region)))
       (emit `(:dynamic-leave ,(region-slot region)))))
 
+(defun emit-region-entry (region statement)
+  (let ((function kiln.kir::*func*))
+    (when (kiln.kir::kfunc-direct-regions-p function)
+      (push (kiln.kir::make-emitted-region
+             :slot (region-slot region) :kind (region-kind region)
+             :parents (mapcar #'region-slot *regions*)
+             :block (bname (kiln.kir::kfunc-current function))
+             :tag (fourth statement))
+            (kiln.kir::kfunc-region-entries function))))
+  (emit statement))
+
 (defun establish-entry (kind &optional (tag 0))
   "Links a new dynamic-environment entry into the context. Returns its
 region; code inside it runs with the region pushed on *REGIONS*."
@@ -389,19 +400,30 @@ region; code inside it runs with the region pushed on *REGIONS*."
          (region (make-region :kind kind :slot slot
                               :handler (if (member kind '(:bind :progv)) nil (new-block))
                               :outer *regions*)))
-    (emit `(:dynamic-enter ,slot ,kind ,tag))
+    (emit-region-entry region `(:dynamic-enter ,slot ,kind ,tag))
     region))
 
 (defun start-dispatch (region land)
-  "Emits the handler block of REGION, dispatching other targets outward."
-  (start-block (region-handler region))
-  (let ((outer (new-block)))
-    (br `(:unwind-target-p ,(region-slot region)) land outer)
-    (start-block outer)
-    (let ((h (let ((*regions* (region-outer region))) (handler))))
-      (if (eq h :nil)
-          (emit '(:trap))
-          (emit `(:jump ,h))))))
+  "Records the landing and the handler chain used by diagnostic KIR."
+  (let* ((dispatch (region-handler region))
+         (outer (new-block))
+         (function kiln.kir::*func*)
+         (handler (let ((*regions* (region-outer region))) (handler))))
+    (if (kiln.kir::kfunc-direct-regions-p function)
+        (progn
+          (push (kiln.kir::make-emitted-landing
+                 :slot (region-slot region) :handler (bname dispatch)
+                 :target (bname land) :forward (bname outer) :outer-handler handler)
+                (kiln.kir::kfunc-region-landings function))
+          (setf (kiln.kir::kblock-terminated dispatch) t
+                (kiln.kir::kblock-terminated outer) t))
+        (progn
+          (start-block dispatch)
+          (br `(:unwind-target-p ,(region-slot region)) land outer)
+          (start-block outer)
+          (if (eq handler :nil)
+              (emit '(:trap))
+              (emit `(:jump ,handler)))))))
 
 (defun emit-nonlocal-values (kind target primary count)
   "Passes the current values to a nonlocal target."
@@ -594,7 +616,7 @@ Return the storage slot and its root region, if any."
               (let ((region (make-region :kind :stack-roots
                                          :slot (new-slot '(:stack-roots-entry))
                                          :handler nil :outer *regions*)))
-                (emit `(:stack-roots-enter ,(region-slot region) ,slot ,class ,reference-count))
+                (emit-region-entry region `(:stack-roots-enter ,(region-slot region) ,slot ,class ,reference-count))
                 region)))))
 
 (defun emit-vector-object (class length initial-value)

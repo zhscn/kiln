@@ -89,8 +89,17 @@ keeps one definition."
   (vars '())
   (slots '())
   (blocks '())
+  (direct-regions-p nil)
+  (region-entries nil)
+  (region-landings nil)
   (current nil)
   (counter 0))
+
+(defstruct emitted-region
+  slot kind parents block tag)
+
+(defstruct emitted-landing
+  slot handler target forward outer-handler)
 
 (defstruct kblock
   name
@@ -209,14 +218,25 @@ entry block current. Unterminated blocks end with a trap."
     (push *func* (kmodule-functions *module*))))
 
 (defun kfunc-form (function)
-  (if (kfunc-p function)
-      `(:func ,(kfunc-name function)
-        (:vars ,@(mapcar #'var-declaration (kfunc-vars function)))
-        (:slots ,@(kfunc-slots function))
-        ,@(and (kfunc-debug function) (list (kfunc-debug function)))
-        ,@(mapcar (lambda (block) (list* :block (kblock-name block) (kblock-stmts block)))
-                  (kfunc-blocks function)))
-      function))
+  (unless (kfunc-p function) (return-from kfunc-form function))
+  (let ((dispatches (when (kfunc-region-landings function) (make-hash-table :test 'eq))))
+    (dolist (entry (kfunc-region-landings function))
+      (setf (gethash (emitted-landing-handler entry) dispatches)
+            (list `(:br (:unwind-target-p ,(emitted-landing-slot entry))
+                        ,(emitted-landing-target entry) ,(emitted-landing-forward entry)))
+            (gethash (emitted-landing-forward entry) dispatches)
+            (list (if (eq (emitted-landing-outer-handler entry) :nil)
+                      '(:trap)
+                      (list :jump (emitted-landing-outer-handler entry))))))
+    `(:func ,(kfunc-name function)
+      (:vars ,@(mapcar #'var-declaration (kfunc-vars function)))
+      (:slots ,@(kfunc-slots function))
+      ,@(and (kfunc-debug function) (list (kfunc-debug function)))
+      ,@(mapcar (lambda (block)
+                  (let ((name (kblock-name block)))
+                    (list* :block name (or (and dispatches (gethash name dispatches))
+                                           (kblock-stmts block)))))
+                (kfunc-blocks function)))))
 
 (defun kmodule-funcs (module)
   "Materialize compatibility function forms for diagnostics and tests."
@@ -225,12 +245,27 @@ entry block current. Unterminated blocks end with a trap."
 (defun (setf kmodule-funcs) (forms module)
   (setf (kmodule-functions module) forms))
 
+(defstruct static-symbol
+  name package name-label package-word undefined-label undefined-setf-label)
+
+(defun static-symbol-form (label symbol)
+  `(:static-symbol (:object-data ,(static-symbol-name-label symbol) :general)
+                   ,(static-symbol-package-word symbol)
+                   (:object-data ,(static-symbol-undefined-label symbol) :general)
+                   ,(if (equal (static-symbol-package symbol) "KEYWORD")
+                        `(:object-data ,label :general)
+                        '(:unbound))
+                   (:object-data "kiln_nil" :general)
+                   (:object-data ,(static-symbol-undefined-setf-label symbol) :general)))
+
 (defun kmodule-data-forms (module)
   (loop for form in (kmodule-data module)
         for object = (and (eq (first form) :data) (third form))
-        collect (if (stringp object)
-                    (list :data (second form) (cons :static-string (map 'list #'char-code object)))
-                    form)))
+        collect (cond ((stringp object)
+                       (list :data (second form) (cons :static-string (map 'list #'char-code object))))
+                      ((static-symbol-p object)
+                       (list :data (second form) (static-symbol-form (second form) object)))
+                      (t form))))
 
 (defun source-function-debug (function)
   (if (kfunc-p function)

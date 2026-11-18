@@ -478,7 +478,10 @@
   (if (kfunc-p function)
       (lower-lir-function data (kfunc-name function)
                           (kfunc-vars function)
-                          (kfunc-slots function) (kfunc-debug function) (kfunc-blocks function))
+                          (kfunc-slots function) (kfunc-debug function) (kfunc-blocks function)
+                          :direct-regions (kfunc-direct-regions-p function)
+                          :region-entries (kfunc-region-entries function)
+                          :region-landings (kfunc-region-landings function))
       (let ((parts (cddr function)) (blocks nil))
         (dolist (part parts)
           (case (first part)
@@ -490,20 +493,22 @@
                             (nreverse blocks) :compatibility t))))
 
 (defun lower-lir-function (data name source-variables source-slots source-debug source-blocks
-                           &key compatibility)
+                           &key compatibility direct-regions region-entries region-landings)
   (let* ((*lir-name-test* (if compatibility 'equalp 'eq))
          (state (make-lir-function :name name :data data
                   :compatibility-variables (when compatibility (make-lir-name-table)))))
-    (multiple-value-bind (blocks slots)
+    (multiple-value-bind (blocks slots live)
         (lir-reachable-blocks state
           (if (or compatibility source-slots)
-              (lir-prepare-landings state source-blocks)
+              (lir-prepare-landings state source-blocks direct-regions region-landings)
               source-blocks)
           source-slots)
       (let* ((prepare-storage (or compatibility slots))
              (storage (when prepare-storage
                         (append (lir-prepare-stack state blocks slots)
-                                (lir-prepare-regions state blocks slots)))))
+                                (if direct-regions
+                                    (lir-declare-emitted-regions state region-entries slots live)
+                                    (lir-prepare-regions state blocks slots))))))
         (setf (lir-function-captures state)
               (or (gethash name (lir-data-function-captures data)) 0))
         (dolist (variable source-variables)
