@@ -174,7 +174,7 @@
 ;;; (The first DEFVAR: its DECLAIM calls PROCLAIM, which is defined above.)
 (defvar *proclaim-hook* nil)
 (defvar *declaration-names* nil)
-(defvar *optimization-qualities* (vector 3 3 3 3 3))
+(defvar *optimization-qualities* (vector 3 3 1 3 3))
 
 ;;; The redefinition hook: the compiler module's dependency tracking
 ;;; (lisp/target/compiler/dependencies.lisp), NIL before it is loaded.

@@ -1,3 +1,5 @@
+(declaim (optimize (debug 3)))
+
 (defun unboxed-local-probe ()
   (kiln.sys:%gc)
   (let* ((frame (find 'unboxed-local-frame (kiln.sys:frame-list) :key #'kiln.sys:frame-name))
@@ -63,6 +65,6 @@
                      (let ((frame (find 'discarded-guard-source (kiln.sys:frame-list)
                                         :key #'kiln.sys:frame-name)))
                        (multiple-value-bind (file start) (kiln.sys:frame-source frame)
-                         (print (= (kiln.sys:source-line file start) 55))))
+                         (print (= (kiln.sys:source-line file start) 57))))
                      (return-from done))))
     (discarded-guard-source)))

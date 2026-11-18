@@ -1,3 +1,5 @@
+(declaim (optimize (debug 3)))
+
 (defmacro exercise-returned-cons ()
   (let ((pair (gensym "PAIR")) (alias (gensym "ALIAS"))
         (item (gensym "ITEM")) (same (gensym "SAME")))

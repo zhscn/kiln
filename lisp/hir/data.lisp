@@ -11,10 +11,11 @@
 ;;;; 16 tagbody, 17 go, 18 catch, 19 throw, 20 unwind-protect,
 ;;;; 21 multiple-value-call, 22 multiple-value-prog1, 23 the,
 ;;;; 24 load-time-value, 25 progv.
-(defvar *hir-policy* 1023)
+(defconstant +default-optimization-policy+ #b1111011111)
+(defvar *hir-policy* +default-optimization-policy+)
 
 (defun hir-policy-quality (policy quality)
-  (logand 3 (ash (or policy 1023)
+  (logand 3 (ash (or policy +default-optimization-policy+)
                 (- (ecase quality (:speed 0) (:safety 2) (:debug 4) (:space 6) (:compilation-speed 8))))))
 
 (defun hir-policy-optimize-p (policy)

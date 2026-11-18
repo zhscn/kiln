@@ -1,3 +1,5 @@
+(declaim (optimize (debug 3)))
+
 (defmacro exercise-cons-borrow ()
   (let ((pair (gensym "PAIR")) (item (gensym "ITEM")) (read (gensym "READ")))
     `(flet ((,read (,item)

@@ -1,3 +1,5 @@
+(declaim (optimize (debug 3)))
+
 (defvar *scalar-cons-events* nil)
 (defun scalar-cons-left () (push 'left *scalar-cons-events*) 1)
 (defun scalar-cons-right () (push 'right *scalar-cons-events*) 2)

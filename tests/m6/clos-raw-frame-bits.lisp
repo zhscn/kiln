@@ -1,3 +1,5 @@
+(declaim (optimize (debug 3)))
+
 (defun raw-frame-probe ()
   (let* ((frame (find 'raw-frame-fixture (kiln.sys:frame-list) :key #'kiln.sys:frame-name))
          (names (svref (kiln.kernel::frame-debug-info frame) 4))

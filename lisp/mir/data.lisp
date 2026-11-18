@@ -10,7 +10,7 @@
 
 (defstruct mir-unit (revision 0 :type fixnum) (load-time-functions #()) (functions (make-hir-buffer)) (analyses (make-hash-table :test 'eq)))
 (defstruct mir-function
-  (id 0 :type fixnum) name source (policy 1023) (internal-prefix 0) (argument-cells 0) (required 0) (optional 0) (rest nil) (key-p nil) (keys #()) (allow-other-keys nil) (bindings #()) (binding-cells 0) (captures #()) (capture-cells 0) (capture-functions #())
+  (id 0 :type fixnum) name source (policy +default-optimization-policy+) (internal-prefix 0) (argument-cells 0) (required 0) (optional 0) (rest nil) (key-p nil) (keys #()) (allow-other-keys nil) (bindings #()) (binding-cells 0) (captures #()) (capture-cells 0) (capture-functions #())
   (blocks (make-hir-buffer)) (instructions (make-hir-buffer)) (values (make-hir-buffer))
   (revision 0 :type fixnum) (analyses (make-hash-table :test 'eq)) debug-name)
 (defun mir-function-positional-count (function)
@@ -24,14 +24,14 @@
 
 (defstruct mir-block (id 0 :type fixnum) (parameters #()) (instructions (make-hir-buffer)) terminator)
 (defstruct mir-value (id 0 :type fixnum) (representation :obj) (block 0 :type fixnum) (position -1 :type fixnum))
-(defstruct mir-instruction (id 0 :type fixnum) (kind 0 :type fixnum) (operands #()) result data source origin (notinline nil) (policy 1023) (effects 0))
+(defstruct mir-instruction (id 0 :type fixnum) (kind 0 :type fixnum) (operands #()) result data source origin (notinline nil) (policy +default-optimization-policy+) (effects 0))
 (defun mir-call-prefix-count (instruction)
   (if (and (= (mir-instruction-kind instruction) 15) (integerp (mir-instruction-data instruction)))
       (mir-instruction-data instruction) 0))
 
 (defstruct mir-edge (target 0 :type fixnum) (arguments #()))
 ;;; Terminators: jump, branch, return, trap, throw, region-entry, continue-unwind, exit-to.
-(defstruct mir-terminator (kind 0 :type fixnum) (operands #()) (edges #()) region source origin (policy 1023))
+(defstruct mir-terminator (kind 0 :type fixnum) (operands #()) (edges #()) region source origin (policy +default-optimization-policy+))
 
 ;;; Instruction kinds: constant, argument, global-read, global-write,
 ;;; global-function, function, global-call, call, primop, single, primary,

@@ -30,7 +30,7 @@
 (defvar *mir-parameter-specials*)
 (defvar *mir-cleanups*)
 (defvar *mir-source* nil)
-(defvar *mir-policy* 1023)
+(defvar *mir-policy* +default-optimization-policy+)
 
 (defun mir-unavailable (reason)
   (error 'mir-unsupported :message (format nil "MIR: ~A~@[ at ~S~]" reason (hir-source-range *mir-source*))))

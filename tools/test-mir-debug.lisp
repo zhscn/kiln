@@ -8,7 +8,7 @@
   (loop for function across (hir-vector (mir-unit-functions unit)) append
     (loop for instruction across (hir-vector (mir-function-instructions function))
           when (= (mir-instruction-kind instruction) 40) collect (cons function instruction))))
-(let* ((unit (mir-debug-test-unit '(lambda (x) (let ((y (+ x 1))) (+ x y)))))
+(let* ((unit (mir-debug-test-unit '(lambda (x) (declare (optimize (debug 3))) (let ((y (+ x 1))) (+ x y)))))
        (bindings (mir-debug-test-bindings unit)))
   (verify-mir unit)
   (assert (= 2 (length bindings)))
@@ -25,11 +25,16 @@
                  (setf rejected (search "Invalid MIR debug binding" (princ-to-string condition)))))
              (assert rejected)))
       (setf (mir-instruction-data instruction) saved))))
+(let* ((unit (mir-debug-test-unit '(lambda (x) (setq x (+ x 1)) x)))
+       (function (mir-at (mir-unit-functions unit) 1)))
+  (assert (= 1 (hir-policy-quality (mir-function-policy function) :debug)))
+  (assert (null (mir-debug-test-bindings unit)))
+  (assert (zerop (mir-function-binding-cells function))))
 (assert (null (mir-debug-test-bindings
                (mir-debug-test-unit '(lambda (x) (declare (optimize (debug 0))) x)))))
-(let ((bindings (mir-debug-test-bindings (mir-debug-test-unit '(lambda (x) (setq x (+ x 1)) x)))))
+(let ((bindings (mir-debug-test-bindings (mir-debug-test-unit '(lambda (x) (declare (optimize (debug 3))) (setq x (+ x 1)) x)))))
   (assert (= 2 (count 'x bindings :key (lambda (entry) (cdr (mir-instruction-data (cdr entry))))))))
-(let* ((unit (mir-debug-test-unit '(lambda (n) (let ((count n)) (lambda () (incf count))))))
+(let* ((unit (mir-debug-test-unit '(lambda (n) (declare (optimize (debug 3))) (let ((count n)) (lambda () (incf count))))))
        (bindings (remove-if-not (lambda (entry) (eq (cdr (mir-instruction-data (cdr entry))) 'count))
                                 (mir-debug-test-bindings unit))))
   (verify-mir unit)
@@ -40,7 +45,7 @@
                                (svref (mir-instruction-operands (cdr entry)) 0)))))))
 (format t "MIR debug bindings preserve source visibility, assignment and cell representations.~%")
 
-(let* ((unit (mir-debug-test-unit '(lambda (n) (let ((count n)) (lambda () (incf count))))))
+(let* ((unit (mir-debug-test-unit '(lambda (n) (declare (optimize (debug 3))) (let ((count n)) (lambda () (incf count))))))
        (entry (find 'count (mir-debug-test-bindings unit)
                     :key (lambda (entry) (cdr (mir-instruction-data (cdr entry))))))
        (function (car entry)) (instruction (cdr entry))
@@ -56,7 +61,7 @@
          (assert rejected))
     (setf (mir-instruction-operands instruction) saved)))
 
-(let* ((unit (mir-debug-test-unit '(lambda (x) (setq x (+ x 1)) x)))
+(let* ((unit (mir-debug-test-unit '(lambda (x) (declare (optimize (debug 3))) (setq x (+ x 1)) x)))
        (bindings (mir-debug-test-bindings unit)))
   (verify-mir unit)
   (dolist (entry bindings)
@@ -73,7 +78,8 @@
   (assert (member '(lambda :in (flet helper :in mir-debug-model)) names :test #'equal)))
 
 (let* ((unit (mir-debug-test-unit
-              '(lambda (x) (flet ((helper (y) (+ y 1))) (helper x) (helper x)))))
+              '(lambda (x) (declare (optimize (debug 3)))
+                 (flet ((helper (y) (+ y 1))) (helper x) (helper x)))))
        (function (find 'helper (hir-vector (mir-unit-functions unit)) :key #'mir-function-name)))
   (setf (mir-function-policy function) (logandc2 (mir-function-policy function) (ash 3 4)))
   (loop for instruction across (hir-vector (mir-function-instructions function)) do
@@ -91,6 +97,16 @@
          (storage (svref (mir-infer-storage unit) 0)))
     (assert (eq (zerop (mir-storage-analysis-stack storage)) (= debug 2)))))
 (format t "MIR storage respects source-visible debugger observations.~%")
+
+(let* ((unit (mir-debug-test-unit
+              '(lambda (n)
+                 (flet ((helper (x) (+ x n)))
+                   (declare (notinline helper))
+                   (helper 1)))))
+       (function (find 'helper (hir-vector (mir-unit-functions unit)) :key #'mir-function-name)))
+  (assert (plusp (length (mir-function-captures function))))
+  (mir-lift-local-functions unit)
+  (assert (plusp (mir-function-internal-prefix function))))
 
 (dolist (form '((lambda (x) (+ x 1))
                 (lambda (x)

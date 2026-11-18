@@ -1,6 +1,6 @@
 ;;;; Frames: the names of the frames' functions, the source
 ;;;; positions of their calls and the variables known during the calls.
-
+(declaim (optimize (debug 3)))
 (defun show-frame (f)
   (multiple-value-bind (file start) (kiln.sys:frame-source f)
     (format t "~S ~A ~S~%" (kiln.sys:frame-name f)

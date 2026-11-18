@@ -122,12 +122,12 @@ at compile time (USE-HOST-MACROS).")
 ;;; proclamations are shared with compile-time evaluation.
 (defmethod trucler:describe-optimize ((client cross-client) (environment clostrum-basic::basic-environment))
   (let ((qualities (clo:optimize client environment)))
-    (flet ((quality (name)
+    (flet ((quality (name default-quality)
              (let ((entry (find name qualities :key (lambda (x) (if (consp x) (car x) x)))))
-               (if (consp entry) (second entry) 3))))
+               (if (consp entry) (second entry) (hir-policy-quality nil default-quality)))))
       (make-instance 'trucler:optimize-description
-        :speed (quality 'speed) :safety (quality 'safety) :debug (quality 'debug)
-        :space (quality 'space) :compilation-speed (quality 'compilation-speed)))))
+        :speed (quality 'speed :speed) :safety (quality 'safety :safety) :debug (quality 'debug :debug)
+        :space (quality 'space :space) :compilation-speed (quality 'compilation-speed :compilation-speed)))))
 
 (defvar *host-macros* (make-hash-table :test 'equal)
   "Names of the macros expanded by host functions at compile time.")

@@ -1,3 +1,5 @@
+(declaim (optimize (debug 3)))
+
 (defmacro exercise-stack-graph ()
   (let ((inner (gensym "INNER")) (outer (gensym "OUTER")))
     `(let ((,inner (cons (vector 17 18) nil)))

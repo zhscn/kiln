@@ -19,6 +19,7 @@
        (kiln.compiler::front-end-forms
         '((setq *lir-image-function*
                 (lambda (image-x image-y)
+                  (declare (optimize (debug 3)))
                   (let ((image-z 1.25d0))
                     (declare (type double-float image-z))
                     (lir-image-probe)

@@ -1,5 +1,11 @@
+(assert (= 1 (svref kiln.kernel::*optimization-qualities* 2)))
+(loop for quality in '(:speed :safety :debug :space :compilation-speed)
+      for level across kiln.kernel::*optimization-qualities*
+      do (assert (= level (kiln.compiler::hir-policy-quality nil quality))))
+
 (defun mir-debug-compile (name form)
-  (let ((kiln.compiler::*compiler-pipeline* :mir)) (compile name form)))
+  (destructuring-bind (operator parameters &rest body) form
+    (compile name (list* operator parameters '(declare (optimize (debug 3))) body))))
 
 (defun mir-debug-vars-for (name)
   (let ((frame (find name (kiln.sys:frame-list) :key #'kiln.sys:frame-name :test #'equal)))
