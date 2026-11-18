@@ -22,6 +22,7 @@
                (:file "lir-schema")
                (:file "backend-target")
                (:file "compilation-metrics")
+               (:file "compiler-eq-table")
                (:file "backend-packet")
                (:file "lir")
                (:file "lir-function")

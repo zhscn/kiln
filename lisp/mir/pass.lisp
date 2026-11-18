@@ -144,7 +144,7 @@
     (unless (= (length signatures) (hir-buffer-count (mir-unit-functions unit)))
       (mir-fail "MIR function membership changes require a unit pass"))
     (let ((*mir-verification-identities* (make-hash-table :test 'eq))
-          (*hir-buffer-views* (make-hash-table :test 'eq)))
+          (*hir-buffer-views* (make-compiler-eq-table)))
       (loop for saved across signatures for entry across (hir-vector (mir-unit-functions unit))
             do (unless (eq (car saved) entry) (mir-fail "MIR function replacement requires a unit pass"))
                (mir-verify-function-layout unit entry)

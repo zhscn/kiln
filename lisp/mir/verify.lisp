@@ -571,7 +571,7 @@
 
 (defun verify-mir (unit)
   (let ((*mir-verification-identities* (make-hash-table :test 'eq))
-        (*hir-buffer-views* (make-hash-table :test 'eq)))
+        (*hir-buffer-views* (make-compiler-eq-table)))
     (when (zerop (hir-buffer-count (mir-unit-functions unit))) (mir-fail "Empty MIR unit"))
     ;; Call validation reads callee layouts. Check every layout before any
     ;; function body so malformed later entries cannot reach those reads.

@@ -81,7 +81,7 @@
   "Share dependencies within one read query, never across edits in a callback."
   (let* ((root (null *mir-edit-analysis-cache*))
          (*mir-edit-analysis-cache* (or *mir-edit-analysis-cache* (make-hash-table :test 'eq)))
-         (*hir-buffer-views* (if root (make-hash-table :test 'eq) *hir-buffer-views*))
+         (*hir-buffer-views* (if root (make-compiler-eq-table) *hir-buffer-views*))
          (entries (or (gethash owner *mir-edit-analysis-cache*)
                       (setf (gethash owner *mir-edit-analysis-cache*) (make-hash-table :test 'eq)))))
     (multiple-value-bind (result present) (gethash name entries)
@@ -93,7 +93,7 @@
 (defun mir-analysis-buffer-views (analyses revision)
   (let ((entry (gethash :buffer-views analyses)))
     (if (and entry (= (car entry) revision)) (cdr entry)
-        (let ((views (make-hash-table :test 'eq)))
+        (let ((views (make-compiler-eq-table)))
           (setf (gethash :buffer-views analyses) (cons revision views))
           views))))
 
