@@ -74,7 +74,8 @@
       (handler-case
           (let ((program (kiln.kir::normalize-lir-module module)))
             (when (fourth case)
-              (print (and (null (kiln.sys:%primop :compile-program program #() kiln.kir::+backend-target-fingerprint+))
-                          (first case)))))
+              (kiln.lir:require-init
+               (kiln.sys:%primop :compile-program program #() kiln.kir::+backend-target-fingerprint+)
+               :compile-program)))
         (error (condition)
           (print (and (search (second case) (princ-to-string condition)) (first case))))))))

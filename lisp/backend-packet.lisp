@@ -22,7 +22,7 @@
          (list (cons :shared (reverse (kmodule-shared module)))))
      ,@(reverse (kmodule-imports module))
      ,@(reverse (kmodule-import-data module))
-     ,@(reverse (kmodule-data module))
+     ,@(reverse (kmodule-data-forms module))
      ,@(reverse (kmodule-roots module))
      ,@(reverse (kmodule-funcs module))))
 

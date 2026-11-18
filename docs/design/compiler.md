@@ -59,8 +59,10 @@ KIR 变成 kiln-cg 内部的数据结构；`kiln-cg dump FILE.lir` 将输入记�
 ## 实现入口与扩展规则
 
 `compile-module` 构造带词法准备结果的 HIR，再经 `hir-to-mir`、MIR pass 和发射器
-产生语义操作。现有私有构建器沿用 `kiln.kir` 的 `kmodule` 和块操作；
-`normalize-lir-module` 将其转成独立 LIR。构建器和诊断 KIR 都不是新的跨语言契约。
+产生语义操作。发射器用 `kmodule` 保存静态数据和函数，函数以结构保存块、变量、
+栈槽和调试记录。LIR 降级直接读取这些结构，在函数内处理动态区域、多值和
+操作数表示。诊断打印按需将结构转成 KIR 表单。静态字符串保留原有字符序列，供符号声明
+和 LIR 常量使用；诊断打印再按其格式展开码点。
 生产调用方通过 `kiln.lir` API 输出 LIR，运行期提交结构化程序或 packet。
 
 修改按职责落在相应层：

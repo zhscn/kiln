@@ -13,7 +13,7 @@
                    (values prefix tail)))
            (setq *lir-stack-rest-function*
                  (lambda (prefix &rest args)
-                   (declare (ignore prefix) (optimize (speed 3) (compilation-speed 0)))
+                   (declare (ignore prefix) (optimize (speed 3) (debug 3) (compilation-speed 0)))
                    (let ((pair (cons (car args) nil)))
                      (kiln.sys:%gc)
                      (car pair))))

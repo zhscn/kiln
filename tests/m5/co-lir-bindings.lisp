@@ -8,7 +8,7 @@
         (sublis (list (cons 'pair (gensym "PAIR")))
          '((setq *lir-binding-function*
                 (lambda (flag value)
-                  (declare (optimize (speed 3) (compilation-speed 0)))
+                  (declare (optimize (speed 3) (debug 3) (compilation-speed 0)))
                   (let ((pair (cons value nil)))
                     (declare (dynamic-extent pair))
                     (let ((*lir-bound-value* (car pair)))

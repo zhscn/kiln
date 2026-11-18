@@ -179,7 +179,7 @@ returns the literals, a vector."
 
 (defun string-data (label string)
   "Defines LABEL as a static string object holding STRING (once)."
-  (module-data label `(:static-string ,@(map 'list #'char-code string)))
+  (module-data label (copy-seq string))
   label)
 
 (defun package-name-word (package)
