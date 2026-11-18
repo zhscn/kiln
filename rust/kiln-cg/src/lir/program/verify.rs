@@ -606,13 +606,35 @@ fn loop_polls(edges: &[Vec<usize>]) -> Vec<bool> {
     polls
 }
 
+#[derive(Clone, Debug)]
+enum Initialized {
+    Inline([u64; 2]),
+    Heap(Vec<u64>),
+}
+
+impl Initialized {
+    fn words(&self) -> &[u64] {
+        match self {
+            Self::Inline(words) => words,
+            Self::Heap(words) => words,
+        }
+    }
+
+    fn words_mut(&mut self) -> &mut [u64] {
+        match self {
+            Self::Inline(words) => words,
+            Self::Heap(words) => words,
+        }
+    }
+}
+
 // Block entries repeatedly copy and intersect definite-assignment facts.
 // Number variables once per function so these operations copy bits rather
 // than allocating a hash table and a String for every initialized variable.
 #[derive(Clone, Debug)]
 struct State<'a> {
     variables: &'a HashMap<&'a str, usize>,
-    initialized: Vec<u64>,
+    initialized: Initialized,
     view: Option<&'a str>,
 }
 
@@ -620,18 +642,27 @@ impl<'a> State<'a> {
     fn new(variables: &'a HashMap<&'a str, usize>) -> Self {
         Self {
             variables,
-            initialized: vec![0; variables.len().div_ceil(64)],
+            initialized: if variables.len() <= 128 {
+                Initialized::Inline([0; 2])
+            } else {
+                Initialized::Heap(vec![0; variables.len().div_ceil(64)])
+            },
             view: None,
         }
     }
     fn initialize(&mut self, name: &str) {
         let index = self.variables[name];
-        self.initialized[index / 64] |= 1 << (index % 64);
+        self.initialized.words_mut()[index / 64] |= 1 << (index % 64);
+    }
+    fn copy_from(&mut self, other: &Self) {
+        debug_assert!(std::ptr::eq(self.variables, other.variables));
+        self.initialized.words_mut().copy_from_slice(other.initialized.words());
+        self.view = other.view;
     }
     fn merge(&mut self, other: &Self) -> bool {
         debug_assert!(std::ptr::eq(self.variables, other.variables));
         let mut changed = false;
-        for (word, other) in self.initialized.iter_mut().zip(&other.initialized) {
+        for (word, other) in self.initialized.words_mut().iter_mut().zip(other.initialized.words()) {
             let intersection = *word & other;
             changed |= *word != intersection;
             *word = intersection;
@@ -646,7 +677,7 @@ impl<'a> State<'a> {
         if !self
             .variables
             .get(name)
-            .is_some_and(|&index| self.initialized[index / 64] & (1 << (index % 64)) != 0)
+            .is_some_and(|&index| self.initialized.words()[index / 64] & (1 << (index % 64)) != 0)
         {
             return Err(format!("variable {name} is not initialized on every path"));
         }
@@ -1343,23 +1374,20 @@ fn function(f: &Function, module: &Module, functions: &FunctionIndex<'_>) -> Res
             queued[target] = true;
         }
     }
+    let mut state = State::new(&types.vars);
     while let Some(i) = work.pop_front() {
         queued[i] = false;
-        let mut state = entries[i].clone().unwrap();
+        state.copy_from(entries[i].as_ref().unwrap());
         if polls[i] {
             state.view = None;
         }
+        // Region flow emits unwind edges in instruction order.
+        let mut unwinds = regions.unwinds[i].iter().peekable();
         for at in 0..=f.blocks[i].instructions.len() {
-            for edge in regions.unwinds[i].iter().filter(|edge| edge.at == at) {
-                let mut exceptional = state.clone();
-                exceptional.view = None;
-                propagate(
-                    &mut entries,
-                    &mut work,
-                    &mut queued,
-                    edge.target,
-                    &exceptional,
-                );
+            while let Some(edge) = unwinds.next_if(|edge| edge.at == at) {
+                let view = state.view.take();
+                propagate(&mut entries, &mut work, &mut queued, edge.target, &state);
+                state.view = view;
             }
             if let Some(inst) = f.blocks[i].instructions.get(at) {
                 state.step(inst, f);
