@@ -351,19 +351,12 @@
               (mir-fail "MIR binding parameter disagrees with its cell layout"))))))
   function)
 
-(defun verify-mir-function (unit function)
-  (let ((*hir-buffer-views* (if *mir-verification-identities*
-                               (or *hir-buffer-views* (make-hash-table :test 'eq))
-                               (make-hash-table :test 'eq)))
-        (*mir-verification-identities* (or *mir-verification-identities* (make-hash-table :test 'eq))))
-    (mir-verify-function-body unit function)))
-
 (defun mir-verify-function-body (unit function)
+  "Verify a body after the unit check has validated all function layouts."
   (let* ((blocks (mir-function-blocks function)) (instructions (mir-function-instructions function))
          (values (mir-function-values function))
          (seen-instructions (make-array (hir-buffer-count instructions) :initial-element nil))
          (seen-values (make-array (hir-buffer-count values) :initial-element nil)))
-    (mir-verify-function-layout unit function)
     (labels ((definition (id block position)
                (let ((value (mir-at values id)))
                  (unless (and (mir-value-p value) (= id (mir-value-id value))
@@ -587,6 +580,6 @@
       (mir-fail "MIR unit entry cannot require a closure environment"))
     (unless (eql 0 (mir-function-internal-prefix (mir-at (mir-unit-functions unit) 0)))
       (mir-fail "MIR unit entry cannot require a private prefix"))
-    (loop for function across (hir-buffer-view (mir-unit-functions unit)) do (verify-mir-function unit function))
+    (loop for function across (hir-buffer-view (mir-unit-functions unit)) do (mir-verify-function-body unit function))
     (mir-verify-private-entries unit)
     unit))
