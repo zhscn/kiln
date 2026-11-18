@@ -46,6 +46,10 @@ LIR 字节数与 `lir_metrics` 始终记录；目标文件测量后删除，后�
 `machine_seconds` 区分 Cranelift 优化与寄存器分配成本，使用后端总时间观察
 解码、LIR 降级、调试信息和目标文件输出的额外成本。
 
+CLIF 调试槽只处理带源码变量标签且含调用点的函数。较大的任务批次按函数并行，
+沿用 `KILN_CG_THREADS` 的线程上限，按原函数顺序输出。静态对象声明保留
+Cranelift 的数据编号，后续定义对象时复用该编号与重定位缓冲。
+
 第三方库的迭代基准使用 `tools/bench-library.py fset` 或
 `tools/bench-library.py maxima`。每个样本从同一份已加载库的快照启动，在副本上
 分别测首次和重复文件编译、相应 FASL 的加载、修改文件后的编译和加载，以及原定义
