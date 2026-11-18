@@ -61,11 +61,16 @@ fn dump_program(path: &str) -> Result<i32, String> {
 /// Loads backend files and merges them into one module; their init functions
 /// run in the order given.
 fn load_all(files: &[&String]) -> Result<kir::Module, String> {
+    let start = std::time::Instant::now();
     let modules = files
         .iter()
         .map(|f| load(f))
         .collect::<Result<Vec<_>, _>>()?;
-    kir::merge(modules)
+    let result = kir::merge(modules);
+    if std::env::var_os("KILN_TIME").is_some() {
+        eprintln!("kiln-cg: loaded in {:?}", start.elapsed());
+    }
+    result
 }
 
 fn run_jit(kir: &kir::Module, opts: &Options) -> Result<i32, String> {
@@ -111,9 +116,14 @@ fn write_obj(kir: &kir::Module, opts: &Options, out_path: &str) -> Result<(), St
     let mut module = ObjectModule::new(builder);
     let out = codegen::compile(&mut module, kir, opts)?;
     codegen::emit_module_info(&mut module, &out)?;
+    let start = std::time::Instant::now();
     let product = module.finish();
     let bytes = product.emit().map_err(|e| e.to_string())?;
-    std::fs::write(out_path, bytes).map_err(|e| format!("{out_path}: {e}"))
+    std::fs::write(out_path, bytes).map_err(|e| format!("{out_path}: {e}"))?;
+    if std::env::var_os("KILN_TIME").is_some() {
+        eprintln!("kiln-cg: serialized object in {:?}", start.elapsed());
+    }
+    Ok(())
 }
 
 fn main() -> ExitCode {
@@ -133,14 +143,7 @@ fn main() -> ExitCode {
     let result = match pos.split_first() {
         Some((cmd, rest)) if cmd.as_str() == "dump" && rest.len() == 1 => dump_program(rest[0]),
         Some((cmd, rest)) if cmd.as_str() == "jit" && !rest.is_empty() => {
-            {
-                let t = std::time::Instant::now();
-                let m = load_all(rest);
-                if std::env::var("KILN_TIME").is_ok() {
-                    eprintln!("kiln-cg: loaded in {:?}", t.elapsed());
-                }
-                m.and_then(|m| run_jit(&m, &opts))
-            }
+            load_all(rest).and_then(|m| run_jit(&m, &opts))
         }
         Some((cmd, rest)) if cmd.as_str() == "obj" && rest.len() >= 3 && rest[rest.len() - 2] == "-o" => {
             let (files, out) = rest.split_at(rest.len() - 2);
