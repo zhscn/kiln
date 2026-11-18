@@ -86,7 +86,9 @@ echo stream 记录，两个输出通过 broadcast stream 复制，原有流保�
 Cyclosis 的外层方法仍负责 unread 和游标，非 ASCII、缓冲补充及其他外部格式仍走
 转换器。文件位置、读写切换和输出刷新共享同一份缓冲状态。
 八位组文件流与专用八位组向量之间的 `write-sequence` 直接分块写入缓冲。
-其他序列及元素宽度沿用通用流方法。
+FASL 的包向量先检查元素范围。较大的 simple-vector 八位组区间先刷新待写数据，
+再由 runtime 分块打包并写入描述符。分块限制临时字节缓冲的大小，每次写入后
+更新文件位置。其他序列及元素宽度沿用通用流方法。
 
 - Cyclosis 的转码器逐个八位组读写，没有缓冲的话每个八位组都是一次系统调用。
 - 同一个缓冲先用于读还是写，取决于下一个操作：写之前把预读的部分用 lseek 退回，读之前先写出待写的部分。`finish-output`、`force-output`、`close`、`file-position`、`file-length` 之前都先写出缓冲。
