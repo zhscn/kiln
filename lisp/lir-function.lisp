@@ -39,7 +39,7 @@
   (stack-shapes (make-lir-name-table))
   (closure-entries (make-lir-name-table))
   rest rest-slots rest-regions
-  active-view active-count
+  active-view active-count (block-constants nil)
   (variables '()) (temporaries '()) (statements '()) (blocks '())
   (receive 0) (received-p nil) (captures 0) (counter 0))
 
@@ -152,12 +152,23 @@
 
 (defun lir-operand (state expression kind)
   (let ((variable-kind (lir-variable-kind state expression)))
-    (if (and variable-kind (eq variable-kind kind))
+    (if (eq variable-kind kind)
         expression
-        (let ((value (lir-expression state expression kind variable-kind))
-              (result (lir-new-temporary state kind)))
-          (lir-emit state `(:set ,result ,value))
-          result))))
+        (let* ((value (lir-expression state expression kind variable-kind))
+               ;; A fresh immediate temporary dominates subsequent uses in
+               ;; this block only. Mutable cells and computed values cannot
+               ;; share this cache.
+               (cache (when (and (consp value)
+                                 (member (first value) '(:nil :t :fixnum :word :f64 :character
+                                                         :single-float :constant :literal :unbound
+                                                         :unbound-slot)))
+                        (or (lir-function-block-constants state)
+                            (setf (lir-function-block-constants state) (make-hash-table :test 'equal))))))
+          (or (and cache (gethash value cache))
+              (let ((result (lir-new-temporary state kind)))
+                (lir-emit state (list :set result value))
+                (when cache (setf (gethash value cache) result))
+                result))))))
 
 (defun lir-pure-expression (state operation arguments)
   (let ((signature (gethash operation *lir-operation-signatures*)))
@@ -547,7 +558,8 @@
           (dolist (block blocks)
             (setf (lir-function-statements state) '()
                   (lir-function-active-view state) nil (lir-function-active-count state) nil
-                  (lir-function-landing-view state) nil)
+                  (lir-function-landing-view state) nil
+                  (lir-function-block-constants state) nil)
             (dolist (statement (kblock-stmts block)) (lir-statement state statement))
             (push (list* :block (kblock-name block) (nreverse (lir-function-statements state)))
                   (lir-function-blocks state)))
