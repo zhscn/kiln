@@ -45,8 +45,16 @@ LIR 字节数与 `lir_metrics` 始终记录；目标文件测量后删除，后�
 `machine_seconds` 区分 Cranelift 优化与寄存器分配成本，使用后端总时间观察
 解码、LIR 降级、调试信息和目标文件输出的额外成本。
 
-后续增加原生 `compile`、源文件 `load`、FASL 加载和宏重定义
-场景，单独测量首次与缓存命中的延迟，再细分读入、宏展开和 HIR 词法准备与 MIR 分析成本。
+第三方库的迭代基准使用 `tools/bench-library.py fset` 或
+`tools/bench-library.py maxima`。每个样本从同一份已加载库的快照启动，在副本上
+分别测首次和重复文件编译、相应 FASL 的加载、修改文件后的编译和加载，以及原定义
+与修改后的单函数求值。FASL 加载包含机器码生成。报告记录阶段时间、进程峰值 RSS、
+LIR 大小和操作计数，以及保留产物的实际磁盘占用。
+
+用 `--prepare-only` 提前构建快照，避免把准备成本计入编辑延迟。Maxima 可用
+`--maxima-build-directory` 复用兼容性测试留下的构建目录。用 `--profile cpu`
+或 `--profile alloc` 在独立运行中采样，`--profile-phase` 选择要采样的操作。
+分配采样用于定位热点，不能当作精确分配计数。
 
 ## 运行期编译的阶段计时
 
