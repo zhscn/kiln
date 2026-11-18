@@ -21,6 +21,36 @@
   (loop for index from 0 for value = (sys-string 24 index)
         while (stringp value) collect value))
 
+(defun kiln.sys:run-process (argv &key output)
+  "Run ARGV synchronously. OUTPUT, when supplied, is a character output stream."
+  (unless (and (consp argv) (stringp (first argv)) (plusp (length (first argv)))
+               (every (lambda (arg) (and (stringp arg) (not (find (code-char 0) arg)))) argv))
+    (error "Invalid subprocess argument list: ~S" argv))
+  (when output
+    (unless (and (streamp output) (output-stream-p output))
+      (error "Expected an output stream, got ~S" output)))
+  (let* ((request (string-octets
+                   (with-output-to-string (stream)
+                     (dolist (arg argv)
+                       (write-string arg stream)
+                       (write-char (code-char 0) stream)))))
+         (fd (if output (sys 27) -1)))
+    (when (and output (minusp fd))
+      (error "Cannot open subprocess output buffer (errno ~D)." (- fd)))
+    (unwind-protect
+         (let ((status (sys 26 request fd)))
+           (when (minusp status)
+             (error "Cannot run subprocess ~S (errno ~D)." (first argv) (- status)))
+           (when output
+             (when (minusp (sys 2 fd 0 0))
+               (error "Cannot rewind subprocess output."))
+             (with-open-stream (input (make-instance 'cyclosis::kiln-file-stream
+                                      :descriptor fd :input t :close-descriptor nil
+                                      :element-type 'character :external-format :utf-8))
+               (loop for char = (read-char input nil) while char do (write-char char output))))
+           status)
+      (when output (sys 1 fd)))))
+
 (defun environment-information (which)
   (let ((value (sys-string 20 which)))
     (and (stringp value) value)))

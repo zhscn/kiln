@@ -594,10 +594,37 @@ pub unsafe extern "C" fn kiln_rt_sys(_ctx: *mut Context, op: u64, a: u64, b: u64
             Err(_) => einval,
         },
         25 => i64::from(std::process::id()),
+        26 => run_process(&unsafe { vector_octets(a) }, fixnum_value(b))
+            .unwrap_or_else(|error| -i64::from(error.raw_os_error().unwrap_or(libc::EIO))),
+        27 => check(i64::from(unsafe { libc::memfd_create(c"kiln-process".as_ptr(), libc::MFD_CLOEXEC) })),
         22 => crate::gc::heap_statistic(fixnum_value(a)).map_or(einval, |value| value as i64),
         _ => einval,
     };
     fixnum(result)
+}
+
+fn run_process(argv: &[u8], output: i64) -> std::io::Result<i64> {
+    use std::os::fd::{FromRawFd, OwnedFd};
+    use std::os::unix::{ffi::OsStrExt, process::ExitStatusExt};
+    use std::process::{Command, Stdio};
+
+    let invalid = || std::io::Error::from_raw_os_error(libc::EINVAL);
+    let argv = argv.strip_suffix(&[0]).ok_or_else(invalid)?;
+    let mut argv = argv.split(|&byte| byte == 0).map(std::ffi::OsStr::from_bytes);
+    let program = argv.next().filter(|name| !name.is_empty()).ok_or_else(invalid)?;
+    let mut command = Command::new(program);
+    command.args(argv);
+    if output != -1 {
+        let output = i32::try_from(output).map_err(|_| invalid())?;
+        let fd = unsafe { libc::fcntl(output, libc::F_DUPFD_CLOEXEC, 3) };
+        if fd < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        command.stdin(Stdio::null());
+        command.stdout(Stdio::from(unsafe { OwnedFd::from_raw_fd(fd) }));
+    }
+    let status = command.status()?;
+    Ok(i64::from(status.code().unwrap_or_else(|| 128 + status.signal().unwrap_or(0))))
 }
 
 /// The shortest decimal representation of the float `x` that reads back

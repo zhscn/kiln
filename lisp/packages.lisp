@@ -42,7 +42,7 @@
            ;; Frames and backtraces (lisp/target/clos/debug.lisp).
            #:frame-list #:frame-name #:frame-source #:frame-variables #:frame-pc
            #:source-line #:print-frame #:print-backtrace #:exit
-           #:getenv #:getcwd #:getpid #:command-line-arguments
+           #:getenv #:getcwd #:getpid #:command-line-arguments #:run-process
            #:single-float-bits #:double-float-bits #:bits-single-float #:bits-double-float
            #:float-infinity-p #:float-nan-p #:with-float-traps-masked #:with-rounding-mode
            ;; The back-end protocol (lisp/target/eval/server.lisp).
