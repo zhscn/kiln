@@ -495,10 +495,15 @@
          (state (make-lir-function :name name :data data
                   :compatibility-variables (when compatibility (make-lir-name-table)))))
     (multiple-value-bind (blocks slots)
-        (lir-reachable-blocks state (lir-prepare-landings state source-blocks) source-slots)
-      (lir-prepare-rest state blocks slots)
-      (let ((storage (append (lir-prepare-stack state blocks slots)
-                             (lir-prepare-regions state blocks slots))))
+        (lir-reachable-blocks state
+          (if (or compatibility source-slots)
+              (lir-prepare-landings state source-blocks)
+              source-blocks)
+          source-slots)
+      (let* ((prepare-storage (or compatibility slots))
+             (storage (when prepare-storage
+                        (append (lir-prepare-stack state blocks slots)
+                                (lir-prepare-regions state blocks slots)))))
         (setf (lir-function-captures state)
               (or (gethash name (lir-data-function-captures data)) 0))
         (dolist (variable source-variables)
@@ -512,6 +517,7 @@
             (lir-scan-value-statement state statement)
             (lir-scan-closure-statement state statement)
             (case (first statement)
+              (:rest-list (unless prepare-storage (lir-record-rest state statement)))
               (:set (lir-record-word-write state (second statement) (third statement)))
               (:receive-prefix
                (dolist (variable (append (second statement) (list (third statement))))

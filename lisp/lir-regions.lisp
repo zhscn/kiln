@@ -39,8 +39,8 @@
 (defun lir-reachable-blocks (state source-blocks source-slots)
   (let ((blocks (make-lir-name-table))
         (live (make-lir-name-table))
-        (slots (make-lir-name-table))
-        (used (make-lir-name-table))
+        (slots (when source-slots (make-lir-name-table)))
+        (used (when source-slots (make-lir-name-table)))
         (pending nil))
     (dolist (block source-blocks)
       (setf (gethash (kblock-name block) blocks) block))
@@ -61,7 +61,7 @@
       (loop while pending
             for block = (gethash (pop pending) blocks)
             do (dolist (statement (kblock-stmts block))
-                 (when (plusp (hash-table-count slots)) (mark-slots statement))
+                 (when slots (mark-slots statement))
                  (case (first statement)
                    (:dynamic-enter
                     (let ((landing (gethash (second statement) (lir-function-region-landings state))))
