@@ -6,10 +6,9 @@
 
 (defstruct lir-data
   name init
-  (objects (make-hash-table :test 'equal))
   ;; Constants use nonnegative IDs. Cells use -1 minus their ID so
   ;; both namespaces can share the builder's declaration table.
-  declaration-indices
+  declarations-by-name
   (mutable (make-hash-table :test 'equal))
   (function-captures (make-hash-table :test 'equal))
   (constants '()) (cells '()) (builtins '()) (literals 0)
@@ -23,21 +22,28 @@
 (defun lir-nil-word-p (word)
   (equal word '(:object-data "kiln_nil" :general)))
 
+(defun lir-static-object (data label)
+  (let ((entry (gethash label (lir-data-declarations-by-name data))))
+    (when (module-data-entry-p entry)
+      (let ((id (module-data-entry-index entry)))
+        (unless (and id (minusp id))
+          (module-data-entry-contents entry))))))
+
 (defun lir-data-string (data reference)
   (unless (and (consp reference) (eq (first reference) :object-data))
     (lir-data-error "expected a string reference, got ~S" reference))
-  (let ((object (gethash (second reference) (lir-data-objects data))))
+  (let ((object (lir-static-object data (second reference))))
     (cond ((stringp object) object)
           ((and (consp object) (eq (first object) :static-string))
            (coerce (mapcar #'code-char (rest object)) 'string))
           (t (lir-data-error "expected string data for ~S" reference)))))
 
 (defun lir-constant-index (data label)
-  (let ((id (gethash label (lir-data-declaration-indices data))))
+  (let ((id (module-data-index (lir-data-declarations-by-name data) label)))
     (when (and (integerp id) (>= id 0)) id)))
 
 (defun lir-cell-index (data label)
-  (let ((id (gethash label (lir-data-declaration-indices data))))
+  (let ((id (module-data-index (lir-data-declarations-by-name data) label)))
     (when (and (integerp id) (< id 0)) (- -1 id))))
 
 (defun lir-object-reference (data label)
@@ -59,7 +65,7 @@
   (destructuring-bind (name package function value plist setf-function) fields
     (flet ((placeholder-p (reference role)
              (and (consp reference) (eq (first reference) :object-data)
-                  (equal (gethash (second reference) (lir-data-objects data))
+                  (equal (lir-static-object data (second reference))
                          `(:static-builtin ,role (:object-data ,label :general))))))
       (unless (and (placeholder-p function :undefined-function)
                    (placeholder-p setf-function :undefined-setf-function)
@@ -118,11 +124,6 @@
 (defun lir-collect-capture-shapes (data module)
   (maphash (lambda (entry count) (lir-register-capture-shape data entry count))
            (kmodule-function-captures module))
-  (maphash (lambda (name object)
-             (declare (ignore name))
-             (when (and (consp object) (eq (first object) :static-function))
-               (lir-register-capture-shape data (second object) 0)))
-           (lir-data-objects data))
   (when (kmodule-capture-shapes-complete-p module)
     (return-from lir-collect-capture-shapes))
   (dolist (entry (kmodule-functions module))
@@ -148,26 +149,31 @@
     (unless (member (second form) '("kiln_nil" "kiln_t") :test #'equal)
       (lir-data-error "unsupported external object ~S" form)))
   (let ((data (make-lir-data :name (kmodule-name module)
-                             :declaration-indices (kmodule-defined module)))
+                             :declarations-by-name (kmodule-defined module)))
         (objects '()) (cells '()) (literal-table nil))
     (dolist (root (kmodule-roots module))
       (unless (member (first root) '(:root :field-root :symbol-roots))
         (lir-data-error "unsupported root declaration ~S" root))
       (setf (gethash (second root) (lir-data-mutable data)) t))
-    (dolist (form (reverse (kmodule-data module)))
-      (case (first form)
-        (:data
-         (let ((name (second form)) (object (third form)))
-           (setf (gethash name (lir-data-objects data)) object)
-           ;; Symbol constants construct their own placeholders in Rust.
-           (unless (and (consp object) (eq (first object) :static-builtin))
-             (push (cons name object) objects))))
-        (:object-cell (push (third form) cells))
-        (:literal-table
-         (when literal-table (lir-data-error "duplicate literal table"))
-         (setf literal-table t (lir-data-literals data) (second form)))
-        (:builtin (push form (lir-data-builtins data)))
-        (t (lir-data-error "unsupported module declaration ~S" form))))
+    ;; Builder declarations are newest first. Push each kind independently
+    ;; to produce packet order, which matches the IDs assigned at registration.
+    (dolist (entry (kmodule-data module))
+      (if (module-data-entry-p entry)
+          (let ((id (module-data-entry-index entry))
+                (object (module-data-entry-contents entry)))
+            (when id
+              (if (minusp id)
+                  (push (lir-data-value data object) cells)
+                  (progn
+                    (when (and (consp object) (eq (first object) :static-function))
+                      (lir-register-capture-shape data (second object) 0))
+                    (push (lir-data-object data (module-data-entry-name entry) object) objects)))))
+          (case (first entry)
+            (:literal-table
+             (when literal-table (lir-data-error "duplicate literal table"))
+             (setf literal-table t (lir-data-literals data) (second entry)))
+            (:builtin (push entry (lir-data-builtins data)))
+            (t (lir-data-error "unsupported module declaration ~S" entry)))))
     (lir-collect-capture-shapes data module)
     (when literals
       (unless (and (simple-vector-p literals) (= (length literals) (lir-data-literals data)))
@@ -176,20 +182,18 @@
       (loop for object across literals for index from 0
             unless (nth-value 1 (gethash object (lir-data-literal-indices data)))
               do (setf (gethash object (lir-data-literal-indices data)) index)))
-    (let ((init (gethash (kmodule-init module) (lir-data-objects data))))
+    (let ((init (lir-static-object data (kmodule-init module))))
       (unless (and (consp init) (eq (first init) :static-function) (= (length init) 2))
         (lir-data-error "module init must name a zero-capture function object"))
       (setf (lir-data-init data) (second init)))
     (maphash (lambda (name mutable)
                (declare (ignore mutable))
-               (unless (or (gethash name (lir-data-objects data))
+               (unless (or (lir-static-object data name)
                            (lir-cell-index data name))
                  (lir-data-error "root names unknown data ~S" name)))
              (lir-data-mutable data))
-    (setf (lir-data-constants data)
-          (mapcar (lambda (entry) (lir-data-object data (car entry) (cdr entry))) (nreverse objects))
-          (lir-data-cells data) (mapcar (lambda (word) (lir-data-value data word)) (nreverse cells))
-          (lir-data-builtins data) (nreverse (lir-data-builtins data)))
+    (setf (lir-data-constants data) objects
+          (lir-data-cells data) cells)
     data))
 
 (defun lir-image-value (data object)

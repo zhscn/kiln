@@ -339,7 +339,7 @@
     ((:fixnum :character :single-float :literal) (emit (list :lir-set target word)))
     (:object-data
      (let* ((label (second word))
-            (index (gethash label (kiln.kir::kmodule-defined *module*)))
+            (index (kiln.kir::module-data-index (kiln.kir::kmodule-defined *module*) label))
             (value (cond ((and (integerp index) (>= index 0)) (list :constant index))
                          ((equal label "kiln_nil") '(:nil))
                          ((equal label "kiln_t") '(:t)))))
@@ -412,7 +412,7 @@
             (emit `(:set ,slot ,(first args)))))
       (0 (mir-lir-constant-assignment out (constant-word data)))
       (26 (let* ((label (svref *mir-lir-load-time-cells* data))
-                 (id (gethash label (kiln.kir::kmodule-defined *module*))))
+                 (id (kiln.kir::module-data-index (kiln.kir::kmodule-defined *module*) label)))
             (emit (list :lir-set out (list :cell-ref (- -1 id)) (list :cell-ref label)))))
       (27 (let* ((region (svref *mir-lir-bindings* (car data)))
                  (symbol (constant-object (cdr data))) (index (emit-tls-index symbol)))

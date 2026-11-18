@@ -48,13 +48,23 @@
     (push `(:import-data ,name) (kmodule-import-data *module*)))
   name)
 
+(defstruct module-data-entry
+  name contents index)
+
 (defun module-data (name contents)
-  (when (declare-once name)
-    (unless (and (consp contents) (eq (first contents) :static-builtin))
-      (setf (gethash name (kmodule-defined *module*)) (kmodule-constant-count *module*))
-      (incf (kmodule-constant-count *module*)))
-    (push `(:data ,name ,contents) (kmodule-data *module*)))
+  (let ((table (kmodule-defined *module*)))
+    (unless (gethash name table)
+      (let* ((index (unless (and (consp contents) (eq (first contents) :static-builtin))
+                      (prog1 (kmodule-constant-count *module*)
+                        (incf (kmodule-constant-count *module*)))))
+             (entry (make-module-data-entry :name name :contents contents :index index)))
+        (setf (gethash name table) entry)
+        (push entry (kmodule-data *module*)))))
   name)
+
+(defun module-data-index (declarations name)
+  (let ((entry (gethash name declarations)))
+    (when (module-data-entry-p entry) (module-data-entry-index entry))))
 
 (defun module-builtin (kind scope)
   "Requests a backend entry by its fixed role and compilation scope."
@@ -64,9 +74,12 @@
 
 (defun module-object-cell (name initial)
   "Defines a mutable object cell initialized from INITIAL."
-  (when (declare-once name)
-    (setf (gethash name (kmodule-defined *module*)) (- (incf (kmodule-cell-count *module*))))
-    (push `(:object-cell ,name ,initial) (kmodule-data *module*)))
+  (let ((table (kmodule-defined *module*)))
+    (unless (gethash name table)
+      (let ((entry (make-module-data-entry :name name :contents initial
+                                          :index (- (incf (kmodule-cell-count *module*))))))
+        (setf (gethash name table) entry)
+        (push entry (kmodule-data *module*)))))
   name)
 
 (defun module-literal-table (count)
@@ -290,13 +303,17 @@ entry block current. Unterminated blocks end with a trap."
                    (:object-data ,(static-symbol-undefined-setf-label symbol) :general)))
 
 (defun kmodule-data-forms (module)
-  (loop for form in (kmodule-data module)
-        for object = (and (eq (first form) :data) (third form))
-        collect (cond ((stringp object)
-                       (list :data (second form) (cons :static-string (map 'list #'char-code object))))
-                      ((static-symbol-p object)
-                       (list :data (second form) (static-symbol-form (second form) object)))
-                      (t form))))
+  (loop for entry in (kmodule-data module)
+        collect (if (module-data-entry-p entry)
+                    (let ((name (module-data-entry-name entry))
+                          (object (module-data-entry-contents entry))
+                          (id (module-data-entry-index entry)))
+                      (cond ((and id (minusp id)) (list :object-cell name object))
+                            ((stringp object)
+                             (list :data name (cons :static-string (map 'list #'char-code object))))
+                            ((static-symbol-p object) (list :data name (static-symbol-form name object)))
+                            (t (list :data name object))))
+                    entry)))
 
 (defun source-function-debug (function)
   (if (kfunc-p function)

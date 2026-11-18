@@ -33,8 +33,8 @@
     (add-symbol "keyword" "KEY" "KEYWORD")
     (add-symbol "uninterned-a" "NAME" nil)
     (add-symbol "uninterned-b" "NAME" nil))
-  (assert (= 0 (gethash "entry" (kiln.kir::kmodule-defined module))))
-  (assert (= 1 (gethash "cycle" (kiln.kir::kmodule-defined module))))
+  (assert (= 0 (kiln.kir::module-data-index (kiln.kir::kmodule-defined module) "entry")))
+  (assert (= 1 (kiln.kir::module-data-index (kiln.kir::kmodule-defined module) "cycle")))
   (let* ((data (kiln.kir::collect-lir-data module))
          (program
            `(:lir-module "data-producer"

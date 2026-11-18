@@ -4,7 +4,9 @@
 (defun mir-object-test-cache-count (form pipeline &optional (name "object-cache-model"))
   (let ((module (compile-module (front-end-forms (list form)) name :pipeline pipeline)))
     (count-if (lambda (entry)
-                (and (consp (third entry)) (eq (car (third entry)) :static-mutable-cons)))
+                (when (kiln.kir::module-data-entry-p entry)
+                  (let ((object (kiln.kir::module-data-entry-contents entry)))
+                    (and (consp object) (eq (first object) :static-mutable-cons)))))
               (kiln.kir::kmodule-data module))))
 
 (dolist (pipeline '(:mir))

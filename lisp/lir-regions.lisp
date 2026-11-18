@@ -75,6 +75,8 @@
       (when source-blocks (edge (kblock-name (first source-blocks))))
       (loop while pending
             for block = (gethash (pop pending) blocks)
+            ;; Builder landings require dynamic slots. With no slots the
+            ;; terminator describes all outgoing edges.
             do (if (and (not slots) (kblock-terminator block))
                    (control-edges (kblock-terminator block))
                    (dolist (statement (kblock-stmts block))
