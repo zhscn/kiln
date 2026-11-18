@@ -27,8 +27,7 @@ struct Lowerer<'a> {
     constants: &'a [Expr],
     cells: String,
     rest_roots: Vec<String>,
-    names: HashMap<&'a str, String>,
-    blocks: Vec<String>,
+    names: HashMap<&'a str, (String, usize)>,
     landing_blocks: &'a [Option<usize>],
     imports: &'a mut HashSet<String>,
     regions: &'a [Region],
@@ -64,10 +63,10 @@ impl Lowerer<'_> {
         });
     }
     fn name(&self, name: &str) -> String {
-        self.names[name].clone()
+        self.names[name].0.clone()
     }
     fn value(&self, name: &str) -> Expr {
-        var(self.name(name))
+        Expr::Local(self.names[name].1)
     }
     fn values(&self, names: &[String]) -> Vec<Expr> {
         names.iter().map(|name| self.value(name)).collect()
@@ -125,7 +124,7 @@ impl Lowerer<'_> {
                     layout::unwind_target(),
                     Expr::Slot(self.slots[region].clone()),
                 ),
-                self.blocks[self.landing_blocks[region].unwrap()].clone(),
+                format!("b{}", self.landing_blocks[region].unwrap()),
                 outer,
             ));
             self.finish(String::new());
@@ -941,7 +940,7 @@ impl Lowerer<'_> {
             )?),
             Instruction::Set(result, expr) => {
                 let value = self.expression(result, expr)?;
-                self.emit(Stmt::Set(self.name(result), value));
+                self.emit(Stmt::SetLocal(self.names[result.as_str()].1, value));
             }
             Instruction::FieldSet(field, object, value) => self.emit(layout::field_store(
                 field.id(),
@@ -1325,20 +1324,14 @@ impl Lowerer<'_> {
             );
         }
         let statements = match term {
-            Terminator::Jump(_) => vec![Stmt::Jump(self.blocks[successors[0]].clone())],
-            Terminator::Branch(cond, _, _) => vec![Stmt::Br(
-                self.value(cond),
-                self.blocks[successors[0]].clone(),
-                self.blocks[successors[1]].clone(),
+            Terminator::Jump(_) => vec![Stmt::JumpBlock(successors[0])],
+            Terminator::Branch(cond, _, _) => vec![Stmt::BranchBlocks(
+                self.value(cond), successors[0], successors[1],
             )],
-            Terminator::Switch(value, _, cases) => vec![Stmt::Switch(
+            Terminator::Switch(value, _, cases) => vec![Stmt::SwitchBlocks(
                 self.value(value),
-                self.blocks[successors[0]].clone(),
-                cases
-                    .iter()
-                    .zip(&successors[1..])
-                    .map(|((key, _), &target)| (*key, self.blocks[target].clone()))
-                    .collect(),
+                successors[0],
+                cases.iter().zip(&successors[1..]).map(|((key, _), &target)| (*key, target)).collect(),
             )],
             Terminator::Return(args) => {
                 let values = self.values(args);
@@ -1444,6 +1437,7 @@ pub(super) fn module(verified: &Verified<'_>) -> Result<kir::Module> {
                 labels: vec![],
                 slots: vec![],
                 blocks: vec![],
+                block_entries: vec![None; f.blocks.len()],
                 debug: f.debug.as_ref().map(|_| {
                     kir::DebugRef::Direct(Word::DataAddr(
                         super::debug::label(f),
@@ -1452,7 +1446,6 @@ pub(super) fn module(verified: &Verified<'_>) -> Result<kir::Module> {
                 }),
             },
             names: HashMap::new(),
-            blocks: (0..f.blocks.len()).map(|i| format!("b{i}")).collect(),
             landing_blocks: &flow.landing_blocks,
             imports: &mut imports,
             regions: &f.regions,
@@ -1473,7 +1466,7 @@ pub(super) fn module(verified: &Verified<'_>) -> Result<kir::Module> {
         };
         for (i, (name, ty)) in f.vars.iter().enumerate() {
             let renamed = format!("v{i}");
-            lower.names.insert(name, renamed.clone());
+            lower.names.insert(name, (renamed.clone(), lower.function.vars.len()));
             if *ty == Type::Mv {
                 lower
                     .function
@@ -1575,14 +1568,15 @@ pub(super) fn module(verified: &Verified<'_>) -> Result<kir::Module> {
             lower.statements = statements;
         }
         lower.poll(true)?;
-        lower.emit(Stmt::Jump(lower.blocks[0].clone()));
+        lower.emit(Stmt::JumpBlock(0));
         lower.finish(String::new());
         for (i, block) in f.blocks.iter().enumerate() {
             let Some(active) = &flow.entries[i] else {
                 continue;
             };
             lower.active = active.clone();
-            lower.block = lower.blocks[i].clone();
+            lower.block = format!("b{i}");
+            lower.function.block_entries[i] = Some(lower.function.blocks.len());
             if flow.polls[i] {
                 lower.poll(false)?;
             }

@@ -289,6 +289,9 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
             imports: &imports,
             lisp_sig: &lisp_sig,
             vars: HashMap::new(),
+            indexed_vars: Vec::with_capacity(f.vars.len()),
+            indexed_blocks: Vec::with_capacity(f.blocks.len()),
+            block_entries: &f.block_entries,
             var_kinds: HashMap::new(),
             slots: HashMap::new(),
             blocks: HashMap::new(),
@@ -967,6 +970,9 @@ struct FuncLowering<'a, M: Module> {
     imports: &'a Imports<'a>,
     lisp_sig: &'a Signature,
     vars: HashMap<&'a str, Variable>,
+    indexed_vars: Vec<(Variable, VarKind, Option<u32>)>,
+    indexed_blocks: Vec<ir::Block>,
+    block_entries: &'a [Option<usize>],
     var_kinds: HashMap<&'a str, VarKind>,
     slots: HashMap<&'a str, ir::StackSlot>,
     blocks: HashMap<&'a str, ir::Block>,
@@ -990,13 +996,16 @@ impl<'a, M: Module> FuncLowering<'a, M> {
             .iter()
             .copied()
             .chain(f.vars.iter().map(|(name, kind)| (name.as_str(), *kind)));
-        for (name, kind) in all_vars {
+        for (index, (name, kind)) in all_vars.enumerate() {
             if self.vars.contains_key(&name) {
                 return Err(format!("duplicate variable {name}"));
             }
             let v = b.declare_var(if kind == VarKind::F64 { ir::types::F64 } else { I64 });
             if kind == VarKind::Obj || (kind == VarKind::F64 && self.labels.contains_key(&name)) {
                 b.declare_var_needs_stack_map(v);
+            }
+            if index >= kir::PREDEFINED_VARS.len() {
+                self.indexed_vars.push((v, kind, self.labels.get(name).copied()));
             }
             self.vars.insert(name, v);
             self.var_kinds.insert(name, kind);
@@ -1006,7 +1015,9 @@ impl<'a, M: Module> FuncLowering<'a, M> {
             self.slots.insert(name.as_str(), ss);
         }
         for blk in &f.blocks {
-            if self.blocks.insert(blk.name.as_str(), b.create_block()).is_some() {
+            let block = b.create_block();
+            self.indexed_blocks.push(block);
+            if self.blocks.insert(blk.name.as_str(), block).is_some() {
                 return Err(format!("duplicate block {}", blk.name));
             }
         }
@@ -1023,8 +1034,8 @@ impl<'a, M: Module> FuncLowering<'a, M> {
         b.def_var(self.vars["exn1"], zero);
         b.ins().jump(self.blocks[f.blocks[0].name.as_str()], &[]);
 
-        for blk in &f.blocks {
-            b.switch_to_block(self.blocks[blk.name.as_str()]);
+        for (index, blk) in f.blocks.iter().enumerate() {
+            b.switch_to_block(self.indexed_blocks[index]);
             let mut terminated = false;
             for s in &blk.stmts {
                 if terminated {
@@ -1157,6 +1168,25 @@ impl<'a, M: Module> FuncLowering<'a, M> {
     }
 
     /// Lowers one statement; returns true if it is a terminator.
+    fn local(&self, id: usize) -> R<(Variable, VarKind, Option<u32>)> {
+        self.indexed_vars.get(id).copied().ok_or_else(|| format!("invalid local index {id}"))
+    }
+
+    fn indexed_block(&self, id: usize) -> R<ir::Block> {
+        self.block_entries.get(id).copied().flatten()
+            .and_then(|index| self.indexed_blocks.get(index).copied())
+            .ok_or_else(|| format!("invalid block index {id}"))
+    }
+
+    fn word_value(b: &mut FunctionBuilder, variable: Variable) -> Value {
+        let value = b.use_var(variable);
+        if b.func.dfg.value_type(value) == ir::types::F64 {
+            b.ins().bitcast(I64, MemFlagsData::new(), value)
+        } else {
+            value
+        }
+    }
+
     fn stmt(&mut self, b: &mut FunctionBuilder, s: &Stmt) -> R<bool> {
         match s {
             Stmt::Set(v, e) => {
@@ -1164,6 +1194,18 @@ impl<'a, M: Module> FuncLowering<'a, M> {
                     self.float_expr(b, e)?
                 } else { self.expr(b, e)? };
                 self.def(b, v, val)?;
+            }
+            Stmt::SetLocal(id, e) => {
+                let (variable, kind, label) = self.local(*id)?;
+                let value = if kind == VarKind::F64 {
+                    self.float_expr(b, e)?
+                } else {
+                    self.expr(b, e)?
+                };
+                b.def_var(variable, value);
+                if let Some(label) = label {
+                    self.value_labels.entry(value).or_default().push(label);
+                }
             }
             Stmt::Store(a, off, v) => {
                 let addr = self.expr(b, a)?;
@@ -1223,6 +1265,25 @@ impl<'a, M: Module> FuncLowering<'a, M> {
                     switch.set_entry(*key as u64 as u128, self.block(target)?);
                 }
                 switch.emit(b, value, self.block(default)?);
+                return Ok(true);
+            }
+            Stmt::JumpBlock(target) => {
+                b.ins().jump(self.indexed_block(*target)?, &[]);
+                return Ok(true);
+            }
+            Stmt::BranchBlocks(condition, then_block, else_block) => {
+                let condition = self.cond(b, condition)?;
+                b.ins().brif(condition, self.indexed_block(*then_block)?, &[],
+                             self.indexed_block(*else_block)?, &[]);
+                return Ok(true);
+            }
+            Stmt::SwitchBlocks(expr, default, entries) => {
+                let value = self.expr(b, expr)?;
+                let mut switch = Switch::new();
+                for (key, target) in entries {
+                    switch.set_entry(*key as u64 as u128, self.indexed_block(*target)?);
+                }
+                switch.emit(b, value, self.indexed_block(*default)?);
                 return Ok(true);
             }
             Stmt::Return(v0, nv) => {
@@ -1352,6 +1413,7 @@ impl<'a, M: Module> FuncLowering<'a, M> {
     fn float_expr(&mut self, b: &mut FunctionBuilder, e: &Expr) -> R<Value> {
         Ok(match e {
             Expr::Var(name) if self.var_kinds.get(name.as_str()) == Some(&VarKind::F64) => b.use_var(self.var(name)?),
+            Expr::Local(id) if self.local(*id)?.1 == VarKind::F64 => b.use_var(self.local(*id)?.0),
             Expr::Int(bits) => b.ins().f64const(ir::immediates::Ieee64::with_bits(*bits as u64)),
             Expr::Load(address, offset) => {
                 let address = self.expr(b, address)?;
@@ -1379,12 +1441,8 @@ impl<'a, M: Module> FuncLowering<'a, M> {
     fn expr(&mut self, b: &mut FunctionBuilder, e: &Expr) -> R<Value> {
         Ok(match e {
             Expr::Int(n) => b.ins().iconst(I64, *n),
-            Expr::Var(v) => {
-                let value = b.use_var(self.var(v)?);
-                if b.func.dfg.value_type(value) == ir::types::F64 {
-                    b.ins().bitcast(I64, MemFlagsData::new(), value)
-                } else { value }
-            },
+            Expr::Var(v) => Self::word_value(b, self.var(v)?),
+            Expr::Local(id) => Self::word_value(b, self.local(*id)?.0),
             Expr::Bin(BinOp::F64Compare, x, y) => {
                 let x = self.float_expr(b, x)?;
                 let y = self.float_expr(b, y)?;

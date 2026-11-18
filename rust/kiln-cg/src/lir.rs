@@ -1620,7 +1620,7 @@ pub fn invoke(
     }
     if args
         .iter()
-        .any(|arg| !matches!(arg, Expr::Int(_) | Expr::Var(_)))
+        .any(|arg| !matches!(arg, Expr::Int(_) | Expr::Var(_) | Expr::Local(_)))
     {
         return Err("invoke: arguments must be evaluated into variables or immediates".into());
     }
@@ -1818,7 +1818,7 @@ pub fn invoke_prepared(
         || saved
             .iter()
             .chain(std::iter::once(&count))
-            .any(|v| !matches!(v, Expr::Int(_) | Expr::Var(_)))
+            .any(|v| !matches!(v, Expr::Int(_) | Expr::Var(_) | Expr::Local(_)))
     {
         return Err("invoke-prepared requires stable count and saved register arguments".into());
     }
@@ -1957,7 +1957,7 @@ pub fn invoke_spread(
     if fixed
         .iter()
         .chain(std::iter::once(&list))
-        .any(|v| !matches!(v, Expr::Var(_) | Expr::Int(_)))
+        .any(|v| !matches!(v, Expr::Var(_) | Expr::Local(_) | Expr::Int(_)))
     {
         return Err(
             "spread call: operands must be evaluated into stable variables or immediates".into(),

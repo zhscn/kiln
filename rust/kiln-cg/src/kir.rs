@@ -74,6 +74,7 @@ pub struct Func {
     pub labels: Vec<(String, u32)>,
     pub slots: Vec<(String, u32)>,
     pub blocks: Vec<Block>,
+    pub block_entries: Vec<Option<usize>>,
     /// The function's debug info object.
     pub debug: Option<DebugRef>,
 }
@@ -151,6 +152,7 @@ pub enum OvfOp {
 pub enum Expr {
     Int(i64),
     Var(String),
+    Local(usize),
     Bin(BinOp, Box<Expr>, Box<Expr>),
     Shift(ShiftOp, Box<Expr>, i64),
     Cmp(CmpOp, Box<Expr>, Box<Expr>),
@@ -166,11 +168,15 @@ pub enum Expr {
 #[derive(Debug)]
 pub enum Stmt {
     Set(String, Expr),
+    SetLocal(usize, Expr),
     Store(Expr, i32, Expr),
     TransferStore(Expr, Expr),
     /// Stores the low 32 bits.
     Store32(Expr, i32, Expr),
     Jump(String),
+    JumpBlock(usize),
+    BranchBlocks(Expr, usize, usize),
+    SwitchBlocks(Expr, usize, Vec<(i64, usize)>),
     Br(Expr, String, String),
     Switch(Expr, String, Vec<(i64, String)>),
     Return(Expr, Expr),
@@ -781,6 +787,7 @@ fn parse_func(
         labels: vec![],
         slots: vec![],
         blocks: vec![],
+        block_entries: vec![],
         debug: None,
     };
     fn uses_prefix(value: &Sexp, prefix: &str) -> bool {
