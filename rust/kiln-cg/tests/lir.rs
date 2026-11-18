@@ -105,7 +105,7 @@ fn representations_constants_and_declarations_are_checked_before_lowering() {
         r#"(lir-module "x" (init "f") (init "f"))"#,
         r#"(lir-module "x" (init "f") (function "f") (function "f"))"#,
         r#"(lir-module "x" (init "f") (function "f" (vars (a obj) (a word))))"#,
-        r#"(lir-module "x" (init "f") (function "f" (receive 1025) (block e (return ()))))"#,
+        r#"(lir-module "x" (init "f") (function "f" (receive 16385) (block e (return ()))))"#,
         r#"(lir-module "x" (init "_kiln_lir_reserved") (function "_kiln_lir_reserved" (block e (return ()))))"#,
         r#"(lir-module "x" (init "f") (literals -1) (function "f" (block e (return ()))))"#,
     ] {
@@ -213,7 +213,7 @@ fn temporary_multiple_values_expire_at_overwrites_and_safepoints() {
         "expired",
     );
     reject(
-        "(block entry (values m ()) (set a (mv-ref m 1025)) (return (a)))",
+        "(block entry (values m ()) (set a (mv-ref m 16385)) (return (a)))",
         "index out of range",
     );
     reject(
@@ -1390,7 +1390,7 @@ fn entry_rest_lists_are_rooted_before_poll_and_cleaned_on_return_tail_call_and_u
     );
     for (from, to, error) in [
         ("(rest tail 2)", "(rest missing 2)", "undeclared variable"),
-        ("(rest tail 2)", "(rest tail 1025)", "rest start"),
+        ("(rest tail 2)", "(rest tail 16385)", "rest start"),
         (
             "(rest tail 2)",
             "(rest tail 2) (rest tail 2)",
@@ -1398,7 +1398,7 @@ fn entry_rest_lists_are_rooted_before_poll_and_cleaned_on_return_tail_call_and_u
         ),
         (
             "(rest tail 1 (stack 3))",
-            "(rest tail 1 (stack 1025))",
+            "(rest tail 1 (stack 16385))",
             "rest start",
         ),
     ] {
@@ -1723,7 +1723,7 @@ fn receive_prefix_checks_capacity_and_destination_aliases() {
     assert!(module.import_funcs.is_empty());
     assert!(parse("a a", "n").unwrap_err().contains("receive prefix"));
     assert!(parse("a", "a").unwrap_err().contains("receive prefix"));
-    let names = (0..1025)
+    let names = (0..16385)
         .map(|i| format!("a{i}"))
         .collect::<Vec<_>>()
         .join(" ");

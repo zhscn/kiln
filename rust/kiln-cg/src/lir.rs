@@ -1687,7 +1687,7 @@ fn argument_reference_checks_capacity_and_register_boundary() {
         format!("{:?}", transfer_ref(0).unwrap())
     );
     assert!(argument_ref(-1, registers()).is_err());
-    assert!(argument_ref(1024, registers()).is_err());
+    assert!(argument_ref((crate::kir::REG_ARGS + kiln_rt::context::VALUES_MAX) as i64, registers()).is_err());
     assert!(argument_ref(0, Vec::new()).is_err());
 }
 
@@ -2133,7 +2133,7 @@ fn prepared_call_validates_counts_and_preserves_unwind_metadata() {
         );
     }
     assert!(call(Expr::Int(-1), saved()).is_err());
-    assert!(call(Expr::Int(1025), saved()).is_err());
+    assert!(call(Expr::Int(16385), saved()).is_err());
     assert!(call(Expr::Int(0), Vec::new()).is_err());
     assert!(call(Expr::Var("count".into()), saved()).is_ok());
     assert!(call(Expr::Load(Box::new(Expr::Int(0)), 0), saved()).is_err());
@@ -2291,7 +2291,7 @@ fn tail_invocation_preserves_transfer_order_and_checks_capacity() {
         format!("{:?}", transfer_set(1, Expr::Int(4)).unwrap())
     );
     assert!(matches!(&statements[2], Stmt::TailCallLisp { args, .. } if args.len() == 6));
-    assert!(tail_invoke("f".into(), vec![Expr::Int(0); 1025]).is_err());
+    assert!(tail_invoke("f".into(), vec![Expr::Int(0); 16385]).is_err());
 }
 
 #[cfg(test)]

@@ -1263,7 +1263,7 @@ fn fixed_transfer_slots_preserve_kir_and_check_bounds() {
             packet::load(&packet::encode(&new, packet::schema::KIR_PAYLOAD).unwrap()).unwrap();
         assert_eq!(format!("{old:?}"), format!("{new:?}"));
     }
-    for index in [-1_i64, 1021, i64::MAX] {
+    for index in [-1_i64, kiln_rt::context::VALUES_MAX as i64, i64::MAX] {
         for body in [
             format!("(set v (transfer-ref {index}))"),
             format!("(transfer-set {index} a0)"),
@@ -1339,7 +1339,7 @@ fn invoke_preserves_argument_transfer_handlers_and_locations() {
             "v".into(),
             "n".into(),
             "f".into(),
-            (0..1025).map(|_| kiln_cg::kir::Expr::Int(0)).collect(),
+            (0..16385).map(|_| kiln_cg::kir::Expr::Int(0)).collect(),
             None,
             None
         )

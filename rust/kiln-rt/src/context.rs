@@ -7,7 +7,7 @@ use crate::stack::Segment;
 
 /// Words of the transfer area: CALL-ARGUMENTS-LIMIT is 3 (the register
 /// arguments) more, MULTIPLE-VALUES-LIMIT 1 more.
-pub const VALUES_MAX: usize = 1021;
+pub const VALUES_MAX: usize = 16381;
 
 #[repr(C)]
 pub struct Context {

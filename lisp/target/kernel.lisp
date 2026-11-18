@@ -113,10 +113,9 @@
 (defconstant most-positive-fixnum 4611686018427387903)
 (defconstant most-negative-fixnum -4611686018427387904)
 
-;;; Calls pass at most 3 + 64 arguments, and return at most 1 + 64 values.
-(defconstant call-arguments-limit 1024)
-(defconstant lambda-parameters-limit 1024)
-(defconstant multiple-values-limit 1022)
+(defconstant call-arguments-limit 16384)
+(defconstant lambda-parameters-limit 16384)
+(defconstant multiple-values-limit 16382)
 (defconstant char-code-limit #x110000)
 (defconstant lambda-list-keywords
   '(&optional &rest &key &allow-other-keys &aux &body &whole &environment))
