@@ -705,22 +705,28 @@
                    unless (member (mir-instruction-kind instruction) '(31 33 36))
                      do (mir-lir-instruction instruction arguments count))
              (let* ((term (mir-block-terminator block))
-                    (*call-source* (mir-terminator-source term)) (edge-index 0)
-                    (targets (map 'simple-vector
-                                  (lambda (edge)
-                                    (let* ((label (new-block))
-                                           (landing (when (and (= 5 (mir-terminator-kind term)) (= edge-index 1))
-                                                      (mir-at (mir-function-instructions function)
-                                                        (mir-at (mir-block-instructions
-                                                                  (mir-at (mir-function-blocks function) (mir-edge-target edge))) 0)))))
-                                      (push (list label edge
-                                                  (if landing
-                                                      (case (mir-instruction-kind landing)
-                                                        (33 (mir-lir-cleanup-regions *regions*))
-                                                        (36 *regions*) (otherwise (rest *regions*))) *regions*)
-                                                  landing) edge-blocks)
-                                      (incf edge-index) label))
-                                  (mir-terminator-edges term))))
+                    (*call-source* (mir-terminator-source term))
+                    (edges (mir-terminator-edges term))
+                    (targets (make-array (length edges))))
+               (loop for edge across edges for index from 0
+                     for target = (mir-edge-target edge)
+                     for landing-p = (and (= 5 (mir-terminator-kind term)) (= index 1))
+                     do (setf (svref targets index)
+                              (if (and (not landing-p) (zerop (length (mir-edge-arguments edge))))
+                                  (svref labels target)
+                                  (let* ((label (new-block))
+                                         (landing
+                                           (when landing-p
+                                             (mir-at (mir-function-instructions function)
+                                               (mir-at (mir-block-instructions
+                                                         (mir-at (mir-function-blocks function) target)) 0)))))
+                                    (push (list label edge
+                                                (if landing
+                                                    (case (mir-instruction-kind landing)
+                                                      (33 (mir-lir-cleanup-regions *regions*))
+                                                      (36 *regions*) (otherwise (rest *regions*))) *regions*)
+                                                landing) edge-blocks)
+                                    label))))
                (case (mir-terminator-kind term)
                  (0 (jump (svref targets 0)))
                  (1 (br `(:eq ,(mir-lir-value (svref (mir-terminator-operands term) 0)) ,(nil-value))
