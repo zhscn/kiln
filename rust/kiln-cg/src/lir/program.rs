@@ -559,7 +559,7 @@ pub struct Verified<'a> {
 
 impl Module {
     pub fn parse(program: &Sexp) -> Result<Self> {
-        parse::module(program)
+        parse::module(parse::Node::text(program))
     }
     pub fn verify(&self) -> Result<Verified<'_>> {
         verify::module(self)
@@ -570,6 +570,10 @@ impl Verified<'_> {
     pub fn lower(&self) -> Result<kir::Module> {
         lower::module(self)
     }
+}
+
+pub(crate) fn parse_packet(packet: crate::packet::Packet<'_>) -> Result<Module> {
+    parse::module(parse::Node::packet(packet, packet.root()))
 }
 
 pub fn compile(program: &Sexp) -> Result<kir::Module> {

@@ -433,13 +433,14 @@ unsafe fn compile_packet(packet: u64, literals: u64) -> Result<u64, CompilationE
             .collect::<Result<Vec<_>, _>>()
     };
     let bytes = request().map_err(|e| CompilationError::new(CompilationStage::Request, e))?;
-    let decoded = crate::packet::decode(&bytes)
+    let decoded = crate::packet::validate(&bytes)
         .map_err(|e| CompilationError::new(CompilationStage::Request, e))?;
     if decoded.language != crate::packet::schema::LIR_PAYLOAD {
         return Err(CompilationError::new(
             CompilationStage::Request, "production compilation requires the LIR payload"));
     }
-    let kir = crate::packet::compile_decoded_lir(decoded.program)
+    let kir = crate::lir::program::parse_packet(decoded)
+        .and_then(|module| module.verify()?.lower())
         .map_err(|e| CompilationError::new(CompilationStage::Program, e))?;
     let size = bytes.len();
     drop(bytes);

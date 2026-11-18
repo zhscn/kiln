@@ -71,8 +71,52 @@ pub struct Request<'a> {
     pub program: Sexp<'a>,
 }
 
-/// Validate lengths and ownership before allocating the decoded tree.
-pub fn decode(bytes: &[u8]) -> Result<Request<'_>, String> {
+#[derive(Clone, Copy)]
+pub(crate) struct Packet<'a> {
+    bytes: &'a [u8],
+    pub(crate) language: u32,
+    edges: usize,
+    strings: usize,
+    root: usize,
+}
+
+pub(crate) enum Record<'a> {
+    Integer(i64),
+    Symbol(&'a str),
+    String(&'a str),
+    List { start: usize, len: usize },
+}
+
+impl<'a> Packet<'a> {
+    pub(crate) fn root(self) -> usize {
+        self.root
+    }
+
+    pub(crate) fn child(self, index: usize) -> usize {
+        u32_at(self.bytes, self.edges + index * 4) as usize
+    }
+
+    pub(crate) fn record(self, id: usize) -> Record<'a> {
+        let at = HEADER_SIZE as usize + id * RECORD_SIZE as usize;
+        let tag = u32_at(self.bytes, at);
+        let a = u32_at(self.bytes, at + 4) as usize;
+        let b = u64_at(self.bytes, at + 8);
+        match tag {
+            INTEGER => Record::Integer(b as i64),
+            SYMBOL | STRING => {
+                let start = self.strings + a;
+                // SAFETY: Packet validation checks the range and UTF-8.
+                let text = unsafe { std::str::from_utf8_unchecked(&self.bytes[start..start + b as usize]) };
+                if tag == SYMBOL { Record::Symbol(text) } else { Record::String(text) }
+            }
+            LIST => Record::List { start: a, len: b as usize },
+            _ => unreachable!(),
+        }
+    }
+}
+
+/// Validate record ownership, ranges and depth before reading any node.
+pub(crate) fn validate(bytes: &[u8]) -> Result<Packet<'_>, String> {
     if bytes.len() < HEADER_SIZE as usize || bytes.len() > MAX_BYTES as usize {
         return Err("backend packet: invalid length".into());
     }
@@ -179,40 +223,22 @@ pub fn decode(bytes: &[u8]) -> Result<Request<'_>, String> {
     if next_edge != ne || next_string != ns || parents[..n - 1].contains(&0) {
         return Err("backend packet: unused records or section data".into());
     }
-    // The validated ownership and depth rules bound this walk. Shared
-    // atoms borrow their bytes from the packet for every occurrence.
-    fn decode_node(bytes: &[u8], edges: usize, strings: usize, id: usize) -> Sexp<'_> {
-        let at = HEADER_SIZE as usize + id * RECORD_SIZE as usize;
-        let tag = u32_at(bytes, at);
-        let a = u32_at(bytes, at + 4) as usize;
-        let b = u64_at(bytes, at + 8);
-        match tag {
-            INTEGER => Sexp::Int(b as i64),
-            SYMBOL | STRING => {
-                // SAFETY: Validation checked every string range and its UTF-8.
-                let text = unsafe {
-                    std::str::from_utf8_unchecked(&bytes[strings + a..strings + a + b as usize])
-                };
-                if tag == SYMBOL {
-                    Sexp::Sym(text.into())
-                } else {
-                    Sexp::Str(text.into())
-                }
-            }
-            LIST => Sexp::List(
-                (a..a + b as usize)
-                    .map(|edge| decode_node(bytes, edges, strings, u32_at(bytes, edges + edge * 4) as usize))
-                    .collect(),
+    Ok(Packet { bytes, language, edges: edge_start, strings: string_start, root: n - 1 })
+}
+
+pub fn decode(bytes: &[u8]) -> Result<Request<'_>, String> {
+    let packet = validate(bytes)?;
+    fn decode_node(packet: Packet<'_>, id: usize) -> Sexp<'_> {
+        match packet.record(id) {
+            Record::Integer(value) => Sexp::Int(value),
+            Record::Symbol(value) => Sexp::Sym(value.into()),
+            Record::String(value) => Sexp::Str(value.into()),
+            Record::List { start, len } => Sexp::List(
+                (start..start + len).map(|edge| decode_node(packet, packet.child(edge))).collect(),
             ),
-            _ => unreachable!(),
         }
     }
-    drop(parents);
-    drop(depths);
-    Ok(Request {
-        language,
-        program: decode_node(bytes, edge_start, string_start, n - 1),
-    })
+    Ok(Request { language: packet.language, program: decode_node(packet, packet.root()) })
 }
 
 /// Canonical records shared by portable-file and native-heap adapters.
@@ -375,17 +401,11 @@ pub fn encode(program: &Sexp, language: u32) -> Result<Vec<u8>, String> {
 
 /// Production packet entry: compatibility KIR cannot bypass LIR verification.
 pub fn load_lir(bytes: &[u8]) -> Result<crate::kir::Module, String> {
-    let request = decode(bytes)?;
-    if request.language != LIR_PAYLOAD {
+    let packet = validate(bytes)?;
+    if packet.language != LIR_PAYLOAD {
         return Err("production compilation requires the LIR payload".into());
     }
-    compile_decoded_lir(request.program)
-}
-
-pub(crate) fn compile_decoded_lir(program: Sexp<'_>) -> Result<crate::kir::Module, String> {
-    let module = crate::lir::program::Module::parse(&program)?;
-    drop(program);
-    module.verify()?.lower()
+    crate::lir::program::parse_packet(packet)?.verify()?.lower()
 }
 
 /// Production owned-program entry. The parser rejects compatibility modules.
@@ -395,11 +415,10 @@ pub fn compile_lir_program(program: &Sexp) -> Result<crate::kir::Module, String>
 
 /// Diagnostic/file dispatcher, including explicitly tagged compatibility KIR.
 pub fn load(bytes: &[u8]) -> Result<crate::kir::Module, String> {
-    let request = decode(bytes)?;
-    match request.language {
-        KIR_PAYLOAD => crate::kir::parse_module(&request.program),
-        LIR_PAYLOAD => compile_decoded_lir(request.program),
-        _ => Err("unknown backend language".into()),
+    if bytes.get(16..20) == Some(LIR_PAYLOAD.to_le_bytes().as_slice()) {
+        load_lir(bytes)
+    } else {
+        crate::kir::parse_module(&decode(bytes)?.program)
     }
 }
 
