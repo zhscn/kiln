@@ -69,7 +69,7 @@ Rust 的运行期入口使用 `packet::load_lir` 或 `compile_lir_program`，拒
 
 当前 `kiln_rt_compile_program` 接收结构化 Lisp 程序、literal 向量和期望目标指纹。在无 safepoint 的窗口复制为 Rust 自有记录，核验目标后进入独立 LIR 的解析、验证和降级；之后不访问程序的原始对象地址。`kiln_rt_compile_packet` 将 octet 向量复制成 native bytes，经过封套校验和解码进入同一程序路径。两者都是单次批量调用，不逐节点 FFI，也不在降级期间回调 Lisp。
 
-字节包校验通过后，解码树中的文本原子借用请求缓冲区。类型化 LIR 取得操作数和名称的所有权后，解码树即可释放，验证和降级使用类型化程序。
+字节包校验通过后，LIR 解析器按记录编号直接读取原子和列表边，构造拥有操作数和名称的类型化程序。运行期包入口随即释放字节缓冲。兼容 KIR 和诊断输出可按需构造 S 表达式。
 
 后续的 native span 或 record-builder API 沿用此 schema 和所有权规则；移动堆内部地址不能作为长时间 Rust 借用。序列化不是一次性编译的必经阶段。
 

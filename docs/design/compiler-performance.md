@@ -42,7 +42,7 @@ LIR 字节数与 `lir_metrics` 始终记录；目标文件测量后删除，后�
 却只改变总文件的一小部分。
 已有模块可用 `--lir-directory DIR --backend target/release/kiln-cg` 独立测量，
 避免在后端采样中重复运行 Lisp 编译器。对象编译开启 `KILN_TIME` 时还可在原始
-日志中区分输入加载和对象序列化。比较 Lisp 发射改动时固定同一个后端二进制，使用
+日志中区分输入加载、声明和静态数据、CLIF 调试槽处理及对象序列化。比较 Lisp 发射改动时固定同一个后端二进制，使用
 `machine_seconds` 区分 Cranelift 优化与寄存器分配成本，使用后端总时间观察
 解码、LIR 降级、调试信息和目标文件输出的额外成本。
 
