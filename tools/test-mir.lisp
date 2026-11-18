@@ -1890,3 +1890,15 @@
   (assert (not (eq old (mir-bundle-carriers function))))
   (assert (svref (mir-bundle-carriers function) (mir-instruction-result call))))
 (format t "MIR carrier demand distinguishes primary/count uses from secondary values and invalidates with bodies.~%")
+
+(let* ((unit (mir-test-unit
+              '(function (lambda (flag a b) (cons (let ((x a)) (if flag x b)) nil)))))
+       (function (mir-at (mir-unit-functions unit) 1))
+       (instructions (hir-vector (mir-function-instructions function))))
+  (assert (notany (lambda (instruction) (member (mir-instruction-kind instruction) '(9 10)))
+                  instructions))
+  (assert (some (lambda (block)
+                  (some (lambda (id)
+                          (eq (mir-value-representation (mir-at (mir-function-values function) id)) :obj))
+                        (mir-block-parameters block)))
+                (hir-vector (mir-function-blocks function)))))
