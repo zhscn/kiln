@@ -341,6 +341,8 @@
            (lir-function-error state "wrong fixed allocation field count"))
          (lir-emit state `(:alloc ,(first args) ,kind :heap
                             ,(mapcar (lambda (argument type) (lir-operand state argument type)) (third args) types)))))
+      (:lir-copy
+       (lir-emit state (cons :set args)))
       (:set
        (let ((kind (lir-variable-kind state (first args))))
          (unless kind (lir-function-error state "assignment to undeclared variable ~S" (first args)))
@@ -523,7 +525,7 @@
             (lir-scan-closure-statement state statement)
             (case (first statement)
               (:rest-list (unless prepare-storage (lir-record-rest state statement)))
-              (:set (lir-record-word-write state (second statement) (third statement)))
+              ((:set :lir-copy) (lir-record-word-write state (second statement) (third statement)))
               (:receive-prefix
                (dolist (variable (append (second statement) (list (third statement))))
                  (lir-record-word-write state variable :unknown)))

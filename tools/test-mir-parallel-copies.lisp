@@ -16,7 +16,10 @@
            (mir-lir-parallel-copies copies))
       (setf (symbol-function 'emit) original))
     (dolist (operation (nreverse operations))
-      (assert (eq (first operation) :set))
+      (assert (member (first operation) '(:set :lir-copy)))
+      (when (eq (first operation) :lir-copy)
+        (assert (and (kiln.kir::kvar-p (third operation))
+                     (eq (svref (second operation) 2) (svref (third operation) 2)))))
       (setf (gethash (second operation) values)
             (if (kiln.kir::kvar-p (third operation)) (gethash (third operation) values) (third operation))))
     (loop for variable across variables for value across expected

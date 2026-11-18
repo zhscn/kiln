@@ -194,6 +194,13 @@ dropped (they are unreachable)."
          (setf (kblock-terminated b) t)))))
   (values))
 
+(defun emit-lir-assignment (target value)
+  (emit (list (if (and (kvar-p target) (kvar-p value)
+                        (eq (svref target 2) (svref value 2)))
+                   :lir-copy
+                   :set)
+              target value)))
+
 (defun kblock-ref (b) (kblock-name b))
 
 (defmacro with-function ((name) &body body)
@@ -234,8 +241,13 @@ entry block current. Unterminated blocks end with a trap."
       ,@(and (kfunc-debug function) (list (kfunc-debug function)))
       ,@(mapcar (lambda (block)
                   (let ((name (kblock-name block)))
-                    (list* :block name (or (and dispatches (gethash name dispatches))
-                                           (kblock-stmts block)))))
+                    (list* :block name
+                           (or (and dispatches (gethash name dispatches))
+                               (mapcar (lambda (statement)
+                                         (if (eq (first statement) :lir-copy)
+                                             (cons :set (rest statement))
+                                             statement))
+                                       (kblock-stmts block))))))
                 (kfunc-blocks function)))))
 
 (defun kmodule-funcs (module)
