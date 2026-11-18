@@ -364,6 +364,12 @@ one (bindings have none)."
   (and (kiln.kir::kvar-p operand)
        (eq (svref operand 2) (if (eq representation :word) :raw representation))))
 
+(defun emit-field-store (field object value)
+  (if (and (lir-builder-representation-p object :obj)
+           (lir-builder-representation-p value :obj))
+      (emit (list :lir-field-set (kiln.kir::lir-field-name field) object value field))
+      (emit (list :field-store field object value))))
+
 (defun copy-to-var (operand &optional (kind :obj))
   (let* ((variable (new-var kind))
          (signature (and (consp operand)
@@ -947,7 +953,7 @@ returns LOW, HIGH and T; else NIL, NIL and NIL."
   "Install a checked function before the kernel's definition setter exists."
   (emit-check-function function)
   (multiple-value-bind (base field) (function-cell-place name)
-    (emit `(:field-store ,field ,base ,function)))
+    (emit-field-store field base function))
   ;; Early kernel definitions precede the notification function.
   (let* ((notify (function-cell-value 'kiln.kernel::note-function-change))
          (changed (new-block))

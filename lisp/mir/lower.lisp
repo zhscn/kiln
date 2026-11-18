@@ -557,7 +557,7 @@
             (if slot (emit `(:stack-cons ,out (:slot ,slot) ,(first args) ,(nil-value)))
                 (emit `(:set ,out ,(emit-cons (first args) (nil-value)))))))
       (20 (mir-lir-load-field out kiln.kir::+packet-field-cons-car+ (first args)))
-      (21 (emit `(:field-store ,kiln.kir::+packet-field-cons-car+ ,(first args) ,(second args))))
+      (21 (emit-field-store kiln.kir::+packet-field-cons-car+ (first args) (second args)))
       (22 (emit `(:set ,out (:closure-ref ,*self* ,data))))
       (23 (let ((slot (svref *mir-lir-stack-slots* (mir-instruction-id instruction))))
             (if slot

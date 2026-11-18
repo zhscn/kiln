@@ -312,10 +312,10 @@ are compared (no short circuit), which also checks every argument."
     (start-block ok)))
 
 ;;; No write barrier yet: only non-generational GC plans.
-(define-primitive (setf car) (v x) (emit-check-cons x) (emit `(:field-store ,kiln.kir::+packet-field-cons-car+ ,x ,v)) v)
-(define-primitive (setf cdr) (v x) (emit-check-cons x) (emit `(:field-store ,kiln.kir::+packet-field-cons-cdr+ ,x ,v)) v)
-(define-primitive rplaca (x v) (emit-check-cons x) (emit `(:field-store ,kiln.kir::+packet-field-cons-car+ ,x ,v)) x)
-(define-primitive rplacd (x v) (emit-check-cons x) (emit `(:field-store ,kiln.kir::+packet-field-cons-cdr+ ,x ,v)) x)
+(define-primitive (setf car) (v x) (emit-check-cons x) (emit-field-store kiln.kir::+packet-field-cons-car+ x v) v)
+(define-primitive (setf cdr) (v x) (emit-check-cons x) (emit-field-store kiln.kir::+packet-field-cons-cdr+ x v) v)
+(define-primitive rplaca (x v) (emit-check-cons x) (emit-field-store kiln.kir::+packet-field-cons-car+ x v) x)
+(define-primitive rplacd (x v) (emit-check-cons x) (emit-field-store kiln.kir::+packet-field-cons-cdr+ x v) x)
 
 (defun emit-list (vals tail)
   (let ((r tail))
@@ -384,7 +384,7 @@ are compared (no short circuit), which also checks every argument."
 (define-primop :set-symbol-function (name function)
   (emit-check-function function)
   (emit-check-symbol name)
-  (emit `(:field-store ,kiln.kir::+packet-field-symbol-function+ ,name ,function))
+  (emit-field-store kiln.kir::+packet-field-symbol-function+ name function)
   function)
 (define-primop :symbol-setf-function (name)
   (emit-check-symbol name)
@@ -392,7 +392,7 @@ are compared (no short circuit), which also checks every argument."
 (define-primop :set-symbol-setf-function (name function)
   (emit-check-function function)
   (emit-check-symbol name)
-  (emit `(:field-store ,kiln.kir::+packet-field-symbol-setf-function+ ,name ,function))
+  (emit-field-store kiln.kir::+packet-field-symbol-setf-function+ name function)
   function)
 (define-primop :undefined-function-p (f)
   (boolean-value (undefined-function-test f)))
@@ -724,7 +724,7 @@ KNOWN-FIXNUM and NONNEGATIVE require proofs about I; the length check remains."
     (require-builtin (if (eq (cdr cell) :setf) :undefined-setf-function :undefined-function))
     (let ((f (new-var)))
       (emit `(:alloc-undefined-function ,f ,s ,(cdr cell) ,(handler)))
-      (emit `(:field-store ,(car cell) ,s ,f)))))
+      (emit-field-store (car cell) s f))))
 ;; NIL and T are defined by the runtime with empty function cells; the
 ;; kernel fills them in first thing.
 (define-primop :init-function-cells (s)
@@ -747,12 +747,12 @@ KNOWN-FIXNUM and NONNEGATIVE require proofs about I; the length check remains."
     (emit-set-symbol-value s '(:unbound-value))
     s))
 (define-primop :symbol-plist (s) (copy-to-var `(:field-load ,kiln.kir::+packet-field-symbol-plist+ ,s)))
-(define-primop :set-symbol-plist (s v) (emit `(:field-store ,kiln.kir::+packet-field-symbol-plist+ ,s ,v)) v)
+(define-primop :set-symbol-plist (s v) (emit-field-store kiln.kir::+packet-field-symbol-plist+ s v) v)
 ;; The package system sets the home package of a symbol, and
 ;; makes a new keyword its own (global) value.
-(define-primop :set-symbol-package (s p) (emit `(:field-store ,kiln.kir::+packet-field-symbol-package+ ,s ,p)) p)
+(define-primop :set-symbol-package (s p) (emit-field-store kiln.kir::+packet-field-symbol-package+ s p) p)
 (define-primop :symbol-global-value (s) (copy-to-var `(:field-load ,kiln.kir::+packet-field-symbol-value+ ,s)))
-(define-primop :set-symbol-global-value (s v) (emit `(:field-store ,kiln.kir::+packet-field-symbol-value+ ,s ,v)) v)
+(define-primop :set-symbol-global-value (s v) (emit-field-store kiln.kir::+packet-field-symbol-value+ s v) v)
 
 (define-primop :evenp (n)
   (emit-check-fixnums n n)

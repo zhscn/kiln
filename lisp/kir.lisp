@@ -245,7 +245,10 @@ entry block current. Unterminated blocks end with a trap."
     (push *func* (kmodule-functions *module*))))
 
 (defun diagnostic-statement (statement)
-  (if (eq (first statement) :lir-set)
+  (case (first statement)
+    (:lir-field-set
+     (list :field-store (fifth statement) (third statement) (fourth statement)))
+    (:lir-set
       (destructuring-bind (op target value &optional original) statement
         (declare (ignore op))
         (list :set target
@@ -257,8 +260,8 @@ entry block current. Unterminated blocks end with a trap."
                         (:single-float (cons :single-float-tag (rest value)))
                         (:literal (cons :literal-ref (rest value)))
                         (otherwise value))
-                      value))))
-      statement))
+                      value)))))
+    (otherwise statement)))
 
 (defun kfunc-form (function)
   (unless (kfunc-p function) (return-from kfunc-form function))
