@@ -33,8 +33,10 @@ def lir_stats(path):
             tag, offset, length = record(index)
             return data[string_start + offset:string_start + offset + length] if tag == 1 else None
 
-        result = dict(functions=0, blocks=0, variables=0, statements=0, sets=0, polls=0, mv_saves=0, mv_restores=0, mv_moves=0, constants=0,
-                      record_bytes=16 * records, edge_bytes=4 * edges, string_bytes=strings)
+        result = dict(functions=0, blocks=0, jump_only_blocks=0, variables=0, statements=0,
+                      sets=0, polls=0, mv_saves=0, mv_restores=0, mv_moves=0, mv_counts=0,
+                      mv_primary_refs=0, constants=0, record_bytes=16 * records,
+                      edge_bytes=4 * edges, string_bytes=strings)
         for index in children(root):
             parts = children(index)
             if not parts:
@@ -58,7 +60,16 @@ def lir_stats(path):
                             operation = children(statement)
                             if operation:
                                 opcode = symbol(operation[0])
-                                result['sets'] += opcode == b'set'
+                                result['jump_only_blocks'] += len(fields) == 3 and opcode == b'jump'
+                                if opcode == b'set':
+                                    result['sets'] += 1
+                                    expression = children(operation[2])
+                                    if expression:
+                                        kind = symbol(expression[0])
+                                        result['mv_counts'] += kind == b'mv-count'
+                                        if kind == b'mv-ref':
+                                            tag, _, slot = record(expression[2])
+                                            result['mv_primary_refs'] += tag == 0 and slot == 0
                                 result['polls'] += opcode == b'poll'
                                 result['mv_saves'] += opcode == b'mv-save'
                                 result['mv_restores'] += opcode == b'mv-restore'
