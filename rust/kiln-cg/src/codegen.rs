@@ -230,7 +230,6 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
     if let Some(start) = declarations_start {
         eprintln!("kiln-cg: declarations and static data in {:?}", start.elapsed());
     }
-    let mut debug_time = std::time::Duration::ZERO;
     // Functions: the CLIF is built here, one function after another (it
     // needs the module for references); the functions are compiled to
     // machine code on all cores, then defined in order.
@@ -261,20 +260,20 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
         };
         lw.build(&mut func, &mut fctx, f)
             .map_err(|e| format!("func {}: {e}", f.name))?;
-        let start = (timing && !lw.value_labels.is_empty() && !lw.call_locs.is_empty())
-            .then(std::time::Instant::now);
-        let slots = debug_slots(&func, &lw.value_labels, lw.call_locs.len());
-        if let Some(start) = start {
-            debug_time += start.elapsed();
-        }
-        debug_ir.push((std::mem::take(&mut lw.call_locs), slots));
+        debug_ir.push(DebugFunction {
+            locs: lw.call_locs,
+            labels: lw.value_labels,
+            slots: Vec::new(),
+        });
         if opts.dump_clif {
             eprintln!("; {}\n{}", f.name, func.display());
         }
         funcs.push(func);
     }
-    if timing {
-        eprintln!("kiln-cg: CLIF debug slots in {debug_time:?}");
+    let debug_start = timing.then(std::time::Instant::now);
+    prepare_debug_slots(&funcs, &mut debug_ir);
+    if let Some(start) = debug_start {
+        eprintln!("kiln-cg: CLIF debug slots in {:?}", start.elapsed());
     }
     let t = std::time::Instant::now();
     let contexts = compile_parallel(module.isa(), funcs, &kir.funcs)?;
@@ -284,7 +283,7 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
     let min_align = (module.isa().function_alignment().minimum as u64)
         .max(module.isa().symbol_alignment());
     let mut debug = Vec::new();
-    for (((ctx, &id), f), (locs, slots)) in contexts.iter().zip(&func_ids).zip(&kir.funcs).zip(&debug_ir) {
+    for (((ctx, &id), f), debug_input) in contexts.iter().zip(&func_ids).zip(&kir.funcs).zip(&debug_ir) {
         let code = ctx.compiled_code().ok_or("no compiled code")?;
         let relocs: Vec<_> = code
             .buffer
@@ -313,7 +312,7 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
                 _ => return Err(format!("func {}: debug-ref: unknown data {name}", f.name)),
             },
         };
-        let sites = encode_debug_sites(ctx, locs, slots)?;
+        let sites = encode_debug_sites(ctx, &debug_input.locs, &debug_input.slots)?;
         if info.is_some() || !sites.is_empty() {
             debug.push(FuncDebug {
                 func: id,
@@ -437,6 +436,37 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
 /// dominator of the call). A value's labels come from the variables it
 /// was assigned to; a block parameter that SSA construction made gets the
 /// labels that all its incoming values have.
+struct DebugFunction {
+    locs: Vec<Option<Loc>>,
+    labels: HashMap<Value, Vec<u32>>,
+    slots: Vec<Vec<(u32, ir::StackSlot)>>,
+}
+
+fn prepare_debug_slots(funcs: &[ir::Function], debug: &mut [DebugFunction]) {
+    let mut jobs: Vec<_> = funcs
+        .iter()
+        .zip(debug)
+        .filter(|(_, input)| !input.labels.is_empty() && !input.locs.is_empty())
+        .collect();
+    let run = |jobs: &mut [(&ir::Function, &mut DebugFunction)]| {
+        for (func, input) in jobs {
+            input.slots = debug_slots(func, &input.labels, input.locs.len());
+            input.labels = HashMap::new();
+        }
+    };
+    let threads = worker_count(jobs.len());
+    if threads == 1 {
+        run(&mut jobs);
+    } else {
+        let chunk = jobs.len().div_ceil(threads);
+        std::thread::scope(|scope| {
+            for jobs in jobs.chunks_mut(chunk) {
+                scope.spawn(|| run(jobs));
+            }
+        });
+    }
+}
+
 fn debug_slots(
     func: &ir::Function,
     labels: &HashMap<Value, Vec<u32>>,
@@ -633,8 +663,9 @@ fn encode_debug_sites(ctx: &Context, locs: &[Option<Loc>], slots: &[Vec<(u32, ir
         }
         let index = loc.bits() as usize - 1;
         let Some(call_loc) = locs.get(index) else { continue };
-        let vars: Vec<(u32, u32)> = slots[index]
-            .iter()
+        let vars: Vec<(u32, u32)> = slots.get(index)
+            .into_iter()
+            .flatten()
             .map(|&(n, slot)| (n, layout.stackslots[slot].offset))
             // Keep slots live at this call, including untraced float debug spills.
             .filter(|(_, off)| maps.get(&ret).is_some_and(|m| m.contains(off)))
@@ -1423,6 +1454,15 @@ enum Callee {
     Indirect(ir::SigRef, Value),
 }
 
+fn worker_count(n: usize) -> usize {
+    // KILN_CG_THREADS overrides the number of threads.
+    std::env::var("KILN_CG_THREADS")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or_else(|| std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1))
+        .clamp(1, n.div_ceil(16).max(1))
+}
+
 /// Compiles FUNCS to machine code on all available cores. The results
 /// keep the order of FUNCS.
 fn compile_parallel(
@@ -1431,12 +1471,7 @@ fn compile_parallel(
     kfuncs: &[kir::Func],
 ) -> R<Vec<Context>> {
     let n = funcs.len();
-    // KILN_CG_THREADS overrides the number of threads.
-    let threads = std::env::var("KILN_CG_THREADS")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or_else(|| std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1))
-        .clamp(1, n.div_ceil(16).max(1));
+    let threads = worker_count(n);
     if threads == 1 {
         // Small modules (code compiled into a running image): no threads.
         return funcs
