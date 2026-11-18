@@ -93,3 +93,16 @@
                  (list (eq (cdr (assoc 'x vars)) x) (cdr (assoc 'y vars)) (car x) y))))))
        (function (funcall maker (list :token))))
   (print (equal (funcall function 3) '(t 3 :token 3))))
+
+(let* ((session (kiln.compiler:make-session))
+       (forms '((defun mir-debug-file-cell (x y)
+                  (declare (optimize (debug 3)))
+                  (incf x)
+                  (values x y))))
+       (module (kiln.compiler:compile-module
+                (kiln.compiler::front-end-forms forms session) "mir-debug-file" :session session))
+       (program (kiln.lir:module-program module)))
+  (assert (loop for function in (cddr program)
+                thereis (and (eq (first function) :function)
+                             (some (lambda (variable) (eq (third variable) :cell))
+                                   (sixth (assoc :debug (cddr function))))))))
