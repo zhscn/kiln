@@ -49,6 +49,12 @@
            (assert (= (read-byte in) 42)))
          (with-open-file (out path :direction :output :if-exists :supersede
                                   :element-type '(unsigned-byte 8))
+           (dolist (invalid '(-1 256 :not-an-octet))
+             (assert (handler-case
+                         (progn (kiln.kernel::fasl-write-data (vector invalid) out) nil)
+                       (error () t)))))
+         (with-open-file (out path :direction :output :if-exists :supersede
+                                  :element-type '(unsigned-byte 8))
            (write-byte 6 out)
            (kiln.kernel::fasl-write-uint 20003 out)
            (write-byte 1 out))

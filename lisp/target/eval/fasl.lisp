@@ -183,7 +183,7 @@
                    ((simple-vector-p object)
                     (write-byte 6 stream) (fasl-write-uint (length object) stream)
                     (loop for octet across object
-                          unless (typep octet '(unsigned-byte 8))
+                          unless (and (fixnump octet) (<= 0 (the fixnum octet) 255))
                             do (error "Invalid packet octet."))
                     (if (and (typep stream 'cyclosis::kiln-file-stream)
                              (equal (stream-element-type stream) '(unsigned-byte 8)))
