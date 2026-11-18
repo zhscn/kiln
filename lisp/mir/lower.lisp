@@ -612,6 +612,12 @@
           (let ((next (gethash source pending)))
             (when next (hir-push next ready))))))))
 
+(defun mir-lir-edge-needs-copies-p (function edge)
+  (loop for target across (mir-block-parameters (mir-at (mir-function-blocks function)
+                                                        (mir-edge-target edge)))
+        for source across (mir-edge-arguments edge)
+        thereis (and (/= target source) (svref *mir-lir-live* target))))
+
 (defun mir-lir-edge-copies (function edge)
   "Prepare carrier conversions before scheduling parallel parameter assignments."
   (let ((copies nil) (view-copies nil)
@@ -740,9 +746,12 @@
                      for target = (mir-edge-target edge)
                      for landing-p = (and (= 5 (mir-terminator-kind term)) (= index 1))
                      do (setf (svref targets index)
-                              (if (and (not landing-p) (zerop (length (mir-edge-arguments edge))))
-                                  (svref labels target)
-                                  (let* ((label (new-block))
+                              (cond ((and (not landing-p) (member (mir-terminator-kind term) '(0 5)))
+                                     (mir-lir-edge-copies function edge)
+                                     (svref labels target))
+                                    ((and (not landing-p) (not (mir-lir-edge-needs-copies-p function edge)))
+                                     (svref labels target))
+                                    (t (let* ((label (new-block))
                                          (landing
                                            (when landing-p
                                              (mir-at (mir-function-instructions function)
@@ -754,7 +763,7 @@
                                                       (33 (mir-lir-cleanup-regions *regions*))
                                                       (36 *regions*) (otherwise (rest *regions*))) *regions*)
                                                 landing) edge-blocks)
-                                    label))))
+                                    label)))))
                (case (mir-terminator-kind term)
                  (0 (jump (svref targets 0)))
                  (1 (br `(:eq ,(mir-lir-value (svref (mir-terminator-operands term) 0)) ,(nil-value))
