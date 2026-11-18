@@ -150,9 +150,12 @@
       ((:vector-read :vector-write)
        (emit-svref-fast-path
         object index
-        (lambda () (if store
-                       (progn (emit-sequence-write :vector-set object index value) value)
-                       (emit-sequence-read :vector-ref object index)))
+        (lambda (result)
+          (if store
+              (progn
+                (emit-sequence-write :vector-set object index value)
+                (kiln.kir::emit-lir-assignment result value))
+              (emit-sequence-read :vector-ref object index result)))
         (lambda () (if store (emit-slow-call name value object index)
                        (emit-slow-call name object index))) t
         (hir-fixnum-type-p index-type)

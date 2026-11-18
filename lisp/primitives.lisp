@@ -591,9 +591,9 @@ are compared (no short circuit), which also checks every argument."
 ;;; path: a call to the kernel's function, which signals the error or
 ;;; handles the other sequences.
 (defun emit-svref-fast-path (v i fast-fn slow-fn &optional known-vector known-fixnum nonnegative)
-  "Calls FAST-FN in a block where V is a simple vector and I a valid index
-of it, SLOW-FN otherwise; both return an operand. Returns the result.
-KNOWN-FIXNUM and NONNEGATIVE require proofs about I; the length check remains."
+  "FAST-FN writes the result in the checked vector block.
+SLOW-FN returns an operand in the fallback block. KNOWN-FIXNUM and
+NONNEGATIVE carry index proofs. The length check remains."
   (let ((r (new-var)) (vector (new-block)) (fast (new-block)) (slow (new-block))
         (done (new-block)))
     (if known-vector (jump vector)
@@ -604,7 +604,7 @@ KNOWN-FIXNUM and NONNEGATIVE require proofs about I; the length check remains."
       (br (if known-fixnum bounds
               `(:or (:eq (:test-class ,kiln.kir::+packet-class-fixnum+ ,i) 0) ,bounds)) slow fast))
     (start-block fast)
-    (emit `(:set ,r ,(funcall fast-fn)))
+    (funcall fast-fn r)
     (jump done)
     (start-block slow)
     (emit `(:set ,r ,(funcall slow-fn)))
@@ -614,12 +614,14 @@ KNOWN-FIXNUM and NONNEGATIVE require proofs about I; the length check remains."
 
 (define-primitive svref (v i)
   (emit-svref-fast-path v i
-                        (lambda () (emit-sequence-read :vector-ref v i))
+                        (lambda (result) (emit-sequence-read :vector-ref v i result))
                         (lambda () (emit-slow-call 'svref v i))))
 
 (define-primitive (setf svref) (x v i)
   (emit-svref-fast-path v i
-                        (lambda () (emit-sequence-write :vector-set v i x) x)
+                        (lambda (result)
+                          (emit-sequence-write :vector-set v i x)
+                          (kiln.kir::emit-lir-assignment result x))
                         (lambda () (emit-slow-call '(setf svref) x v i))))
 
 (defun emit-schar (s i c slow-name &optional known-string)
