@@ -109,6 +109,7 @@ keeps one definition."
 (defstruct kblock
   name
   (stmts '())
+  (terminator nil)
   (terminated nil))
 
 (defvar *func*)
@@ -222,7 +223,8 @@ entry block current. Unterminated blocks end with a trap."
       (unless (kblock-terminated block)
         (start-block block)
         (emit '(:trap)))
-      (setf (kblock-stmts block) (nreverse (kblock-stmts block))))
+      (setf (kblock-terminator block) (first (kblock-stmts block))
+            (kblock-stmts block) (nreverse (kblock-stmts block))))
     (setf (kfunc-blocks *func*) blocks
           (kfunc-vars *func*) (nreverse (kfunc-vars *func*))
           (kfunc-slots *func*) (nreverse (kfunc-slots *func*))

@@ -35,6 +35,7 @@
       (setf (gethash (first slot) (lir-function-stack-shapes state)) (second slot)))
     (dolist (block blocks)
       (dolist (statement (kblock-stmts block))
+        (lir-scan-function-statement state statement)
         (case (first statement)
           (:rest-list (lir-record-rest state statement))
           (:stack-closure

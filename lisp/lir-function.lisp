@@ -495,6 +495,21 @@
                             (rest (assoc :slots parts)) (source-function-debug function)
                             (nreverse blocks) :compatibility t))))
 
+(defun lir-scan-function-statement (state statement)
+  (lir-scan-value-statement state statement)
+  (case (first statement)
+    ((:alloc-closure :stack-closure) (lir-scan-closure-statement state statement))
+    ((:set :lir-set) (lir-record-word-write state (second statement) (third statement)))
+    (:receive-prefix
+     (dolist (variable (second statement))
+       (lir-record-word-write state variable :unknown))
+     (lir-record-word-write state (third statement) :unknown))
+    ((:fixnum-add-ovf :fixnum-sub-ovf :fixnum-mul-ovf)
+     (lir-record-word-write state (second statement) :unknown)
+     (lir-record-word-write state (third statement) :unknown))
+    ((:heap-number-p :guarded-class-test :special-ref)
+     (lir-record-word-write state (second statement) :unknown))))
+
 (defun lower-lir-function (data name source-variables source-slots source-debug source-blocks
                            &key compatibility direct-regions region-entries region-landings)
   (let* ((*lir-name-test* (if compatibility 'equalp 'eq))
@@ -506,12 +521,7 @@
               (lir-prepare-landings state source-blocks direct-regions region-landings)
               source-blocks)
           source-slots)
-      (let* ((prepare-storage (or compatibility slots))
-             (storage (when prepare-storage
-                        (append (lir-prepare-stack state blocks slots)
-                                (if direct-regions
-                                    (lir-declare-emitted-regions state region-entries slots live)
-                                    (lir-prepare-regions state blocks slots))))))
+      (let ((prepare-storage (or compatibility slots)))
         (setf (lir-function-captures state)
               (or (gethash name (lir-data-function-captures data)) 0))
         (dolist (variable source-variables)
@@ -520,40 +530,36 @@
                  (kind (ecase source-kind (:obj :obj) (:raw :word) (:f64 :f64))))
             (lir-register-variable state name kind)
             (push (list name kind) (lir-function-variables state))))
-        (dolist (block blocks)
-          (dolist (statement (kblock-stmts block))
-            (lir-scan-value-statement state statement)
-            (lir-scan-closure-statement state statement)
-            (case (first statement)
-              (:rest-list (unless prepare-storage (lir-record-rest state statement)))
-              ((:set :lir-set) (lir-record-word-write state (second statement) (third statement)))
-              (:receive-prefix
-               (dolist (variable (append (second statement) (list (third statement))))
-                 (lir-record-word-write state variable :unknown)))
-              ((:fixnum-add-ovf :fixnum-sub-ovf :fixnum-mul-ovf)
-               (lir-record-word-write state (second statement) :unknown)
-               (lir-record-word-write state (third statement) :unknown))
-              ((:heap-number-p :guarded-class-test :special-ref)
-               (lir-record-word-write state (second statement) :unknown)))))
-        (dolist (block blocks)
-          (setf (lir-function-statements state) '()
-                (lir-function-active-view state) nil (lir-function-active-count state) nil
-                (lir-function-landing-view state) nil)
-          (dolist (statement (kblock-stmts block)) (lir-statement state statement))
-          (push (list* :block (kblock-name block) (nreverse (lir-function-statements state)))
-                (lir-function-blocks state)))
-        (let* ((debug-variables
-                 (if compatibility source-variables
-                     (loop for variable in source-variables
-                           when (svref variable 3) collect (var-declaration variable))))
-               (debug (lir-function-debug state source-debug debug-variables)))
-          `(:function ,(lir-function-name state) (:receive ,(lir-function-receive state))
-            (:captures ,(lir-function-captures state))
-            ,@(and (lir-function-rest state) (list (lir-function-rest state)))
-            (:vars ,@(nreverse (lir-function-variables state)) ,@(nreverse (lir-function-temporaries state)))
-            ,@storage
-            ,@(and debug (list debug))
-            ,@(nreverse (lir-function-blocks state))))))))
+        (let ((storage (cond (prepare-storage
+                             (append (lir-prepare-stack state blocks slots)
+                                     (if direct-regions
+                                         (lir-declare-emitted-regions state region-entries slots live)
+                                         (lir-prepare-regions state blocks slots))))
+                            (t (dolist (block blocks)
+                                 (dolist (statement (kblock-stmts block))
+                                   (lir-scan-function-statement state statement)
+                                   (when (eq (first statement) :rest-list)
+                                     (lir-record-rest state statement))))
+                               nil))))
+          (dolist (block blocks)
+            (setf (lir-function-statements state) '()
+                  (lir-function-active-view state) nil (lir-function-active-count state) nil
+                  (lir-function-landing-view state) nil)
+            (dolist (statement (kblock-stmts block)) (lir-statement state statement))
+            (push (list* :block (kblock-name block) (nreverse (lir-function-statements state)))
+                  (lir-function-blocks state)))
+          (let* ((debug-variables
+                   (if compatibility source-variables
+                       (loop for variable in source-variables
+                             when (svref variable 3) collect (var-declaration variable))))
+                 (debug (lir-function-debug state source-debug debug-variables)))
+            `(:function ,(lir-function-name state) (:receive ,(lir-function-receive state))
+              (:captures ,(lir-function-captures state))
+              ,@(and (lir-function-rest state) (list (lir-function-rest state)))
+              (:vars ,@(nreverse (lir-function-variables state)) ,@(nreverse (lir-function-temporaries state)))
+              ,@storage
+              ,@(and debug (list debug))
+              ,@(nreverse (lir-function-blocks state)))))))))
 
 (defun normalize-lir-module (module &optional literals)
   "Returns an independent LIR program and its literal bindings."
