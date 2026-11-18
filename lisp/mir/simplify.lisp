@@ -85,7 +85,7 @@
                                  (cond ((null candidate) (setf candidate argument))
                                        ((/= argument candidate) (setf conflict t))))))
                            (when (and candidate (not conflict)
-                                      (logbitp (mir-value-block (svref values candidate)) (svref dominators id)))
+                                      (mir-block-dominates-p dominators (mir-value-block (svref values candidate)) id))
                              (setf (svref aliases parameter) candidate)
                              (let ((watchers (svref users parameter)))
                                (dolist (user watchers) (enqueue user))
