@@ -123,3 +123,15 @@
                                                               when (= (mir-edge-target edge) (mir-block-id block))
                                                                 collect (svref (mir-edge-arguments edge) index))))) 1)))))
 (format t "MIR shared-code function captures retain distinct edge environments.~%")
+
+;; A capture read proves the identity needed to initialize another closure.
+;; Turning the read into an ordinary argument would lose that proof.
+(let* ((unit (mir-capture-test-unit
+              '(flet ((g (x) (+ n x)))
+                 (flet ((f () (lambda () (g 1))))
+                   (declare (notinline f))
+                   (values (f) #'g)))))
+       (f (mir-capture-test-function unit 'f)))
+  (mir-lift-direct-environments unit)
+  (verify-mir unit)
+  (assert (zerop (mir-function-internal-prefix f))))

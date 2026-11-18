@@ -177,10 +177,34 @@
       (setf (mir-function-instructions function) rebuilt-instructions)))
   function)
 
+(defun mir-direct-lifting-loses-identity-p (function functions widths)
+  "Check operations that require identities carried by capture reads."
+  (when (some #'integerp (mir-function-capture-functions function))
+    (let ((known (mir-function-identities function))
+          (without-captures (mir-compute-function-identities function :trust-captures nil)))
+      (loop for instruction across (hir-buffer-view (mir-function-instructions function))
+            for kind = (mir-instruction-kind instruction)
+            for args = (mir-instruction-operands instruction)
+            thereis
+            (case kind
+              (24 (let* ((data (mir-instruction-data instruction))
+                         (receiver (svref functions (car data)))
+                         (target (svref (mir-function-capture-functions receiver) (cdr data))))
+                    (and target (not (eql target (svref without-captures (svref args 1)))))))
+              ((7 15) (let* ((operand (svref args 0)) (target (svref known operand)))
+                        (and (integerp target)
+                             (or (svref widths target)
+                                 (plusp (mir-function-internal-prefix (svref functions target))))
+                             (not (eql target (svref without-captures operand)))))))))))
+
 (defun mir-lift-direct-environments (unit &key (parameter-budget 4096))
   (let* ((calls (mir-infer-calls unit)) (widths (mir-lifting-widths unit calls))
          (identities (mir-call-analysis-identities calls))
-         (cell-masks (map 'simple-vector #'mir-function-capture-cells (hir-buffer-view (mir-unit-functions unit)))))
+         (functions (hir-buffer-view (mir-unit-functions unit)))
+         (cell-masks (map 'simple-vector #'mir-function-capture-cells functions)))
+    (loop for function across functions for id from 0
+          when (and (svref widths id) (mir-direct-lifting-loses-identity-p function functions widths))
+            do (setf (svref widths id) nil))
     (unless (find-if #'identity widths) (return-from mir-lift-direct-environments unit))
     (loop for function across (hir-buffer-view (mir-unit-functions unit)) for known across identities
           for extra = (loop for block across (hir-buffer-view (mir-function-blocks function))
