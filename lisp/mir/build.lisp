@@ -183,8 +183,27 @@
     (mir-terminate 0 #() (vector (if resultp (mir-edge-to id result) (mir-edge-to id))))))
 
 (defun mir-single (value) (mir-instruction 9 :bundle (vector value)))
-(defun mir-primary (node) (let ((value (mir-build-node node)))
-                           (when *mir-block* (mir-instruction 10 :obj (vector value)))))
+(defun mir-project-primary (value)
+  (let* ((ids (mir-block-instructions *mir-block*))
+         (instructions (mir-function-instructions *mir-function*))
+         (values (mir-function-values *mir-function*))
+         (last (1- (hir-buffer-count ids)))
+         (id (1- (hir-buffer-count instructions))))
+    (when (and (>= last 0) (= (mir-at ids last) id))
+      (let ((instruction (mir-at instructions id)))
+        (when (and (= (mir-instruction-kind instruction) 9)
+                   (eql (mir-instruction-result instruction) value)
+                   (= value (1- (hir-buffer-count values))))
+          ;; The enclosing primary context is the first user of this
+          ;; freshly emitted single result. Reuse its object directly.
+          (dolist (buffer (list ids instructions values))
+            (setf (svref (hir-buffer-data buffer) (decf (hir-buffer-count buffer))) nil))
+          (return-from mir-project-primary (svref (mir-instruction-operands instruction) 0)))))
+    (mir-instruction 10 :obj (vector value))))
+
+(defun mir-primary (node)
+  (let ((value (mir-build-node node)))
+    (when *mir-block* (mir-project-primary value))))
 
 (defun mir-binding-index (variable)
   (multiple-value-bind (id found) (gethash variable *mir-bindings*)
