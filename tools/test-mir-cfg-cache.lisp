@@ -15,6 +15,9 @@
              (mir-reachable-blocks function)
              (mir-binding-regions function))
            (assert (= computations checked))
+           (mir-run-pass unit (mir-at (mir-unit-functions unit) 1) #'identity
+                         :changes '(:instructions))
+           (assert (= computations checked))
            (verify-mir unit)
            (assert (= computations (* checked 2)))))
     (setf (symbol-function 'mir-control-flow) original)))

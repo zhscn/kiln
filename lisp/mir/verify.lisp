@@ -377,7 +377,7 @@
               (mir-fail "MIR binding parameter disagrees with its cell layout"))))))
   function)
 
-(defun mir-verify-function-body (unit function)
+(defun mir-verify-function-body (unit function &optional reuse-cfg-p)
   "Verify a body after the unit check has validated all function layouts."
   (let* ((blocks (mir-function-blocks function)) (instructions (mir-function-instructions function))
          (values (mir-function-values function))
@@ -549,10 +549,9 @@
         (unless (= checks 1) (mir-fail "MIR entry requires one arity check")))
       (unless (every #'identity seen-instructions) (mir-fail "Unowned MIR instruction"))
       (unless (every #'identity seen-values) (mir-fail "Unowned MIR value"))
-      (multiple-value-bind (reachable dominators) (mir-control-flow function)
-        ;; Publish only freshly computed facts; verification never trusts a
-        ;; previous optimization snapshot of a graph it is checking.
-        (mir-record-control-flow function reachable dominators)
+      (multiple-value-bind (reachable dominators)
+          (if reuse-cfg-p (mir-cached-control-flow function) (mir-control-flow function))
+        (unless reuse-cfg-p (mir-record-control-flow function reachable dominators))
         (mir-verify-closure-initialization unit function)
         (mir-verify-cells function)
         (mir-verify-internal-calls unit function)

@@ -153,7 +153,9 @@
       (mir-verify-load-time-functions unit)
       ;; Iterate the unit's order, not the hash table, for deterministic diagnostics.
       (loop for function across (hir-vector (mir-unit-functions unit))
-            when (gethash function changed) do (mir-verify-function-body unit function))
+            when (gethash function changed)
+              do (mir-verify-function-body unit function
+                    (and (not (eq changes :all)) (not (member :control-flow changes)))))
       (mir-verify-private-entries unit))
     unit))
 
