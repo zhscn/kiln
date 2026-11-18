@@ -114,6 +114,8 @@ struct Imports<'a> {
 }
 
 pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> R<Output> {
+    let timing = std::env::var_os("KILN_TIME").is_some();
+    let declarations_start = timing.then(std::time::Instant::now);
     let sysv = module.isa().default_call_conv();
     let lisp_sig = lisp_signature(CallConv::Tail);
     let mut names: HashMap<&str, Ref> = HashMap::new();
@@ -225,6 +227,10 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
         module.define_data(id, &desc).map_err(err)?;
     }
 
+    if let Some(start) = declarations_start {
+        eprintln!("kiln-cg: declarations and static data in {:?}", start.elapsed());
+    }
+    let mut debug_time = std::time::Duration::ZERO;
     // Functions: the CLIF is built here, one function after another (it
     // needs the module for references); the functions are compiled to
     // machine code on all cores, then defined in order.
@@ -255,14 +261,21 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
         };
         lw.build(&mut func, &mut fctx, f)
             .map_err(|e| format!("func {}: {e}", f.name))?;
+        let start = (timing && !lw.value_labels.is_empty() && !lw.call_locs.is_empty())
+            .then(std::time::Instant::now);
         let slots = debug_slots(&func, &lw.value_labels, lw.call_locs.len());
+        if let Some(start) = start {
+            debug_time += start.elapsed();
+        }
         debug_ir.push((std::mem::take(&mut lw.call_locs), slots));
         if opts.dump_clif {
             eprintln!("; {}\n{}", f.name, func.display());
         }
         funcs.push(func);
     }
-    let timing = std::env::var("KILN_TIME").is_ok();
+    if timing {
+        eprintln!("kiln-cg: CLIF debug slots in {debug_time:?}");
+    }
     let t = std::time::Instant::now();
     let contexts = compile_parallel(module.isa(), funcs, &kir.funcs)?;
     if timing {

@@ -49,10 +49,6 @@ impl<'a> Nodes<'a> {
         }
     }
 
-    fn is_empty(self) -> bool {
-        self.len() == 0
-    }
-
     fn at(self, index: usize) -> Node<'a> {
         assert!(index < self.len());
         match self {
@@ -293,7 +289,8 @@ fn function(xs: Nodes) -> Result<Function> {
                     file: constant_value(args.at(1))?,
                     start: u32::try_from(integer(args.at(2))?)
                         .map_err(|_| "LIR: invalid debug start")?,
-                    end: u32::try_from(integer(args.at(3))?).map_err(|_| "LIR: invalid debug end")?,
+                    end: u32::try_from(integer(args.at(3))?)
+                        .map_err(|_| "LIR: invalid debug end")?,
                     variables,
                 });
             }
@@ -404,7 +401,8 @@ fn block(xs: Nodes) -> Result<Block> {
                 if args.len() < 2 {
                     return Err("LIR: switch needs value and default".into());
                 };
-                let cases = args.tail(2)
+                let cases = args
+                    .tail(2)
                     .iter()
                     .map(|case| {
                         let case = list(case)?;
@@ -412,7 +410,11 @@ fn block(xs: Nodes) -> Result<Block> {
                         Ok((integer(case.at(0))?, symbol(case.at(1))?))
                     })
                     .collect::<Result<_>>()?;
-                Some(Terminator::Switch(symbol(args.at(0))?, symbol(args.at(1))?, cases))
+                Some(Terminator::Switch(
+                    symbol(args.at(0))?,
+                    symbol(args.at(1))?,
+                    cases,
+                ))
             }
             "return" => {
                 arity(name, args, 1)?;
@@ -424,7 +426,10 @@ fn block(xs: Nodes) -> Result<Block> {
             }
             "tail-call" => {
                 arity(name, args, 2)?;
-                Some(Terminator::TailCall(symbol(args.at(0))?, names(args.at(1))?))
+                Some(Terminator::TailCall(
+                    symbol(args.at(0))?,
+                    names(args.at(1))?,
+                ))
             }
             "error" | "fatal-error" => {
                 if !(2..=3).contains(&args.len()) {
@@ -437,8 +442,10 @@ fn block(xs: Nodes) -> Result<Block> {
                     }
                     arity(tag, range, 2)?;
                     Some((
-                        u32::try_from(integer(range.at(0))?).map_err(|_| "LIR: invalid location")?,
-                        u32::try_from(integer(range.at(1))?).map_err(|_| "LIR: invalid location")?,
+                        u32::try_from(integer(range.at(0))?)
+                            .map_err(|_| "LIR: invalid location")?,
+                        u32::try_from(integer(range.at(1))?)
+                            .map_err(|_| "LIR: invalid location")?,
                     ))
                 } else {
                     None
@@ -897,7 +904,11 @@ fn expression(x: Node) -> Result<Expression> {
         }
         "select" => {
             arity(name, args, 3)?;
-            Expression::Select(symbol(args.at(0))?, symbol(args.at(1))?, symbol(args.at(2))?)
+            Expression::Select(
+                symbol(args.at(0))?,
+                symbol(args.at(1))?,
+                symbol(args.at(2))?,
+            )
         }
         "mv-count" => {
             arity(name, args, 1)?;

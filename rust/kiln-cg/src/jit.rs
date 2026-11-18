@@ -439,11 +439,12 @@ unsafe fn compile_packet(packet: u64, literals: u64) -> Result<u64, CompilationE
         return Err(CompilationError::new(
             CompilationStage::Request, "production compilation requires the LIR payload"));
     }
-    let kir = crate::lir::program::parse_packet(decoded)
-        .and_then(|module| module.verify()?.lower())
+    let module = crate::lir::program::parse_packet(decoded)
         .map_err(|e| CompilationError::new(CompilationStage::Program, e))?;
     let size = bytes.len();
     drop(bytes);
+    let kir = module.verify().and_then(|verified| verified.lower())
+        .map_err(|e| CompilationError::new(CompilationStage::Program, e))?;
     unsafe { install_module(&kir, literals, Some(size), t) }
         .map_err(|e| CompilationError::new(CompilationStage::Install, e))
 }
