@@ -194,12 +194,11 @@
              (case op
                ((:word :f64 :fixnum :character :single-float) expression)
                ((:object-address :object-data)
-                (lir-data-value (lir-function-data state) (cons :object-data args)))
+                (lir-object-reference (lir-function-data state) (first args)))
                (:literal-ref (cons :literal args))
                (:cell-ref
-                (multiple-value-bind (index found)
-                    (gethash (first args) (lir-data-cell-indices (lir-function-data state)))
-                  (unless found (lir-function-error state "unknown cell ~S" (first args)))
+                (let ((index (lir-cell-index (lir-function-data state) (first args))))
+                  (unless index (lir-function-error state "unknown cell ~S" (first args)))
                   `(:cell-ref ,index)))
                (:unbound-value '(:unbound)) (:unbound-slot-value '(:unbound-slot))
                (:frame-pointer '(:frame-pointer))
@@ -377,8 +376,8 @@
                                    ,(lir-operand state (second args) :obj)
                                    ,(lir-operand state (third args) :obj))))
       (:cell-set
-       (multiple-value-bind (index found) (gethash (first args) (lir-data-cell-indices (lir-function-data state)))
-         (unless found (lir-function-error state "unknown cell ~S" (first args)))
+       (let ((index (lir-cell-index (lir-function-data state) (first args))))
+         (unless index (lir-function-error state "unknown cell ~S" (first args)))
          (lir-emit state `(:cell-set ,index ,(lir-operand state (second args) :obj)))))
       (:jump (lir-emit state statement))
       (:br (lir-emit state `(:branch ,(lir-operand state (first args) :word) ,@(rest args))))

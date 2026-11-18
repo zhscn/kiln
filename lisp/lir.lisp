@@ -7,8 +7,9 @@
 (defstruct lir-data
   name init
   (objects (make-hash-table :test 'equal))
-  (indices (make-hash-table :test 'equal))
-  (cell-indices (make-hash-table :test 'equal))
+  ;; Constants use nonnegative IDs. Cells use -1 minus their ID so
+  ;; both namespaces can share the builder's declaration table.
+  declaration-indices
   (mutable (make-hash-table :test 'equal))
   (function-captures (make-hash-table :test 'equal))
   (constants '()) (cells '()) (builtins '()) (literals 0)
@@ -31,16 +32,27 @@
            (coerce (mapcar #'code-char (rest object)) 'string))
           (t (lir-data-error "expected string data for ~S" reference)))))
 
+(defun lir-constant-index (data label)
+  (let ((id (gethash label (lir-data-declaration-indices data))))
+    (when (and (integerp id) (>= id 0)) id)))
+
+(defun lir-cell-index (data label)
+  (let ((id (gethash label (lir-data-declaration-indices data))))
+    (when (and (integerp id) (< id 0)) (- -1 id))))
+
+(defun lir-object-reference (data label)
+  (cond ((equal label "kiln_nil") '(:nil))
+        ((equal label "kiln_t") '(:t))
+        (t (let ((id (lir-constant-index data label)))
+             (unless id (lir-data-error "unknown object reference ~S" label))
+             (list :constant id)))))
+
 (defun lir-data-value (data word)
   "Translates an object initializer to an immediate, literal or graph reference."
   (cond ((not (consp word)) (lir-data-error "invalid object initializer ~S" word))
         ((member (first word) '(:fixnum :character :single-float :literal :unbound)) word)
         ((eq (first word) :object-data)
-         (cond ((lir-nil-word-p word) '(:nil))
-               ((equal word '(:object-data "kiln_t" :general)) '(:t))
-               (t (multiple-value-bind (index found) (gethash (second word) (lir-data-indices data))
-                    (unless found (lir-data-error "unknown object reference ~S" word))
-                    `(:constant ,index)))))
+         (lir-object-reference data (second word)))
         (t (lir-data-error "unsupported object initializer ~S" word))))
 
 (defun lir-data-symbol (data label fields)
@@ -59,7 +71,7 @@
                               `(:object-data ,label :general) '(:unbound)))
         (lir-data-error "symbol ~S has a noncanonical initial value" label))
       (if package `(:symbol ,package ,name)
-          `(:uninterned ,name ,(gethash label (lir-data-indices data)))))))
+          `(:uninterned ,name ,(lir-constant-index data label))))))
 
 (defun lir-string-constant (string)
   ;; The packet string pool accepts Unicode scalar values. The code-point
@@ -76,7 +88,7 @@
          (let ((name (static-symbol-name object)) (package (static-symbol-package object)))
            (return-from lir-data-object
              (if package `(:symbol ,package ,name)
-                 `(:uninterned ,name ,(gethash label (lir-data-indices data))))))))
+                 `(:uninterned ,name ,(lir-constant-index data label)))))))
   (let ((kind (first object)) (fields (rest object)))
     (case kind
       (:static-string (cons :string fields))
@@ -135,8 +147,9 @@
   (dolist (form (kmodule-import-data module))
     (unless (member (second form) '("kiln_nil" "kiln_t") :test #'equal)
       (lir-data-error "unsupported external object ~S" form)))
-  (let ((data (make-lir-data :name (kmodule-name module)))
-        (objects '()) (cells '()) (index 0) (cell-index 0) (literal-table nil))
+  (let ((data (make-lir-data :name (kmodule-name module)
+                             :declaration-indices (kmodule-defined module)))
+        (objects '()) (cells '()) (literal-table nil))
     (dolist (root (kmodule-roots module))
       (unless (member (first root) '(:root :field-root :symbol-roots))
         (lir-data-error "unsupported root declaration ~S" root))
@@ -145,21 +158,11 @@
       (case (first form)
         (:data
          (let ((name (second form)) (object (third form)))
-           (when (gethash name (lir-data-objects data))
-             (lir-data-error "duplicate data label ~S" name))
            (setf (gethash name (lir-data-objects data)) object)
            ;; Symbol constants construct their own placeholders in Rust.
            (unless (and (consp object) (eq (first object) :static-builtin))
-             (setf (gethash name (lir-data-indices data)) index)
-             (incf index)
              (push (cons name object) objects))))
-        (:object-cell
-         (let ((name (second form)))
-           (when (nth-value 1 (gethash name (lir-data-cell-indices data)))
-             (lir-data-error "duplicate cell ~S" name))
-           (setf (gethash name (lir-data-cell-indices data)) cell-index)
-           (incf cell-index)
-           (push (third form) cells)))
+        (:object-cell (push (third form) cells))
         (:literal-table
          (when literal-table (lir-data-error "duplicate literal table"))
          (setf literal-table t (lir-data-literals data) (second form)))
@@ -180,7 +183,7 @@
     (maphash (lambda (name mutable)
                (declare (ignore mutable))
                (unless (or (gethash name (lir-data-objects data))
-                           (nth-value 1 (gethash name (lir-data-cell-indices data))))
+                           (lir-cell-index data name))
                  (lir-data-error "root names unknown data ~S" name)))
              (lir-data-mutable data))
     (setf (lir-data-constants data)

@@ -18,6 +18,8 @@
   (imports '())
   (import-data '())
   (data '())
+  (constant-count 0)
+  (cell-count 0)
   (functions '())
   (roots '())
   (shared '())
@@ -47,8 +49,10 @@
   name)
 
 (defun module-data (name contents)
-  "CONTENTS is (:words ...) or (:bytes \"...\")."
   (when (declare-once name)
+    (unless (and (consp contents) (eq (first contents) :static-builtin))
+      (setf (gethash name (kmodule-defined *module*)) (kmodule-constant-count *module*))
+      (incf (kmodule-constant-count *module*)))
     (push `(:data ,name ,contents) (kmodule-data *module*)))
   name)
 
@@ -61,6 +65,7 @@
 (defun module-object-cell (name initial)
   "Defines a mutable object cell initialized from INITIAL."
   (when (declare-once name)
+    (setf (gethash name (kmodule-defined *module*)) (- (incf (kmodule-cell-count *module*))))
     (push `(:object-cell ,name ,initial) (kmodule-data *module*)))
   name)
 
