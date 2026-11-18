@@ -538,12 +538,31 @@ are compared (no short circuit), which also checks every argument."
 
 (define-primop :length (v) (copy-to-var (vector-length v)))
 
+(defun emit-sequence-index (index)
+  (copy-to-var (list :fixnum-untag index) :raw))
+
+(defun emit-sequence-read (operation sequence index &optional result)
+  (let* ((index (emit-sequence-index index))
+         (value (list operation sequence index)))
+    (if result
+        (progn
+          (emit (list (if (lir-builder-representation-p sequence :obj) :lir-set :set)
+                      result value))
+          result)
+        (copy-to-var value))))
+
+(defun emit-sequence-write (operation sequence index value)
+  (let ((operands (list sequence (emit-sequence-index index) value)))
+    (if (every #'lir-builder-representation-p operands '(:obj :word :obj))
+        (emit (list* :lir-store operation operands))
+        (emit (cons operation operands)))))
+
 (define-primop :schar (s i)
   (emit-check-index s i)
-  (copy-to-var `(:string-ref ,s (:fixnum-untag ,i))))
+  (emit-sequence-read :string-ref s i))
 (define-primop :set-schar (s i c)
   (emit-check-index s i)
-  (emit `(:string-set ,s (:fixnum-untag ,i) ,c))
+  (emit-sequence-write :string-set s i c)
   c)
 
 (define-primop :make-string (n c)
@@ -554,17 +573,17 @@ are compared (no short circuit), which also checks every argument."
 
 (define-primop :svref (v i)
   (emit-check-index v i)
-  (copy-to-var `(:vector-ref ,v (:fixnum-untag ,i))))
+  (emit-sequence-read :vector-ref v i))
 (define-primop :svref-unchecked (v i)
   ;; V is known to be a simple vector and I a valid index of it (CLOS's
   ;; dispatch caches, whose indices are masked to their size).
-  (copy-to-var `(:vector-ref ,v (:fixnum-untag ,i))))
+  (emit-sequence-read :vector-ref v i))
 (define-primop :set-svref (v i x)
   (emit-check-index v i)
-  (emit `(:vector-set ,v (:fixnum-untag ,i) ,x))
+  (emit-sequence-write :vector-set v i x)
   x)
 (define-primop :set-svref-unchecked (v i x)
-  (emit `(:vector-set ,v (:fixnum-untag ,i) ,x))
+  (emit-sequence-write :vector-set v i x)
   x)
 
 ;;; SVREF, (SETF SVREF) and LENGTH are open-coded for simple vectors (and
@@ -595,12 +614,12 @@ KNOWN-FIXNUM and NONNEGATIVE require proofs about I; the length check remains."
 
 (define-primitive svref (v i)
   (emit-svref-fast-path v i
-                        (lambda () `(:vector-ref ,v (:fixnum-untag ,i)))
+                        (lambda () (emit-sequence-read :vector-ref v i))
                         (lambda () (emit-slow-call 'svref v i))))
 
 (define-primitive (setf svref) (x v i)
   (emit-svref-fast-path v i
-                        (lambda () (emit `(:vector-set ,v (:fixnum-untag ,i) ,x)) x)
+                        (lambda () (emit-sequence-write :vector-set v i x) x)
                         (lambda () (emit-slow-call '(setf svref) x v i))))
 
 (defun emit-schar (s i c slow-name &optional known-string)
@@ -616,9 +635,9 @@ KNOWN-FIXNUM and NONNEGATIVE require proofs about I; the length check remains."
         slow fast)
     (start-block fast)
     (if c
-        (progn (emit `(:string-set ,s (:fixnum-untag ,i) ,c))
+        (progn (emit-sequence-write :string-set s i c)
                (emit `(:set ,r ,c)))
-        (emit `(:set ,r (:string-ref ,s (:fixnum-untag ,i)))))
+        (emit-sequence-read :string-ref s i r))
     (jump done)
     (start-block slow)
     (emit `(:set ,r ,(if c
@@ -651,9 +670,9 @@ KNOWN-FIXNUM and NONNEGATIVE require proofs about I; the length check remains."
     (br bad-index slow fast-vector)
     (start-block fast-vector)
     (if x
-        (progn (emit `(:vector-set ,v (:fixnum-untag ,i) ,x))
+        (progn (emit-sequence-write :vector-set v i x)
                (emit `(:set ,r ,x)))
-        (emit `(:set ,r (:vector-ref ,v (:fixnum-untag ,i)))))
+        (emit-sequence-read :vector-ref v i r))
     (jump done)
     (start-block string)
     (br (if x
@@ -662,9 +681,9 @@ KNOWN-FIXNUM and NONNEGATIVE require proofs about I; the length check remains."
         slow fast-string)
     (start-block fast-string)
     (if x
-        (progn (emit `(:string-set ,v (:fixnum-untag ,i) ,x))
+        (progn (emit-sequence-write :string-set v i x)
                (emit `(:set ,r ,x)))
-        (emit `(:set ,r (:string-ref ,v (:fixnum-untag ,i)))))
+        (emit-sequence-read :string-ref v i r))
     (jump done)
     (start-block slow)
     (emit `(:set ,r ,(if x

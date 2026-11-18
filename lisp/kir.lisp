@@ -246,6 +246,7 @@ entry block current. Unterminated blocks end with a trap."
 
 (defun diagnostic-statement (statement)
   (case (first statement)
+    (:lir-store (rest statement))
     (:lir-field-set
      (list :field-store (fifth statement) (third statement) (fourth statement)))
     (:lir-set

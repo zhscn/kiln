@@ -151,8 +151,8 @@
        (emit-svref-fast-path
         object index
         (lambda () (if store
-                       (progn (emit `(:vector-set ,object (:fixnum-untag ,index) ,value)) value)
-                       `(:vector-ref ,object (:fixnum-untag ,index))))
+                       (progn (emit-sequence-write :vector-set object index value) value)
+                       (emit-sequence-read :vector-ref object index)))
         (lambda () (if store (emit-slow-call name value object index)
                        (emit-slow-call name object index))) t
         (hir-fixnum-type-p index-type)

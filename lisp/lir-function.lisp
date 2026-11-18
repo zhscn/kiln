@@ -382,6 +382,7 @@
       (:special-set
        (lir-emit state `(:special-set ,(lir-operand state (first args) :obj)
                                      ,(lir-operand state (second args) :obj))))
+      (:lir-store (lir-emit state args))
       (:lir-field-set
        (lir-emit state (list :field-set (first args) (second args) (third args))))
       (:field-store
