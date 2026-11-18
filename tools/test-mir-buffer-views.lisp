@@ -1,7 +1,7 @@
 ;;;; Run after tools/env.lisp and (ql:quickload "kiln").
 (in-package #:kiln.compiler)
 
-(let* ((buffer (make-hir-buffer)) (*hir-buffer-views* (make-hash-table :test 'eq)))
+(let* ((buffer (make-hir-buffer)) (*hir-buffer-views* (make-compiler-eq-table)))
   (hir-push :first buffer)
   (let ((before (hir-buffer-view buffer)))
     (assert (eq before (hir-buffer-view buffer)))
@@ -28,7 +28,7 @@
        (unit (hir-to-mir (toplevel-form-ast (first forms))))
        (function (mir-at (mir-unit-functions unit) 0))
        (buffer (mir-function-instructions function))
-       (*hir-buffer-views* (make-hash-table :test 'eq))
+       (*hir-buffer-views* (make-compiler-eq-table))
        (before (hir-buffer-view buffer))
        (old (svref before 0)) (invalid (copy-mir-instruction old)))
   (setf (mir-instruction-effects invalid) -1

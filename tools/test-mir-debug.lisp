@@ -91,3 +91,11 @@
          (storage (svref (mir-infer-storage unit) 0)))
     (assert (eq (zerop (mir-storage-analysis-stack storage)) (= debug 2)))))
 (format t "MIR storage respects source-visible debugger observations.~%")
+
+(dolist (form '((lambda (x) (+ x 1))
+                (lambda (x)
+                  (declare (optimize (debug 3)))
+                  (flet ((f (y) (+ x y))) (f x)))))
+  (let ((unit (mir-debug-test-unit form)))
+    (assert (eq (mir-lift-local-functions unit) unit))
+    (assert (not (nth-value 1 (gethash :calls (mir-unit-analyses unit)))))))

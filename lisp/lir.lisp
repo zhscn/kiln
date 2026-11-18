@@ -95,6 +95,8 @@
              (when (eq (first object) :static-function)
                (lir-register-capture-shape data (second object) 0)))
            (lir-data-objects data))
+  (when (kmodule-capture-shapes-complete-p module)
+    (return-from lir-collect-capture-shapes))
   (dolist (function (kmodule-funcs module))
     (let ((slots (rest (assoc :slots (cddr function)))))
       (dolist (part (cddr function))

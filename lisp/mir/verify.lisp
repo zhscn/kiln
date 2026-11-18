@@ -67,11 +67,13 @@
 
 (defun mir-verification-function-identities (function)
   "Reuse identities within one verification of an unchanged graph."
-  (if *mir-verification-identities*
-      (or (gethash function *mir-verification-identities*)
-          (setf (gethash function *mir-verification-identities*)
-                (mir-compute-function-identities function)))
-      (mir-compute-function-identities function)))
+  (let ((cache *mir-verification-identities*))
+    (or (and cache (gethash function cache))
+        (let ((identities
+                (with-compilation-phase (:mir-analysis '(:mir-analysis :verification :functions))
+                  (mir-compute-function-identities function))))
+          (when cache (setf (gethash function cache) identities))
+          identities))))
 
 (defun mir-verify-closure-initialization (unit function)
   (unless (find-if (lambda (instruction) (member (mir-instruction-kind instruction) '(23 24)))
@@ -351,19 +353,12 @@
               (mir-fail "MIR binding parameter disagrees with its cell layout"))))))
   function)
 
-(defun verify-mir-function (unit function)
-  (let ((*hir-buffer-views* (if *mir-verification-identities*
-                               (or *hir-buffer-views* (make-hash-table :test 'eq))
-                               (make-hash-table :test 'eq)))
-        (*mir-verification-identities* (or *mir-verification-identities* (make-hash-table :test 'eq))))
-    (mir-verify-function-body unit function)))
-
 (defun mir-verify-function-body (unit function)
+  "Verify a body after the unit check has validated all function layouts."
   (let* ((blocks (mir-function-blocks function)) (instructions (mir-function-instructions function))
          (values (mir-function-values function))
          (seen-instructions (make-array (hir-buffer-count instructions) :initial-element nil))
          (seen-values (make-array (hir-buffer-count values) :initial-element nil)))
-    (mir-verify-function-layout unit function)
     (labels ((definition (id block position)
                (let ((value (mir-at values id)))
                  (unless (and (mir-value-p value) (= id (mir-value-id value))
@@ -553,7 +548,9 @@
               (loop for edge across (mir-terminator-edges term)
                     do (loop for operand across (mir-edge-arguments edge) do (use operand i (length body)))))))))
     (mir-verify-region-landings function)
-    (let ((bindings (mir-compute-binding-regions function)))
+    (let ((bindings
+            (with-compilation-phase (:mir-analysis '(:mir-analysis :verification :binding-regions))
+              (mir-compute-binding-regions function))))
       (setf (gethash :binding-regions (mir-function-analyses function))
             (cons (mir-function-revision function) bindings)))
     function))
@@ -574,7 +571,7 @@
 
 (defun verify-mir (unit)
   (let ((*mir-verification-identities* (make-hash-table :test 'eq))
-        (*hir-buffer-views* (make-hash-table :test 'eq)))
+        (*hir-buffer-views* (make-compiler-eq-table)))
     (when (zerop (hir-buffer-count (mir-unit-functions unit))) (mir-fail "Empty MIR unit"))
     ;; Call validation reads callee layouts. Check every layout before any
     ;; function body so malformed later entries cannot reach those reads.
@@ -587,6 +584,6 @@
       (mir-fail "MIR unit entry cannot require a closure environment"))
     (unless (eql 0 (mir-function-internal-prefix (mir-at (mir-unit-functions unit) 0)))
       (mir-fail "MIR unit entry cannot require a private prefix"))
-    (loop for function across (hir-buffer-view (mir-unit-functions unit)) do (verify-mir-function unit function))
+    (loop for function across (hir-buffer-view (mir-unit-functions unit)) do (mir-verify-function-body unit function))
     (mir-verify-private-entries unit)
     unit))

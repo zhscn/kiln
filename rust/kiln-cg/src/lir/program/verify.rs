@@ -17,9 +17,7 @@ pub(super) fn module(module: &Module) -> Result<Verified<'_>> {
             return Err("LIR: duplicate builtin declaration".into());
         }
     }
-    super::constants::verify(module)?;
-    super::debug::verify(module)?;
-    let mut functions = HashSet::new();
+    let mut functions = HashMap::with_capacity(module.functions.len());
     for f in &module.functions {
         if f.name.is_empty()
             || f.name.contains('\0')
@@ -59,20 +57,18 @@ pub(super) fn module(module: &Module) -> Result<Verified<'_>> {
         {
             return Err(format!("LIR: invalid or reserved function name {}", f.name));
         }
-        if !functions.insert(f.name.as_str()) {
+        if functions.insert(f.name.as_str(), f.captures).is_some() {
             return Err(format!("LIR: duplicate function {}", f.name));
         }
     }
-    if !functions.contains(module.init.as_str()) {
-        return Err("LIR: init function is not defined".into());
-    }
-    if module
-        .functions
-        .iter()
-        .any(|f| f.name == module.init && f.captures != 0)
-    {
+    let init_captures = functions
+        .get(module.init.as_str())
+        .ok_or("LIR: init function is not defined")?;
+    if *init_captures != 0 {
         return Err("LIR: init function cannot require captures".into());
     }
+    super::constants::verify(module, &functions)?;
+    super::debug::check_budget(module)?;
     let flow = module
         .functions
         .iter()
@@ -81,17 +77,22 @@ pub(super) fn module(module: &Module) -> Result<Verified<'_>> {
                 .map_err(|error| format!("LIR function {}: {error}", f.name))
         })
         .collect::<Result<_>>()?;
-    Ok(Verified { module, flow })
+    Ok(Verified {
+        module,
+        functions,
+        flow,
+    })
 }
 
 struct Types<'a> {
-    vars: HashMap<&'a str, Type>,
+    vars: HashMap<&'a str, usize>,
+    declarations: &'a [(String, Type)],
 }
 impl Types<'_> {
     fn get(&self, name: &str) -> Result<Type> {
         self.vars
             .get(name)
-            .copied()
+            .map(|&index| self.declarations[index].1)
             .ok_or_else(|| format!("undeclared variable {name}"))
     }
     fn expect(&self, name: &str, ty: Type) -> Result<()> {
@@ -118,7 +119,7 @@ fn expression(
     types: &Types<'_>,
     f: &Function,
     module: &Module,
-    functions: &HashSet<&str>,
+    functions: &FunctionIndex<'_>,
 ) -> Result<Type> {
     use Expression::*;
     Ok(match expr {
@@ -183,10 +184,7 @@ fn expression(
             Type::Obj
         }
         Function(name) => {
-            if !functions.contains(name.as_str()) {
-                return Err(format!("undefined function {name}"));
-            }
-            if function_captures(module, name)? != 0 {
+            if function_captures(functions, name)? != 0 {
                 return Err("captured function requires a closure".into());
             }
             Type::Obj
@@ -237,7 +235,7 @@ fn instruction(
     types: &Types<'_>,
     f: &Function,
     module: &Module,
-    functions: &HashSet<&str>,
+    functions: &FunctionIndex<'_>,
 ) -> Result<()> {
     match inst {
         Instruction::Runtime {
@@ -390,7 +388,7 @@ fn instruction(
             if let Instruction::Call {
                 entry: Some(entry), ..
             } = inst
-                && !functions.contains(entry.as_str())
+                && !functions.contains_key(entry.as_str())
             {
                 return Err("known call entry is not defined".into());
             }
@@ -415,7 +413,7 @@ fn instruction(
                 }
             }
             types.expect(result, Type::Obj)?;
-            let count = function_captures(module, entry)?;
+            let count = function_captures(functions, entry)?;
             if let Some(fields) = fields {
                 if fields.len() != count {
                     return Err("closure capture count does not match entry".into());
@@ -431,7 +429,7 @@ fn instruction(
         } => {
             types.expect(closure, Type::Obj)?;
             types.expect(value, Type::Obj)?;
-            if *index >= function_captures(module, entry)? {
+            if *index >= function_captures(functions, entry)? {
                 return Err("capture index out of range".into());
             }
         }
@@ -902,15 +900,6 @@ fn find_region(f: &Function, name: &str) -> Result<usize> {
         .ok_or_else(|| format!("undefined region {name}"))
 }
 
-fn function_captures(module: &Module, name: &str) -> Result<usize> {
-    module
-        .functions
-        .iter()
-        .find(|f| f.name == name)
-        .map(|f| f.captures)
-        .ok_or_else(|| format!("undefined function {name}"))
-}
-
 fn find_stack_object<'a>(f: &'a Function, name: &str) -> Result<&'a StackObject> {
     f.stack_objects
         .iter()
@@ -1147,7 +1136,7 @@ fn region_flow(
     Ok(flow)
 }
 
-fn function(f: &Function, module: &Module, functions: &HashSet<&str>) -> Result<Flow> {
+fn function(f: &Function, module: &Module, functions: &FunctionIndex<'_>) -> Result<Flow> {
     if f.receive > ARGUMENT_LIMIT {
         return Err("receive declaration exceeds argument limit".into());
     }
@@ -1158,13 +1147,15 @@ fn function(f: &Function, module: &Module, functions: &HashSet<&str>) -> Result<
         return Err("function has no entry block".into());
     }
     let mut types = Types {
-        vars: HashMap::new(),
+        vars: HashMap::with_capacity(f.vars.len()),
+        declarations: &f.vars,
     };
-    for (name, ty) in &f.vars {
-        if name.is_empty() || types.vars.insert(name, *ty).is_some() {
+    for (index, (name, _)) in f.vars.iter().enumerate() {
+        if name.is_empty() || types.vars.insert(name, index).is_some() {
             return Err(format!("duplicate or empty variable {name}"));
         }
     }
+    let debug_types = super::debug::verify_function(module, f, |name| types.get(name).ok())?;
     if let Some(rest) = &f.rest {
         types.expect(&rest.variable, Type::Obj)?;
         if rest.first > ARGUMENT_LIMIT || rest.stack_capacity > ARGUMENT_LIMIT {
@@ -1197,7 +1188,7 @@ fn function(f: &Function, module: &Module, functions: &HashSet<&str>) -> Result<
         if object.name.is_empty() || !objects.insert(object.name.as_str()) {
             return Err("duplicate or empty stack object name".into());
         }
-        let (class, count) = object.shape(&module.functions)?;
+        let (class, count) = object.shape(functions)?;
         let (bytes, _, _) = crate::lir::stack_object_layout(class, count as i64)?;
         frame_bytes = frame_bytes
             .checked_add(bytes as usize)
@@ -1267,7 +1258,7 @@ fn function(f: &Function, module: &Module, functions: &HashSet<&str>) -> Result<
                 _ => None,
             };
             if let Some((object, extra)) = stack_work {
-                let (class, count) = find_stack_object(f, object)?.shape(&module.functions)?;
+                let (class, count) = find_stack_object(f, object)?.shape(functions)?;
                 let (bytes, _, _) = crate::lir::stack_object_layout(class, count as i64)?;
                 expanded_stack_words = expanded_stack_words
                     .checked_add(bytes as usize / 8 + extra)
@@ -1325,14 +1316,8 @@ fn function(f: &Function, module: &Module, functions: &HashSet<&str>) -> Result<
             break flow;
         }
     };
-    let variables = f
-        .vars
-        .iter()
-        .enumerate()
-        .map(|(index, (name, _))| (name.as_str(), index))
-        .collect();
     let mut entries = vec![None; f.blocks.len()];
-    let mut initial = State::new(&variables);
+    let mut initial = State::new(&types.vars);
     if let Some(rest) = &f.rest {
         initial.initialize(&rest.variable);
     }
@@ -1401,6 +1386,7 @@ fn function(f: &Function, module: &Module, functions: &HashSet<&str>) -> Result<
         check.map_err(|error| format!("block {}: {error}", block.name))?;
     }
     Ok(Flow {
+        debug_types,
         polls,
         entries: regions.entries,
     })

@@ -5,7 +5,7 @@
 ;;;; then rename that view when the pair moves to a common destination.
 
 (defun lir-pair-view (state primary count)
-  (unless (eq (gethash count (lir-function-types state)) :word)
+  (unless (eq (lir-variable-kind state count) :word)
     (lir-function-error state "result count is not a machine-word variable: ~S" count))
   (multiple-value-bind (old found) (gethash count (lir-function-view-primaries state))
     (when (and found (not (equalp old primary)))
@@ -18,7 +18,7 @@
   (multiple-value-bind (old found) (gethash variable (lir-function-value-aliases state))
     (declare (ignore old))
     (setf (gethash variable (lir-function-value-aliases state))
-          (if (and (not found) (or (gethash value (lir-function-types state)) (eq value :self))) value :unknown))))
+          (if (and (not found) (or (lir-variable-kind state value) (eq value :self))) value :unknown))))
 
 (defun lir-scan-value-statement (state statement)
   (case (first statement)

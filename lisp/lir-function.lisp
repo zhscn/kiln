@@ -16,10 +16,12 @@
 
 (defvar *lir-view-hint* nil)
 
+(defstruct (lir-variable (:constructor make-lir-variable (name representation)))
+  name representation constant-word)
+
 (defstruct lir-function
   name data
-  (types (make-hash-table :test 'equalp))
-  (constant-words (make-hash-table :test 'equalp))
+  (variables-by-id (make-array 8 :initial-element nil) :type simple-vector)
   (views (make-hash-table :test 'equalp))
   (view-primaries (make-hash-table :test 'equalp))
   (value-aliases (make-hash-table :test 'equalp))
@@ -39,9 +41,44 @@
 (defun lir-function-error (state control &rest arguments)
   (error "LIR function ~A: ~A" (lir-function-name state) (apply #'format nil control arguments)))
 
+(defun lir-variable-index (name)
+  (when (kvar-p name)
+    (let ((id (svref name 1)))
+      (when (typep id '(integer 0 #.(ash most-positive-fixnum -1)))
+        (case (svref name 0)
+          (#\v (* 2 id))
+          (#\l (1+ (* 2 id))))))))
+
+(defun lir-variable-entry (state name)
+  (let ((index (lir-variable-index name))
+        (kinds (lir-function-variables-by-id state)))
+    (when (and index (< index (length kinds)))
+      (let ((entry (svref kinds index)))
+        (when (and entry (or (eq name (lir-variable-name entry))
+                             (equalp name (lir-variable-name entry))))
+          entry)))))
+
+(defun lir-variable-kind (state name)
+  (let ((entry (lir-variable-entry state name)))
+    (when entry (lir-variable-representation entry))))
+
+(defun lir-require-variable (state name)
+  (or (lir-variable-entry state name)
+      (lir-function-error state "undeclared variable ~S" name)))
+
+(defun lir-register-variable (state name kind)
+  (let ((index (lir-variable-index name))
+        (kinds (lir-function-variables-by-id state)))
+    (unless index (lir-function-error state "invalid variable name ~S" name))
+    (unless (< index (length kinds))
+      (setf kinds (replace (make-array (max (1+ index) (* 2 (length kinds))) :initial-element nil)
+                           kinds)
+            (lir-function-variables-by-id state) kinds))
+    (setf (svref kinds index) (make-lir-variable name kind))))
+
 (defun lir-new-temporary (state kind)
   (let ((name (vector #\l (incf (lir-function-counter state)) kind nil)))
-    (setf (gethash name (lir-function-types state)) kind)
+    (lir-register-variable state name kind)
     (push (list name kind) (lir-function-temporaries state))
     name))
 
@@ -80,7 +117,7 @@
         (t (error "Field ~S is not an object reference field" field))))
 
 (defun lir-expression-kind (state expression)
-  (or (gethash expression (lir-function-types state))
+  (or (lir-variable-kind state expression)
       (cond ((integerp expression) nil)
             ((eq expression :self) :obj)
             ((consp expression)
@@ -104,8 +141,7 @@
            (second (gethash (first expression) *lir-operation-signatures*)))))
 
 (defun lir-operand (state expression kind)
-  (if (and (gethash expression (lir-function-types state))
-           (eq (gethash expression (lir-function-types state)) kind))
+  (if (and kind (eq (lir-variable-kind state expression) kind))
       expression
       (let ((value (lir-expression state expression kind))
             (result (lir-new-temporary state kind)))
@@ -133,7 +169,7 @@
               ((and (eq actual :word) (eq expected :f64))
                (lir-pure-expression state :f64-from-bits (list expression)))
               (t (lir-function-error state "expected ~S, got ~S from ~S" expected actual expression)))))
-    (cond ((gethash expression (lir-function-types state)) expression)
+    (cond ((lir-variable-kind state expression) expression)
           ((integerp expression)
            (case expected
              (:word `(:word ,expression)) (:f64 `(:f64 ,expression))
@@ -217,8 +253,9 @@
 
 (defun lir-return-count (state count)
   (if (integerp count) count
-      (multiple-value-bind (value found) (gethash count (lir-function-constant-words state))
-        (if (and found (integerp value)) value
+      (let* ((entry (lir-variable-entry state count))
+             (value (and entry (lir-variable-constant-word entry))))
+        (if (integerp value) value
             (lir-function-error state "return needs a multi-value view for count ~S" count)))))
 
 (defun lir-statement (state statement)
@@ -295,7 +332,7 @@
          (lir-emit state `(:alloc ,(first args) ,kind :heap
                             ,(mapcar (lambda (argument type) (lir-operand state argument type)) (third args) types)))))
       (:set
-       (let ((kind (gethash (first args) (lir-function-types state))))
+       (let ((kind (lir-variable-kind state (first args))))
          (unless kind (lir-function-error state "assignment to undeclared variable ~S" (first args)))
          (lir-emit state `(:set ,(first args) ,(lir-expression state (second args) kind)))))
       (:receive-prefix
@@ -379,7 +416,7 @@
       (unless (and (= (length description) 2) (member (first description) '(:cell :double-bits)))
         (lir-function-error state "invalid image variable description ~S" description))
       (setf name (second description) cell (eq (first description) :cell))
-      (unless (eq (gethash variable (lir-function-types state)) (if cell :obj :f64))
+      (unless (eq (lir-variable-kind state variable) (if cell :obj :f64))
         (lir-function-error state "debug variable representation disagrees with ~S" description)))
     `(,variable ,(lir-image-value (lir-function-data state) name) ,@(and cell '(:cell)))))
 
@@ -421,9 +458,10 @@
                           collect (lir-debug-variable state (first declaration) (nth (third declaration) names))))))))
 
 (defun lir-record-word-write (state variable value)
-  (multiple-value-bind (old found) (gethash variable (lir-function-constant-words state))
-    (setf (gethash variable (lir-function-constant-words state))
-          (if (and (integerp value) (or (not found) (eql old value))) value :unknown))))
+  (let* ((entry (lir-require-variable state variable))
+         (old (lir-variable-constant-word entry)))
+    (setf (lir-variable-constant-word entry)
+          (if (and (integerp value) (or (null old) (eql old value))) value :unknown))))
 
 (defun normalize-lir-function (data function)
   "Normalizes source expressions and binding code to the independent function grammar."
@@ -436,7 +474,7 @@
           (or (gethash (second function) (lir-data-function-captures data)) 0))
     (dolist (declaration declarations)
       (let ((kind (ecase (second declaration) (:obj :obj) (:raw :word) (:f64 :f64))))
-        (setf (gethash (first declaration) (lir-function-types state)) kind)
+        (lir-register-variable state (first declaration) kind)
         (push (list (first declaration) kind) (lir-function-variables state))))
     (dolist (part parts)
       (when (eq (first part) :block)

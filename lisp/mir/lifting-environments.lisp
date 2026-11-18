@@ -675,5 +675,9 @@
 
 
 (defun mir-lift-local-functions (unit &key (parameter-budget 4096))
-  (mir-lift-private-environments unit :parameter-budget parameter-budget)
-  (mir-lift-direct-environments unit :parameter-budget parameter-budget))
+  (when (loop for function across (hir-buffer-view (mir-unit-functions unit))
+              thereis (and (plusp (length (mir-function-captures function)))
+                           (mir-lifting-policy-p function)))
+    (mir-lift-private-environments unit :parameter-budget parameter-budget)
+    (mir-lift-direct-environments unit :parameter-budget parameter-budget))
+  unit)

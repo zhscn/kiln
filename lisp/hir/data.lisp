@@ -45,10 +45,10 @@
 (defun hir-buffer-view (buffer)
   "Borrow a read-only snapshot in the current analysis scope; append refreshes it."
   (if *hir-buffer-views*
-      (let ((entry (gethash buffer *hir-buffer-views*)))
+      (let ((entry (compiler-eq-ref *hir-buffer-views* buffer)))
         (if (and entry (= (car entry) (hir-buffer-count buffer))) (cdr entry)
             (let ((view (hir-vector buffer)))
-              (setf (gethash buffer *hir-buffer-views*) (cons (hir-buffer-count buffer) view))
+              (setf (compiler-eq-ref *hir-buffer-views* buffer) (cons (hir-buffer-count buffer) view))
               view)))
       (hir-vector buffer)))
 

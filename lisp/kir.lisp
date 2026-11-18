@@ -22,7 +22,8 @@
   (roots '())
   (shared '())
   (defined (make-hash-table :test 'equal))
-  (function-captures (make-hash-table :test 'equal)))
+  (function-captures (make-hash-table :test 'equal))
+  capture-shapes-complete-p)
 
 (defun make-kmodule (name)
   (%make-kmodule name))

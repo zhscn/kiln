@@ -500,7 +500,7 @@ those whose names are in EXCLUDE."
      (system-files "anatomicl")
      ;; kiln's compiler (M5.3): its packages are the host's.
      (mapcar (lambda (name) (asdf:system-relative-pathname "kiln" (format nil "lisp/~A.lisp" name)))
-             '("abi" "kir" "lir-schema" "backend-target" "compilation-metrics" "backend-packet" "lir" "lir-function" "lir-values" "lir-closures" "lir-stack" "lir-regions" "lir-api" "hir/data" "hir/consumer" "lower" "values" "primitives" "structures" "source-forms" "compilation-context" "environment-query" "toplevel" "front" "cross"
+             '("abi" "kir" "lir-schema" "backend-target" "compilation-metrics" "compiler-eq-table" "backend-packet" "lir" "lir-function" "lir-values" "lir-closures" "lir-stack" "lir-regions" "lir-api" "hir/data" "hir/consumer" "lower" "values" "primitives" "structures" "source-forms" "compilation-context" "environment-query" "toplevel" "front" "cross"
                "hir/environment" "hir/convert" "type-inference" "hir/analyze" "hir/eval" "mir/data" "mir/pass" "mir/verify" "mir/build" "mir/values" "mir/types" "mir/calls" "mir/escape" "mir/predicates" "mir/lifting" "mir/lifting-environments" "mir/inlining" "mir/lists" "mir/scalar" "mir/simplify" "mir/lower" "mir/dump"
                "target/compiler/client" "target/eval/interpreter"))))
 

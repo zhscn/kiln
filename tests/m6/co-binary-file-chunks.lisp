@@ -6,7 +6,9 @@
        (progn
          (with-open-file (out path :direction :output :if-exists :supersede
                                   :element-type '(unsigned-byte 8))
-           (write-sequence data out))
+           (assert (eq data (write-sequence data out :end 8189)))
+           (assert (eq data (write-sequence data out :start 8189 :end 8195)))
+           (assert (eq data (write-sequence data out :start 8195))))
          (with-open-file (in path :element-type '(unsigned-byte 8))
            (assert (= (read-byte in) 0))
            (let ((bytes (make-array (+ size 5) :initial-element :untouched)))

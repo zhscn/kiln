@@ -3,41 +3,50 @@ use crate::kir::{Data, DataContents, Expr, Word};
 use kiln_rt::object::*;
 use std::collections::HashSet;
 
-pub(super) fn verify(module: &Module) -> Result<()> {
+pub(super) fn check_budget(module: &Module) -> Result<()> {
     let mut words = 0usize;
-    for function in &module.functions {
-        let Some(debug) = &function.debug else {
-            continue;
-        };
-        if debug.start > debug.end {
-            return Err("LIR: reversed debug source range".into());
-        }
-        constants::validate_value(module, &debug.name)?;
-        constants::validate_value(module, &debug.file)?;
-        let mut seen = HashSet::new();
-        for variable in &debug.variables {
-            let ty = function
-                .vars
-                .iter()
-                .find(|(name, _)| name == &variable.variable)
-                .map(|(_, ty)| *ty)
-                .ok_or("LIR: debug variable is not declared")?;
-            if !matches!(ty, Type::Obj | Type::F64) || (variable.cell && ty != Type::Obj) {
-                return Err("LIR: invalid debug variable representation".into());
-            }
-            if !seen.insert(&variable.variable) {
-                return Err("LIR: duplicate debug variable".into());
-            }
-            constants::validate_value(module, &variable.name)?;
-        }
-        words = words
-            .checked_add(7 + debug.variables.len() * 7)
+    for debug in module.functions.iter().filter_map(|f| f.debug.as_ref()) {
+        words = debug
+            .variables
+            .len()
+            .checked_mul(7)
+            .and_then(|count| count.checked_add(7))
+            .and_then(|count| words.checked_add(count))
             .ok_or("LIR: debug expansion overflow")?;
         if words > crate::packet::schema::MAX_BYTES as usize / 8 {
             return Err("LIR: debug data exceeds request limit".into());
         }
     }
     Ok(())
+}
+
+pub(super) fn verify_function(
+    module: &Module,
+    function: &Function,
+    variable_type: impl Fn(&str) -> Option<Type>,
+) -> Result<Vec<Type>> {
+    let Some(debug) = &function.debug else {
+        return Ok(Vec::new());
+    };
+    if debug.start > debug.end {
+        return Err("LIR: reversed debug source range".into());
+    }
+    constants::validate_value(module, &debug.name)?;
+    constants::validate_value(module, &debug.file)?;
+    let mut seen = HashSet::with_capacity(debug.variables.len());
+    let mut types = Vec::with_capacity(debug.variables.len());
+    for variable in &debug.variables {
+        let ty = variable_type(&variable.variable).ok_or("LIR: debug variable is not declared")?;
+        if !matches!(ty, Type::Obj | Type::F64) || (variable.cell && ty != Type::Obj) {
+            return Err("LIR: invalid debug variable representation".into());
+        }
+        if !seen.insert(&variable.variable) {
+            return Err("LIR: duplicate debug variable".into());
+        }
+        constants::validate_value(module, &variable.name)?;
+        types.push(ty);
+    }
+    Ok(types)
 }
 
 pub(super) fn label(function: &Function) -> String {
@@ -84,25 +93,19 @@ fn value(
     )
 }
 pub(super) fn lower(
-    module: &Module,
+    verified: &Verified<'_>,
     objects: &[Expr],
     result: &mut kir::Module,
     imports: &mut HashSet<String>,
 ) {
-    for function in &module.functions {
+    for (function, flow) in verified.module.functions.iter().zip(&verified.flow) {
         let Some(debug) = &function.debug else {
             continue;
         };
         let label = label(function);
         let names = format!("{label}_names");
         let mut variables = Vec::new();
-        for (i, variable) in debug.variables.iter().enumerate() {
-            let ty = function
-                .vars
-                .iter()
-                .find(|(name, _)| name == &variable.variable)
-                .unwrap()
-                .1;
+        for (i, (variable, &ty)) in debug.variables.iter().zip(&flow.debug_types).enumerate() {
             let mut name = value(&variable.name, objects, imports);
             if variable.cell || ty == Type::F64 {
                 let keyword = if variable.cell { "CELL" } else { "DOUBLE-BITS" };

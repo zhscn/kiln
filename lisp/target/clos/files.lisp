@@ -222,6 +222,15 @@
       (+ start (stream-read-octets stream sequence start end))
       (call-next-method)))
 
+(defmethod stream-write-sequence ((stream kiln-file-stream) sequence
+                                 &optional (start 0) end)
+  (if (and (vectorp sequence)
+           (equal (stream-element-type stream) '(unsigned-byte 8))
+           (equal (array-element-type sequence) '(unsigned-byte 8))
+           (<= 0 start (or end (length sequence)) (length sequence)))
+      (stream-write-octets stream sequence start end)
+      (call-next-method)))
+
 (defmethod stream-finish-output ((stream kiln-file-stream))
   (flush-file-buffer stream)
   nil)

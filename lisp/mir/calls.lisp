@@ -6,7 +6,7 @@
   (cond ((eq old :unseen) new) ((eq new :unseen) old)
         ((eql old new) old) (t :unknown)))
 
-(defun mir-compute-function-identities (function &key inputs summaries (finalize t))
+(defun mir-compute-function-identities (function &key inputs summaries (finalize t) (trust-captures t))
   "Track one local function ID, or :UNKNOWN, through primary values."
   (let* ((identities (make-array (hir-buffer-count (mir-function-values function))
                                  :initial-element :unseen))
@@ -34,7 +34,9 @@
                              (cond ((eq target :unseen) :unseen)
                                    ((and summaries (integerp target)) (svref summaries target))
                                    (t :unknown))))
-                   (22 (or (svref (mir-function-capture-functions function) (mir-instruction-data instruction)) :unknown))
+                   (22 (or (and trust-captures
+                                (svref (mir-function-capture-functions function) (mir-instruction-data instruction)))
+                           :unknown))
                    ((3 9 10 11 39) (svref identities (svref args 0)))
                    (14 (if (zerop (mir-instruction-data instruction))
                            (svref identities (svref args 0)) :unknown))

@@ -1,19 +1,30 @@
 ;;;; Run after tools/env.lisp and (ql:quickload "kiln").
 (in-package #:kiln.compiler)
 
+(defun mir-fast-double-box-count (module)
+  (let ((slow-callee
+          (list :object-address
+                (kiln.kir::kir-name "kiln_sym_" (symbol-label 'kiln.kernel::controlled-real-arithmetic))
+                :general)))
+    (labels ((slow-block-p (tree)
+               (or (equal tree slow-callee)
+                   (and (consp tree)
+                        (or (slow-block-p (car tree)) (slow-block-p (cdr tree))))))
+             (boxes (tree)
+               (cond ((atom tree) 0)
+                     ;; This block handles exceptional operands or rounding modes
+                     ;; through the boxed arithmetic ABI.
+                     ((and (eq (car tree) :block) (slow-block-p tree)) 0)
+                     ((and (eq (car tree) :alloc-fixed)
+                           (eql (third tree) kiln.kir::+packet-class-double+)) 1)
+                     (t (+ (boxes (car tree)) (boxes (cdr tree)))))))
+      (boxes (kiln.kir::kmodule-funcs module)))))
+
 (defun mir-double-box-count (body)
-  (let* ((session (make-session))
-         (module (compile-module (front-end-forms (list body) session)
-                                 "double-boxes" :session session))
-         (count 0))
-    (labels ((visit (node)
-               (when (consp node)
-                 (when (and (eq (first node) :alloc-fixed)
-                            (eql (third node) kiln.kir::+packet-class-double+))
-                   (incf count))
-                 (dolist (part node) (visit part)))))
-      (visit (kiln.kir::kmodule-funcs module)))
-    count))
+  (let ((session (make-session)))
+    (mir-fast-double-box-count
+     (compile-module (front-end-forms (list body) session)
+                     "double-boxes" :session session))))
 
 ;; Only the result crossing the object ABI needs a box. Source-visible
 ;; bindings remain object uses at high debug, so their observations survive.

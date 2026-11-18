@@ -183,8 +183,12 @@
                    ((simple-vector-p object)
                     (write-byte 6 stream) (fasl-write-uint (length object) stream)
                     (loop for octet across object
-                          do (unless (typep octet '(unsigned-byte 8)) (error "Invalid packet octet."))
-                             (write-byte octet stream)))
+                          unless (typep octet '(unsigned-byte 8))
+                            do (error "Invalid packet octet."))
+                    (if (and (typep stream 'cyclosis::kiln-file-stream)
+                             (equal (stream-element-type stream) '(unsigned-byte 8)))
+                        (cyclosis:stream-write-octets stream object)
+                        (write-sequence object stream)))
                    (t (error "Unsupported FASL record datum ~S." object))))))
 
 (defun fasl-intern-symbol (name package)
