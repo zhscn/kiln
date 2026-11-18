@@ -359,10 +359,21 @@ one (bindings have none)."
 (defun jump (b) (emit (list :jump (bname b))))
 (defun br (cond then else) (emit (list :br cond (bname then) (bname else))))
 
+(defun lir-builder-representation-p (operand representation)
+  (and (kiln.kir::kvar-p operand)
+       (eq (svref operand 2) (if (eq representation :word) :raw representation))))
+
 (defun copy-to-var (operand &optional (kind :obj))
-  (let ((v (new-var kind)))
-    (emit (list :set v operand))
-    v))
+  (let* ((variable (new-var kind))
+         (signature (and (consp operand)
+                         (gethash (first operand) kiln.kir::*lir-operation-signatures*))))
+    (cond ((and signature
+                (lir-builder-representation-p variable (second signature))
+                (= (length (rest operand)) (length (first signature)))
+                (every #'lir-builder-representation-p (rest operand) (first signature)))
+           (emit (list :lir-set variable operand)))
+          (t (kiln.kir::emit-lir-assignment variable operand)))
+    variable))
 
 (defun emit-fatal-error (code obj)
   "Reports error CODE about the Lisp value OBJ and ends the program."

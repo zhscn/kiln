@@ -343,7 +343,7 @@
          (lir-emit state `(:alloc ,(first args) ,kind :heap
                             ,(mapcar (lambda (argument type) (lir-operand state argument type)) (third args) types)))))
       (:lir-set
-       (lir-emit state (cons :set args)))
+       (lir-emit state (list :set (first args) (second args))))
       (:set
        (let ((kind (lir-variable-kind state (first args))))
          (unless kind (lir-function-error state "assignment to undeclared variable ~S" (first args)))

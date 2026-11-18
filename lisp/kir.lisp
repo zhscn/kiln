@@ -229,6 +229,22 @@ entry block current. Unterminated blocks end with a trap."
           (kfunc-current *func*) nil)
     (push *func* (kmodule-functions *module*))))
 
+(defun diagnostic-statement (statement)
+  (if (eq (first statement) :lir-set)
+      (destructuring-bind (op target value &optional original) statement
+        (declare (ignore op))
+        (list :set target
+              (or original
+                  (if (consp value)
+                      (case (first value)
+                        (:fixnum (cons :fixnum-tag (rest value)))
+                        (:character (cons :character-tag (rest value)))
+                        (:single-float (cons :single-float-tag (rest value)))
+                        (:literal (cons :literal-ref (rest value)))
+                        (otherwise value))
+                      value))))
+      statement))
+
 (defun kfunc-form (function)
   (unless (kfunc-p function) (return-from kfunc-form function))
   (let ((dispatches (when (kfunc-region-landings function) (make-hash-table :test 'eq))))
@@ -248,20 +264,7 @@ entry block current. Unterminated blocks end with a trap."
                   (let ((name (kblock-name block)))
                     (list* :block name
                            (or (and dispatches (gethash name dispatches))
-                               (mapcar (lambda (statement)
-                                         (if (eq (first statement) :lir-set)
-                                             (let ((value (third statement)))
-                                               (list :set (second statement)
-                                                     (if (consp value)
-                                                         (cons (ecase (first value)
-                                                                 (:fixnum :fixnum-tag)
-                                                                 (:character :character-tag)
-                                                                 (:single-float :single-float-tag)
-                                                                 (:literal :literal-ref))
-                                                               (rest value))
-                                                         value)))
-                                             statement))
-                                       (kblock-stmts block))))))
+                               (mapcar #'diagnostic-statement (kblock-stmts block))))))
                 (kfunc-blocks function)))))
 
 (defun kmodule-funcs (module)

@@ -324,6 +324,30 @@
     (and (not (svref *mir-lir-live* id)) definition
          (member (mir-instruction-kind definition) '(0 1 12 16 37)))))
 
+(defun mir-lir-load-field (target field object)
+  (let ((source (list :field-load field object)))
+    (if (and (kiln.kir::kvar-p object) (eq (svref object 2) :obj))
+        (emit (list :lir-set target
+                    (if (eql field kiln.kir::+packet-field-double-bits+)
+                        (list :unbox-double object)
+                        (list :field-ref (kiln.kir::lir-field-name field) object))
+                    source))
+        (emit (list :set target source)))))
+
+(defun mir-lir-constant-assignment (target word)
+  (case (first word)
+    ((:fixnum :character :single-float :literal) (emit (list :lir-set target word)))
+    (:object-data
+     (let* ((label (second word))
+            (index (gethash label (kiln.kir::kmodule-defined *module*)))
+            (value (cond ((and (integerp index) (>= index 0)) (list :constant index))
+                         ((equal label "kiln_nil") '(:nil))
+                         ((equal label "kiln_t") '(:t)))))
+       (if value
+           (emit (list :lir-set target value (word-operand word)))
+           (emit (list :set target (word-operand word))))))
+    (otherwise (emit (list :set target (word-operand word))))))
+
 (defun mir-lir-instruction (instruction arguments argument-count)
   (let* ((*call-source* (mir-instruction-source instruction)) (*hir-policy* (mir-instruction-policy instruction))
          (kind (mir-instruction-kind instruction)) (result (mir-instruction-result instruction))
@@ -386,11 +410,10 @@
                              (note-debug-var variable (cdr data) (logbitp index *mir-lir-debug-cells*))
                              variable))))
             (emit `(:set ,slot ,(first args)))))
-      (0 (let ((word (constant-word data)))
-           (if (and (consp word) (member (first word) '(:fixnum :character :single-float :literal)))
-               (emit (list :lir-set out word))
-               (emit (list :set out (word-operand word))))))
-      (26 (emit `(:set ,out (:cell-ref ,(svref *mir-lir-load-time-cells* data)))))
+      (0 (mir-lir-constant-assignment out (constant-word data)))
+      (26 (let* ((label (svref *mir-lir-load-time-cells* data))
+                 (id (gethash label (kiln.kir::kmodule-defined *module*))))
+            (emit (list :lir-set out (list :cell-ref (- -1 id)) (list :cell-ref label)))))
       (27 (let* ((region (svref *mir-lir-bindings* (car data)))
                  (symbol (constant-object (cdr data))) (index (emit-tls-index symbol)))
             (emit-region-entry region `(:dynamic-enter ,(region-slot region) :bind ,symbol))
@@ -514,7 +537,7 @@
       (19 (let ((slot (svref *mir-lir-stack-slots* (mir-instruction-id instruction))))
             (if slot (emit `(:stack-cons ,out (:slot ,slot) ,(first args) ,(nil-value)))
                 (emit `(:set ,out ,(emit-cons (first args) (nil-value)))))))
-      (20 (emit `(:set ,out (:field-load ,kiln.kir::+packet-field-cons-car+ ,(first args)))))
+      (20 (mir-lir-load-field out kiln.kir::+packet-field-cons-car+ (first args)))
       (21 (emit `(:field-store ,kiln.kir::+packet-field-cons-car+ ,(first args) ,(second args))))
       (22 (emit `(:set ,out (:closure-ref ,*self* ,data))))
       (23 (let ((slot (svref *mir-lir-stack-slots* (mir-instruction-id instruction))))
@@ -532,8 +555,9 @@
                                (:progv-list +err-not-list+) (:progv-symbol +err-not-symbol+))
                       (first args))))
     (when (and result (svref *mir-lir-doubles* result))
-      (emit `(:set ,(svref *mir-lir-doubles* result)
-                   (:field-load ,kiln.kir::+packet-field-double-bits+ ,(if (consp out) (car out) out)))))))
+      (mir-lir-load-field (svref *mir-lir-doubles* result)
+                          kiln.kir::+packet-field-double-bits+
+                          (if (consp out) (car out) out)))))
 
 (defun mir-lir-parallel-copies (copies)
   "Assign atomic operands in parallel, using one temporary per copy cycle."
