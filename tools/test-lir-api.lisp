@@ -32,3 +32,9 @@
   (assert (handler-case (progn (kiln.kir::lir-closure-entry state first) nil)
             (error (condition)
               (search "closure alias cycle" (princ-to-string condition))))))
+
+
+(assert (equal (kiln.kir::lir-string-constant "λ漢") '(:string "λ漢")))
+(let ((surrogate (code-char #xd800)))
+  (when surrogate
+    (assert (equal (kiln.kir::lir-string-constant (string surrogate)) '(:string #xd800)))))

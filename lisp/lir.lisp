@@ -61,9 +61,17 @@
       (if package `(:symbol ,package ,name)
           `(:uninterned ,name ,(gethash label (lir-data-indices data)))))))
 
+(defun lir-string-constant (string)
+  ;; The packet string pool accepts Unicode scalar values. The code-point
+  ;; form also preserves characters outside that range on supporting hosts.
+  (if (loop for character across string for code = (char-code character)
+            never (or (<= #xd800 code #xdfff) (> code #x10ffff)))
+      (list :string string)
+      (cons :string (map 'list #'char-code string))))
+
 (defun lir-data-object (data label object)
   (cond ((stringp object)
-         (return-from lir-data-object (cons :string (map 'list #'char-code object))))
+         (return-from lir-data-object (lir-string-constant object)))
         ((static-symbol-p object)
          (let ((name (static-symbol-name object)) (package (static-symbol-package object)))
            (return-from lir-data-object
