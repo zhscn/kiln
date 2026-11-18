@@ -116,7 +116,7 @@ struct Imports<'a> {
 pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> R<Output> {
     let sysv = module.isa().default_call_conv();
     let lisp_sig = lisp_signature(CallConv::Tail);
-    let mut names: HashMap<String, Ref> = HashMap::new();
+    let mut names: HashMap<&str, Ref> = HashMap::new();
 
     // Declarations.
     let mut imports = Imports {
@@ -129,7 +129,7 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
         let id = module
             .declare_function(&f.name, Linkage::Import, &sig)
             .map_err(err)?;
-        names.insert(f.name.clone(), Ref::Func(id));
+        names.insert(f.name.as_str(), Ref::Func(id));
         imports.by_name.insert(&f.name, f);
         if f.unwinds {
             let tsig = word_signature(CallConv::Tail, f.params, f.returns);
@@ -144,26 +144,26 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
         let id = module
             .declare_function(grow_values, Linkage::Import, &word_signature(sysv, 2, 0))
             .map_err(err)?;
-        names.insert(grow_values.into(), Ref::Func(id));
+        names.insert(grow_values, Ref::Func(id));
     }
     for d in &kir.import_data {
         let id = module
             .declare_data(d, Linkage::Import, false, false)
             .map_err(err)?;
-        names.insert(d.clone(), Ref::Data(id));
+        names.insert(d.as_str(), Ref::Data(id));
     }
     for d in &kir.data {
         let id = module
             .declare_data(&d.name, Linkage::Local, true, false)
             .map_err(err)?;
-        names.insert(d.name.clone(), Ref::Data(id));
+        names.insert(d.name.as_str(), Ref::Data(id));
     }
     let mut func_ids = Vec::new();
     for f in &kir.funcs {
         let id = module
             .declare_function(&f.name, Linkage::Local, &lisp_sig)
             .map_err(err)?;
-        names.insert(f.name.clone(), Ref::Func(id));
+        names.insert(f.name.as_str(), Ref::Func(id));
         func_ids.push(id);
     }
     let enter_sig = word_signature(sysv, 5, 1);
@@ -173,7 +173,7 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
 
     // Data.
     for d in &kir.data {
-        let Some(Ref::Data(id)) = names.get(&d.name).copied() else {
+        let Some(Ref::Data(id)) = names.get(d.name.as_str()).copied() else {
             unreachable!()
         };
         let mut desc = DataDescription::new();
@@ -192,14 +192,14 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
                         Word::Int(n) => {
                             bytes[i * 8..i * 8 + 8].copy_from_slice(&n.to_le_bytes());
                         }
-                        Word::DataAddr(name, addend) => match names.get(name) {
+                        Word::DataAddr(name, addend) => match names.get(name.as_str()) {
                             Some(Ref::Data(target)) => {
                                 let gv = module.declare_data_in_data(*target, &mut desc);
                                 desc.write_data_addr(off, gv, *addend);
                             }
                             _ => return Err(format!("data {}: unknown data {name}", d.name)),
                         },
-                        Word::CodeAddr(name) => match names.get(name) {
+                        Word::CodeAddr(name) => match names.get(name.as_str()) {
                             Some(Ref::Func(target)) => {
                                 let fr = module.declare_func_in_data(*target, &mut desc);
                                 desc.write_function_addr(off, fr);
@@ -210,7 +210,7 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
                             }
                             _ => return Err(format!("data {}: unknown code entry {name}", d.name)),
                         },
-                        Word::FuncAddr(name) => match names.get(name) {
+                        Word::FuncAddr(name) => match names.get(name.as_str()) {
                             Some(Ref::Func(target)) => {
                                 let fr = module.declare_func_in_data(*target, &mut desc);
                                 desc.write_function_addr(off, fr);
@@ -249,7 +249,7 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
             func_refs: HashMap::new(),
             data_gvs: HashMap::new(),
             lisp_sigref: None,
-            labels: f.labels.iter().cloned().collect(),
+            labels: f.labels.iter().map(|(name, index)| (name.as_str(), *index)).collect(),
             value_labels: HashMap::new(),
             call_locs: Vec::new(),
         };
@@ -288,14 +288,14 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
         let info = match &f.debug {
             None => None,
             Some(DebugRef::Direct(Word::Int(n))) => Some(DebugInfo::Word(*n)),
-            Some(DebugRef::Direct(Word::DataAddr(name, addend))) => match names.get(name) {
+            Some(DebugRef::Direct(Word::DataAddr(name, addend))) => match names.get(name.as_str()) {
                 Some(Ref::Data(d)) => Some(DebugInfo::Data(*d, *addend)),
                 _ => return Err(format!("func {}: debug: unknown data {name}", f.name)),
             },
             Some(DebugRef::Direct(Word::FuncAddr(_) | Word::CodeAddr(_))) => {
                 return Err(format!("func {}: debug: not an object", f.name));
             }
-            Some(DebugRef::Indirect(name, off)) => match names.get(name) {
+            Some(DebugRef::Indirect(name, off)) => match names.get(name.as_str()) {
                 Some(Ref::Data(d)) => Some(DebugInfo::Indirect(*d, *off)),
                 _ => return Err(format!("func {}: debug-ref: unknown data {name}", f.name)),
             },
@@ -318,7 +318,7 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
             continue;
         }
         let tid = imports.trampolines[f.name.as_str()];
-        let Ref::Func(target) = names[&f.name] else {
+        let Ref::Func(target) = names[f.name.as_str()] else {
             unreachable!()
         };
         ctx.func.signature = word_signature(CallConv::Tail, f.params, f.returns);
@@ -375,14 +375,14 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
 
     let mut inits = Vec::new();
     for name in &kir.inits {
-        let Some(Ref::Data(id)) = names.get(name).copied() else {
+        let Some(Ref::Data(id)) = names.get(name.as_str()).copied() else {
             return Err(format!("init {name} is not a data object"));
         };
         inits.push(id);
     }
     let mut roots = Vec::new();
     for (name, index) in &kir.roots {
-        let Some(Ref::Data(id)) = names.get(name).copied() else {
+        let Some(Ref::Data(id)) = names.get(name.as_str()).copied() else {
             return Err(format!("root: {name} is not a data object"));
         };
         roots.push((id, index * 8));
@@ -395,7 +395,7 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
     let data = kir
         .data
         .iter()
-        .filter_map(|d| match names.get(&d.name) {
+        .filter_map(|d| match names.get(d.name.as_str()) {
             Some(Ref::Data(id)) => Some((d.name.clone(), *id)),
             _ => None,
         })
@@ -874,33 +874,33 @@ pub fn emit_module_info<M: Module>(module: &mut M, out: &Output) -> R<()> {
 
 struct FuncLowering<'a, M: Module> {
     module: &'a mut M,
-    names: &'a HashMap<String, Ref>,
+    names: &'a HashMap<&'a str, Ref>,
     imports: &'a Imports<'a>,
     lisp_sig: &'a Signature,
-    vars: HashMap<String, Variable>,
-    var_kinds: HashMap<String, VarKind>,
-    slots: HashMap<String, ir::StackSlot>,
-    blocks: HashMap<String, ir::Block>,
+    vars: HashMap<&'a str, Variable>,
+    var_kinds: HashMap<&'a str, VarKind>,
+    slots: HashMap<&'a str, ir::StackSlot>,
+    blocks: HashMap<&'a str, ir::Block>,
     /// Hidden landing block per handler: receives the payload and jumps.
     landings: HashMap<String, ir::Block>,
     func_refs: HashMap<FuncId, ir::FuncRef>,
     data_gvs: HashMap<DataId, ir::GlobalValue>,
     lisp_sigref: Option<ir::SigRef>,
     /// Variables holding source variables -> index of the name.
-    labels: HashMap<String, u32>,
+    labels: HashMap<&'a str, u32>,
     /// Values assigned to such variables -> the names' indices.
     value_labels: HashMap<Value, Vec<u32>>,
     /// Source location of each call; call I has the srcloc I + 1.
     call_locs: Vec<Option<Loc>>,
 }
 
-impl<M: Module> FuncLowering<'_, M> {
-    fn build(&mut self, func: &mut ir::Function, fctx: &mut FunctionBuilderContext, f: &kir::Func) -> R<()> {
+impl<'a, M: Module> FuncLowering<'a, M> {
+    fn build(&mut self, func: &mut ir::Function, fctx: &mut FunctionBuilderContext, f: &'a kir::Func) -> R<()> {
         let mut b = FunctionBuilder::new(func, fctx);
         let all_vars = kir::PREDEFINED_VARS
             .iter()
-            .map(|(n, k)| (n.to_string(), *k))
-            .chain(f.vars.iter().cloned());
+            .copied()
+            .chain(f.vars.iter().map(|(name, kind)| (name.as_str(), *kind)));
         for (name, kind) in all_vars {
             if self.vars.contains_key(&name) {
                 return Err(format!("duplicate variable {name}"));
@@ -909,15 +909,15 @@ impl<M: Module> FuncLowering<'_, M> {
             if kind == VarKind::Obj || (kind == VarKind::F64 && self.labels.contains_key(&name)) {
                 b.declare_var_needs_stack_map(v);
             }
-            self.vars.insert(name.clone(), v);
+            self.vars.insert(name, v);
             self.var_kinds.insert(name, kind);
         }
         for (name, size) in &f.slots {
             let ss = b.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, *size, 3));
-            self.slots.insert(name.clone(), ss);
+            self.slots.insert(name.as_str(), ss);
         }
         for blk in &f.blocks {
-            if self.blocks.insert(blk.name.clone(), b.create_block()).is_some() {
+            if self.blocks.insert(blk.name.as_str(), b.create_block()).is_some() {
                 return Err(format!("duplicate block {}", blk.name));
             }
         }
@@ -932,10 +932,10 @@ impl<M: Module> FuncLowering<'_, M> {
         let zero = b.ins().iconst(I64, 0);
         b.def_var(self.vars["exn0"], zero);
         b.def_var(self.vars["exn1"], zero);
-        b.ins().jump(self.blocks[&f.blocks[0].name], &[]);
+        b.ins().jump(self.blocks[f.blocks[0].name.as_str()], &[]);
 
         for blk in &f.blocks {
-            b.switch_to_block(self.blocks[&blk.name]);
+            b.switch_to_block(self.blocks[blk.name.as_str()]);
             let mut terminated = false;
             for s in &blk.stmts {
                 if terminated {
@@ -959,7 +959,7 @@ impl<M: Module> FuncLowering<'_, M> {
             let p = b.block_params(l).to_vec();
             b.def_var(self.vars["exn0"], p[0]);
             b.def_var(self.vars["exn1"], p[1]);
-            b.ins().jump(self.blocks[&h], &[]);
+            b.ins().jump(self.blocks[h.as_str()], &[]);
         }
         b.seal_all_blocks();
         b.finalize(self.module.target_config());
@@ -1071,7 +1071,7 @@ impl<M: Module> FuncLowering<'_, M> {
     fn stmt(&mut self, b: &mut FunctionBuilder, s: &Stmt) -> R<bool> {
         match s {
             Stmt::Set(v, e) => {
-                let val = if self.var_kinds.get(v) == Some(&VarKind::F64) {
+                let val = if self.var_kinds.get(v.as_str()) == Some(&VarKind::F64) {
                     self.float_expr(b, e)?
                 } else { self.expr(b, e)? };
                 self.def(b, v, val)?;
@@ -1201,7 +1201,7 @@ impl<M: Module> FuncLowering<'_, M> {
                 let (id, handler) = if imp.unwinds {
                     (self.imports.trampolines[name.as_str()], handler.as_deref())
                 } else {
-                    let Ref::Func(id) = self.names[name] else { unreachable!() };
+                    let Ref::Func(id) = self.names[name.as_str()] else { unreachable!() };
                     (id, None)
                 };
                 let fr = self.func_ref(b, id);
@@ -1262,7 +1262,7 @@ impl<M: Module> FuncLowering<'_, M> {
 
     fn float_expr(&mut self, b: &mut FunctionBuilder, e: &Expr) -> R<Value> {
         Ok(match e {
-            Expr::Var(name) if self.var_kinds.get(name) == Some(&VarKind::F64) => b.use_var(self.var(name)?),
+            Expr::Var(name) if self.var_kinds.get(name.as_str()) == Some(&VarKind::F64) => b.use_var(self.var(name)?),
             Expr::Int(bits) => b.ins().f64const(ir::immediates::Ieee64::with_bits(*bits as u64)),
             Expr::Load(address, offset) => {
                 let address = self.expr(b, address)?;
@@ -1363,7 +1363,7 @@ impl<M: Module> FuncLowering<'_, M> {
                 b.ins().uload32(mf, a, *off)
             }
             Expr::Addr(name, addend) => {
-                let base = match self.names.get(name) {
+                let base = match self.names.get(name.as_str()) {
                     Some(Ref::Func(id)) => {
                         let fr = self.func_ref(b, *id);
                         b.ins().func_addr(I64, fr)
@@ -1388,7 +1388,7 @@ impl<M: Module> FuncLowering<'_, M> {
             Expr::Slot(s) => {
                 let ss = *self
                     .slots
-                    .get(s)
+                    .get(s.as_str())
                     .ok_or_else(|| format!("unknown slot {s}"))?;
                 b.ins().stack_addr(I64, ss, 0)
             }
