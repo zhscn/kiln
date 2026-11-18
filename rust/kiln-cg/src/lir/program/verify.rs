@@ -1201,6 +1201,7 @@ fn function(f: &Function, module: &Module, functions: &FunctionIndex<'_>) -> Res
     }
     let mut regions = HashSet::new();
     let mut landings = HashMap::new();
+    let mut landing_blocks = vec![None; f.regions.len()];
     let mut objects = HashSet::new();
     let mut frame_bytes = f
         .regions
@@ -1248,6 +1249,7 @@ fn function(f: &Function, module: &Module, functions: &FunctionIndex<'_>) -> Res
             if block == 0 {
                 return Err("landing cannot be the function entry".into());
             }
+            landing_blocks[i] = Some(block);
             if landings.insert(block, i).is_some() {
                 return Err("regions cannot share a landing block".into());
             }
@@ -1416,6 +1418,8 @@ fn function(f: &Function, module: &Module, functions: &FunctionIndex<'_>) -> Res
     Ok(Flow {
         debug_types,
         polls,
+        successors: normal,
+        landing_blocks,
         entries: regions.entries,
     })
 }

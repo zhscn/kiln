@@ -28,7 +28,8 @@ struct Lowerer<'a> {
     cells: String,
     rest_roots: Vec<String>,
     names: HashMap<&'a str, String>,
-    blocks: HashMap<&'a str, String>,
+    blocks: Vec<String>,
+    landing_blocks: &'a [Option<usize>],
     imports: &'a mut HashSet<String>,
     regions: &'a [Region],
     functions: &'a FunctionIndex<'a>,
@@ -124,7 +125,7 @@ impl Lowerer<'_> {
                     layout::unwind_target(),
                     Expr::Slot(self.slots[region].clone()),
                 ),
-                self.blocks[self.regions[region].landing.as_ref().unwrap().as_str()].clone(),
+                self.blocks[self.landing_blocks[region].unwrap()].clone(),
                 outer,
             ));
             self.finish(String::new());
@@ -1276,7 +1277,7 @@ impl Lowerer<'_> {
         Ok(())
     }
 
-    fn terminator(&mut self, term: &Terminator) -> Result<()> {
+    fn terminator(&mut self, term: &Terminator, successors: &[usize]) -> Result<()> {
         match term {
             Terminator::FatalError { code, value, loc } => {
                 self.emit(Stmt::CallRt {
@@ -1324,18 +1325,19 @@ impl Lowerer<'_> {
             );
         }
         let statements = match term {
-            Terminator::Jump(target) => vec![Stmt::Jump(self.blocks[target.as_str()].clone())],
-            Terminator::Branch(cond, yes, no) => vec![Stmt::Br(
+            Terminator::Jump(_) => vec![Stmt::Jump(self.blocks[successors[0]].clone())],
+            Terminator::Branch(cond, _, _) => vec![Stmt::Br(
                 self.value(cond),
-                self.blocks[yes.as_str()].clone(),
-                self.blocks[no.as_str()].clone(),
+                self.blocks[successors[0]].clone(),
+                self.blocks[successors[1]].clone(),
             )],
-            Terminator::Switch(value, default, cases) => vec![Stmt::Switch(
+            Terminator::Switch(value, _, cases) => vec![Stmt::Switch(
                 self.value(value),
-                self.blocks[default.as_str()].clone(),
+                self.blocks[successors[0]].clone(),
                 cases
                     .iter()
-                    .map(|(key, target)| (*key, self.blocks[target.as_str()].clone()))
+                    .zip(&successors[1..])
+                    .map(|((key, _), &target)| (*key, self.blocks[target].clone()))
                     .collect(),
             )],
             Terminator::Return(args) => {
@@ -1450,7 +1452,8 @@ pub(super) fn module(verified: &Verified<'_>) -> Result<kir::Module> {
                 }),
             },
             names: HashMap::new(),
-            blocks: HashMap::new(),
+            blocks: (0..f.blocks.len()).map(|i| format!("b{i}")).collect(),
+            landing_blocks: &flow.landing_blocks,
             imports: &mut imports,
             regions: &f.regions,
             functions: &verified.functions,
@@ -1498,9 +1501,6 @@ pub(super) fn module(verified: &Verified<'_>) -> Result<kir::Module> {
                 .enumerate()
                 .map(|(i, var)| (lower.name(&var.variable), i as u32))
                 .collect();
-        }
-        for (i, block) in f.blocks.iter().enumerate() {
-            lower.blocks.insert(&block.name, format!("b{i}"));
         }
         for slot in &lower.slots {
             lower
@@ -1575,21 +1575,21 @@ pub(super) fn module(verified: &Verified<'_>) -> Result<kir::Module> {
             lower.statements = statements;
         }
         lower.poll(true)?;
-        lower.emit(Stmt::Jump(lower.blocks[f.blocks[0].name.as_str()].clone()));
+        lower.emit(Stmt::Jump(lower.blocks[0].clone()));
         lower.finish(String::new());
         for (i, block) in f.blocks.iter().enumerate() {
             let Some(active) = &flow.entries[i] else {
                 continue;
             };
             lower.active = active.clone();
-            lower.block = lower.blocks[block.name.as_str()].clone();
+            lower.block = lower.blocks[i].clone();
             if flow.polls[i] {
                 lower.poll(false)?;
             }
             for inst in &block.instructions {
                 lower.instruction(inst)?;
             }
-            lower.terminator(&block.terminator)?;
+            lower.terminator(&block.terminator, &flow.successors[i])?;
             lower.finish(String::new());
         }
         lower.dispatchers()?;

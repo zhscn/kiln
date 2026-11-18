@@ -132,6 +132,8 @@ struct ActiveRegion {
 struct Flow {
     debug_types: Vec<Type>,
     polls: Vec<bool>,
+    successors: Vec<Vec<usize>>,
+    landing_blocks: Vec<Option<usize>>,
     /// Unreachable source blocks are checked structurally and omitted from KIR.
     entries: Vec<Option<Vec<ActiveRegion>>>,
 }
