@@ -12,6 +12,7 @@ mod parse;
 mod verify;
 
 use crate::{kir, sexp::Sexp};
+use std::collections::HashMap;
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -75,17 +76,23 @@ pub enum Storage {
     Stack(String),
 }
 
+type FunctionIndex<'a> = HashMap<&'a str, usize>;
+
+fn function_captures(functions: &FunctionIndex<'_>, name: &str) -> Result<usize> {
+    functions
+        .get(name)
+        .copied()
+        .ok_or_else(|| format!("undefined function {name}"))
+}
+
 impl StackObject {
-    fn shape(&self, functions: &[Function]) -> Result<(u32, usize)> {
+    fn shape(&self, functions: &FunctionIndex<'_>) -> Result<(u32, usize)> {
         match &self.kind {
             StackKind::Cons => Ok((crate::packet::schema::CLASS_CONS, 2)),
-            StackKind::Closure(entry) => {
-                let function = functions
-                    .iter()
-                    .find(|f| &f.name == entry)
-                    .ok_or_else(|| format!("undefined function {entry}"))?;
-                Ok((crate::packet::schema::CLASS_FUNCTION, function.captures))
-            }
+            StackKind::Closure(entry) => Ok((
+                crate::packet::schema::CLASS_FUNCTION,
+                function_captures(functions, entry)?,
+            )),
         }
     }
 }
@@ -123,6 +130,7 @@ struct ActiveRegion {
 }
 
 struct Flow {
+    debug_types: Vec<Type>,
     polls: Vec<bool>,
     /// Unreachable source blocks are checked structurally and omitted from KIR.
     entries: Vec<Option<Vec<ActiveRegion>>>,
@@ -545,6 +553,7 @@ pub enum Terminator {
 /// Only the verifier can construct the capability used by the lowerer.
 pub struct Verified<'a> {
     module: &'a Module,
+    functions: FunctionIndex<'a>,
     flow: Vec<Flow>,
 }
 

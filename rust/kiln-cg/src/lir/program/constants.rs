@@ -5,7 +5,7 @@ use num_bigint::BigInt;
 use num_integer::Integer;
 use std::collections::{HashMap, HashSet, VecDeque};
 
-pub(super) fn verify(module: &Module) -> Result<()> {
+pub(super) fn verify(module: &Module, functions: &FunctionIndex<'_>) -> Result<()> {
     if module.cells.len() > crate::packet::schema::MAX_BYTES as usize / 8 {
         return Err("LIR: cell table exceeds request limit".into());
     }
@@ -37,11 +37,7 @@ pub(super) fn verify(module: &Module) -> Result<()> {
                 return Err("LIR: empty symbol package".into());
             }
             ConstantObject::Function(entry) => {
-                if !module
-                    .functions
-                    .iter()
-                    .any(|f| &f.name == entry && f.captures == 0)
-                {
+                if functions.get(entry.as_str()) != Some(&0) {
                     return Err("LIR: constant function requires a zero-capture entry".into());
                 }
             }

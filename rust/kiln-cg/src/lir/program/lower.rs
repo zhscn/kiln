@@ -31,7 +31,7 @@ struct Lowerer<'a> {
     blocks: HashMap<&'a str, String>,
     imports: &'a mut HashSet<String>,
     regions: &'a [Region],
-    functions: &'a [Function],
+    functions: &'a FunctionIndex<'a>,
     slots: Vec<String>,
     stack_slots: HashMap<&'a str, String>,
     stack_objects: &'a [StackObject],
@@ -1042,12 +1042,7 @@ impl Lowerer<'_> {
                         values.push(var(saved));
                     }
                 }
-                let count = self
-                    .functions
-                    .iter()
-                    .find(|f| &f.name == entry)
-                    .unwrap()
-                    .captures;
+                let count = self.functions[entry.as_str()];
                 if let Storage::Stack(name) = storage {
                     let slot = self.stack_slots[name.as_str()].clone();
                     self.statements.extend(layout::initialize_stack_object(
@@ -1426,7 +1421,7 @@ pub(super) fn module(verified: &Verified<'_>) -> Result<kir::Module> {
     }
 
     let constants = super::constants::lower(source, &mut result, &mut imports)?;
-    super::debug::lower(source, &constants, &mut result, &mut imports);
+    super::debug::lower(verified, &constants, &mut result, &mut imports);
     for (f, flow) in source.functions.iter().zip(&verified.flow) {
         if f.captures == 0 {
             result.data.push(Data {
@@ -1458,7 +1453,7 @@ pub(super) fn module(verified: &Verified<'_>) -> Result<kir::Module> {
             blocks: HashMap::new(),
             imports: &mut imports,
             regions: &f.regions,
-            functions: &source.functions,
+            functions: &verified.functions,
             slots: (0..f.regions.len()).map(|i| format!("r{i}")).collect(),
             stack_slots: f
                 .stack_objects
@@ -1514,7 +1509,7 @@ pub(super) fn module(verified: &Verified<'_>) -> Result<kir::Module> {
                 .push((slot.clone(), size_of::<kiln_rt::context::DynEntry>() as u32));
         }
         for object in &f.stack_objects {
-            let (class, count) = object.shape(&source.functions)?;
+            let (class, count) = object.shape(&verified.functions)?;
             let (bytes, _, _) = layout::stack_object_layout(class, count as i64)?;
             lower
                 .function
