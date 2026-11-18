@@ -1,7 +1,7 @@
 use super::*;
 use crate::kir::{Data, DataContents, Expr, Word};
 use kiln_rt::object::*;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 pub(super) fn check_budget(module: &Module) -> Result<()> {
     let mut words = 0usize;
@@ -98,50 +98,72 @@ pub(super) fn lower(
     result: &mut kir::Module,
     imports: &mut HashSet<String>,
 ) {
+    let mut descriptors = HashMap::<(bool, &ConstantValue), String>::new();
+    let mut empty_names = None::<String>;
     for (function, flow) in verified.module.functions.iter().zip(&verified.flow) {
         let Some(debug) = &function.debug else {
             continue;
         };
         let label = label(function);
-        let names = format!("{label}_names");
         let mut variables = Vec::new();
         for (i, (variable, &ty)) in debug.variables.iter().zip(&flow.debug_types).enumerate() {
-            let mut name = value(&variable.name, objects, imports);
-            if variable.cell || ty == Type::F64 {
-                let keyword = if variable.cell { "CELL" } else { "DOUBLE-BITS" };
-                let symbol = format!("kiln_sym_KEYWORD_3A_{}", keyword.replace('-', "_2D_"));
-                imports.insert(symbol.clone());
-                let tail = format!("{label}_name_{i}_tail");
-                let head = format!("{label}_name_{i}");
-                imports.insert("kiln_nil".into());
-                data(
-                    result,
-                    tail.clone(),
-                    KIND_CONS,
-                    vec![name, (object("kiln_nil".into()), None)],
-                    0,
-                );
-                data(
-                    result,
-                    head.clone(),
-                    KIND_CONS,
-                    vec![
-                        (object(symbol), None),
-                        (Word::DataAddr(tail, TAG_CONS as i64), None),
-                    ],
-                    0,
-                );
-                name = (Word::DataAddr(head, TAG_CONS as i64), None);
-            }
+            let name = if variable.cell || ty == Type::F64 {
+                // The debugger reads only the marker and variable name.
+                // Descriptors with the same literal binding can share roots
+                // and relocations within this module.
+                let entry = descriptors.entry((variable.cell, &variable.name));
+                let head = entry.or_insert_with(|| {
+                    let symbol = if variable.cell {
+                        "kiln_sym_KEYWORD_3A_CELL"
+                    } else {
+                        "kiln_sym_KEYWORD_3A_DOUBLE_2D_BITS"
+                    };
+                    imports.insert(symbol.into());
+                    imports.insert("kiln_nil".into());
+                    let tail = format!("{label}_name_{i}_tail");
+                    let head = format!("{label}_name_{i}");
+                    data(
+                        result,
+                        tail.clone(),
+                        KIND_CONS,
+                        vec![
+                            value(&variable.name, objects, imports),
+                            (object("kiln_nil".into()), None),
+                        ],
+                        0,
+                    );
+                    data(
+                        result,
+                        head.clone(),
+                        KIND_CONS,
+                        vec![
+                            (object(symbol.into()), None),
+                            (Word::DataAddr(tail, TAG_CONS as i64), None),
+                        ],
+                        0,
+                    );
+                    head
+                });
+                (Word::DataAddr(head.clone(), TAG_CONS as i64), None)
+            } else {
+                value(&variable.name, objects, imports)
+            };
             variables.push(name);
         }
-        data(
-            result,
-            names.clone(),
-            KIND_SIMPLE_VECTOR,
-            variables,
-            debug.variables.len(),
-        );
+        let names = if variables.is_empty() {
+            empty_names
+                .get_or_insert_with(|| {
+                    let name = format!("{label}_names");
+                    data(result, name.clone(), KIND_SIMPLE_VECTOR, Vec::new(), 0);
+                    name
+                })
+                .clone()
+        } else {
+            let name = format!("{label}_names");
+            let length = variables.len();
+            data(result, name.clone(), KIND_SIMPLE_VECTOR, variables, length);
+            name
+        };
         let fields = vec![
             value(&debug.name, objects, imports),
             value(&debug.file, objects, imports),
