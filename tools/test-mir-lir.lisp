@@ -2,6 +2,8 @@
 ;;;; and clos.lir from tools/test.sh, plus target/debug/kiln-cg.
 (in-package #:kiln.compiler)
 
+(load (merge-pathnames "test-mir-double-boxes.lisp" *load-truename*))
+
 (let* ((root (asdf:system-source-directory "kiln"))
        (output (merge-pathnames "build/mir-test/host.lir" root))
        (session (make-session))
@@ -432,13 +434,8 @@
                 (print (= (calculate 1d0 2d0) 43d0))))
        (module (compile-module (front-end-forms (list form) session)
                                "mir-raw-double-joins" :session session :pipeline :mir)))
-  (labels ((boxes (tree)
-             (if (consp tree)
-                 (+ (if (and (eq (car tree) :alloc-fixed)
-                             (eql (third tree) kiln.kir::+packet-class-double+)) 1 0)
-                    (boxes (car tree)) (boxes (cdr tree))) 0)))
-    (assert (= 1 (boxes (kiln.kir::kmodule-funcs module)))
-            () "Raw MIR loop intermediates should require only the return box."))
+  (assert (= 1 (mir-fast-double-box-count module))
+          () "Raw MIR loop intermediates should require only the return box on the fast path.")
   (kiln::write-module module output)
   (let ((text (uiop:run-program
                (mapcar #'namestring
@@ -461,13 +458,9 @@
                                "mir-double-comparison" :session session :pipeline :mir)))
   (labels ((operations (tree name)
              (if (consp tree) (+ (if (eq (car tree) name) 1 0)
-                                (operations (car tree) name) (operations (cdr tree) name)) 0))
-           (boxes (tree)
-             (if (consp tree) (+ (if (and (eq (car tree) :alloc-fixed)
-                                        (eql (third tree) kiln.kir::+packet-class-double+)) 1 0)
-                                (boxes (car tree)) (boxes (cdr tree))) 0)))
+                                (operations (car tree) name) (operations (cdr tree) name)) 0)))
     (assert (= 1 (operations (kiln.kir::kmodule-funcs module) :f64-compare)))
-    (assert (zerop (boxes (kiln.kir::kmodule-funcs module)))))
+    (assert (zerop (mir-fast-double-box-count module))))
   (kiln::write-module module output)
   (let ((text (uiop:run-program
                (mapcar #'namestring
@@ -497,13 +490,9 @@
                                "mir-double-predicates" :session session :pipeline :mir)))
   (labels ((operations (tree name)
              (if (consp tree) (+ (if (eq (car tree) name) 1 0)
-                                (operations (car tree) name) (operations (cdr tree) name)) 0))
-           (boxes (tree)
-             (if (consp tree) (+ (if (and (eq (car tree) :alloc-fixed)
-                                        (eql (third tree) kiln.kir::+packet-class-double+)) 1 0)
-                                (boxes (car tree)) (boxes (cdr tree))) 0)))
+                                (operations (car tree) name) (operations (cdr tree) name)) 0)))
     (assert (= 3 (operations (kiln.kir::kmodule-funcs module) :f64-compare)))
-    (assert (zerop (boxes (kiln.kir::kmodule-funcs module))))))
+    (assert (zerop (mir-fast-double-box-count module)))))
 (format t "Host MIR double predicates consume raw arithmetic results.~%")
 
 (dolist (bounded '(nil t))
