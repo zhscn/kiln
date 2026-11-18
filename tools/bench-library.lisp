@@ -16,16 +16,21 @@
       (kiln.sys:start-profiler :mode (if (equal mode "alloc") :alloc :cpu)))
     (unwind-protect
          (let ((wall (get-internal-real-time)) (cpu (get-internal-run-time))
-               (metrics (make-hash-table :test 'eq)))
-           (progv '(kiln.compiler::*compilation-metrics* kiln.compiler::*compilation-metrics-frame*)
-                  (list metrics nil)
+               (metrics (make-hash-table :test 'eq))
+               (details (make-hash-table :test 'equal)))
+           (progv '(kiln.compiler::*compilation-metrics* kiln.compiler::*compilation-metrics-frame*
+                    kiln.compiler::*compilation-metric-details*)
+                  (list metrics nil details)
              (funcall function))
            (format t "~&BENCH-END ~A ~D ~D ~D~%" name
                    (- (get-internal-real-time) wall) (- (get-internal-run-time) cpu)
                    internal-time-units-per-second)
            (maphash (lambda (phase values)
                       (format t "~&BENCH-METRIC ~A ~A~{ ~D~}~%" name phase (coerce values 'list)))
-                    metrics))
+                    metrics)
+           (maphash (lambda (key values)
+                      (format t "~&BENCH-METRIC ~A ~{~A~^/~}~{ ~D~}~%" name key (coerce values 'list)))
+                    details))
       (when profile
         (kiln.sys:stop-profiler)
         (kiln.sys:write-folded-stacks (environment "KILN_BENCH_PROFILE_OUT"))))

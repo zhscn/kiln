@@ -67,11 +67,13 @@
 
 (defun mir-verification-function-identities (function)
   "Reuse identities within one verification of an unchanged graph."
-  (if *mir-verification-identities*
-      (or (gethash function *mir-verification-identities*)
-          (setf (gethash function *mir-verification-identities*)
-                (mir-compute-function-identities function)))
-      (mir-compute-function-identities function)))
+  (let ((cache *mir-verification-identities*))
+    (or (and cache (gethash function cache))
+        (let ((identities
+                (with-compilation-phase (:mir-analysis '(:mir-analysis :verification :functions))
+                  (mir-compute-function-identities function))))
+          (when cache (setf (gethash function cache) identities))
+          identities))))
 
 (defun mir-verify-closure-initialization (unit function)
   (unless (find-if (lambda (instruction) (member (mir-instruction-kind instruction) '(23 24)))
@@ -546,7 +548,9 @@
               (loop for edge across (mir-terminator-edges term)
                     do (loop for operand across (mir-edge-arguments edge) do (use operand i (length body)))))))))
     (mir-verify-region-landings function)
-    (let ((bindings (mir-compute-binding-regions function)))
+    (let ((bindings
+            (with-compilation-phase (:mir-analysis '(:mir-analysis :verification :binding-regions))
+              (mir-compute-binding-regions function))))
       (setf (gethash :binding-regions (mir-function-analyses function))
             (cons (mir-function-revision function) bindings)))
     function))
