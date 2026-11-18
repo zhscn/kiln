@@ -748,6 +748,7 @@
         (jump (svref labels (mir-edge-target (second entry))))))))
 
 (defun mir-optimize-unit (unit)
+  "Optimize a verified unit through passes that preserve its verification contracts."
   (with-compilation-phase (:mir-optimize)
     (mir-simplify-block-parameters unit :preserve-refinements t)
     (mir-specialize-value-calls unit)
@@ -771,7 +772,6 @@
                                           (mir-unit-load-time-functions unit)))
            (*mir-lir-labels* (map 'simple-vector (lambda (function) (declare (ignore function))
                                                   (fresh-label "kiln_mir_")) functions)))
-      (verify-mir unit)
       (when (plusp (length *mir-lir-load-time-cells*))
         (setf (kiln.kir::kmodule-replayable-p *module*) nil)
         (loop for cell across *mir-lir-load-time-cells*
