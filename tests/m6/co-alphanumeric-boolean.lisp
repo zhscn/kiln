@@ -1,0 +1,5 @@
+(assert (eq (alphanumericp #\2) t))
+(assert (= (digit-char-p #\2) 2))
+(assert (eq (alphanumericp #\A) t))
+(assert (null (alphanumericp #\Space)))
+(print :alphanumeric-boolean)

@@ -1292,7 +1292,7 @@
   (cond ((or (< weight 0) (>= weight radix)) nil)
         ((< weight 10) (code-char (+ weight 48)))
         (t (code-char (+ weight 55)))))
-(defun alphanumericp (c) (or (alpha-char-p c) (digit-char-p c)))
+(defun alphanumericp (c) (or (alpha-char-p c) (not (null (digit-char-p c)))))
 ;;; Character names for C0 and C1 controls, and Space.
 (defparameter *character-names*
   '((0 . "Nul")
