@@ -601,6 +601,8 @@ Under `#+kiln`:
 - Recognizes kiln and its Unicode character support.
 - Uses public process environment, working-directory, command-line and exit
   interfaces. User arguments follow the executable name directly.
+- Runs synchronous UIOP commands through kiln’s process interface and the
+  existing shell and file redirection path.
 
 ## trivial-features patches
 

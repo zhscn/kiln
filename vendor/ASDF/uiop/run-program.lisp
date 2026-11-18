@@ -436,12 +436,13 @@ or whether it's already taken care of by the implementation's underlying run-pro
        (return-from %system
          (wait-process
           (apply 'launch-program (%normalize-system-command command) keys)))))
-    #+(or abcl clasp clisp cormanlisp ecl gcl genera (and lispworks os-windows) mkcl xcl)
+    #+(or kiln abcl clasp clisp cormanlisp ecl gcl genera (and lispworks os-windows) mkcl xcl)
     (let ((%command (%redirected-system-command command input output error-output directory)))
       ;; see comments for these functions
       (%handle-if-does-not-exist input if-input-does-not-exist)
       (%handle-if-exists output if-output-exists)
       (%handle-if-exists error-output if-error-output-exists)
+      #+kiln (kiln.sys:run-process (list "/bin/sh" "-c" %command))
       #+abcl (ext:run-shell-command %command)
       #+(or clasp ecl) (let ((*standard-input* *stdin*)
                              (*standard-output* *stdout*)
@@ -560,9 +561,9 @@ RUN-PROGRAM returns 3 values:
 or an indication of failure via the EXIT-CODE of the process"
     (declare (ignorable input output error-output if-input-does-not-exist if-output-exists
                         if-error-output-exists element-type external-format ignore-error-status))
-    #-(or abcl allegro clasp clisp clozure cmucl cormanlisp ecl gcl lispworks mcl mkcl sbcl scl xcl)
+    #-(or kiln abcl allegro clasp clisp clozure cmucl cormanlisp ecl gcl lispworks mcl mkcl sbcl scl xcl)
     (not-implemented-error 'run-program)
-    (apply (if (or force-shell
+    (apply (if (or #+kiln t force-shell
                    ;; Per doc string, set FORCE-SHELL to T if we get command as a string.
                    ;; But don't override user's specified preference. [2015/06/29:rpg]
                    (and (stringp command)
