@@ -113,10 +113,12 @@
 (defun mir-storage-resolve (fields points path)
   (dolist (selector path points)
     (if (eq selector :reachable)
-        (loop for before = points
-              do (setf points (logior points (mir-storage-field fields points nil)
-                                     (mir-storage-field fields points t)))
-              until (= before points))
+        (loop with pending = points while (not (zerop pending))
+              for before = points
+              do (mir-do-storage-fields (id fields pending)
+                   (let ((pair (svref fields id)))
+                     (setf points (logior points (car pair) (cdr pair)))))
+                 (setf pending (logandc2 points before)))
         (setf points (mir-storage-field fields points (eq selector :cdr))))))
 
 (defun mir-compute-storage (function types packets &key borrows identities parameters functions)
@@ -279,11 +281,12 @@
                        (eql 1 (mir-values-fact-count (svref packets id))))
             (setf escaped (logior escaped (svref points id))))))
       (setf changed t)
-      (loop while changed do
-        (let ((before escaped))
-          (mir-do-storage-fields (id fields escaped)
-            (setf escaped (logior escaped (car (svref fields id)) (cdr (svref fields id)))))
-          (setf changed (/= before escaped))))
+      (loop with pending = escaped while (not (zerop pending))
+            for before = escaped
+            do (mir-do-storage-fields (id fields pending)
+                 (let ((pair (svref fields id)))
+                   (setf escaped (logior escaped (car pair) (cdr pair)))))
+               (setf pending (logandc2 escaped before)))
       (make-mir-storage-analysis :points points :fields fields :escaped escaped
                                  :stack (logand sites (lognot escaped))
                                  :rest (logand rest-sites (lognot escaped))
