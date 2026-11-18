@@ -58,7 +58,7 @@ pub enum DebugInfo {
 
 pub struct Output {
     pub enter: FuncId,
-    pub inits: Vec<DataId>,
+    pub inits: Vec<DataRef>,
     pub callsites: Vec<CallSiteInfo>,
     pub stackmaps: Vec<StackMapInfo>,
     /// Static GC roots: (data object, byte offset).
@@ -67,14 +67,21 @@ pub struct Output {
     /// defines.
     pub exports: Vec<(String, Ref)>,
     /// All data objects the module defines, by name.
-    pub data: HashMap<String, DataId>,
+    pub data: HashMap<String, DataRef>,
     pub debug: Vec<FuncDebug>,
 }
 
 #[derive(Clone, Copy)]
 pub enum Ref {
     Func(FuncId),
-    Data(DataId),
+    Data(DataRef),
+}
+
+#[derive(Clone, Copy)]
+pub struct DataRef {
+    pub id: DataId,
+    pub offset: u32,
+    pub size: usize,
 }
 
 pub struct Options {
@@ -152,18 +159,55 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
         let id = module
             .declare_data(d, Linkage::Import, false, false)
             .map_err(err)?;
-        names.insert(d.as_str(), Ref::Data(id));
+        names.insert(d.as_str(), Ref::Data(DataRef { id, offset: 0, size: 0 }));
     }
-    let mut data_ids = Vec::with_capacity(kir.data.len());
+    // Give every object a distinct aligned address within bounded sections.
+    const SECTION_BYTES: usize = 1 << 20;
+    let reserved: std::collections::HashSet<_> = names.keys().copied()
+        .chain(kir.funcs.iter().map(|f| f.name.as_str()))
+        .chain(kir.data.iter().map(|d| d.name.as_str()))
+        .collect();
+    let mut data_refs = Vec::with_capacity(kir.data.len());
+    let mut sections: Vec<(DataId, usize)> = Vec::new();
+    let mut section_serial = 0;
     for d in &kir.data {
-        let id = module
-            .declare_data(&d.name, Linkage::Local, true, false)
-            .map_err(err)?;
-        names.insert(d.name.as_str(), Ref::Data(id));
-        data_ids.push(id);
+        let size = match &d.contents {
+            DataContents::Bytes(bytes) => bytes.len().checked_add(1),
+            DataContents::Words(words) => words.len().checked_mul(8),
+        }.ok_or("static object size overflow")?;
+        let padded = size.max(1).checked_add(7).ok_or("static object alignment overflow")? & !7;
+        if padded > u32::MAX as usize {
+            return Err("static object exceeds relocation range".into());
+        }
+        if sections.last().is_none_or(|(_, used)| *used + padded > SECTION_BYTES) {
+            let name = loop {
+                let name = format!("__kiln_static_pool_{section_serial}");
+                section_serial += 1;
+                if !reserved.contains(name.as_str()) {
+                    break name;
+                }
+            };
+            let id = module.declare_data(&name, Linkage::Local, true, false).map_err(err)?;
+            sections.push((id, 0));
+        }
+        let (id, used) = sections.last_mut().unwrap();
+        let reference = DataRef { id: *id, offset: *used as u32, size };
+        *used += padded;
+        data_refs.push(reference);
+    }
+    drop(reserved);
+    let mut local_names = std::collections::HashSet::with_capacity(kir.data.len());
+    for (d, &reference) in kir.data.iter().zip(&data_refs) {
+        if !local_names.insert(d.name.as_str()) || matches!(names.get(d.name.as_str()), Some(Ref::Func(_))) {
+            return Err(format!("duplicate static object {}", d.name));
+        }
+        names.insert(d.name.as_str(), Ref::Data(reference));
     }
     let mut func_ids = Vec::new();
     for f in &kir.funcs {
+        if matches!(names.get(f.name.as_str()), Some(Ref::Data(_))) {
+            return Err(format!("function {} conflicts with data", f.name));
+        }
         let id = module
             .declare_function(&f.name, Linkage::Local, &lisp_sig)
             .map_err(err)?;
@@ -175,56 +219,54 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
         .declare_function(ENTER_NAME, Linkage::Export, &enter_sig)
         .map_err(err)?;
 
-    // Keep declaration order and reuse relocation storage across objects.
     let mut desc = DataDescription::new();
-    for (d, &id) in kir.data.iter().zip(&data_ids) {
+    let mut objects = kir.data.iter().zip(&data_refs).peekable();
+    let mut data_relocs = HashMap::new();
+    let mut func_relocs = HashMap::new();
+    for (id, size) in sections {
         desc.set_align(8);
-        match &d.contents {
-            DataContents::Bytes(b) => {
-                let mut bytes = b.clone();
-                bytes.push(0);
-                desc.define(bytes.into_boxed_slice());
-            }
-            DataContents::Words(words) => {
-                let mut bytes = vec![0u8; words.len() * 8];
-                for (i, w) in words.iter().enumerate() {
-                    let off = (i * 8) as u32;
-                    match w {
-                        Word::Int(n) => {
-                            bytes[i * 8..i * 8 + 8].copy_from_slice(&n.to_le_bytes());
+        let mut bytes = vec![0u8; size];
+        while let Some((d, reference)) = objects.next_if(|(_, reference)| reference.id == id) {
+            let start = reference.offset as usize;
+            match &d.contents {
+                DataContents::Bytes(text) => bytes[start..start + text.len()].copy_from_slice(text),
+                DataContents::Words(words) => {
+                    for (i, word) in words.iter().enumerate() {
+                        let at = start + i * 8;
+                        let off = at as u32;
+                        match word {
+                            Word::Int(n) => bytes[at..at + 8].copy_from_slice(&n.to_le_bytes()),
+                            Word::DataAddr(name, addend) => match names.get(name.as_str()) {
+                                Some(Ref::Data(target)) => {
+                                    let gv = *data_relocs.entry(target.id)
+                                        .or_insert_with(|| module.declare_data_in_data(target.id, &mut desc));
+                                    desc.write_data_addr(off, gv, i64::from(target.offset).wrapping_add(*addend));
+                                }
+                                _ => return Err(format!("data {}: unknown data {name}", d.name)),
+                            },
+                            Word::CodeAddr(name) | Word::FuncAddr(name) => match names.get(name.as_str()) {
+                                Some(Ref::Func(target)) => {
+                                    let fr = *func_relocs.entry(*target)
+                                        .or_insert_with(|| module.declare_func_in_data(*target, &mut desc));
+                                    desc.write_function_addr(off, fr);
+                                }
+                                Some(Ref::Data(target)) if matches!(word, Word::CodeAddr(_)) => {
+                                    let gv = *data_relocs.entry(target.id)
+                                        .or_insert_with(|| module.declare_data_in_data(target.id, &mut desc));
+                                    desc.write_data_addr(off, gv, i64::from(target.offset));
+                                }
+                                _ => return Err(format!("data {}: unknown code entry {name}", d.name)),
+                            },
                         }
-                        Word::DataAddr(name, addend) => match names.get(name.as_str()) {
-                            Some(Ref::Data(target)) => {
-                                let gv = module.declare_data_in_data(*target, &mut desc);
-                                desc.write_data_addr(off, gv, *addend);
-                            }
-                            _ => return Err(format!("data {}: unknown data {name}", d.name)),
-                        },
-                        Word::CodeAddr(name) => match names.get(name.as_str()) {
-                            Some(Ref::Func(target)) => {
-                                let fr = module.declare_func_in_data(*target, &mut desc);
-                                desc.write_function_addr(off, fr);
-                            }
-                            Some(Ref::Data(target)) => {
-                                let gv = module.declare_data_in_data(*target, &mut desc);
-                                desc.write_data_addr(off, gv, 0);
-                            }
-                            _ => return Err(format!("data {}: unknown code entry {name}", d.name)),
-                        },
-                        Word::FuncAddr(name) => match names.get(name.as_str()) {
-                            Some(Ref::Func(target)) => {
-                                let fr = module.declare_func_in_data(*target, &mut desc);
-                                desc.write_function_addr(off, fr);
-                            }
-                            _ => return Err(format!("data {}: unknown function {name}", d.name)),
-                        },
                     }
                 }
-                desc.define(bytes.into_boxed_slice());
             }
         }
+        desc.define(bytes.into_boxed_slice());
         module.define_data(id, &desc).map_err(err)?;
         desc.clear();
+        data_relocs.clear();
+        func_relocs.clear();
     }
 
     if let Some(start) = declarations_start {
@@ -301,14 +343,14 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
             None => None,
             Some(DebugRef::Direct(Word::Int(n))) => Some(DebugInfo::Word(*n)),
             Some(DebugRef::Direct(Word::DataAddr(name, addend))) => match names.get(name.as_str()) {
-                Some(Ref::Data(d)) => Some(DebugInfo::Data(*d, *addend)),
+                Some(Ref::Data(d)) => Some(DebugInfo::Data(d.id, i64::from(d.offset).wrapping_add(*addend))),
                 _ => return Err(format!("func {}: debug: unknown data {name}", f.name)),
             },
             Some(DebugRef::Direct(Word::FuncAddr(_) | Word::CodeAddr(_))) => {
                 return Err(format!("func {}: debug: not an object", f.name));
             }
             Some(DebugRef::Indirect(name, off)) => match names.get(name.as_str()) {
-                Some(Ref::Data(d)) => Some(DebugInfo::Indirect(*d, *off)),
+                Some(Ref::Data(d)) => Some(DebugInfo::Indirect(d.id, i64::from(d.offset).wrapping_add(*off))),
                 _ => return Err(format!("func {}: debug-ref: unknown data {name}", f.name)),
             },
         };
@@ -397,7 +439,12 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
         let Some(Ref::Data(id)) = names.get(name.as_str()).copied() else {
             return Err(format!("root: {name} is not a data object"));
         };
-        roots.push((id, index * 8));
+        let offset = index.checked_mul(8).and_then(|index| id.offset.checked_add(index))
+            .ok_or("static root offset overflow")?;
+        if (*index as usize) >= id.size / 8 {
+            return Err(format!("root: {name} is outside its data object"));
+        }
+        roots.push((id.id, offset));
     }
     let exports = kiln_rt::EXPORTED_NAMES
         .iter()
@@ -407,7 +454,7 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
     let data = kir
         .data
         .iter()
-        .zip(data_ids)
+        .zip(data_refs)
         .map(|(d, id)| (d.name.clone(), id))
         .collect();
     Ok(Output {
@@ -805,8 +852,8 @@ pub fn emit_module_info<M: Module>(module: &mut M, out: &Output) -> R<()> {
     let mut idesc = DataDescription::new();
     idesc.set_align(8);
     for (i, id) in out.inits.iter().enumerate() {
-        let gv = module.declare_data_in_data(*id, &mut idesc);
-        idesc.write_data_addr((i * 8) as u32, gv, kiln_rt::object::TAG_GENERAL as i64);
+        let gv = module.declare_data_in_data(id.id, &mut idesc);
+        idesc.write_data_addr((i * 8) as u32, gv, i64::from(id.offset) + kiln_rt::object::TAG_GENERAL as i64);
     }
     idesc.define(vec![0u8; out.inits.len() * 8 + 8].into_boxed_slice());
     module.define_data(inits, &idesc).map_err(err)?;
@@ -834,8 +881,8 @@ pub fn emit_module_info<M: Module>(module: &mut M, out: &Output) -> R<()> {
                 edesc.write_function_addr((i * 16 + 8) as u32, fr);
             }
             Ref::Data(id) => {
-                let gv = module.declare_data_in_data(*id, &mut edesc);
-                edesc.write_data_addr((i * 16 + 8) as u32, gv, 0);
+                let gv = module.declare_data_in_data(id.id, &mut edesc);
+                edesc.write_data_addr((i * 16 + 8) as u32, gv, i64::from(id.offset));
             }
         }
     }
@@ -1405,13 +1452,15 @@ impl<'a, M: Module> FuncLowering<'a, M> {
                 b.ins().uload32(mf, a, *off)
             }
             Expr::Addr(name, addend) => {
+                let mut addend = *addend;
                 let base = match self.names.get(name.as_str()) {
                     Some(Ref::Func(id)) => {
                         let fr = self.func_ref(b, *id);
                         b.ins().func_addr(I64, fr)
                     }
                     Some(Ref::Data(id)) => {
-                        let id = *id;
+                        addend = addend.wrapping_add(i64::from(id.offset));
+                        let id = id.id;
                         let gv = *self
                             .data_gvs
                             .entry(id)
@@ -1420,8 +1469,8 @@ impl<'a, M: Module> FuncLowering<'a, M> {
                     }
                     None => return Err(format!("addr: unknown symbol {name}")),
                 };
-                if *addend != 0 {
-                    b.ins().iadd_imm_s(base, *addend)
+                if addend != 0 {
+                    b.ins().iadd_imm_s(base, addend)
                 } else {
                     base
                 }

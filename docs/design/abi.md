@@ -1,5 +1,12 @@
 # ABI：调用约定、context 和非局部退出
 
+## 静态数据的地址
+
+后端可把多个静态对象放在同一数据区。每个对象仍按对象表示所需的字对齐，
+引用由数据区基址和对象偏移组成。对象标签、静态根、初始化入口和字面量补丁
+都以对象地址为基准，模块信息表继续提交已重定位的地址。
+
+
 本文是编译出的 Lisp 代码、kiln-cg 和 kiln-rt 之间的约定。值和对象的表示见 [objects.md](objects.md)，KIR 和模块信息见 [codegen.md](codegen.md)，GC 的规则见 [gc.md](gc.md)。修改 ABI 前先改这里，并同步 `rust/kiln-rt/src/{object,context}.rs` 和 `lisp/abi.lisp`；kiln 对 ABI 的承诺见 [abi-policy.md](abi-policy.md)。
 
 ## 调用约定

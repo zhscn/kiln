@@ -262,7 +262,7 @@ impl Prepared {
         for (name, r) in &out.exports {
             let addr = match r {
                 Ref::Func(id) => module.get_finalized_function(*id) as usize,
-                Ref::Data(id) => module.get_finalized_data(*id).0 as usize,
+                Ref::Data(id) => module.get_finalized_data(id.id).0 as usize + id.offset as usize,
             };
             kiln_rt::register_export(name, addr);
         }
@@ -276,7 +276,7 @@ impl Loaded {
         self.out
             .inits
             .iter()
-            .map(|id| self.module.get_finalized_data(*id).0 as u64 + kiln_rt::object::TAG_GENERAL)
+            .map(|id| self.module.get_finalized_data(id.id).0 as u64 + u64::from(id.offset) + kiln_rt::object::TAG_GENERAL)
             .collect()
     }
 }
@@ -545,8 +545,9 @@ unsafe fn install_module(
             .data
             .get(LITERALS_NAME)
             .ok_or("the module has literals but no literal words")?;
-        let (words, size) = loaded.module.get_finalized_data(*id);
-        if size < n * 8 {
+        let (words, _) = loaded.module.get_finalized_data(id.id);
+        let words = words.wrapping_add(id.offset as usize);
+        if id.size < n * 8 {
             return Err("more literals than literal words".into());
         }
         let elements = (untag(literals) + 8) as *const u64;
@@ -560,12 +561,13 @@ unsafe fn install_module(
             .data
             .get(name)
             .ok_or("missing literal patch data")?;
-        let (words, _) = loaded.module.get_finalized_data(*id);
+        let (words, _) = loaded.module.get_finalized_data(id.id);
+        let words = words.wrapping_add(id.offset as usize);
         let elements = (untag(literals) + 8) as *const u64;
         unsafe { *(words as *mut u64).add(*word as usize) = *elements.add(*literal) };
     }
     let init = *loaded.out.inits.first().ok_or("no init function")?;
-    let init = loaded.module.get_finalized_data(init).0 as u64 + kiln_rt::object::TAG_GENERAL;
+    let init = loaded.module.get_finalized_data(init.id).0 as u64 + u64::from(init.offset) + kiln_rt::object::TAG_GENERAL;
     if std::env::var("KILN_TIME").is_ok() {
         let source = input_size.map_or_else(
             || "structured program".to_string(),

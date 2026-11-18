@@ -24,7 +24,7 @@ fn diagnostics_preserve_unicode_and_bound_allocation() {
 
 fn source() -> kir::Module {
     kir::parse_module(&crate::sexp::parse_one(
-        r#"(module "publication" (init "publication_root") (data "publication_root" (words 0)) (root "publication_root" 0))"#,
+        r#"(module "publication" (init "publication_root") (data "padding" (words 17)) (data "publication_root" (words 0)) (root "publication_root" 0))"#,
     ).unwrap()).unwrap()
 }
 
@@ -38,7 +38,9 @@ fn prepared_roots_are_registered_only_when_published() {
     )
     .unwrap();
     let id = pending.out.data["publication_root"];
-    let address = pending.module.get_finalized_data(id).0 as usize;
+    assert_eq!(id.id, pending.out.data["padding"].id);
+    assert_eq!(id.offset, pending.out.data["padding"].offset + 8);
+    let address = pending.module.get_finalized_data(id.id).0 as usize + id.offset as usize;
     assert!(!kiln_rt::gc::static_roots().contains(&address));
     let loaded = pending.publish();
     assert!(kiln_rt::gc::static_roots().contains(&address));
@@ -56,7 +58,7 @@ fn dropping_prepared_code_leaves_no_registered_roots() {
     )
     .unwrap();
     let id = pending.out.data["publication_root"];
-    let address = pending.module.get_finalized_data(id).0 as usize;
+    let address = pending.module.get_finalized_data(id.id).0 as usize + id.offset as usize;
     drop(pending);
     assert!(!kiln_rt::gc::static_roots().contains(&address));
 }
