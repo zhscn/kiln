@@ -446,47 +446,67 @@ fn debug_slots(
         e.sort_unstable();
         e.dedup();
     }
-    // Incoming values of block parameters; None for try_call results.
-    let mut incoming: HashMap<(ir::Block, usize), Vec<Option<Value>>> = HashMap::new();
-    for block in func.layout.blocks() {
-        for inst in func.layout.block_insts(block) {
-            for dest in dfg.insts[inst].branch_destination(&dfg.jump_tables, &dfg.exception_tables) {
-                let target = dest.block(&dfg.value_lists);
-                for (i, arg) in dest.args(&dfg.value_lists).enumerate() {
-                    let v = match arg {
-                        BlockArg::Value(v) => Some(dfg.resolve_aliases(v)),
-                        _ => None,
-                    };
-                    incoming.entry((target, i)).or_default().push(v);
-                }
-            }
-        }
+    // A parameter acquires labels only when every predecessor supplies
+    // the same labels. Visit its users when a value is labeled for the
+    // first time; cycles without a labeled input stay unresolved.
+    #[derive(Default)]
+    struct IncomingLabels {
+        remaining: usize,
+        first: Option<Value>,
+        blocked: bool,
     }
-    // The least fixed point, which does not depend on the order.
-    loop {
-        let mut changed = false;
-        for ((block, i), vals) in &incoming {
-            let p = dfg.block_params(*block)[*i];
-            if lab.contains_key(&p) {
-                continue;
-            }
-            let Some(Some(first)) = vals.first() else { continue };
-            let Some(l) = lab.get(first) else { continue };
-            if vals.iter().all(|v| v.and_then(|v| lab.get(&v)) == Some(l)) {
-                let l = l.clone();
-                lab.insert(p, l);
-                changed = true;
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
+    let mut incoming = HashMap::<Value, IncomingLabels>::new();
+    let mut users = HashMap::<Value, Vec<Value>>::new();
     let mut map_slots = std::collections::HashSet::new();
     for block in func.layout.blocks() {
         for inst in func.layout.block_insts(block) {
             if let Some(entries) = dfg.user_stack_map_entries(inst) {
                 map_slots.extend(entries.iter().map(|e| e.slot));
+            }
+            for dest in dfg.insts[inst].branch_destination(&dfg.jump_tables, &dfg.exception_tables) {
+                let target = dest.block(&dfg.value_lists);
+                for (parameter, arg) in dfg.block_params(target).iter().copied()
+                    .zip(dest.args(&dfg.value_lists))
+                {
+                    if lab.contains_key(&parameter) {
+                        continue;
+                    }
+                    let state = incoming.entry(parameter).or_default();
+                    match arg {
+                        BlockArg::Value(value) => {
+                            state.remaining += 1;
+                            users.entry(dfg.resolve_aliases(value)).or_default().push(parameter);
+                        }
+                        _ => state.blocked = true,
+                    }
+                }
+            }
+        }
+    }
+    if map_slots.is_empty() {
+        return out;
+    }
+    let mut pending: Vec<_> = lab.keys().copied().collect();
+    while let Some(source) = pending.pop() {
+        if let Some(parameters) = users.remove(&source) {
+            for parameter in parameters {
+                let state = incoming.get_mut(&parameter).unwrap();
+                if state.blocked {
+                    continue;
+                }
+                if let Some(first) = state.first {
+                    if lab[&first] != lab[&source] {
+                        state.blocked = true;
+                        continue;
+                    }
+                } else {
+                    state.first = Some(source);
+                }
+                state.remaining -= 1;
+                if state.remaining == 0 {
+                    lab.insert(parameter, lab[&source].clone());
+                    pending.push(parameter);
+                }
             }
         }
     }
