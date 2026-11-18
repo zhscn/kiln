@@ -36,13 +36,15 @@
              (assert (= (svref values 1) (+ 2 (ash 3 8)))))))
     (when (probe-file path) (delete-file path))))
 
-(let ((path "build/test/packet-record.bin") (bytes (make-array 20003)))
+(let ((path "build/test/packet-record.bin") (bytes (make-array 70003)))
   (dotimes (i (length bytes)) (setf (svref bytes i) (mod i 256)))
   (unwind-protect
        (progn
          (with-open-file (out path :direction :output :if-exists :supersede
                                   :element-type '(unsigned-byte 8))
+           (assert (zerop (file-position out)))
            (kiln.kernel::fasl-write-data bytes out)
+           (assert (= (file-position out) (+ 4 (length bytes))))
            (write-byte 42 out))
          (with-open-file (in path :element-type '(unsigned-byte 8))
            (assert (equalp bytes (kiln.kernel::fasl-read-data in)))
@@ -56,7 +58,7 @@
          (with-open-file (out path :direction :output :if-exists :supersede
                                   :element-type '(unsigned-byte 8))
            (write-byte 6 out)
-           (kiln.kernel::fasl-write-uint 20003 out)
+           (kiln.kernel::fasl-write-uint (length bytes) out)
            (write-byte 1 out))
          (with-open-file (in path :element-type '(unsigned-byte 8))
            (assert (handler-case (progn (kiln.kernel::fasl-read-data in) nil)
