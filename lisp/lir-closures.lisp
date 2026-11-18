@@ -15,17 +15,15 @@
       (lir-record-alias state variable :unknown))))
 
 (defun lir-closure-entry (state variable)
-  (let ((seen (make-hash-table :test 'equalp)))
-    (loop
-      (let ((entry (gethash variable (lir-function-closure-entries state))))
-        (when entry (return entry)))
-      (when (gethash variable seen)
-        (lir-function-error state "closure alias cycle"))
-      (setf (gethash variable seen) t)
-      (let ((alias (gethash variable (lir-function-value-aliases state))))
-        (unless (and alias (not (eq alias :unknown)))
-          (lir-function-error state "capture store has no known closure entry"))
-        (setf variable alias)))))
+  (let ((aliases (lir-function-value-aliases state)))
+    (loop repeat (1+ (hash-table-count aliases))
+          for entry = (gethash variable (lir-function-closure-entries state))
+          when entry return entry
+          do (let ((alias (gethash variable aliases)))
+               (unless (and alias (not (eq alias :unknown)))
+                 (lir-function-error state "capture store has no known closure entry"))
+               (setf variable alias))
+          finally (lir-function-error state "closure alias cycle"))))
 
 (defun lir-closure-statement (state statement)
   (let ((args (rest statement)))

@@ -31,14 +31,13 @@
      (lir-record-alias state (second statement) :unknown))))
 
 (defun lir-primary-alias-p (state value primary)
-  (let ((seen (make-hash-table :test 'equalp)))
-    (loop
-      (when (equalp value primary) (return t))
-      (when (gethash value seen) (return nil))
-      (setf (gethash value seen) t)
-      (let ((alias (gethash value (lir-function-value-aliases state))))
-        (unless (and alias (not (eq alias :unknown))) (return nil))
-        (setf value alias)))))
+  (let ((aliases (lir-function-value-aliases state)))
+    ;; Each entry contributes at most one link to a chain without cycles.
+    (loop repeat (1+ (hash-table-count aliases))
+          when (equalp value primary) return t
+          do (let ((alias (gethash value aliases)))
+               (unless (and alias (not (eq alias :unknown))) (return nil))
+               (setf value alias)))))
 
 (defun lir-view-for-values (state primary count)
   (cond ((and (integerp count) (<= 0 count 1))

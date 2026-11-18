@@ -14,3 +14,21 @@
     (assert (= arity (second description)))
     (assert (eq safepoint (third description)))))
 (assert (handler-case (progn (kiln.lir:runtime-signature :invented-runtime-call) nil) (error () t)))
+
+(let* ((state (kiln.kir::make-lir-function :name "alias-test"))
+       (aliases (kiln.kir::lir-function-value-aliases state))
+       (closures (kiln.kir::lir-function-closure-entries state))
+       (first (vector #\v 1 :obj nil))
+       (second (vector #\v 2 :obj nil))
+       (last (vector #\v 3 :obj nil)))
+  (setf (gethash first aliases) second
+        (gethash second aliases) last
+        (gethash last closures) "entry")
+  (assert (kiln.kir::lir-primary-alias-p state first (copy-seq last)))
+  (assert (equal (kiln.kir::lir-closure-entry state first) "entry"))
+  (remhash last closures)
+  (setf (gethash last aliases) first)
+  (assert (not (kiln.kir::lir-primary-alias-p state first :self)))
+  (assert (handler-case (progn (kiln.kir::lir-closure-entry state first) nil)
+            (error (condition)
+              (search "closure alias cycle" (princ-to-string condition))))))
