@@ -1596,7 +1596,8 @@ pub(super) fn module(verified: &Verified<'_>) -> Result<kir::Module> {
         result.funcs.push(lower.function);
     }
     super::runtime::register_imports(&mut result)?;
-    imports.retain(|name| !result.data.iter().any(|d| &d.name == name));
+    let definitions: HashSet<&str> = result.data.iter().map(|d| d.name.as_str()).collect();
+    imports.retain(|name| !definitions.contains(name.as_str()));
     result.import_data = imports.into_iter().collect();
     result.import_data.sort();
     for (kind, image) in &source.builtins {
