@@ -122,6 +122,7 @@ keeps one definition."
 (defstruct kblock
   name
   (stmts '())
+  constants
   (terminator nil)
   (terminated nil))
 
