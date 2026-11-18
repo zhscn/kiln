@@ -12,7 +12,7 @@ fn charge(remaining: &mut usize, bytes: usize) -> Result<(), String> {
 
 /// # Safety
 /// Values must be valid Lisp objects, with no safepoint during traversal.
-unsafe fn snapshot(value: u64, depth: u32, remaining: &mut usize) -> Result<Sexp, String> {
+unsafe fn snapshot(value: u64, depth: u32, remaining: &mut usize) -> Result<Sexp<'static>, String> {
     if depth > packet::schema::MAX_DEPTH || *remaining < packet::schema::RECORD_SIZE as usize {
         return Err("backend program exceeds traversal limits".into());
     }
@@ -43,13 +43,13 @@ unsafe fn snapshot(value: u64, depth: u32, remaining: &mut usize) -> Result<Sexp
                 KIND_STRING => {
                     let text = string_value(value);
                     charge(remaining, text.len())?;
-                    Ok(Sexp::Str(text))
+                    Ok(Sexp::Str(text.into()))
                 }
                 KIND_SYMBOL => {
                     let name = (*(untag(value) as *const SymbolObj)).name;
                     let text = string_value(name).to_ascii_lowercase();
                     charge(remaining, text.len())?;
-                    Ok(Sexp::Sym(text))
+                    Ok(Sexp::Sym(text.into()))
                 }
                 KIND_BIGNUM => i64::try_from(kiln_rt::bignum::to_bigint(value))
                     .map(Sexp::Int)
@@ -65,7 +65,7 @@ unsafe fn snapshot(value: u64, depth: u32, remaining: &mut usize) -> Result<Sexp
                         .ok_or("invalid variable prefix")?;
                     let text = format!("{c}{}", fixnum_value(n));
                     charge(remaining, text.len())?;
-                    Ok(Sexp::Sym(text))
+                    Ok(Sexp::Sym(text.into()))
                 }
                 _ => Err("unsupported backend program object".into()),
             };
@@ -78,7 +78,7 @@ unsafe fn snapshot(value: u64, depth: u32, remaining: &mut usize) -> Result<Sexp
 ///
 /// # Safety
 /// PROGRAM must be a valid Lisp value; no moving GC may run during traversal.
-pub(crate) unsafe fn snapshot_program(program: u64) -> Result<Sexp, String> {
+pub(crate) unsafe fn snapshot_program(program: u64) -> Result<Sexp<'static>, String> {
     let mut remaining = packet::schema::MAX_EXPANDED_BYTES as usize;
     unsafe { snapshot(program, 1, &mut remaining) }
 }

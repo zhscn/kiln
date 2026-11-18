@@ -3,14 +3,14 @@
 //! Atoms: integers (i64), symbols (bare identifiers, case-sensitive), and
 //! strings ("..." with \" and \\ escapes). `;` starts a line comment.
 
-use std::fmt;
+use std::{borrow::Cow, fmt};
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum Sexp {
+pub enum Sexp<'a> {
     Int(i64),
-    Sym(String),
-    Str(String),
-    List(Vec<Sexp>),
+    Sym(Cow<'a, str>),
+    Str(Cow<'a, str>),
+    List(Vec<Sexp<'a>>),
 }
 
 #[derive(Debug)]
@@ -54,7 +54,7 @@ impl Reader<'_> {
         }
     }
 
-    fn read(&mut self) -> Result<Sexp, ParseError> {
+    fn read(&mut self) -> Result<Sexp<'static>, ParseError> {
         self.skip_ws();
         let Some(&c) = self.src.get(self.pos) else {
             return self.err("unexpected end of input");
@@ -100,7 +100,7 @@ impl Reader<'_> {
                     }
                 }
                 match String::from_utf8(bytes) {
-                    Ok(s) => Ok(Sexp::Str(s)),
+                    Ok(s) => Ok(Sexp::Str(s.into())),
                     Err(_) => self.err("string is not valid UTF-8"),
                 }
             }
@@ -117,14 +117,14 @@ impl Reader<'_> {
                 let tok = std::str::from_utf8(&self.src[start..self.pos]).unwrap();
                 match tok.parse::<i64>() {
                     Ok(n) => Ok(Sexp::Int(n)),
-                    Err(_) => Ok(Sexp::Sym(tok.to_string())),
+                    Err(_) => Ok(Sexp::Sym(tok.to_string().into())),
                 }
             }
         }
     }
 }
 
-pub fn parse_one(src: &str) -> Result<Sexp, ParseError> {
+pub fn parse_one(src: &str) -> Result<Sexp<'static>, ParseError> {
     let mut r = Reader {
         src: src.as_bytes(),
         pos: 0,
@@ -137,7 +137,7 @@ pub fn parse_one(src: &str) -> Result<Sexp, ParseError> {
     Ok(s)
 }
 
-impl fmt::Display for Sexp {
+impl fmt::Display for Sexp<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Sexp::Int(n) => write!(f, "{n}"),

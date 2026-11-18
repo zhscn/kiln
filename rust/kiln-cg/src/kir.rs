@@ -226,21 +226,21 @@ pub const REG_ARGS: usize = 3;
 
 type R<T> = Result<T, String>;
 
-fn list(s: &Sexp) -> R<&[Sexp]> {
+fn list<'s, 'a>(s: &'s Sexp<'a>) -> R<&'s [Sexp<'a>]> {
     match s {
         Sexp::List(v) => Ok(v),
         _ => Err(format!("expected a list, got {s}")),
     }
 }
 
-fn sym(s: &Sexp) -> R<&str> {
+fn sym<'s>(s: &'s Sexp<'_>) -> R<&'s str> {
     match s {
         Sexp::Sym(x) => Ok(x),
         _ => Err(format!("expected a symbol, got {s}")),
     }
 }
 
-fn string(s: &Sexp) -> R<&str> {
+fn string<'s>(s: &'s Sexp<'_>) -> R<&'s str> {
     match s {
         Sexp::Str(x) => Ok(x),
         _ => Err(format!("expected a string, got {s}")),
@@ -254,7 +254,7 @@ fn int(s: &Sexp) -> R<i64> {
     }
 }
 
-fn head(items: &[Sexp]) -> R<(&str, &[Sexp])> {
+fn head<'s, 'a>(items: &'s [Sexp<'a>]) -> R<(&'s str, &'s [Sexp<'a>])> {
     let (h, rest) = items.split_first().ok_or("empty form")?;
     Ok((sym(h)?, rest))
 }
@@ -2258,7 +2258,7 @@ fn parse_stmt(s: &Sexp) -> R<Stmt> {
 fn parse_expr(s: &Sexp) -> R<Expr> {
     match s {
         Sexp::Int(n) => return Ok(Expr::Int(*n)),
-        Sexp::Sym(v) => return Ok(Expr::Var(v.clone())),
+        Sexp::Sym(v) => return Ok(Expr::Var(v.to_string())),
         Sexp::Str(_) => return Err(format!("unexpected string {s}")),
         Sexp::List(_) => {}
     }

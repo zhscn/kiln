@@ -421,7 +421,7 @@ unsafe fn compile_packet(packet: u64, literals: u64) -> Result<u64, CompilationE
             return Err("request too large".into());
         }
         let words = unsafe { std::slice::from_raw_parts((untag(packet) + 8) as *const u64, n) };
-        let bytes = words
+        words
             .iter()
             .map(|&word| {
                 if !is_fixnum(word) {
@@ -430,17 +430,19 @@ unsafe fn compile_packet(packet: u64, literals: u64) -> Result<u64, CompilationE
                 u8::try_from(fixnum_value(word))
                     .map_err(|_| "request contains a non-octet".to_string())
             })
-            .collect::<Result<Vec<_>, _>>()?;
-        let decoded = crate::packet::decode(&bytes)?;
-        if decoded.language != crate::packet::schema::LIR_PAYLOAD {
-            return Err("production compilation requires the LIR payload".into());
-        }
-        Ok((decoded.program, bytes.len()))
+            .collect::<Result<Vec<_>, _>>()
     };
-    let (program, size) =
-        request().map_err(|e| CompilationError::new(CompilationStage::Request, e))?;
-    let kir = crate::packet::compile_lir_program(&program)
+    let bytes = request().map_err(|e| CompilationError::new(CompilationStage::Request, e))?;
+    let decoded = crate::packet::decode(&bytes)
+        .map_err(|e| CompilationError::new(CompilationStage::Request, e))?;
+    if decoded.language != crate::packet::schema::LIR_PAYLOAD {
+        return Err(CompilationError::new(
+            CompilationStage::Request, "production compilation requires the LIR payload"));
+    }
+    let kir = crate::packet::compile_decoded_lir(decoded.program)
         .map_err(|e| CompilationError::new(CompilationStage::Program, e))?;
+    let size = bytes.len();
+    drop(bytes);
     unsafe { install_module(&kir, literals, Some(size), t) }
         .map_err(|e| CompilationError::new(CompilationStage::Install, e))
 }

@@ -66,13 +66,13 @@ fn u64_at(bytes: &[u8], at: usize) -> u64 {
     u64::from_le_bytes(bytes[at..at + 8].try_into().unwrap())
 }
 
-pub struct Request {
+pub struct Request<'a> {
     pub language: u32,
-    pub program: Sexp,
+    pub program: Sexp<'a>,
 }
 
 /// Validate lengths and ownership before allocating the decoded tree.
-pub fn decode(bytes: &[u8]) -> Result<Request, String> {
+pub fn decode(bytes: &[u8]) -> Result<Request<'_>, String> {
     if bytes.len() < HEADER_SIZE as usize || bytes.len() > MAX_BYTES as usize {
         return Err("backend packet: invalid length".into());
     }
@@ -179,43 +179,39 @@ pub fn decode(bytes: &[u8]) -> Result<Request, String> {
     if next_edge != ne || next_string != ns || parents[..n - 1].contains(&0) {
         return Err("backend packet: unused records or section data".into());
     }
-    let mut nodes: Vec<Option<Sexp>> = Vec::with_capacity(n);
-    for id in 0..n {
+    // The validated ownership and depth rules bound this walk. Shared
+    // atoms borrow their bytes from the packet for every occurrence.
+    fn decode_node(bytes: &[u8], edges: usize, strings: usize, id: usize) -> Sexp<'_> {
         let at = HEADER_SIZE as usize + id * RECORD_SIZE as usize;
         let tag = u32_at(bytes, at);
         let a = u32_at(bytes, at + 4) as usize;
         let b = u64_at(bytes, at + 8);
-        let node = match tag {
+        match tag {
             INTEGER => Sexp::Int(b as i64),
             SYMBOL | STRING => {
-                let text =
-                    std::str::from_utf8(&bytes[string_start + a..string_start + a + b as usize])
-                        .unwrap()
-                        .to_owned();
+                // SAFETY: Validation checked every string range and its UTF-8.
+                let text = unsafe {
+                    std::str::from_utf8_unchecked(&bytes[strings + a..strings + a + b as usize])
+                };
                 if tag == SYMBOL {
-                    Sexp::Sym(text)
+                    Sexp::Sym(text.into())
                 } else {
-                    Sexp::Str(text)
+                    Sexp::Str(text.into())
                 }
             }
             LIST => Sexp::List(
                 (a..a + b as usize)
-                    .map(|edge| {
-                        let child = u32_at(bytes, edge_start + edge * 4) as usize;
-                        match nodes[child].as_ref().unwrap() {
-                            Sexp::List(items) if !items.is_empty() => nodes[child].take().unwrap(),
-                            atom => atom.clone(),
-                        }
-                    })
+                    .map(|edge| decode_node(bytes, edges, strings, u32_at(bytes, edges + edge * 4) as usize))
                     .collect(),
             ),
             _ => unreachable!(),
-        };
-        nodes.push(Some(node));
+        }
     }
+    drop(parents);
+    drop(depths);
     Ok(Request {
         language,
-        program: nodes.pop().unwrap().unwrap(),
+        program: decode_node(bytes, edge_start, string_start, n - 1),
     })
 }
 
@@ -383,7 +379,13 @@ pub fn load_lir(bytes: &[u8]) -> Result<crate::kir::Module, String> {
     if request.language != LIR_PAYLOAD {
         return Err("production compilation requires the LIR payload".into());
     }
-    compile_lir_program(&request.program)
+    compile_decoded_lir(request.program)
+}
+
+pub(crate) fn compile_decoded_lir(program: Sexp<'_>) -> Result<crate::kir::Module, String> {
+    let module = crate::lir::program::Module::parse(&program)?;
+    drop(program);
+    module.verify()?.lower()
 }
 
 /// Production owned-program entry. The parser rejects compatibility modules.
@@ -396,7 +398,7 @@ pub fn load(bytes: &[u8]) -> Result<crate::kir::Module, String> {
     let request = decode(bytes)?;
     match request.language {
         KIR_PAYLOAD => crate::kir::parse_module(&request.program),
-        LIR_PAYLOAD => crate::lir::program::compile(&request.program),
+        LIR_PAYLOAD => compile_decoded_lir(request.program),
         _ => Err("unknown backend language".into()),
     }
 }
@@ -426,7 +428,7 @@ mod tests {
     }
     #[test]
     fn pools_atoms_but_bounds_decoded_expansion() {
-        let form = Sexp::List(vec![Sexp::Str("x".repeat(1 << 20)); 2]);
+        let form = Sexp::List(vec![Sexp::Str("x".repeat(1 << 20).into()); 2]);
         let mut bytes = encode(&form, KIR_PAYLOAD).unwrap();
         assert_eq!(u32_at(&bytes, 40), 2);
         let strings = bytes[(HEADER_SIZE + 2 * RECORD_SIZE + 2 * 4) as usize..].to_vec();

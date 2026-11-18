@@ -1,6 +1,6 @@
 use super::*;
 
-fn list(s: &Sexp) -> Result<&[Sexp]> {
+fn list<'s, 'a>(s: &'s Sexp<'a>) -> Result<&'s [Sexp<'a>]> {
     match s {
         Sexp::List(xs) => Ok(xs),
         _ => Err(format!("LIR: expected list, got {s}")),
@@ -8,13 +8,13 @@ fn list(s: &Sexp) -> Result<&[Sexp]> {
 }
 fn symbol(s: &Sexp) -> Result<String> {
     match s {
-        Sexp::Sym(x) => Ok(x.clone()),
+        Sexp::Sym(x) => Ok(x.to_string()),
         _ => Err(format!("LIR: expected name, got {s}")),
     }
 }
 fn text(s: &Sexp) -> Result<String> {
     match s {
-        Sexp::Str(x) => Ok(x.clone()),
+        Sexp::Str(x) => Ok(x.to_string()),
         _ => Err(format!("LIR: expected string, got {s}")),
     }
 }
@@ -27,7 +27,7 @@ fn integer(s: &Sexp) -> Result<i64> {
 fn index(s: &Sexp) -> Result<usize> {
     usize::try_from(integer(s)?).map_err(|_| "LIR: negative index or count".into())
 }
-fn form(s: &Sexp) -> Result<(&str, &[Sexp])> {
+fn form<'s, 'a>(s: &'s Sexp<'a>) -> Result<(&'s str, &'s [Sexp<'a>])> {
     let xs = list(s)?;
     match xs.split_first() {
         Some((Sexp::Sym(name), args)) => Ok((name, args)),
@@ -719,7 +719,7 @@ fn storage(value: &Sexp) -> Result<Storage> {
 
 fn expression(x: &Sexp) -> Result<Expression> {
     if let Sexp::Sym(var) = x {
-        return Ok(Expression::Copy(var.clone()));
+        return Ok(Expression::Copy(var.to_string()));
     }
     let (name, args) = form(x)?;
     if let Some(op) = Op::parse(name) {
