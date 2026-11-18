@@ -1229,12 +1229,12 @@ pub fn closure_set(object: Expr, index: i64, value: Expr) -> Result<Stmt, String
 }
 
 fn transfer_offset(index: i64) -> Result<i32, String> {
-    use kiln_rt::context::{Context, VALUES_MAX};
+    use kiln_rt::context::VALUES_MAX;
     let index = usize::try_from(index).map_err(|_| "invalid transfer index")?;
     if index >= VALUES_MAX {
         return Err("transfer index out of range".into());
     }
-    Ok((core::mem::offset_of!(Context, values) + index * size_of::<u64>()) as i32)
+    Ok((index * size_of::<u64>()) as i32)
 }
 
 pub fn argument_ref(index: i64, registers: Vec<Expr>) -> Result<Expr, String> {
@@ -1249,42 +1249,40 @@ pub fn argument_ref(index: i64, registers: Vec<Expr>) -> Result<Expr, String> {
     }
 }
 
+fn transfer_field(offset: usize) -> Expr {
+    Expr::Load(Box::new(Expr::Var("ctx".into())), offset as i32)
+}
+
 pub fn transfer_ref(index: i64) -> Result<Expr, String> {
-    Ok(Expr::Load(
-        Box::new(Expr::Var("ctx".into())),
-        transfer_offset(index)?,
-    ))
+    use kiln_rt::context::{Context, VALUES_INITIAL};
+    let offset = transfer_offset(index)?;
+    let base = transfer_field(core::mem::offset_of!(Context, values));
+    if index < VALUES_INITIAL as i64 {
+        return Ok(Expr::Load(Box::new(base), offset));
+    }
+    // Argument receives may speculatively read an absent optional argument.
+    // Keep the load in bounds. The receive's argument-count select discards it.
+    let safe_index = Expr::Select(
+        Box::new(Expr::Cmp(crate::kir::CmpOp::Lt, Box::new(Expr::Int(index)),
+            Box::new(transfer_field(core::mem::offset_of!(Context, values_capacity))))),
+        Box::new(Expr::Int(index)), Box::new(Expr::Int(0)),
+    );
+    Ok(transfer_ref_dynamic(safe_index))
 }
 
 pub fn transfer_set(index: i64, value: Expr) -> Result<Stmt, String> {
-    Ok(Stmt::Store(
-        Expr::Var("ctx".into()),
-        transfer_offset(index)?,
-        value,
-    ))
-}
-
-fn transfer_address(index: Expr) -> Expr {
-    Expr::Bin(
-        crate::kir::BinOp::Add,
-        Box::new(Expr::Var("ctx".into())),
-        Box::new(Expr::Shift(crate::kir::ShiftOp::Shl, Box::new(index), 3)),
-    )
+    transfer_offset(index)?;
+    Ok(transfer_set_dynamic(Expr::Int(index), value))
 }
 
 pub fn transfer_ref_dynamic(index: Expr) -> Expr {
-    Expr::Load(
-        Box::new(transfer_address(index)),
-        core::mem::offset_of!(kiln_rt::context::Context, values) as i32,
-    )
+    let base = transfer_field(core::mem::offset_of!(kiln_rt::context::Context, values));
+    Expr::Load(Box::new(Expr::Bin(crate::kir::BinOp::Add, Box::new(base),
+        Box::new(Expr::Shift(crate::kir::ShiftOp::Shl, Box::new(index), 3)))), 0)
 }
 
 pub fn transfer_set_dynamic(index: Expr, value: Expr) -> Stmt {
-    Stmt::Store(
-        transfer_address(index),
-        core::mem::offset_of!(kiln_rt::context::Context, values) as i32,
-        value,
-    )
+    Stmt::TransferStore(index, value)
 }
 
 pub fn transfer_roots(count: Expr) -> Stmt {
@@ -1616,7 +1614,7 @@ pub fn invoke(
     handler: Option<String>,
     loc: Option<crate::kir::Loc>,
 ) -> Result<Vec<Stmt>, String> {
-    use kiln_rt::context::{Context, VALUES_MAX};
+    use kiln_rt::context::VALUES_MAX;
     if args.len() > crate::kir::REG_ARGS + VALUES_MAX {
         return Err("invoke: too many arguments".into());
     }
@@ -1637,9 +1635,7 @@ pub fn invoke(
         if index < crate::kir::REG_ARGS {
             registers.push(value);
         } else {
-            let offset =
-                core::mem::offset_of!(Context, values) + (index - crate::kir::REG_ARGS) * 8;
-            statements.push(Stmt::Store(Expr::Var("ctx".into()), offset as i32, value));
+            statements.push(transfer_set((index - crate::kir::REG_ARGS) as i64, value)?);
         }
     }
     statements.push(Stmt::CallLisp {

@@ -8,6 +8,7 @@ use crate::stack::Segment;
 /// Words of the transfer area: CALL-ARGUMENTS-LIMIT is 3 (the register
 /// arguments) more, MULTIPLE-VALUES-LIMIT 1 more.
 pub const VALUES_MAX: usize = 16381;
+pub const VALUES_INITIAL: usize = 16;
 
 #[repr(C)]
 pub struct Context {
@@ -48,10 +49,11 @@ pub struct Context {
     /// poll is requested (`isize::MAX`: compiled code compares signed).
     /// Otherwise `stack_real_limit`.
     pub stack_limit: usize,
-    /// Offset 88, last of the fields compiled code uses, so that its size
-    /// does not move them. Transfer area: arguments beyond the register
-    /// arguments, and return values beyond the first.
-    pub values: [u64; VALUES_MAX],
+    /// Offset 88. Native storage for arguments and results beyond the
+    /// register slots. Growth can replace the pointer between stores.
+    pub values: *mut u64,
+    /// Offset 96. Number of initialized slots in the native allocation.
+    pub values_capacity: usize,
     /// The soft and hard stack limits: `stack_real_limit` is the soft one,
     /// lowered to the hard one while a stack exhaustion is signaled. 0
     /// when the stack's bounds are not known.
@@ -64,6 +66,7 @@ pub const CTX_STACK_BASE_FP: i32 = core::mem::offset_of!(Context, stack_base_fp)
 const _: () = assert!(core::mem::offset_of!(Context, tls) == 48);
 const _: () = assert!(core::mem::offset_of!(Context, stack_limit) == 80);
 const _: () = assert!(core::mem::offset_of!(Context, values) == 88);
+const _: () = assert!(core::mem::offset_of!(Context, values_capacity) == 96);
 const _: () = assert!(core::mem::offset_of!(Context, values_live) == 56);
 const _: () = assert!(core::mem::offset_of!(Context, alloc_cursor) == 64);
 const _: () = assert!(core::mem::offset_of!(Context, alloc_limit) == 72);
@@ -78,7 +81,8 @@ impl Context {
             mutator: core::ptr::null_mut(),
             segments: core::ptr::null_mut(),
             tls: crate::special::new_tls_table(),
-            values: [0; VALUES_MAX],
+            values: Box::into_raw(vec![0_u64; VALUES_INITIAL].into_boxed_slice()).cast(),
+            values_capacity: VALUES_INITIAL,
             values_live: 0,
             alloc_cursor: core::ptr::null_mut(),
             alloc_limit: core::ptr::null_mut(),
@@ -160,4 +164,38 @@ pub struct DynEntry {
     pub pend_target: *mut DynEntry,
     /// Offset 40: pending Lisp value, or a raw word count for DYN_STACK_ROOTS.
     pub pend_value: u64,
+}
+
+
+impl Drop for Context {
+    fn drop(&mut self) {
+        unsafe {
+            drop(Box::from_raw(std::ptr::slice_from_raw_parts_mut(
+                self.values, self.values_capacity,
+            )));
+        }
+    }
+}
+
+/// Grow native storage without entering Lisp, polling, or triggering a safepoint.
+///
+/// # Safety
+/// The caller owns this context and must reload the backing pointer after the call.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kiln_rt_grow_values(ctx: *mut Context, index: usize) {
+    let ctx = unsafe { &mut *ctx };
+    assert!(index < VALUES_MAX);
+    if index < ctx.values_capacity {
+        return;
+    }
+    let capacity = (index + 1).next_power_of_two().min(VALUES_MAX);
+    let mut replacement = vec![0; capacity].into_boxed_slice();
+    unsafe {
+        let previous = Box::from_raw(std::ptr::slice_from_raw_parts_mut(
+            ctx.values, ctx.values_capacity,
+        ));
+        replacement[..ctx.values_capacity].copy_from_slice(&previous);
+    }
+    ctx.values = Box::into_raw(replacement).cast();
+    ctx.values_capacity = capacity;
 }

@@ -35,7 +35,13 @@
 
 - 调用方先求出所有参数，然后把第 4 个及之后的参数写进 `ctx.values[0..]`，紧接着调用。
 - 被调方在入口处、第一个 safepoint 之前（poll 和参数个数检查的出错路径之前）把它们读进自己的变量。这段时间里没有 safepoint，所以这些字不需要作为 GC root。多值返回也用这块区域，两者的使用时段不重叠。
-- `call-arguments-limit` 是 3 + 16381 = 16384，`multiple-values-limit` 是 16382。传递区按 context 固定预留约 128 KiB，GC 只扫描当前登记的活跃前缀。容量覆盖 Maxima 等库传递大型列表的调用。`apply` 和 `multiple-value-call` 在运行期按列表长度分配寄存器和传递区，超过上限时报错。
+- `call-arguments-limit` 为 16384，`multiple-values-limit` 为 16382。
+  这两个上限决定后端接受的最大计数。每个 context 初始分配 16 个八字节槽。
+  写入超出容量的槽时扩大原生缓冲区，保留已填入的值，并在 context 销毁时释放。
+  扩容不触发 Lisp GC，也不回调 Lisp。生成代码在扩容后重新读取缓冲区指针。
+  GC 按 `values_live` 扫描已经登记的活跃前缀。
+- `apply` 和 `multiple-value-call` 逐项填充寄存器和传递区，检查列表尾部及参数上限。
+  槽位已知且在初始容量内时，生成代码直接写入。
 - `&rest` 的列表在入口处构造，这会分配内存，而传递区里还有没读出的参数。所以构造期间把 `ctx.values_live` 设为传递区里的参数个数，GC 把这些字当作 root，构造完再清零。
   已证明列表及所有尾部不逃逸的入口可为至多八个 cons 使用固定栈槽；引用字段在
   构造前登记为动态环境精确根，超过容量时整条列表采用堆存储。存储选择不改变调用签名。
@@ -64,7 +70,8 @@ HIR 前端转换 lambda list 之后（`lisp/hir/convert.lisp`），每个 `&opti
 | 64 | `alloc_cursor` | bump 分配器 cursor 字段的地址：编译出的代码就地分配小对象（[gc.md](gc.md) 的“内联分配”） |
 | 72 | `alloc_limit` | bump 分配器 limit 字段的地址 |
 | 80 | `stack_limit` | 函数入口的帧指针低于它时进入 poll 慢路径：栈快用完了，或者有 poll 请求（这时是 `isize::MAX`，见“Poll 点”）。平时等于只给 Rust 用的 `stack_real_limit`，0 表示不知道栈的范围 |
-| 88 | `values[16381]` | 传递区：第 4 个及之后的参数，第二个及之后的返回值。放在最后，改大小不移动别的字段 |
+| 88 | `values` | 指向传递区的指针，第 4 个及之后的参数和第二个及之后的返回值存放在这里 |
+| 96 | `values_capacity` | 当前可写槽数，以字为单位 |
 
 ## 动态环境条目
 

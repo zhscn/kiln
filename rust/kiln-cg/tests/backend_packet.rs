@@ -1218,7 +1218,7 @@ fn dynamic_transfer_slots_expand_to_context_accesses() {
         )
     };
     let old = module(
-        "(set v (load (add ctx (shl i 3)) 88)) (store (add ctx (shl i 3)) 88 a0)".to_string(),
+        "(set v (load (add (load ctx 88) (shl i 3)) 0)) (transfer-set-dynamic i a0)".to_string(),
     );
     let new = module("(set v (transfer-ref-dynamic i)) (transfer-set-dynamic i a0)".to_string());
     let old = kiln_cg::kir::parse_module(&sexp::parse_one(&old).unwrap()).unwrap();
@@ -1250,15 +1250,11 @@ fn fixed_transfer_slots_preserve_kir_and_check_bounds() {
         )
     };
     for index in [0, 1, 1020] {
-        let offset = 88 + index * 8;
-        let old = module(format!(
-            "(set v (load ctx {offset})) (store ctx {offset} a0)"
-        ));
         let new = module(format!(
             "(set v (transfer-ref {index})) (transfer-set {index} a0)"
         ));
-        let old = kiln_cg::kir::parse_module(&sexp::parse_one(&old).unwrap()).unwrap();
         let new = sexp::parse_one(&new).unwrap();
+        let old = kiln_cg::kir::parse_module(&new).unwrap();
         let new =
             packet::load(&packet::encode(&new, packet::schema::KIR_PAYLOAD).unwrap()).unwrap();
         assert_eq!(format!("{old:?}"), format!("{new:?}"));
@@ -1310,7 +1306,7 @@ fn invoke_preserves_argument_transfer_handlers_and_locations() {
             .iter()
             .skip(3)
             .enumerate()
-            .map(|(i, value)| format!("(store ctx {} {value})", 88 + i * 8))
+            .map(|(i, value)| format!("(transfer-set {i} {value})"))
             .collect::<Vec<_>>()
             .join(" ");
         let old_call = format!(

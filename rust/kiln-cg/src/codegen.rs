@@ -139,6 +139,13 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
             imports.trampolines.insert(&f.name, tid);
         }
     }
+    let grow_values = "kiln_rt_grow_values";
+    if !names.contains_key(grow_values) {
+        let id = module
+            .declare_function(grow_values, Linkage::Import, &word_signature(sysv, 2, 0))
+            .map_err(err)?;
+        names.insert(grow_values.into(), Ref::Func(id));
+    }
     for d in &kir.import_data {
         let id = module
             .declare_data(d, Linkage::Import, false, false)
@@ -1054,6 +1061,36 @@ impl<M: Module> FuncLowering<'_, M> {
                 let val = self.expr(b, v)?;
                 let mf = trusted(b);
                 b.ins().store(mf, val, addr, *off);
+            }
+            Stmt::TransferStore(index, value) => {
+                use kiln_rt::context::{Context, VALUES_INITIAL};
+                let fits_initial = matches!(index, Expr::Int(i) if *i >= 0 && *i < VALUES_INITIAL as i64);
+                let index = self.expr(b, index)?;
+                let value = self.expr(b, value)?;
+                let ctx = self.expr(b, &Expr::Var("ctx".into()))?;
+                let flags = trusted(b);
+                if !fits_initial {
+                    let capacity = b.ins().load(
+                        I64, flags, ctx, core::mem::offset_of!(Context, values_capacity) as i32,
+                    );
+                    let fits = b.ins().icmp(IntCC::UnsignedLessThan, index, capacity);
+                    let grow = b.create_block();
+                    let store = b.create_block();
+                    b.ins().brif(fits, store, &[], grow, &[]);
+                    b.switch_to_block(grow);
+                    b.set_cold_block(grow);
+                    let Ref::Func(id) = self.names["kiln_rt_grow_values"] else { unreachable!() };
+                    let function = self.func_ref(b, id);
+                    b.ins().call(function, &[ctx, index]);
+                    b.ins().jump(store, &[]);
+                    b.switch_to_block(store);
+                }
+                let base = b.ins().load(
+                    I64, flags, ctx, core::mem::offset_of!(Context, values) as i32,
+                );
+                let offset = b.ins().ishl_imm_u(index, 3);
+                let address = b.ins().iadd(base, offset);
+                b.ins().store(flags, value, address, 0);
             }
             Stmt::Store32(a, off, v) => {
                 let addr = self.expr(b, a)?;

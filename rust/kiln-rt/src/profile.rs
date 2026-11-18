@@ -296,9 +296,9 @@ mod tests {
     #[test]
     fn stop_quiesces_timer_and_interrupts_long_wait() {
         // The timer only accesses poll_flag and stack_limit; no Lisp or GC runs.
-        let mut ctx: Context = unsafe { std::mem::zeroed() };
+        let mut ctx = std::mem::ManuallyDrop::new(unsafe { std::mem::zeroed::<Context>() });
         for _ in 0..8 {
-            start(&mut ctx, MODE_CPU, 50);
+            start(&mut *ctx, MODE_CPU, 50);
             std::thread::sleep(Duration::from_millis(1));
             stop();
             ctx.poll_flag = 0;
@@ -307,7 +307,7 @@ mod tests {
             assert_eq!(ctx.poll_flag, 0);
             assert_eq!(ctx.stack_limit, 0);
         }
-        start(&mut ctx, MODE_CPU, 10_000_000);
+        start(&mut *ctx, MODE_CPU, 10_000_000);
         let began = Instant::now();
         stop();
         assert!(began.elapsed() < Duration::from_secs(1));

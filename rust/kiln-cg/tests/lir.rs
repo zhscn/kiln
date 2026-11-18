@@ -602,8 +602,8 @@ fn lowering_owns_argument_snapshots_calling_convention_and_cycle_polls() {
     .unwrap();
     let f = &module.funcs[0];
     let entry = format!("{:?}", f.blocks[0]);
-    let offset = core::mem::offset_of!(kiln_rt::context::Context, values) + 8;
-    assert!(entry.contains(&format!("Load(Var(\"ctx\"), {offset})")));
+    let offset = core::mem::offset_of!(kiln_rt::context::Context, values);
+    assert!(entry.contains(&format!("Load(Load(Var(\"ctx\"), {offset}), 8)")));
     let call = f
         .blocks
         .iter()

@@ -167,6 +167,7 @@ pub enum Expr {
 pub enum Stmt {
     Set(String, Expr),
     Store(Expr, i32, Expr),
+    TransferStore(Expr, Expr),
     /// Stores the low 32 bits.
     Store32(Expr, i32, Expr),
     Jump(String),

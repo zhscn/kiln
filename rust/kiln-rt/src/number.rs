@@ -101,14 +101,14 @@ pub unsafe fn write(ctx: *mut Context, x: &Num) -> u64 {
                 // The numerator and denominator may be bignums: keep them
                 // in ctx.values as roots while the ratio is allocated.
                 let n = from_bigint(ctx, r.numer());
-                (*ctx).values[0] = n;
+                *(*ctx).values.add(0) = n;
                 (*ctx).values_live = 1;
                 let d = from_bigint(ctx, r.denom());
-                (*ctx).values[1] = d;
+                *(*ctx).values.add(1) = d;
                 (*ctx).values_live = 2;
                 let p = crate::gc::alloc(ctx, 24, KIND_RATIO);
-                *((p + 8) as *mut u64) = (*ctx).values[0];
-                *((p + 16) as *mut u64) = (*ctx).values[1];
+                *((p + 8) as *mut u64) = *(*ctx).values.add(0);
+                *((p + 16) as *mut u64) = *(*ctx).values.add(1);
                 (*ctx).values_live = 0;
                 p + TAG_GENERAL
             }
@@ -444,10 +444,10 @@ pub unsafe extern "C" fn kiln_rt_number_op(ctx: *mut Context, op: u64, a: u64, b
                 // Allocate the remainder first and keep it as a root while
                 // the quotient is allocated.
                 let rv = write(ctx, &r);
-                (*ctx).values[2] = rv;
+                *(*ctx).values.add(2) = rv;
                 (*ctx).values_live = 3;
                 let qv = from_bigint(ctx, &q);
-                (*ctx).values[0] = (*ctx).values[2];
+                *(*ctx).values.add(0) = *(*ctx).values.add(2);
                 (*ctx).values_live = 0;
                 return qv;
             }

@@ -151,9 +151,9 @@ unsafe fn stack_slots(ctx: &Context, out: &mut Vec<KilnSlot>) {
         }
     }
     // Multiple values being saved (see Context::values_live).
-    let live = (ctx.values_live as usize).min(crate::context::VALUES_MAX);
+    let live = (ctx.values_live as usize).min(ctx.values_capacity);
     for i in 0..live {
-        out.push(KilnSlot(unsafe { Address::from_ptr(ctx.values.as_ptr().add(i)) }));
+        out.push(KilnSlot(unsafe { Address::from_ptr(ctx.values.add(i)) }));
     }
     // Thread-local values of special variables.
     for i in 1..crate::special::tls_used() {

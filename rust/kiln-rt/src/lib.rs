@@ -240,6 +240,7 @@ pub fn symbols() -> Vec<(&'static str, *const u8)> {
             "kiln_rt_float_decimal",
             rtfun::kiln_rt_float_decimal as *const u8,
         ),
+        ("kiln_rt_grow_values", context::kiln_rt_grow_values as *const u8),
         ("kiln_rt_sys", rtfun::kiln_rt_sys as *const u8),
         ("kiln_rt_write_kir", kirtext::kiln_rt_write_kir as *const u8),
         ("kiln_rt_poll", rtfun::kiln_rt_poll as *const u8),

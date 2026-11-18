@@ -110,7 +110,7 @@ pub unsafe extern "C" fn kiln_rt_integer_op(ctx: *mut Context, op: u64, a: u64, 
             // The remainder is allocated first and kept in ctx.values,
             // which is not a root: allocate the quotient before storing it.
             let rv = from_bigint(ctx, &r);
-            (*ctx).values[0] = rv;
+            *(*ctx).values.add(0) = rv;
             (*ctx).values_live = 1;
             let qv = from_bigint(ctx, &q);
             (*ctx).values_live = 0;
