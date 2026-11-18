@@ -1092,7 +1092,9 @@ literals are the image's objects, and it has no symbol table.
 Returns the module and the vector of its literals."
   (unless (eq pipeline :mir) (fail "Unknown compiler pipeline ~S" pipeline))
   (let ((*compiler-pipeline* pipeline)
-        (*module* (make-kmodule module-name))
+        (*module* (let ((module (make-kmodule module-name)))
+                    (setf (kiln.kir::kmodule-capture-shapes-complete-p module) t)
+                    module))
         (*image-literals* (and image (make-hash-table :test 'eq)))
         (*image-literal-objects* '())
         (*module-label* (mangle module-name))
