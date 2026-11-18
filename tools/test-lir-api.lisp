@@ -38,3 +38,25 @@
 (let ((surrogate (code-char #xd800)))
   (when surrogate
     (assert (equal (kiln.kir::lir-string-constant (string surrogate)) '(:string #xd800)))))
+
+(let* ((state (kiln.kir::make-lir-function :name "result-projections"))
+       (view (kiln.kir::lir-new-temporary state :mv))
+       (primary (kiln.kir::lir-new-temporary state :obj))
+       (count (kiln.kir::lir-new-temporary state :word))
+       (copy (kiln.kir::lir-new-temporary state :word))
+       (blocks (list (list :block :entry
+                           (list :set primary (list :mv-ref view 0))
+                           (list :set count (list :mv-count view))
+                           (list :set copy count)
+                           (list :return (list primary))))))
+  (kiln.kir::lir-drop-unused-result-copies state blocks nil)
+  (assert (equal (cddar blocks)
+                 (list (list :set primary (list :mv-ref view 0))
+                       (list :return (list primary)))))
+  (assert (equal (mapcar #'first (kiln.kir::lir-function-temporaries state)) (list primary view))))
+
+(let* ((state (kiln.kir::make-lir-function :name "constant-operands"))
+       (first (kiln.kir::lir-operand state '(:fixnum 1) :obj)))
+  (assert (eq first (kiln.kir::lir-operand state '(:fixnum 1) :obj)))
+  (setf (kiln.kir::lir-function-block-constants state) nil)
+  (assert (not (eq first (kiln.kir::lir-operand state '(:fixnum 1) :obj)))))

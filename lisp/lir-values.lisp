@@ -59,6 +59,7 @@
            view))))
 
 (defun lir-bind-result-pair (state primary count view)
+  (setf (lir-function-result-pairs-p state) t)
   (lir-emit state `(:set ,primary (:mv-ref ,view 0)))
   (lir-emit state `(:set ,count (:mv-count ,view)))
   (setf (lir-function-active-view state) view (lir-function-active-count state) nil))
