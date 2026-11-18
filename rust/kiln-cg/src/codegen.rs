@@ -154,11 +154,13 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
             .map_err(err)?;
         names.insert(d.as_str(), Ref::Data(id));
     }
+    let mut data_ids = Vec::with_capacity(kir.data.len());
     for d in &kir.data {
         let id = module
             .declare_data(&d.name, Linkage::Local, true, false)
             .map_err(err)?;
         names.insert(d.name.as_str(), Ref::Data(id));
+        data_ids.push(id);
     }
     let mut func_ids = Vec::new();
     for f in &kir.funcs {
@@ -173,12 +175,9 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
         .declare_function(ENTER_NAME, Linkage::Export, &enter_sig)
         .map_err(err)?;
 
-    // Data.
-    for d in &kir.data {
-        let Some(Ref::Data(id)) = names.get(d.name.as_str()).copied() else {
-            unreachable!()
-        };
-        let mut desc = DataDescription::new();
+    // Keep declaration order and reuse relocation storage across objects.
+    let mut desc = DataDescription::new();
+    for (d, &id) in kir.data.iter().zip(&data_ids) {
         desc.set_align(8);
         match &d.contents {
             DataContents::Bytes(b) => {
@@ -225,6 +224,7 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
             }
         }
         module.define_data(id, &desc).map_err(err)?;
+        desc.clear();
     }
 
     if let Some(start) = declarations_start {
@@ -408,10 +408,8 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
     let data = kir
         .data
         .iter()
-        .filter_map(|d| match names.get(d.name.as_str()) {
-            Some(Ref::Data(id)) => Some((d.name.clone(), *id)),
-            _ => None,
-        })
+        .zip(data_ids)
+        .map(|(d, id)| (d.name.clone(), id))
         .collect();
     Ok(Output {
         enter,
