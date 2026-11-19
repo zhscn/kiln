@@ -1,0 +1,79 @@
+--- a/src/enc-ksc-5601.lisp
++++ b/src/enc-ksc-5601.lisp
+@@ -1236,8 +1236,8 @@
+   (gethash utf8 +unicode-to-ksc-5601+))
+
+ (defun ksc-5601-to-utf8 (ksc-5601)
+-  (let ((b1 (ldb (byte 8 0) ksc-5601))
+-        (b2 (ldb (byte 8 8) ksc-5601)))
++  (let ((b1 (ldb (byte 8 8) ksc-5601))
++        (b2 (ldb (byte 8 0) ksc-5601)))
+     (cond
+       ((and (<= #x21 b1 #x2c)
+             (<= #x21 b2 #x7e))
+@@ -1289,9 +1289,9 @@
+      (loop for i fixnum from start below end
+            and di fixnum from d-start by 2
+            for code of-type code-point = (,getter src i)
+-           for ksc-5601 of-type code-point = (utf8-to-ksc-5601 code)
+-           unless ksc-5601
+-             do (handle-error)
++           for ksc-5601 = (or (utf8-to-ksc-5601 code)
++                              (encoding-error code :ksc_5601 src i
++                                              (utf8-to-ksc-5601 #x3013)))
+            do (,setter ksc-5601 dest di 2 :be)
+            finally (return (the fixnum (- di d-start))))))
+
+@@ -1302,7 +1302,7 @@
+               (fixnum start end d-start))
+      (loop for i fixnum from start below end by 2
+            and di fixnum from d-start
+-           for ksc-5601 of-type code-point = (,getter src i 2)
++           for ksc-5601 of-type code-point = (,getter src i 2 :be)
+            for code of-type code-point = (ksc-5601-to-utf8 ksc-5601)
+            do (,setter code dest di)
+            finally (return (the fixnum (- di d-start))))))
+--- a/tests/tests.lisp
++++ b/tests/tests.lisp
+@@ -223,11 +223,25 @@
+
+ ;;; Testing consistency by encoding and decoding a simple string for
+ ;;; all character encodings.
++(defun round-trip-sample (encoding)
++  (if (eq encoding :ksc_5601)
++      (map 'string #'code-char '(#xac00 #xb098 #xb2e4))
++      *standard-characters*))
++
++(deftest ksc-5601-fixed-byte-order ()
++  (let ((sample (string (code-char #xac00))))
++    (is (equalp (ub8v #x30 #x21)
++                (string-to-octets sample :encoding :ksc_5601)))
++    (is (string= sample (octets-to-string (ub8v #x30 #x21) :encoding :ksc_5601)))
++    (signals character-encoding-error
++      (string-to-octets "a" :encoding :ksc_5601 :errorp t))))
++
+ (deftest rw-equiv.1 ()
+   (let ((compatible-encodings (remove :ebcdic-international (list-character-encodings))))
+     (dolist (*default-character-encoding* compatible-encodings)
+-      (let ((octets (string-to-octets *standard-characters*)))
+-        (is (string= (octets-to-string octets) *standard-characters*))))))
++      (let* ((sample (round-trip-sample *default-character-encoding*))
++             (octets (string-to-octets sample)))
++        (is (string= (octets-to-string octets) sample))))))
+
+ ;;; FIXME: assumes little-endianness.  Easily fixable when we
+ ;;; implement the BE and LE variants of :UTF-16.
+@@ -916,9 +930,10 @@
+     (is (string= test-string string))))
+
+ (deftest encoder-and-decoder-return-values ()
+-  (mapcar 'encoder/decoder-retvals
+-          (remove-if 'ambiguous-encoding-p
+-                     (list-character-encodings))))
++  (dolist (encoding (remove-if 'ambiguous-encoding-p (list-character-encodings)))
++    (if (eq encoding :ksc_5601)
++        (encoder/decoder-retvals encoding (round-trip-sample encoding))
++        (encoder/decoder-retvals encoding))))
+
+ (deftest code-point-sweep (encoding)
+   (finishes

@@ -44,7 +44,8 @@ python3 tools/test-libraries.py asdf asdf --kiln build/boot/kiln1 \
 冷缓存数据；重复使用会复用 ASDF 产物，不能把两者混作同一条件。
 `--tests` 调用上游的 ASDF `test-op`。有些上游测试只打印失败而不向 ASDF 发出
 错误，因此报告的 `test_op_completed` 仅表示操作正常返回，还必须核对上游摘要。
-缺失测试依赖与主库加载失败分别记录。
+缺失测试依赖与主库加载失败分别记录。 Babel 的固定语料为 KS C 5601 使用该字符集可表示的韩文
+样本，并验证固定字节序和不可编码字符的诊断。
 清单中的 `check_file` 在主库加载后执行，宿主与目标共用同一组兼容性断言；
 实现专用分支只检查对应的平台契约。
 

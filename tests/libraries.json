@@ -61,7 +61,8 @@
       "url": "https://github.com/cl-babel/babel.git",
       "revision": "4eaf3f228be4f6860ccc0b0fbb4c1781a1ee6597",
       "role": "unicode-and-octet-arrays",
-      "system": "babel"
+      "system": "babel",
+      "patches": ["tests/library-patches/babel-ksc-5601.patch"]
     },
     {
       "name": "iterate",
