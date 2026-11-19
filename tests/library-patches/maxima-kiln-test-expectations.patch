@@ -1,0 +1,46 @@
+--- a/src/testsuite.lisp
++++ b/src/testsuite.lisp
+@@ -246,10 +246,10 @@
+     "rtest_gf"
+     "rtest_arag"
+     ((mlist simp) "rtest_pdiff"
+-     #-(or ccl cmucl ecl sbcl gcl clisp)
++     #-(or ccl cmucl ecl sbcl gcl clisp kiln)
+      ((mlist simp) 62))
+     ((mlist simp) "rtest_to_poly"
+-     #-(or abcl ccl cmucl sbcl gcl ecl clisp)
++     #-(or abcl ccl cmucl sbcl gcl ecl clisp kiln)
+      ((mlist simp) 13 14 15 16 17 18 19 20 25))
+ ;; Tested with acl 10.1
+     ((mlist simp) "rtestprintf"
+@@ -272,9 +272,9 @@
+      ((mlist simp) 27 61)
+      #+cmucl
+      ((mlist simp) 61)
+-     #+sbcl
++     #+(or sbcl kiln)
+      ((mlist simp) 61 63 65 69)
+-     #-(or clisp cmucl gcl ecl abcl ccl allegro sbcl)
++     #-(or clisp cmucl gcl ecl abcl ccl allegro sbcl kiln)
+      ((mlist simp) 38 61 63 65 69)
+      )
+     "rtest_simplex"
+@@ -286,15 +286,15 @@
+     ((mlist simp) "rtest_to_poly_solve"
+      ((mlist simp) 64 74 80 116 140 141 168 184 245 322))
+     ((mlist simp) "rtest_sym"
+-     #-(or sbcl ccl gcl clisp cmucl ecl) ((mlist simp) 15 64)
++     #-(or sbcl ccl gcl clisp cmucl ecl kiln) ((mlist simp) 15 64)
+      #+sbcl ((mlist simp))
+      #+ccl ((mlist simp)))
+     "rtest_mnewton"
+     "rtest_solve_rat_ineq"
+     ((mlist simp) "rtest_vect"
+-     #-(or sbcl ccl cmucl gcl ecl clisp)
++     #-(or sbcl ccl cmucl gcl ecl clisp kiln)
+      ((mlist simp) 4 9 10 13 16 19 20 21 24 25)
+-     #+(or sbcl ccl cmucl ecl gcl clisp)
++     #+(or sbcl ccl cmucl ecl gcl clisp kiln)
+      ((mlist simp) 4 9 10 13 16 20 21 24 25))
+      "rtest_antid"
+      "rtest_bffac"
