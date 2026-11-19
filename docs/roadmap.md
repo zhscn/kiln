@@ -148,13 +148,11 @@
 - 完整 Lisp-Stat 的数据框和网络依赖需要线程、子进程及外部库接口。
   clavier 的依赖闭包涉及 Bordeaux-Threads；在支持并发 Lisp 线程前，不能声明
   `:thread-support` 或用空操作替代其线程 API。数值核心与综合系统分别验证。
-- Maxima 的 `system` 使用同步子进程接口。网络和图形功能仍需相应的运行期接口。
-  share 套件仍需按文件和案例对齐 SBCL。图形测试 `rtest_draw` 通过
+- Maxima 的 `system` 使用同步子进程接口。图形测试 `rtest_draw` 通过
   `ensure-directories-exist` 建立输出目录，并调用 PATH 中的 Gnuplot。
-  `rtest_to_poly_solve` 在读取 `%and` 中缀表达式时中止。另需隔离
-  `rtest_grobner`、`rtestprintf`、
-  `rtest_abs_integrate` 与 `rtest_finance` 的差异，
-  并核对 share 报告中意外通过的预期失败案例。
+  网络功能仍需相应的运行期接口。share 整套运行中的 `rtest_lu` 曾在
+  `array-infinity-norm` 中耗尽控制栈。单独运行该文件可通过，需要隔离前序
+  测试留下的进程状态。
 
 与 CL 不一致的行为：
 - `print`（编译器原语）：AOT 模块里先打印对象再换行，不经过 `*standard-output*`、`print-object` 和打印变量。要等测试的期望输出统一迁移。
