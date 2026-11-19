@@ -9,3 +9,5 @@
 (:AUX :OUTER)
 :DEFAULT
 :CALLER
+(40 42)
+(42 :OUTER)
