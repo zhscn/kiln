@@ -147,7 +147,8 @@
         "tests/library-patches/maxima-kiln-system.patch",
         "tests/library-patches/maxima-kiln-mkdir.patch",
         "tests/library-patches/maxima-rk-list.patch",
-        "tests/library-patches/maxima-kiln-test-expectations.patch"
+        "tests/library-patches/maxima-kiln-test-expectations.patch",
+        "tests/library-patches/maxima-lu-array.patch"
       ]
     },
     {

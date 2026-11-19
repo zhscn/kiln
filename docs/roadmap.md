@@ -150,9 +150,9 @@
   `:thread-support` 或用空操作替代其线程 API。数值核心与综合系统分别验证。
 - Maxima 的 `system` 使用同步子进程接口。图形测试 `rtest_draw` 通过
   `ensure-directories-exist` 建立输出目录，并调用 PATH 中的 Gnuplot。
-  网络功能仍需相应的运行期接口。share 整套运行中的 `rtest_lu` 曾在
-  `array-infinity-norm` 中耗尽控制栈。单独运行该文件可通过，需要隔离前序
-  测试留下的进程状态。
+  网络功能仍需相应的运行期接口。Maxima 的 LU 范数直接累加数组的行和。
+  原先经局部闭包转换整张矩阵时，连续运行 share 套件可导致控制栈耗尽，
+  这一调用路径仍需缩小为独立的编译器回归。
 
 与 CL 不一致的行为：
 - `print`（编译器原语）：AOT 模块里先打印对象再换行，不经过 `*standard-output*`、`print-object` 和打印变量。要等测试的期望输出统一迁移。

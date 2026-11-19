@@ -1,0 +1,23 @@
+--- a/share/linearalgebra/lu.lisp
++++ b/share/linearalgebra/lu.lisp
+@@ -51,9 +51,14 @@
+
+-;; Return the infinity norm (the largest row sum) of the r by c array mat. The function
+-;; fn coerces matrix elements into flonum floats. The argument 'mat' is a Maxima
+-;; style matrix; thus mat = (($matrix) ((mlist) a b c) etc).
+-
++;; Accumulate row sums directly so the temporary storage does not grow
++;; with the matrix. FN converts each element to a Lisp number.
+ (defun array-infinity-norm (mat fn)
+-  (reduce #'max (mapcar #'(lambda (s) (reduce #'+ s)) 
+-			(array-to-row-list mat #'(lambda (s) (abs (funcall fn s)))))))
++  (let ((columns (array-dimension mat 1))
++        (largest nil))
++    (dotimes (row (array-dimension mat 0) (if largest largest (max)))
++      (let ((sum nil))
++        (dotimes (column columns)
++          (let ((entry (abs (funcall fn (aref mat row column)))))
++            (setf sum (if sum (+ sum entry) entry))))
++        (let ((row-norm (or sum 0)))
++          (setf largest (if largest (max largest row-norm) row-norm)))))))
+
