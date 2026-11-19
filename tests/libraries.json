@@ -31,7 +31,8 @@
       "url": "https://codeberg.org/pcostanza/closer-mop.git",
       "revision": "04f89c12b4a327ddf556648721c97633241abe34",
       "role": "mop-portability",
-      "system": "closer-mop"
+      "system": "closer-mop",
+      "check_file": "tests/library-integration/closer-mop.lisp"
     },
     {
       "name": "cl-ppcre",
