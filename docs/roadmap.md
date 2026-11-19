@@ -153,7 +153,7 @@
   `ensure-directories-exist` 建立输出目录，并调用 PATH 中的 Gnuplot。
   `rtest_to_poly_solve` 在读取 `%and` 中缀表达式时中止。另需隔离
   `rtest_grobner`、`rtestprintf`、
-  `rtest_abs_integrate`、`rtest_finance` 与 `rtest_rk_adaptive` 的差异，
+  `rtest_abs_integrate` 与 `rtest_finance` 的差异，
   并核对 share 报告中意外通过的预期失败案例。
 
 与 CL 不一致的行为：

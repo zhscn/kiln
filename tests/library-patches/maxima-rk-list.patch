@@ -1,0 +1,47 @@
+--- a/share/contrib/rk_adaptive.mac
++++ b/share/contrib/rk_adaptive.mac
+@@ -152,7 +152,8 @@
+             " units of ",var
+         )
+     ),
+-    /* Convert the result into a more user-friendly format (tm)*/
+-    args(transpose(apply('matrix,reverse(result))))
++    /* Return one chronological list per column of samples. */
++    result:reverse(result),
++    makelist(map(lambda([sample],sample[i]),result),i,1,length(first(result)))
+ );
+ compile(rk_adaptive);
+\ No newline at end of file
+--- a/share/contrib/rtest_rk_adaptive.mac
++++ b/share/contrib/rtest_rk_adaptive.mac
+@@ -10,10 +10,10 @@
+ is(first(data[1])=0);
+ true;
+
+-is(apply('max,map(lambda([t,x],abs(x-%e^(-(t/10)))),data[1],data[2]))<1e-3);
++is(lreduce('max,map(lambda([t,x],abs(x-%e^(-(t/10)))),data[1],data[2]))<1e-3);
+ true;
+
+-is(apply('max,map(lambda([t,x],abs(x-%e^(-(t/10)))),data[1],data[2]))>1e-4);
++is(lreduce('max,map(lambda([t,x],abs(x-%e^(-(t/10)))),data[1],data[2]))>1e-4);
+ true;
+
+ is(length(data[1])>1000);
+@@ -28,7 +28,7 @@
+ is(first(data[1])=0);
+ true;
+
+-is(apply('max,map(lambda([t,x],abs(x-%e^(-(t/10)))),data[1],data[2]))<1e-4);
++is(lreduce('max,map(lambda([t,x],abs(x-%e^(-(t/10)))),data[1],data[2]))<1e-4);
+ true;
+
+ is(length(data[1])>3000);
+@@ -37,7 +37,7 @@
+ (data:rk_adaptive(1/10*x,x,1,t,100.0,0,maxabserr=1e-4),done);
+ done;
+
+-is(apply('max,map(lambda([t,x],abs(x-%e^(-10)*%e^(t/10))),data[1],data[2]))<1e-3);
++is(lreduce('max,map(lambda([t,x],abs(x-%e^(-10)*%e^(t/10))),data[1],data[2]))<1e-3);
+ true;
+
+ (kill(data),done);
