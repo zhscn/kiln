@@ -35,3 +35,7 @@
 (print (handler-case (format nil "~q") (error () 'format-error)))
 (print (handler-case (error "bad ~a" 'thing)
          (error (c) (format nil "~a" c))))
+
+(f "~,0f|~8,3f|~8,3f|" 0d0 0d0 -0d0)
+(f "~g|~g|~g|~g|" 42d0 1.5d0 0.5d0 0d0)
+(f "~g|~,4g|" 1.4142135623730951d0 3.141592653589793d0)

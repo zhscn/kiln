@@ -394,6 +394,11 @@ The FORMAT compiler macro can use the directive compiler in both the cross
 compiler and the image. The host-side client emits references to the target
 printer client, so no host client object enters generated code.
 
+Fixed-format zero uses the requested number of fractional digits, including
+zero digits. The general directive chooses its fixed or exponential form from
+the decimal point position, derived from both the exponent and the
+significand length.
+
 Known upstream bug, not patched: `~F` rounds `(format nil "~,1f" 0.05f0)`
 (and `0.05d0`) to `"0.0"`; it should be `"0.1"`, since both are slightly
 greater than 0.05. Invistra with Quaviver does the same in SBCL.

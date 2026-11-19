@@ -158,8 +158,10 @@
         (when (zerop my-significand)
           (setf fractional-position 1)))
       (when d
-        (multiple-value-setq (my-significand digit-count fractional-position)
-          (trim-fractional client value my-significand exponent sign digit-count fractional-position d)))
+        (if (zerop significand)
+            (setf fractional-position (- digit-count d))
+            (multiple-value-setq (my-significand digit-count fractional-position)
+              (trim-fractional client value my-significand exponent sign digit-count fractional-position d))))
       (when (and (>= fractional-position digit-count)
                  (null d)
                  (or (null w)
@@ -400,14 +402,12 @@
 (defun %format-general-float
     (client colon-p at-sign-p w d e k overflowchar padchar exponentchar value significand
      exponent sign)
-  (unless d
-    (let ((q (if (minusp exponent)
-                 (- (quaviver.math:count-digits 10 significand) exponent)
-                 (max (quaviver.math:count-digits 10 significand) exponent))))
-      (setq d (max q (min exponent 7)))))
-  (let* ((ee (if e (+ e 2) 4))
+  (let* ((digits (quaviver.math:count-digits 10 significand))
+         (position (if (zerop significand) 1 (+ digits exponent)))
+         (d (or d (max digits position (- exponent))))
+         (ee (if e (+ e 2) 4))
          (ww (if w (- w ee) nil))
-         (dd (- d exponent)))
+         (dd (- d position)))
     (cond ((<= 0 dd d)
            (let ((char (if (%format-fixed-format-float client colon-p at-sign-p ww dd 0
                                                        overflowchar padchar value significand
