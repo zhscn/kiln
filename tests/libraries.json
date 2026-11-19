@@ -144,7 +144,8 @@
         "tests/library-patches/maxima-kiln-unicode.patch",
         "tests/library-patches/maxima-kiln-default-encoding.patch",
         "tests/library-patches/maxima-kiln-process-id.patch",
-        "tests/library-patches/maxima-kiln-system.patch"
+        "tests/library-patches/maxima-kiln-system.patch",
+        "tests/library-patches/maxima-kiln-mkdir.patch"
       ]
     },
     {

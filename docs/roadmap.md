@@ -149,9 +149,10 @@
   clavier 的依赖闭包涉及 Bordeaux-Threads；在支持并发 Lisp 线程前，不能声明
   `:thread-support` 或用空操作替代其线程 API。数值核心与综合系统分别验证。
 - Maxima 的 `system` 使用同步子进程接口。网络和图形功能仍需相应的运行期接口。
-  share 套件仍需按文件和案例对齐 SBCL。图形测试 `rtest_draw` 在建立测试环境时
-  找不到 `error-catch` 类，后续案例依赖该环境；`rtest_to_poly_solve` 在读取
-  `%and` 中缀表达式时中止。另需隔离 `rtest_grobner`、`rtestprintf`、
+  share 套件仍需按文件和案例对齐 SBCL。图形测试 `rtest_draw` 通过
+  `ensure-directories-exist` 建立输出目录，并调用 PATH 中的 Gnuplot。
+  `rtest_to_poly_solve` 在读取 `%and` 中缀表达式时中止。另需隔离
+  `rtest_grobner`、`rtestprintf`、
   `rtest_abs_integrate`、`rtest_finance` 与 `rtest_rk_adaptive` 的差异，
   并核对 share 报告中意外通过的预期失败案例。
 

@@ -1,0 +1,11 @@
+--- a/share/contrib/operatingsystem/operatingsystem.lisp
++++ b/share/contrib/operatingsystem/operatingsystem.lisp
+@@ -45,6 +45,6 @@
+   #+sbcl (sb-unix:unix-mkdir (namestring (sb-ext:native-pathname dir)) #o777)
+   #+ccl (ensure-directories-exist dir)
+   #+ecl (ensure-directories-exist dir)
+-  #+abcl (ensure-directories-exist dir)
+-  #-(or abcl allegro clisp cmu gcl lispworks sbcl ccl ecl)
++  #+(or abcl kiln) (ensure-directories-exist dir)
++  #-(or abcl allegro clisp cmu gcl lispworks sbcl ccl ecl kiln)
+   (error 'not-implemented :proc (list 'mkdir dir)))
