@@ -153,6 +153,7 @@
                    (hir-fixed-array-dimension type (svref *mir-lir-types* (svref operands 1))))
               :fixed-array-dimension)
              ((and (= count 1) (eq name 'length) (member type '(simple-vector :native-string))) :length)
+             ((and (= count 1) (eq name 'length) (hir-simple-specialized-vector-p type)) :specialized-array-length)
              ((and (= count 2) (eq name 'aref) (hir-simple-specialized-array-p type)) :specialized-array-read)
              ((and store (equal name '(setf aref)) (hir-simple-specialized-array-p type)
                    (hir-known-subtype-p (svref *mir-lir-types* (svref operands 0))
@@ -168,13 +169,9 @@
              ((and store (equal name '(setf elt)) (eq type :simple-array-vector)) :array-write))
        type))))
 
-(defun mir-lir-specialized-vector-p (type)
-  (and (hir-simple-specialized-array-p type)
-       (consp (third type)) (null (cdr (third type)))))
-
 (defun mir-lir-vector-contents-candidate-p (type)
   (and (hir-simple-specialized-array-p type)
-       (or (eq (third type) '*) (mir-lir-specialized-vector-p type))))
+       (or (eq (third type) '*) (hir-simple-specialized-vector-p type))))
 
 (defun mir-lir-array-contents-source (value)
   ;; A declaration can first prove the representation on a copy. Stop
@@ -223,7 +220,7 @@
                          (let* ((store (eq operation :specialized-array-write))
                                 (index (svref (mir-instruction-operands instruction) (if store 2 1)))
                                 (origin (mir-primary-origin index *mir-lir-definitions*))
-                                (dimension (and (mir-lir-specialized-vector-p type) (first (third type)))))
+                                (dimension (and (hir-simple-specialized-vector-p type) (first (third type)))))
                            (setf (gethash result sources)
                                  (list source origin (and (integerp dimension) dimension))))
                          (incf (gethash source uses 0)
@@ -279,7 +276,7 @@
          (when (and (gethash source *mir-lir-array-contents*)
                     definition (= (mir-instruction-kind definition) 6)
                     (eq (mir-instruction-data definition) 'make-array)
-                    (mir-lir-specialized-vector-p (svref *mir-lir-types* source))
+                    (hir-simple-specialized-vector-p (svref *mir-lir-types* source))
                     (not (gethash source seen)))
            (setf (gethash source seen) t)
            (let* ((length (svref (mir-instruction-operands definition) 0))
@@ -290,6 +287,18 @@
                (push source (gethash origin arrays)))))))
      sources)
     arrays))
+
+(defun mir-lir-array-length-argument (length values)
+  (let ((definition (svref *mir-lir-definitions* length)))
+    (when (and definition (= (mir-instruction-kind definition) 6)
+               (eq (mir-instruction-data definition) 'length)
+               (= (length (mir-instruction-operands definition)) 1))
+      (let* ((argument (svref (mir-instruction-operands definition) 0))
+             (source (mir-lir-array-contents-source argument)))
+        (when (and (gethash source *mir-lir-array-contents*)
+                   (hir-simple-specialized-vector-p (svref *mir-lir-types* source))
+                   (zerop (mir-value-block (svref values source))))
+          source)))))
 
 (defun mir-lir-array-branch-bounds (term block lengths values dominators facts)
   (let* ((test (svref (mir-terminator-operands term) 0))
@@ -304,7 +313,10 @@
              (type (svref *mir-lir-types* index))
              (length (mir-primary-origin (svref args 1) *mir-lir-definitions*)))
         (when (hir-nonnegative-integer-type-p type)
-          (let ((origin (mir-primary-origin index *mir-lir-definitions*)))
+          (let ((origin (mir-primary-origin index *mir-lir-definitions*))
+                (array (mir-lir-array-length-argument length values)))
+            (when array
+              (setf facts (mir-lir-add-array-bound (list origin array nil) facts)))
             (dolist (source (gethash length lengths))
               (when (mir-block-dominates-p dominators (mir-value-block (svref values source)) block)
                 (setf facts (mir-lir-add-array-bound (list origin source nil) facts))))))
@@ -340,7 +352,7 @@
                                    :from-end t :initial-value (svref inputs id)))
           do (setf (sbit queued id) 0)
              (multiple-value-bind (branch-bounds accepted-edge)
-                 (when (and dominators (= (mir-terminator-kind term) 1))
+                 (when (= (mir-terminator-kind term) 1)
                    (mir-lir-array-branch-bounds term id lengths values dominators outgoing))
                (loop for edge across (mir-terminator-edges term)
                      for edge-index from 0
@@ -420,7 +432,7 @@
          (index (if store (third args) (second args)))
          (value (when store
                   (if doublep (mir-lir-double-bits (svref operands 0)) (first args))))
-         (rank-one (mir-lir-specialized-vector-p type)))
+         (rank-one (hir-simple-specialized-vector-p type)))
     (flet ((specialized-access ()
              (cond ((and store doublep)
                     (emit-slow-call 'kiln.kernel::%set-simple-specialized-aref-1
@@ -436,6 +448,14 @@
                               (t value)))))))
       (case operation
       (:length (copy-to-var (vector-length object)))
+      (:specialized-array-length
+       (let ((dimension (first (third type))))
+         (if (integerp dimension)
+             (constant-object dimension)
+             (let* ((source (mir-lir-array-contents-source (svref operands 0)))
+                    (storage (and *mir-lir-array-contents*
+                                  (gethash source *mir-lir-array-contents*))))
+               (or (cdr storage) (emit-slow-call 'length object))))))
       (:fixed-array-dimension
        (constant-object (hir-fixed-array-dimension type index-type)))
       ((:specialized-array-read :specialized-array-write)
@@ -1562,7 +1582,7 @@
         (setf *mir-lir-array-contents* (make-hash-table :test #'eql))
         (dolist (owner owners)
           (let* ((type (svref *mir-lir-types* owner))
-                 (dimension (and (mir-lir-specialized-vector-p type) (first (third type)))))
+                 (dimension (and (hir-simple-specialized-vector-p type) (first (third type)))))
             (setf (gethash owner *mir-lir-array-contents*)
                   (cons (new-var)
                         (if (integerp dimension) (constant-object dimension) (new-var))))))
@@ -1619,7 +1639,7 @@
                               (let* ((type (svref *mir-lir-types* result))
                                      (value (mir-lir-value result))
                                      (array (if (consp value) (car value) value))
-                                     (rank-one (mir-lir-specialized-vector-p type))
+                                     (rank-one (hir-simple-specialized-vector-p type))
                                      (contents (car storage))
                                      (length (cdr storage))
                                      (*call-source* (mir-instruction-source instruction)))

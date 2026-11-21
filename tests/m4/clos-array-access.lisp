@@ -144,3 +144,11 @@
 (assert (equalp (fill-with-index 3) #(0d0 1d0 2d0)))
 (assert (handler-case (progn (fill-with-invalid-index 1) nil)
           (error () t)))
+
+(defun fill-input-vector (array)
+  (declare ((simple-array double-float (*)) array) (optimize (speed 3) (safety 3)))
+  (dotimes (i (length array) array)
+    (setf (aref array i) 1d0)))
+
+(assert (zerop (length (fill-input-vector (fill-with-index 0)))))
+(assert (equalp (fill-input-vector (fill-with-index 3)) #(1d0 1d0 1d0)))

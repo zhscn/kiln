@@ -48,6 +48,10 @@
 (defun hir-simple-specialized-array-p (type)
   (and (consp type) (eq (car type) :simple-specialized-array)))
 
+(defun hir-simple-specialized-vector-p (type)
+  (and (hir-simple-specialized-array-p type)
+       (consp (third type)) (null (cdr (third type)))))
+
 (defun hir-fixed-array-dimension (type axis)
   (when (and (hir-simple-specialized-array-p type)
              (hir-range-p axis)
@@ -197,6 +201,12 @@
       ((and (eq name 'length) (= count 1)
             (member (svref types 0) '(simple-vector :native-string)))
        (hir-integer-range 0 #xffffffff))
+      ((and (eq name 'length) (= count 1)
+            (hir-simple-specialized-vector-p (svref types 0)))
+       (let ((dimension (first (third (svref types 0)))))
+         (if (integerp dimension)
+             (hir-integer-range dimension dimension)
+             (hir-integer-range 0 #xffffffff))))
       ((and (>= count 1) (member name '(aref row-major-aref))
             (hir-simple-specialized-array-p (svref types 0)))
        (hir-specialized-element-type (second (svref types 0))))
