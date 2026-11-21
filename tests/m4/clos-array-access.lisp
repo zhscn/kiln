@@ -127,3 +127,20 @@
   (assert (= (row-major-aref matrix 5) 129))
   (assert (handler-case (progn (aref matrix 0 3) nil) (error () t)))
   (assert (handler-case (progn (setf (aref matrix 1 2) 256) nil) (type-error () t))))
+
+(defun fill-with-index (size)
+  (declare (type (integer 0 100) size) (optimize (speed 3) (safety 3)))
+  (let ((array (make-array size :element-type 'double-float :initial-element 0d0)))
+    (dotimes (i size array)
+      (setf (aref array i) (float i 0d0)))))
+
+(defun fill-with-invalid-index (size)
+  (declare (type (integer 0 100) size) (optimize (speed 3) (safety 3)))
+  (let ((array (make-array size :element-type 'double-float :initial-element 0d0)))
+    (dotimes (i size array)
+      (setf (aref array (1+ i)) 1d0))))
+
+(assert (zerop (length (fill-with-index 0))))
+(assert (equalp (fill-with-index 3) #(0d0 1d0 2d0)))
+(assert (handler-case (progn (fill-with-invalid-index 1) nil)
+          (error () t)))
