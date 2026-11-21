@@ -312,6 +312,7 @@ fn function(xs: Nodes) -> Result<Function> {
                     let ty = match symbol(var.at(1))?.as_str() {
                         "obj" => Type::Obj,
                         "word" => Type::Word,
+                        "f32" => Type::F32,
                         "f64" => Type::F64,
                         "mv" => Type::Mv,
                         ty => return Err(format!("LIR: unknown representation {ty}")),
@@ -379,11 +380,17 @@ fn block(xs: Nodes) -> Result<Block> {
     let (name, xs) = xs.split_first().ok_or("LIR: missing block name")?;
     let mut instructions = Vec::new();
     let mut terminator = None;
-    for x in xs.iter() {
+    let mut cold = false;
+    for (position, x) in xs.iter().enumerate() {
         if terminator.is_some() {
             return Err("LIR: instruction after terminator".into());
         }
         let (name, args) = form(x)?;
+        if position == 0 && name == "cold" {
+            arity(name, args, 0)?;
+            cold = true;
+            continue;
+        }
         let term = match name {
             "jump" => {
                 arity(name, args, 1)?;
@@ -540,6 +547,7 @@ fn block(xs: Nodes) -> Result<Block> {
                 let kind = match symbol(args.at(1))?.as_str() {
                     "simple-vector" => SequenceKind::Vector,
                     "string" => SequenceKind::String,
+                    "double-storage" => SequenceKind::DoubleStorage,
                     _ => return Err("LIR: unsupported sequence kind".into()),
                 };
                 Instruction::AllocateSequence {
@@ -794,6 +802,7 @@ fn block(xs: Nodes) -> Result<Block> {
     }
     Ok(Block {
         name: symbol(name)?,
+        cold,
         instructions,
         terminator: terminator.ok_or("LIR: unterminated block")?,
     })
@@ -950,6 +959,7 @@ fn class(x: Node) -> Result<Class> {
         "bignum" => Class::Bignum,
         "ratio" => Class::Ratio,
         "double-float" => Class::Double,
+        "double-storage" => Class::DoubleStorage,
         "standard-instance" => Class::Instance,
         "funcallable-instance" => Class::Funcallable,
         "complex" => Class::Complex,

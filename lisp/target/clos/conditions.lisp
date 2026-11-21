@@ -38,11 +38,9 @@
 ;;; - other symbols that name a class and are not DEFTYPEs: TYPEP is
 ;;;   CLASS-TYPEP, membership in the class precedence list;
 ;;; - (OR ...), (AND ...) and (NOT ...) of those.
-;;; The answers hold until a type, a class name or a class precedence list
-;;; changes; KILN.KERNEL::INVALIDATE-TYPE-CACHES then empties the caches.
-;;; A redefined class gets a new unique number, but its obsolete instances
-;;; keep the old one as their stamp until they are updated, so that the
-;;; cache is emptied then too (REFINALIZE).
+;;; Guard answers with the shared type version. A redefined class gets a
+;;; new unique number, while obsolete instances keep their old stamp until
+;;; they are updated. The version also invalidates answers for those stamps.
 (defparameter *class-determined-types*
   '(t nil null symbol cons list atom function compiled-function character
     number real rational integer fixnum bignum ratio float single-float
@@ -68,51 +66,60 @@
            (t nil)))
         (t nil)))
 
-(defun cacheable-type-p (type)
+(defun cacheable-type-p (type version)
   "CLASS-DETERMINED-TYPE-P, remembering the types that are not."
   (let* ((memo kiln.kernel::*uncacheable-types*)
+         (versions kiln.kernel::*uncacheable-type-versions*)
          (index (kiln.sys:%primop :fixnum-logand
                                   (kiln.sys:%primop :identity-hash type) 511)))
-    (cond ((eq (svref memo index) type) nil)
+    (cond ((and (eql (kiln.sys:%primop :svref-unchecked versions index) version)
+                (eq (kiln.sys:%primop :svref-unchecked memo index) type))
+           nil)
           ((class-determined-type-p type) t)
-          (t (setf (svref memo index) type)
+          (t (kiln.sys:%primop :set-svref-unchecked memo index type)
+             (kiln.sys:%primop :set-svref-unchecked versions index version)
              nil))))
 
 (declaim (inline typep-cache-index typep-cache-probe))
 
 (defun typep-cache-index (stamp type)
-  (* 2 (kiln.sys:%primop
-        :fixnum-logand
-        (kiln.sys:%primop :fixnum-logxor stamp (kiln.sys:%primop :identity-hash type))
-        4095)))
+  (kiln.sys:%primop
+   :fixnum-logand
+   (kiln.sys:%primop :fixnum-logxor stamp (kiln.sys:%primop :identity-hash type))
+   4095))
 
 (defun typep-cache-probe (stamp type)
-  "The entry of KILN.KERNEL::*TYPEP-CACHE* for objects with STAMP and TYPE:
-the stamp, doubled, plus 1 if the objects are of TYPE; NIL if there is
-none."
+  "Return the cached stamp and result for TYPE in the current version."
+  (let* ((index (typep-cache-index stamp type))
+         (version (kiln.sys:%primop :svref-unchecked kiln.kernel::*type-assumption-cell* 0)))
+    (when (eql (kiln.sys:%primop :svref-unchecked kiln.kernel::*typep-cache-versions* index)
+               version)
+      (let* ((cache kiln.kernel::*typep-cache*)
+             (offset (kiln.sys:%primop :fixnum+ index index))
+             (entry (kiln.sys:%primop :svref-unchecked cache offset))
+             (key (+ stamp stamp)))
+        (and (eq (kiln.sys:%primop :svref-unchecked cache (kiln.sys:%primop :fixnum+ offset 1)) type)
+             (or (eq entry key) (eq entry (+ key 1)))
+             entry)))))
+
+(defun publish-typep-entry (stamp type result version)
   (let* ((cache kiln.kernel::*typep-cache*)
+         (versions kiln.kernel::*typep-cache-versions*)
          (index (typep-cache-index stamp type))
-         (entry (svref cache index))
-         (key (+ stamp stamp)))
-    (and (eq (svref cache (+ index 1)) type)
-         (or (eq entry key) (eq entry (+ key 1)))
-         entry)))
+         (offset (kiln.sys:%primop :fixnum+ index index))
+         (entry (if result (+ stamp stamp 1) (+ stamp stamp))))
+    (kiln.sys:%primop :set-svref-unchecked versions index nil)
+    (kiln.sys:%primop :set-svref-unchecked cache offset entry)
+    (kiln.sys:%primop :set-svref-unchecked cache (kiln.sys:%primop :fixnum+ offset 1) type)
+    (kiln.sys:%primop :set-svref-unchecked versions index version)
+    entry))
 
 (defun typep-cache-fill (object type stamp)
-  "Computes (TYPEP OBJECT TYPE) and, if TYPE depends on the class alone,
-stores it in KILN.KERNEL::*TYPEP-CACHE* under STAMP. Returns the entry,
-or T or NIL for a type that is not cached."
-  (let ((result (kiln.kernel::uncached-typep object type)))
-    (if (cacheable-type-p type)
-        (let* ((cache kiln.kernel::*typep-cache*)
-               (index (typep-cache-index stamp type))
-               (new (if result (+ stamp stamp 1) (+ stamp stamp))))
-          ;; The type first: a reader that sees the new key with the old
-          ;; type misses.
-          (setf (svref cache (+ index 1)) nil
-                (svref cache index) new
-                (svref cache (+ index 1)) type)
-          new)
+  (let* ((version (kiln.kernel::type-assumption-version))
+         (result (kiln.kernel::uncached-typep object type)))
+    (if (and (cacheable-type-p type version)
+             (eql version (kiln.kernel::type-assumption-version)))
+        (publish-typep-entry stamp type result version)
         (if result t nil))))
 
 (defun kiln.kernel::%cached-typep (object type)
@@ -130,12 +137,9 @@ or T or NIL for a type that is not cached."
          (entry (typep-cache-probe number super)))
     (if entry
         (eq entry (+ number number 1))
-        (let ((result (if (member super (%slot class '%precedence-list)) t nil))
-              (cache kiln.kernel::*typep-cache*)
-              (index (typep-cache-index number super)))
-          (setf (svref cache (+ index 1)) nil
-                (svref cache index) (if result (+ number number 1) (+ number number))
-                (svref cache (+ index 1)) super)
+        (let* ((version (kiln.kernel::type-assumption-version))
+               (result (if (member super (%slot class '%precedence-list)) t nil)))
+          (publish-typep-entry number super result version)
           result))))
 
 ;;; (TYPEP OBJECT 'TYPE) at a call site with its CACHE (lower.lisp,
@@ -143,9 +147,8 @@ or T or NIL for a type that is not cached."
 ;;; DEFTYPE), the result depends only on the object's class, so the car of
 ;;; CACHE keeps the entry of KILN.KERNEL::*TYPEP-CACHE* for the last
 ;;; object's class. The cdr keeps the version of the type assumption it was
-;;; found under: after a type or a class definition changes, an obsolete
-;;; instance would still have its old class's answer here (the global cache
-;;; is emptied then, the call sites are not). A call site that sees objects
+;;; found under. Both caches check the version to invalidate answers for
+;;; obsolete instances after redefinition. A call site that sees objects
 ;;; of many classes (an AST walker) misses that cache and finds the entry
 ;;; in the global cache.
 (defun kiln.kernel::%typep-cached (object type cache)

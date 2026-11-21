@@ -107,6 +107,7 @@
         ((eql class +packet-class-bignum+) :bignum)
         ((eql class +packet-class-ratio+) :ratio)
         ((eql class +packet-class-double+) :double-float)
+        ((eql class +packet-class-double-storage+) :double-storage)
         ((eql class +packet-class-instance+) :standard-instance)
         ((eql class +packet-class-funcallable-instance+) :funcallable-instance)
         ((eql class +packet-class-complex+) :complex)
@@ -326,11 +327,14 @@
        (lir-check-handler state (fifth args))
        (let* ((kind (lir-class-name (second args)))
               (initial (fourth args)))
-         (unless (member kind '(:simple-vector :string))
+         (unless (member kind '(:simple-vector :string :double-storage))
            (lir-function-error state "unsupported sequence allocation class ~S" (second args)))
          (lir-emit state `(:alloc-sequence ,(first args) ,kind
                            ,(lir-operand state (third args) :word)
-                           ,(lir-operand state (if (eq kind :string) `(:character-tag ,initial) initial) :obj)))))
+                           ,(case kind
+                              (:double-storage (lir-operand state initial :f64))
+                              (:string (lir-operand state `(:character-tag ,initial) :obj))
+                              (t (lir-operand state initial :obj)))))))
       (:alloc-vector-elements
        (lir-check-handler state (third args))
        (lir-emit state `(:vector ,(first args)
@@ -590,7 +594,7 @@
         (dolist (variable source-variables)
           (let* ((name (if compatibility (first variable) variable))
                  (source-kind (if compatibility (second variable) (svref variable 2)))
-                 (kind (ecase source-kind (:obj :obj) (:raw :word) (:f64 :f64))))
+                 (kind (ecase source-kind (:obj :obj) (:raw :word) (:f32 :f32) (:f64 :f64))))
             (lir-register-variable state name kind)
             (push (list name kind) (lir-function-variables state))))
         (let ((storage (cond (prepare-storage
@@ -610,7 +614,10 @@
                   (lir-function-landing-view state) nil
                   (lir-function-block-constants state) nil)
             (dolist (statement (kblock-stmts block)) (lir-statement state statement))
-            (push (list* :block (kblock-name block) (nreverse (lir-function-statements state)))
+            (push (list* :block (kblock-name block)
+                         (if (kblock-cold block)
+                             (cons (list :cold) (nreverse (lir-function-statements state)))
+                             (nreverse (lir-function-statements state))))
                   (lir-function-blocks state)))
           (let* ((debug-variables
                    (if compatibility source-variables

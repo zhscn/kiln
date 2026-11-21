@@ -1,8 +1,8 @@
 ;;;; File streams: Cyclosis' POSIX file streams with a
 ;;;; buffer, and OPEN's MAKE-FILE-STREAM for kiln's client. Cyclosis'
 ;;;; transcoders read and write one octet at a time; without a buffer each
-;;;; would be a system call. The standard streams (streams.lisp) are not
-;;;; buffered, so that their output is not delayed or reordered.
+;;;; would be a system call. Standard input shares the file input buffer.
+;;;; The standard output streams write through to their descriptors.
 
 (in-package #:cyclosis)
 
@@ -22,6 +22,8 @@
    ;; Opened with O_APPEND: each write moves the offset to the end, so it
    ;; is not kept across writes.
    (%append :initform nil :initarg :append :reader file-append-p)))
+
+(defclass kiln-standard-input-stream (kiln-file-stream) ())
 
 (declaim (inline file-buffer in-start in-end out-end %utf-8-characters
                  (setf in-start) (setf in-end) (setf out-end)
@@ -300,6 +302,18 @@ they have been read from the file, but the character has not."
   (/ (check-sys stream (kiln.kernel::sys 12 (descriptor stream)))
      (octets-per-element stream)))
 
+(defmethod stream-file-position ((stream kiln-standard-input-stream)) nil)
+
+(defmethod (setf stream-file-position) (position (stream kiln-standard-input-stream))
+  (declare (ignore position))
+  nil)
+
+(defmethod stream-file-length ((stream kiln-standard-input-stream)) nil)
+
+(defmethod stream-clear-input ((stream kiln-standard-input-stream))
+  (setf (in-start stream) 0 (in-end stream) 0)
+  nil)
+
 (defmethod close :before ((stream kiln-file-stream) &key abort)
   (when (stream-open-p stream)
     (if abort
@@ -370,3 +384,6 @@ they have been read from the file, but the character has not."
           (when (eq direction :probe)
             (close stream))
           stream)))))
+
+;; Existing synonym and two-way streams already refer to this object.
+(change-class +standard-input+ 'kiln-standard-input-stream)

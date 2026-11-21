@@ -14,3 +14,6 @@
 ((NIL NIL T) (T T NIL) (T T NIL))
 ((T T NIL) (NIL NIL T) (NIL NIL T))
 (42 T T NIL)
+((NIL NIL) NIL)
+((T T) T)
+((NIL NIL) NIL)

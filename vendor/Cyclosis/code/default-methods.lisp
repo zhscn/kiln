@@ -149,6 +149,23 @@
   (stream-read-char stream))
 
 (defmethod stream-read-line ((stream fundamental-character-input-stream))
+  #+kiln
+  (let ((buffer (make-string 120))
+        (used 0)
+        (capacity 120))
+    (declare (fixnum used capacity))
+    (loop for c = (stream-read-char stream)
+          until (or (eql c :eof) (eql c #\Newline))
+          do (when (= used capacity)
+               (setf capacity (* 2 capacity)
+                     buffer (replace (make-string capacity) buffer)))
+             (setf (schar buffer used) c)
+             (incf used)
+          finally (return (values (if (= used capacity)
+                                      buffer
+                                      (replace (make-string used) buffer))
+                                  (eql c :eof)))))
+  #-kiln
   (loop
      with result = (make-array 120 :element-type 'character :adjustable t :fill-pointer 0)
      for c = (stream-read-char stream)

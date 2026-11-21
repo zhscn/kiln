@@ -13,7 +13,7 @@
 //!
 //! Contagion (CLHS 12.1.4): double > single > rational.
 
-use crate::bignum::{from_bigint, is_bignum, to_bigint};
+use crate::bignum::{bignum_is_negative, from_bigint, gcd_ref, integer_from_i128, integer_i128, is_bignum, to_bigint};
 use crate::context::Context;
 use crate::object::{self, KIND_DOUBLE, KIND_MASK, KIND_RATIO, TAG_GENERAL};
 use crate::rtfun::{ERR_DIVISION_BY_ZERO, ERR_NOT_NUMBER, error_with};
@@ -80,6 +80,21 @@ pub unsafe fn read(v: u64) -> Option<Num> {
     }
 }
 
+/// Allocate a ratio from already reduced, rooted-by-this-call components.
+unsafe fn alloc_ratio(ctx: *mut Context, numerator: u64, denominator: u64) -> u64 {
+    unsafe {
+        let values = (*ctx).values;
+        *values.add(0) = numerator;
+        *values.add(1) = denominator;
+        (*ctx).values_live = 2;
+        let p = crate::gc::alloc(ctx, 24, KIND_RATIO);
+        *((p + 8) as *mut u64) = *values.add(0);
+        *((p + 16) as *mut u64) = *values.add(1);
+        (*ctx).values_live = 0;
+        p + TAG_GENERAL
+    }
+}
+
 /// Makes a Lisp number of `x`, allocating if needed.
 ///
 /// # Safety
@@ -104,13 +119,7 @@ pub unsafe fn write(ctx: *mut Context, x: &Num) -> u64 {
                 *(*ctx).values.add(0) = n;
                 (*ctx).values_live = 1;
                 let d = from_bigint(ctx, r.denom());
-                *(*ctx).values.add(1) = d;
-                (*ctx).values_live = 2;
-                let p = crate::gc::alloc(ctx, 24, KIND_RATIO);
-                *((p + 8) as *mut u64) = *(*ctx).values.add(0);
-                *((p + 16) as *mut u64) = *(*ctx).values.add(1);
-                (*ctx).values_live = 0;
-                p + TAG_GENERAL
+                alloc_ratio(ctx, *(*ctx).values.add(0), d)
             }
         }
     }
@@ -159,10 +168,82 @@ fn format_of(x: &Num) -> Format {
 
 fn normalize(r: BigRational) -> Num {
     if r.denom().is_one() {
-        Num::Int(r.to_integer())
+        Num::Int(r.into_raw().0)
     } else {
         Num::Ratio(r)
     }
+}
+
+fn add_rationals(a: BigRational, b: BigRational, subtract: bool) -> BigRational {
+    let (an, ad) = a.into_raw();
+    let (bn, bd) = b.into_raw();
+    if ad.is_one() {
+        let scaled = an * &bd;
+        return BigRational::new_raw(if subtract { scaled - bn } else { scaled + bn }, bd);
+    }
+    if bd.is_one() {
+        let scaled = bn * &ad;
+        return BigRational::new_raw(if subtract { an - scaled } else { an + scaled }, ad);
+    }
+    let common = gcd_ref(&ad, &bd);
+    let (left, right, left_scale) = if common.is_one() {
+        (an * &bd, bn * &ad, ad)
+    } else {
+        let left_scale = ad / &common;
+        let right_scale = &bd / &common;
+        (an * right_scale, bn * &left_scale, left_scale)
+    };
+    let numerator = if subtract { left - right } else { left + right };
+    if common.is_one() {
+        return BigRational::new_raw(numerator, left_scale * bd);
+    }
+    // Both inputs are reduced. Only factors from the common denominator
+    // can divide the new numerator and denominator.
+    let cancel = gcd_ref(&numerator, &common);
+    if cancel.is_one() {
+        BigRational::new_raw(numerator, left_scale * bd)
+    } else {
+        BigRational::new_raw(numerator / &cancel, left_scale * (bd / cancel))
+    }
+}
+
+fn multiply_rationals(a: BigRational, b: BigRational, reciprocal: bool) -> BigRational {
+    fn cancel(left: &mut BigInt, right: &mut BigInt) {
+        if !left.is_one() && !right.is_one() {
+            let divisor = gcd_ref(left, right);
+            if !divisor.is_one() {
+                *left /= &divisor;
+                *right /= divisor;
+            }
+        }
+    }
+
+    let (mut an, mut ad) = a.into_raw();
+    let (mut bn, mut bd) = b.into_raw();
+    if reciprocal {
+        assert!(!bn.is_zero(), "division by zero");
+        std::mem::swap(&mut bn, &mut bd);
+    }
+    if an.is_one() && ad.is_one() {
+        return if bd.is_negative() {
+            BigRational::new_raw(-bn, -bd)
+        } else {
+            BigRational::new_raw(bn, bd)
+        };
+    }
+    if an.is_zero() || bn.is_zero() {
+        return BigRational::zero();
+    }
+    cancel(&mut an, &mut bd);
+    cancel(&mut bn, &mut ad);
+    let mut numerator = an * bn;
+    let mut denominator = ad * bd;
+    if denominator.is_negative() {
+        numerator = -numerator;
+        denominator = -denominator;
+    }
+    // Each input was reduced and both pairs of cross factors were canceled.
+    BigRational::new_raw(numerator, denominator)
 }
 
 fn arith(op: u64, x: &Num, y: &Num) -> Num {
@@ -197,10 +278,8 @@ fn arith(op: u64, x: &Num, y: &Num) -> Num {
             }
             let (a, b) = (to_rational(x), to_rational(y));
             normalize(match op {
-                OP_ADD => a + b,
-                OP_SUB => a - b,
-                OP_MUL => a * b,
-                _ => a / b,
+                OP_ADD | OP_SUB => add_rationals(a, b, op == OP_SUB),
+                _ => multiply_rationals(a, b, op == OP_DIV),
             })
         }
     }
@@ -249,33 +328,56 @@ fn is_zero(x: &Num) -> bool {
     }
 }
 
+fn rounded_integer_division(op: u64, a: &BigInt, b: &BigInt) -> (BigInt, BigInt) {
+    let (mut q, mut r) = a.div_rem(b);
+    if !r.is_zero() {
+        let same_sign = r.is_negative() == b.is_negative();
+        let adjustment = match op {
+            OP_FLOOR if !same_sign => -1,
+            OP_CEILING if same_sign => 1,
+            OP_ROUND => {
+                let twice_remainder = r.abs() << 1;
+                if twice_remainder > b.abs()
+                    || (twice_remainder == b.abs() && q.is_odd())
+                {
+                    if same_sign { 1 } else { -1 }
+                } else {
+                    0
+                }
+            }
+            _ => 0,
+        };
+        match adjustment {
+            -1 => {
+                q -= 1;
+                r += b;
+            }
+            1 => {
+                q += 1;
+                r -= b;
+            }
+            _ => {}
+        }
+    }
+    (q, r)
+}
+
 /// Quotient (an integer) and remainder of a division with the rounding
 /// of OP (TRUNCATE, FLOOR, CEILING or ROUND).
 fn divide(op: u64, x: &Num, y: &Num) -> (BigInt, Num) {
     if let (Num::Int(a), Num::Int(b)) = (x, y) {
-        // Reducing a/b first computes a GCD that integer division never needs.
-        let (mut q, mut r) = a.div_rem(b);
-        if !r.is_zero() {
-            let same_sign = r.is_negative() == b.is_negative();
-            let adjustment = match op {
-                OP_FLOOR if !same_sign => -1,
-                OP_CEILING if same_sign => 1,
-                OP_ROUND => {
-                    let twice_remainder = r.abs() << 1;
-                    if twice_remainder > b.abs()
-                        || (twice_remainder == b.abs() && q.is_odd())
-                    {
-                        if same_sign { 1 } else { -1 }
-                    } else {
-                        0
-                    }
-                }
-                _ => 0,
-            };
-            q += adjustment;
-            r -= b * adjustment;
-        }
+        let (q, r) = rounded_integer_division(op, a, b);
         return (q, Num::Int(r));
+    }
+    if let (Num::Ratio(a), Num::Int(b)) = (x, y) {
+        let (q, numerator) = if b.is_one() {
+            rounded_integer_division(op, a.numer(), a.denom())
+        } else {
+            rounded_integer_division(op, a.numer(), &(a.denom() * b))
+        };
+        // The new numerator differs by a multiple of the old denominator,
+        // so the remainder is already reduced.
+        return (q, Num::Ratio(BigRational::new_raw(numerator, a.denom().clone())));
     }
     let format = format_of(x).max(format_of(y));
     let q = if format == Format::Rational {
@@ -378,6 +480,31 @@ fn hypot(x: &Num, y: &Num) -> Num {
 }
 
 fn expt(x: &Num, y: &Num) -> Num {
+    if let (Num::Int(base), Num::Int(exponent)) = (x, y)
+        && let Some(power) = exponent.magnitude().to_u32()
+    {
+        let result = if let Some(zeros) = base.trailing_zeros()
+            && zeros + 1 == base.bits()
+            && let Some(shift) = zeros
+                .checked_mul(u64::from(power))
+                .and_then(|shift| usize::try_from(shift).ok())
+        {
+            let magnitude = BigInt::one() << shift;
+            if base.is_negative() && power % 2 != 0 {
+                -magnitude
+            } else {
+                magnitude
+            }
+        } else {
+            base.pow(power)
+        };
+        let result = Num::Int(result);
+        return if exponent.is_negative() {
+            arith(OP_DIV, &Num::Int(BigInt::one()), &result)
+        } else {
+            result
+        };
+    }
     match y {
         Num::Int(e) if format_of(x) == Format::Rational || e.bits() < 64 => {
             // Exact for rationals; repeated squaring keeps floats close.
@@ -430,7 +557,126 @@ pub unsafe extern "C" fn kiln_rt_number_op(ctx: *mut Context, op: u64, a: u64, b
                 _ => object::nil(),
             };
         }
+        if op == OP_DIV && a == 2 && kind_of(b) == Some(KIND_RATIO) {
+            let p = object::untag(b);
+            let numerator = *((p + 8) as *const u64);
+            let denominator = *((p + 16) as *const u64);
+            if numerator == 2 {
+                return denominator;
+            }
+            let positive = if object::is_fixnum(numerator) {
+                object::fixnum_value(numerator) > 0
+            } else {
+                !bignum_is_negative(numerator)
+            };
+            if positive {
+                return alloc_ratio(ctx, denominator, numerator);
+            }
+        }
+        if matches!(op, OP_ADD | OP_SUB) {
+            let ratio_left = object::is_fixnum(b) && kind_of(a) == Some(KIND_RATIO);
+            let ratio_right = object::is_fixnum(a) && kind_of(b) == Some(KIND_RATIO);
+            if ratio_left || ratio_right {
+                let (ratio, integer) = if ratio_left { (a, b) } else { (b, a) };
+                let p = object::untag(ratio);
+                let numerator = *((p + 8) as *const u64);
+                let denominator = *((p + 16) as *const u64);
+                let mut integer = object::fixnum_value(integer);
+                if op == OP_SUB && ratio_left {
+                    integer = -integer;
+                }
+                let negate_numerator = op == OP_SUB && !ratio_left;
+                let sum = if object::is_fixnum(numerator) && object::is_fixnum(denominator) {
+                    // A product of two fixnums and an added fixnum fit i128.
+                    let n = i128::from(object::fixnum_value(numerator));
+                    let d = i128::from(object::fixnum_value(denominator));
+                    let sum = if negate_numerator { -n } else { n } + d * i128::from(integer);
+                    if (i128::from(object::FIXNUM_MIN)..=i128::from(object::FIXNUM_MAX)).contains(&sum) {
+                        return alloc_ratio(ctx, (sum as u64) << 1, denominator);
+                    }
+                    Some(sum)
+                } else if let Some(n) = integer_i128(numerator)
+                    && let Some(d) = integer_i128(denominator)
+                    && let Some(product) = d.checked_mul(i128::from(integer))
+                {
+                    if negate_numerator { product.checked_sub(n) } else { product.checked_add(n) }
+                } else {
+                    None
+                };
+                // Adding an integer preserves the denominator and reduction.
+                *(*ctx).values.add(0) = denominator;
+                (*ctx).values_live = 1;
+                let result = if let Some(sum) = sum {
+                    integer_from_i128(ctx, sum)
+                } else {
+                    let mut n = to_bigint(numerator);
+                    if negate_numerator {
+                        n = -n;
+                    }
+                    n += to_bigint(denominator) * integer;
+                    from_bigint(ctx, &n)
+                };
+                return alloc_ratio(ctx, result, *(*ctx).values.add(0));
+            }
+        }
+        if op == OP_COMPARE {
+            // A canonical ratio has a nonzero numerator and positive denominator.
+            let ratio_vs_zero = if b == 0 && kind_of(a) == Some(KIND_RATIO) {
+                Some((a, false))
+            } else if a == 0 && kind_of(b) == Some(KIND_RATIO) {
+                Some((b, true))
+            } else {
+                None
+            };
+            if let Some((ratio, reversed)) = ratio_vs_zero {
+                let numerator = *((object::untag(ratio) + 8) as *const u64);
+                let negative = if object::is_fixnum(numerator) {
+                    object::fixnum_value(numerator) < 0
+                } else {
+                    bignum_is_negative(numerator)
+                };
+                return if negative ^ reversed { (-2_i64) as u64 } else { 2 };
+            }
+            // A bignum is outside the fixnum interval, so its sign
+            // determines the order against every fixnum.
+            if object::is_fixnum(a) && is_bignum(b) {
+                return if bignum_is_negative(b) { 2 } else { (-2_i64) as u64 };
+            }
+            if object::is_fixnum(b) && is_bignum(a) {
+                return if bignum_is_negative(a) { (-2_i64) as u64 } else { 2 };
+            }
+        }
         let x = number_arg(ctx, a);
+        if op == OP_TRUNCATE && b == 2 && let Num::Double(value) = &x {
+            let quotient = value.trunc();
+            // The upper bound is exclusive: FIXNUM_MAX rounds up as f64.
+            let limit = -(object::FIXNUM_MIN as f64);
+            if (-limit..limit).contains(&quotient) {
+                let integer = quotient as i64;
+                // Converting the integer back canonicalizes the quotient's zero,
+                // just as the general integer quotient path does.
+                let remainder = write(ctx, &Num::Double(value - integer as f64));
+                *(*ctx).values.add(0) = remainder;
+                (*ctx).values_live = 0;
+                return (integer as u64) << 1;
+            }
+        }
+        let x = if op == OP_MUL && object::is_fixnum(b) {
+            match x {
+                Num::Int(mut value) => {
+                    value *= object::fixnum_value(b);
+                    return from_bigint(ctx, &value);
+                }
+                other => other,
+            }
+        } else {
+            x
+        };
+        if op == OP_MUL && object::is_fixnum(a) && is_bignum(b) {
+            let mut value = to_bigint(b);
+            value *= object::fixnum_value(a);
+            return from_bigint(ctx, &value);
+        }
         let unary = (OP_TO_SINGLE..=OP_RATIONAL).contains(&op)
             || (OP_SINH..=OP_ATANH).contains(&op);
         let y = if unary { Num::Int(BigInt::zero()) } else { number_arg(ctx, b) };
@@ -438,7 +684,15 @@ pub unsafe extern "C" fn kiln_rt_number_op(ctx: *mut Context, op: u64, a: u64, b
             error_with(ctx, ERR_DIVISION_BY_ZERO, a);
         }
         let result = match op {
-            OP_ADD | OP_SUB | OP_MUL | OP_DIV => arith(op, &x, &y),
+            OP_ADD | OP_SUB | OP_MUL => match (x, y) {
+                (Num::Int(a), Num::Int(b)) => Num::Int(match op {
+                    OP_ADD => a + b,
+                    OP_SUB => a - b,
+                    _ => a * b,
+                }),
+                (x, y) => arith(op, &x, &y),
+            },
+            OP_DIV => arith(op, &x, &y),
             OP_TRUNCATE..=OP_ROUND => {
                 let (q, r) = divide(op, &x, &y);
                 // Allocate the remainder first and keep it as a root while
@@ -628,6 +882,61 @@ mod tests {
         let (q, r) = divide(OP_TRUNCATE, &Num::Int(numerator), &Num::Int(divisor));
         assert_eq!(q, quotient);
         assert!(matches!(r, Num::Int(r) if r == BigInt::from(7)));
+    }
+
+    #[test]
+    fn exact_integer_powers_preserve_sign_and_reciprocals() {
+        for base in [
+            BigInt::from(-16),
+            BigInt::from(-3),
+            BigInt::from(2),
+            -(BigInt::one() << 2048usize),
+            (BigInt::one() << 2048usize) + 1,
+        ] {
+            for power in [0, 1, 2, 5, 13] {
+                let expected = base.pow(power);
+                let input = Num::Int(base.clone());
+                let result = expt(&input, &Num::Int(power.into()));
+                assert!(matches!(result, Num::Int(integer) if integer == expected));
+                if power != 0 {
+                    let reciprocal = expt(&input, &Num::Int(-BigInt::from(power)));
+                    assert_eq!(
+                        to_rational(&reciprocal),
+                        BigRational::new(BigInt::one(), expected)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn ratio_by_integer_preserves_reduced_remainders() {
+        for numerator in [-9i64, -3, -1, 1, 3, 9] {
+            for divisor in [-5i64, -3, -1, 1, 3, 5] {
+                let ratio = BigRational::new(numerator.into(), 2.into());
+                let divisor_int = BigInt::from(divisor);
+                for op in [OP_TRUNCATE, OP_FLOOR, OP_CEILING, OP_ROUND] {
+                    let (q, remainder) =
+                        divide(op, &Num::Ratio(ratio.clone()), &Num::Int(divisor_int.clone()));
+                    let reference = numerator as f64 / (2 * divisor) as f64;
+                    let rounded = match op {
+                        OP_TRUNCATE => reference.trunc(),
+                        OP_FLOOR => reference.floor(),
+                        OP_CEILING => reference.ceil(),
+                        _ => reference.round_ties_even(),
+                    };
+                    assert_eq!(q, BigInt::from(rounded as i64));
+                    let Num::Ratio(remainder) = remainder else {
+                        panic!("ratio remainder expected");
+                    };
+                    assert_eq!(remainder.denom(), ratio.denom());
+                    assert_eq!(
+                        remainder.numer() + q * &divisor_int * ratio.denom(),
+                        *ratio.numer()
+                    );
+                }
+            }
+        }
     }
 
     #[test]

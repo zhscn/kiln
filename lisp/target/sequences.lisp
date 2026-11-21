@@ -335,7 +335,36 @@ other, the shorter's length and the rest of the longer after it."
 
 ;;; Searching
 
+(defun unsigned-fixnum-vector-storage (seq)
+  (when (and (not (native-vector-p seq)) (vectorp seq))
+    (let ((type (array-element-type seq)))
+      (when (and (consp type) (eq (car type) 'unsigned-byte)
+                 (<= (cadr type) (integer-length most-positive-fixnum)))
+        (complex-array-op :native-storage seq)))))
+
+(defun position-in-unsigned-fixnum-storage (item storage start end from-end)
+  (declare (fixnum start end))
+  (unless (minusp (the fixnum item))
+    (if from-end
+        (do ((i (1- end) (1- i))) ((< i start) nil)
+          (declare (fixnum i))
+          (when (eq item (%primop :svref-unchecked storage i)) (return i)))
+        (do ((i start (1+ i))) ((>= i end) nil)
+          (declare (fixnum i))
+          (when (eq item (%primop :svref-unchecked storage i)) (return i))))))
+
+(defun numeric-search-storage (item seq test test-not key)
+  (and (null test-not) (null key) (%primop :fixnump item)
+       (or (eq test '=) (eq test #'=))
+       (unsigned-fixnum-vector-storage seq)))
+
 (defun find (item seq &key test test-not key (start 0) end from-end)
+  (let ((storage (numeric-search-storage item seq test test-not key)))
+    (when storage
+      (return-from find
+        (when (position-in-unsigned-fixnum-storage item storage start
+                                                   (sequence-end seq start end) from-end)
+          item))))
   (cond ((and (listp seq) (null from-end))
          (let ((l (nthcdr start seq)) (end (and end (- end start))))
            (if (null end)
@@ -360,6 +389,10 @@ other, the shorter's length and the rest of the longer after it."
            (when (satisfies-test item x test test-not key) (return x))))))
 
 (defun find-if (pred seq &key key (start 0) end from-end)
+  (when (and (null key) (or (eq pred 'minusp) (eq pred #'minusp))
+             (unsigned-fixnum-vector-storage seq))
+    (sequence-end seq start end)
+    (return-from find-if nil))
   (cond ((and (listp seq) (null from-end))
          (do ((l (nthcdr start seq) (cdr l)) (i start (+ i 1)))
              ((or (null l) (and end (>= i end))) nil)
@@ -382,6 +415,11 @@ other, the shorter's length and the rest of the longer after it."
   (apply #'find-if (complement pred) seq args))
 
 (defun position (item seq &key test test-not key (start 0) end from-end)
+  (let ((storage (numeric-search-storage item seq test test-not key)))
+    (when storage
+      (return-from position
+        (position-in-unsigned-fixnum-storage item storage start
+                                             (sequence-end seq start end) from-end))))
   (if (listp seq)
       (do ((l (nthcdr start seq) (cdr l)) (i start (+ i 1)) (found nil))
           ((or (null l) (and end (>= i end))) found)
@@ -436,8 +474,38 @@ other, the shorter's length and the rest of the longer after it."
               ((or (>= i end1) (>= j end2))
                (if (and (>= i end1) (>= j end2)) nil i))
             (unless (same i j) (return i)))))))
+(defun search-native-strings (needle haystack from-end start1 end1 start2 end2)
+  (let* ((end1 (%string-bounds needle start1 end1))
+         (end2 (%string-bounds haystack start2 end2))
+         (n (- end1 start1))
+         (last (- end2 n)))
+    (declare (fixnum start1 start2 end1 end2 n last))
+    (cond ((< last start2) nil)
+          ((zerop n) (if from-end end2 start2))
+          (t
+           (let ((first-char (%primop :schar-unchecked needle start1))
+                 (i (if from-end last start2))
+                 (stop (if from-end start2 last))
+                 (step (if from-end -1 1)))
+             (declare (fixnum i stop step))
+             (loop
+               (when (and (eq first-char (%primop :schar-unchecked haystack i))
+                          (do ((k 1 (1+ k)))
+                              ((= k n) t)
+                            (declare (fixnum k))
+                            (unless (eq (%primop :schar-unchecked needle (+ start1 k))
+                                        (%primop :schar-unchecked haystack (+ i k)))
+                              (return nil))))
+                 (return i))
+               (when (= i stop) (return nil))
+               (incf i step)))))))
+
 (defun search (needle haystack &key from-end test test-not key
                                     (start1 0) end1 (start2 0) end2)
+  (when (and (null test) (null test-not) (null key)
+             (%primop :stringp needle) (%primop :stringp haystack))
+    (return-from search
+      (search-native-strings needle haystack from-end start1 end1 start2 end2)))
   (let* ((end1 (or end1 (length needle)))
          (end2 (or end2 (length haystack)))
          (n (- end1 start1))
@@ -725,6 +793,18 @@ other, the shorter's length and the rest of the longer after it."
          (end2 (sequence-end source start2 end2))
          (n (min (- end1 start1) (- end2 start2))))
     (cond ((<= n 0) target)
+          ((and (%primop :stringp target) (%primop :stringp source))
+           (locally
+             (declare (fixnum start1 start2 n))
+             (if (and (eq target source) (> start1 start2))
+                 (do ((i (1- n) (1- i))) ((< i 0) target)
+                   (declare (fixnum i))
+                   (%primop :set-schar-unchecked target (+ start1 i)
+                            (%primop :schar-unchecked source (+ start2 i))))
+                 (dotimes (i n target)
+                   (declare (fixnum i))
+                   (%primop :set-schar-unchecked target (+ start1 i)
+                            (%primop :schar-unchecked source (+ start2 i)))))))
           ((and (vectorp target) (vectorp source)
                 (or (eq (array-element-type target) t)
                     (equal (array-element-type target) (array-element-type source)))

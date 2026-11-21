@@ -105,9 +105,9 @@
   ;; primary-result type is known. Unknown library calls retain unknown count.
   (or (member name '((setf aref) (setf svref) (setf elt) (setf char) (setf schar)) :test #'equal)
       (hir-predicate-type name)
-      (member name '(car cdr first rest rplaca rplacd identity + - * / abs 1+ 1- logand logior logxor
+      (member name '(car cdr first rest rplaca rplacd identity + - * / mod abs 1+ 1- logand logior logxor
                      < > <= >= = /= eq eql equal equalp zerop plusp minusp
-                     cons list vector make-array length char schar aref elt char-code))))
+                     cons list vector make-array array-dimension length char schar aref elt char-code float))))
 
 (defun mir-return-value-owners (function carriers)
   "Track bundles whose secondary values still occupy the ABI value area."

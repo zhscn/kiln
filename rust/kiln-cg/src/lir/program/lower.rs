@@ -160,7 +160,7 @@ impl Lowerer<'_> {
             raw.clone(),
             Expr::Int(bytes),
             Expr::Int(header),
-            true,
+            false, // initialize_fixed writes every payload word before a safepoint.
             "kiln_rt_alloc".into(),
             handler,
         )?;
@@ -190,7 +190,10 @@ impl Lowerer<'_> {
         initial: Expr,
     ) -> Result<()> {
         let n = self.temporary(VarKind::Raw);
-        let value = self.temporary(VarKind::Obj);
+        let value = self.temporary(match kind {
+            SequenceKind::DoubleStorage => VarKind::F64,
+            SequenceKind::Vector | SequenceKind::String => VarKind::Obj,
+        });
         self.emit(Stmt::Set(n.clone(), length));
         self.emit(Stmt::Set(value.clone(), initial));
         self.require(
@@ -203,7 +206,7 @@ impl Lowerer<'_> {
             layout::fixnum_tag(var(&n)),
         )?;
         let initial = match kind {
-            SequenceKind::Vector => var(&value),
+            SequenceKind::Vector | SequenceKind::DoubleStorage => var(&value),
             SequenceKind::String => {
                 self.require(
                     layout::test_class(crate::packet::schema::CLASS_CHARACTER, var(&value))?,
@@ -418,18 +421,15 @@ impl Lowerer<'_> {
         Ok(index)
     }
 
-    fn special(&mut self, symbol: Expr, result: Option<String>, value: Option<Expr>) -> Result<()> {
-        // The destination may also contain the symbol. Preserve it for the
-        // global-value branch before the TLS read overwrites the destination.
+    fn special_write(&mut self, symbol: Expr, value: Expr) -> Result<()> {
         let saved_symbol = self.temporary(VarKind::Obj);
         self.emit(Stmt::Set(saved_symbol.clone(), symbol));
         let prefix = self.fresh();
-        let (vars, blocks, next) = layout::special_access(
+        let (vars, blocks, next) = layout::special_write(
             &prefix,
             self.block.clone(),
             std::mem::take(&mut self.statements),
             saved_symbol,
-            result,
             value,
         )?;
         self.function.vars.extend(vars);
@@ -612,7 +612,9 @@ impl Lowerer<'_> {
             Capture(index) => layout::closure_ref(var("self"), *index as i64)?,
             Field(field, object) => layout::field_load(field.id(), self.value(object))?,
             Special(symbol) => {
-                self.special(self.value(symbol), Some(self.name(result)), None)?;
+                let tls_value = self.temporary(VarKind::Obj);
+                let read = layout::special_read(self.value(symbol), tls_value, self.name(result))?;
+                self.statements.extend(read);
                 self.value(result)
             }
             Test(class, object) => {
@@ -664,7 +666,8 @@ impl Lowerer<'_> {
             HeapNumber => return Err("heap number tests require control-flow expansion".into()),
             HashMix => layout::hash_mix(a, b()),
             WordAdd | WordSub | WordAnd | WordOr | WordXor | WordMul | WordDiv | WordRem
-            | WordShl | WordSar | WordShr | F64Add | F64Sub | F64Mul | F64Div | F64Compare => {
+            | WordShl | WordSar | WordShr | SingleAdd | SingleSub | SingleMul | SingleDiv
+            | F32Add | F32Sub | F32Mul | F32Div | F64Add | F64Sub | F64Mul | F64Div | F64Compare => {
                 let op = match op {
                     WordAdd => BinOp::Add,
                     WordSub => BinOp::Sub,
@@ -678,6 +681,14 @@ impl Lowerer<'_> {
                     WordSar => BinOp::Sarv,
                     WordShr => BinOp::Shrv,
                     F64Compare => BinOp::F64Compare,
+                    SingleAdd => BinOp::SingleAdd,
+                    SingleSub => BinOp::SingleSub,
+                    SingleMul => BinOp::SingleMul,
+                    SingleDiv => BinOp::SingleDiv,
+                    F32Add => BinOp::F32Add,
+                    F32Sub => BinOp::F32Sub,
+                    F32Mul => BinOp::F32Mul,
+                    F32Div => BinOp::F32Div,
                     F64Add => BinOp::F64Add,
                     F64Sub => BinOp::F64Sub,
                     F64Mul => BinOp::F64Mul,
@@ -692,6 +703,7 @@ impl Lowerer<'_> {
             WordLe => compare(CmpOp::Le, a, b()),
             WordGt => compare(CmpOp::Gt, a, b()),
             WordGe => compare(CmpOp::Ge, a, b()),
+            FixnumUge => compare(CmpOp::Uge, a, b()),
             FixnumUnsigned => layout::fixnum_unsigned_bits(a),
             FixnumAnd | FixnumOr | FixnumXor | FixnumDiv | FixnumRem | FixnumEq | FixnumLt
             | FixnumLe | FixnumGt | FixnumGe | FixnumShl | FixnumSar => layout::fixnum_operation(
@@ -723,9 +735,13 @@ impl Lowerer<'_> {
                 None,
             )?,
             SingleTag => layout::single_float_tag(a),
+            F32Bits => Expr::F32Bits(Box::new(a)),
+            PackSingle => Expr::PackSingle(Box::new(a)),
+            UnpackSingle => Expr::UnpackSingle(Box::new(a)),
             SingleBits => layout::single_float_bits(a),
             InvalidVectorLength => layout::invalid_vector_length(a),
             InvalidRackLength => layout::invalid_rack_length(a),
+            F64FromSigned => Expr::F64FromSigned(Box::new(a)),
             F64Bits | F64FromBits => a,
 
             FixnumTag => layout::fixnum_tag(a),
@@ -751,7 +767,8 @@ impl Lowerer<'_> {
             FuncallableFunction => layout::funcallable_function(a),
             UndefinedFunction => layout::builtins::undefined_function(a)?,
             VectorLength => layout::vector_length(a),
-            VectorRef => layout::vector_ref(a, b()),
+            SingleStorageRef => Expr::UnpackSingle(Box::new(layout::vector_ref(a, b()))),
+            VectorRef | DoubleStorageRef => layout::vector_ref(a, b()),
             StringRef => layout::string_ref(a, b()),
             UnboxDouble => layout::field_load(crate::packet::schema::FIELD_DOUBLE_BITS, a)?,
         })
@@ -881,7 +898,9 @@ impl Lowerer<'_> {
                 let object = args[0].clone();
                 let value = args[args.len() - 1].clone();
                 let statement = match operation {
-                    StoreOperation::Vector => layout::vector_set(object, args[1].clone(), value),
+                    StoreOperation::Vector | StoreOperation::DoubleStorage => {
+                        layout::vector_set(object, args[1].clone(), value)
+                    }
                     StoreOperation::String => layout::string_set(object, args[1].clone(), value),
                     StoreOperation::InstanceRack => layout::set_instance_rack(object, value)?,
                     StoreOperation::InstanceStamp => {
@@ -948,7 +967,7 @@ impl Lowerer<'_> {
                 self.value(value),
             )?),
             Instruction::SpecialSet(symbol, value) => {
-                self.special(self.value(symbol), None, Some(self.value(value)))?
+                self.special_write(self.value(symbol), self.value(value))?
             }
             Instruction::Numeric {
                 result,
@@ -1438,6 +1457,7 @@ pub(super) fn module(verified: &Verified<'_>) -> Result<kir::Module> {
                 slots: vec![],
                 blocks: vec![],
                 block_entries: vec![None; f.blocks.len()],
+                cold_blocks: vec![],
                 debug: f.debug.as_ref().map(|_| {
                     kir::DebugRef::Direct(Word::DataAddr(
                         super::debug::label(f),
@@ -1481,6 +1501,7 @@ pub(super) fn module(verified: &Verified<'_>) -> Result<kir::Module> {
                     renamed,
                     match ty {
                         Type::Obj => VarKind::Obj,
+                        Type::F32 => VarKind::F32,
                         Type::F64 => VarKind::F64,
                         _ => VarKind::Raw,
                     },
@@ -1576,7 +1597,11 @@ pub(super) fn module(verified: &Verified<'_>) -> Result<kir::Module> {
             };
             lower.active = active.clone();
             lower.block = format!("b{i}");
-            lower.function.block_entries[i] = Some(lower.function.blocks.len());
+            let entry = lower.function.blocks.len();
+            lower.function.block_entries[i] = Some(entry);
+            if block.cold {
+                lower.function.cold_blocks.push(entry);
+            }
             if flow.polls[i] {
                 lower.poll(false)?;
             }

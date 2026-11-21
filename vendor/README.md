@@ -35,6 +35,9 @@ shows exactly what kiln changed. Changes are not sent upstream for now.
 
 ## Clostrophilia patches
 
+- Direct method registration scans the specializer's list with the
+  kernel's identity test and retains the MOP accessor calls.
+
 - Generic-function option conditions use private accessor names for the
   invalid declaration and method-combination values, keeping the CL
   symbols DECLARATION and METHOD-COMBINATION unbound as functions.
@@ -225,6 +228,9 @@ Each patched place is marked with a `kiln:` comment.
 
 ## Salmagundi patches
 
+- Probing compares tagged index markers and cached fixnum hashes directly.
+  EQL tables also use tagged-word equality for fixnum and character keys.
+
 - Array `equalp` hashes use active vector lengths and ignore storage element
   types. Hash-table content hashes combine entries independently of iteration
   order, with a depth budget for nested arrays and tables.
@@ -338,6 +344,12 @@ Under `#+kiln` (simple vectors and strings stay native):
 
 ## Cyclosis patches
 
+- The string output stream methods for `WRITE-SEQUENCE` and `WRITE-STRING`
+  share a range-aware append function. The stream grows geometrically
+  and updates its cursor from the characters in the selected range. Appending
+  between native buffers with room uses a single pass to copy and track the
+  cursor.
+
 - Concatenated streams forward unread characters to their current constituent,
   so the unread character survives when a temporary composite is discarded.
 
@@ -352,6 +364,9 @@ Under `#+kiln` (simple vectors and strings stay native):
   the physical file system.
 
 Under `#+kiln`:
+
+- The default character-stream line reader writes characters into a growing
+  native string and returns an exact-length simple string.
 
 - The package does not shadow the names whose definitions in Cyclosis are
   the CL ones (`stream`, `close`, `streamp`, the stream classes, ...), and

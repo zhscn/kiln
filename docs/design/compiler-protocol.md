@@ -37,7 +37,7 @@ Rust 的运行期入口使用 `packet::load_lir` 或 `compile_lir_program`，拒
 
 宿主使用可移植 Lisp 编码器，image 使用批量 native 编码器，两者输出同一 schema。native 编码在无 safepoint 的窗口直接构造 Rust 自有记录，对原子使用临时对象身份缓存；记录和字节完成、缓存释放后才分配结果向量；分配通过带帧指针的 safepoint trampoline，调用者的其他对象保持为精确 roots。ASCII 标识符统一转小写，UTF-8 字符串保留原内容；非 ASCII 标识符不做大小写转换。需要保留字节时使用 simple-vector octets，编译入口批量复制为 native bytes 后解码。编译失败返回有界诊断向量，由 Lisp 解码为结构化 condition；独立产物 handle 未公开，Rust panic 遵守工作区的 abort 配置。此载体每个 octet 占一个 Lisp 槽，不能把它称为紧凑的原生字节数组；后续可优化载体而保持 wire schema。请求快照、降级和成功安装期间没有 Lisp 分配；失败诊断可以分配，因此两个编译服务声明为 safepoint，单 mutator 下由调用帧保护后续仍需使用的对象；尚不支持并发 mutator 的 native 状态切换。
 
-生产构建、自举、REPL 和基准的 `.lir` 输出使用二进制封套，旧 `.kir` 文件及 `kiln_rt_jit` 文本入口保留用于迁移对照。原生 `compile` 使用 `:compile-program`，一次性程序不物化字节向量；`eval` 的缓存载荷和 FASL 加载使用 `:compile-packet`。缓存和定义指纹采用规范化记录字节。FASL 格式版本为 2，记录标签 6 保存 packet octets；旧版本会拒绝加载。
+生产构建、自举、REPL 和基准的 `.lir` 输出使用二进制封套，旧 `.kir` 文件及 `kiln_rt_jit` 文本入口保留用于迁移对照。原生 `compile` 使用 `:compile-program`，一次性程序不物化字节向量；`eval` 的缓存载荷和 FASL 加载使用 `:compile-packet`。缓存和定义指纹采用规范化记录字节。FASL 记录数据的标签 6 保存 packet octets。加载器支持封套版本 2、3 和 4。
 
 ## 语义构建器与兼容输入的字段操作
 
@@ -101,7 +101,10 @@ SBCL 只提交可移植常量图，不传递宿主 tagged word。stage0 写二�
 
 ## 文件、FASL、快照与缓存
 
-`.lir` 文件保存规范化请求；诊断 dump 不参与往返解析。目标 FASL 编译载荷采用 LIR 字节和常量图，其格式版本记录 LIR schema、目标 ABI 和后端兼容键。当前版本 2 已保存 packet 载荷；LIR 操作或 schema 变化时仍需显式更新兼容键，不以旧版本头装入不兼容载荷。
+`.lir` 文件保存规范化请求；诊断 dump 不参与往返解析。目标 FASL 编译载荷采用 LIR 字节和常量图，其格式版本记录 LIR schema、目标 ABI 和后端兼容键。从封套版本 3 起，记录种类使用单字节操作码。版本 4 把 cons 创建和初始化的对象编号直接编为变长整数。各受支持的版本使用同一种 packet 载荷。LIR 操作或 schema 变化时仍需显式更新兼容键。
+
+FASL 记录解码使用每次加载独有的工作向量。解码嵌套数据时，每个尚未组装的对象占用两个槽，
+向量按嵌套深度扩容，并在记录之间复用。组成对象后立即清除对应的引用槽。
 
 快照若含缓存的 LIR 或内联编译数据，也记录对应 schema 和编译器版本。不兼容的可重建缓存丢弃；无法恢复的必要数据明确拒绝加载。内联源码或绑定后 IR 的持久表示另行决定，不能默认为跨版本兼容。
 

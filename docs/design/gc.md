@@ -13,7 +13,7 @@
   - load 时去掉 tag；fixnum、立即数、静态对象及栈对象（地址不在 MMTk 的堆范围内）返回 `None`，GC 不处理。用地址范围判断，不用 `is_in_mmtk_spaces`（它要查 SFT 表，慢）。
   - store 时保留原来的 tag。
 - **mutator**：每个 context 绑定一个 MMTk mutator，tls 就是 context 的地址。
-- **分配不清零**：MMTk 交出的内存已经是零：kiln 用到的 plan 建空间时都传 `zeroed = true`，空间每次取得新页时清零（mutator 的 bump 块、大对象、GC 复制的目标块都是这样来的）；Immix 的分配器重用 recyclable line 时也清零，free-list 分配器清零每个 cell。所以 `kiln_rt_alloc` 只写 header（debug 构建检查首尾两个字是零）。编译出的代码的内联快路径（`emit-alloc`）仍然逐字写零，这些写也是多余的，可以去掉。反过来，MMTk 的清零才是大头（自举时约 2.5% 的 CPU，其中 GC 复制目标块的清零完全白做），但它在 MMTk 里写死，要改 MMTk。
+- **分配不清零**：MMTk 交出的内存已经是零：kiln 用到的 plan 建空间时都传 `zeroed = true`，空间每次取得新页时清零（mutator 的 bump 块、大对象、GC 复制的目标块都是这样来的）；Immix 的分配器重用 recyclable line 时也清零，free-list 分配器清零每个 cell。所以 `kiln_rt_alloc` 只写 header（debug 构建检查首尾两个字是零）。当后端能在下一个 safepoint 前写完全部字段时，例如构造 cons 和 double-float，内联快路径直接写入字段值。反过来，MMTk 的清零才是大头（自举时约 2.5% 的 CPU，其中 GC 复制目标块的清零完全白做），但它在 MMTk 里写死，要改 MMTk。
 - **root 分包**：交给 MMTk 的 root 槽每包最多 `EDGES_WORK_BUFFER_SIZE`（4096）个。一个包由一个 worker 处理，它要复制并扫描包里所有槽指向的对象；编译器会话里 static root 约 11 万个，原来放在一个包里，回收的这一部分只有一个 worker 在做（实测停顿没有变化，瓶颈不在这里）。static root 里只把指向堆的字交出去。
 - **统计**：`KILN_GC_STATS=1` 在进程退出时向 stderr 打印回收次数、停顿时间、分配量、每次回收后的存活量、GC worker 和整个进程的 CPU 时间（`rust/kiln-rt/src/gcstats.rs`）；值是文件名时另外每次回收写一行。加 `MMTK_COUNT_LIVE_BYTES_IN_GC=true` 时存活量是 MMTk 数出的对象字节数，否则是回收后在用的页。SemiSpace 下再加 `KILN_GC_AGES=1`，把每次复制的字节分成“上次回收之后分配的”和“上次回收复制过的”，即 nursery GC 会复制的部分和分代 plan 不再复制的部分（用一张覆盖堆地址范围的位图，会拖慢回收）。
 

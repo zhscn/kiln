@@ -30,3 +30,6 @@ NIL
 (B 7)
 B
 (3 4)
+(:LEFT :NEW)
+(NIL NIL)
+3

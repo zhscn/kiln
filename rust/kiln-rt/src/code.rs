@@ -136,6 +136,9 @@ pub fn register(
             .map(|r| (*r, unsafe { std::slice::from_raw_parts(r.sites, r.nsites as usize) }.to_vec()))
             .collect(),
     };
+    // Image compatibility depends on the launcher roots, before this
+    // module contributes its own.
+    crate::image::executable_fingerprint();
     register_tables(&tables);
     REGION.lock().unwrap().tables.push(tables);
 }

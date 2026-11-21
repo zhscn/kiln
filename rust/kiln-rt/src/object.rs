@@ -44,6 +44,8 @@ pub const KIND_RACK: u64 = 11;
 pub const KIND_COMPLEX: u64 = 12;
 /// Structure: [header (slot count << 8), layout, slots...].
 pub const KIND_STRUCTURE_INSTANCE: u64 = 13;
+/// Internal array backing store: [header (length << 8), binary64 words...].
+pub const KIND_DOUBLE_STORAGE: u64 = 14;
 
 /// Immediates: low 3 bits 0b011, bits 3..8 the immediate kind, payload
 /// from bit 8.
@@ -233,7 +235,7 @@ pub fn untag(v: u64) -> usize {
 pub fn object_bytes(header: u64) -> usize {
     match header & KIND_MASK {
         KIND_CONS => CONS_BYTES,
-        KIND_SIMPLE_VECTOR => 8 + 8 * header_length(header),
+        KIND_SIMPLE_VECTOR | KIND_DOUBLE_STORAGE => 8 + 8 * header_length(header),
         KIND_SYMBOL => SYMBOL_BYTES,
         KIND_STRING => 8 + (4 * header_length(header)).next_multiple_of(8),
         KIND_BIGNUM => 8 + 8 * header_length(header),

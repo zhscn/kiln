@@ -59,16 +59,52 @@
     (setf (slot-value stream '%position) (length string))
     character))
 
-;;; kiln: a string is appended at once (the default method writes it a
-;;; character at a time), and the output cursor updated as for each
-;;; character.
-(defmethod stream-write-string
-    ((stream string-output-stream) seq &optional (start 0) end)
+(defun try-append-native-string (stream string source start end)
+  (declare (fixnum start end))
+  (let ((layout regalia::*character-vector-layout*))
+    (when (and (kiln.sys:%primop :stringp source)
+               (kiln.sys:%primop :standard-instance-p string)
+               (eq (kiln.sys:%primop :standard-instance-access string -2)
+                   (kiln.sys:%primop :svref-unchecked layout 0))
+               (null (kiln.sys:%primop :standard-instance-access
+                                     string (kiln.sys:%primop :svref-unchecked layout 2))))
+      (let* ((slot (kiln.sys:%primop :svref-unchecked layout 3))
+             (fill (kiln.sys:%primop :standard-instance-access string slot))
+             (storage (kiln.sys:%primop :standard-instance-access
+                                        string (kiln.sys:%primop :svref-unchecked layout 4))))
+        (when (and (not (eq source storage))
+                   (kiln.sys:%primop :fixnump fill)
+                   (<= (- end start) (- (kiln.sys:%primop :length storage) fill)))
+          (let* ((cursor (output-cursor stream))
+                 (column (caar cursor)) (line (cdar cursor))
+                 (previous-column column) (previous-line line)
+                 (destination fill))
+            (declare (fixnum destination))
+            (do ((index start (1+ index))) ((= index end))
+              (declare (fixnum index))
+              (let ((char (kiln.sys:%primop :schar-unchecked source index)))
+                (kiln.sys:%primop :set-schar-unchecked storage destination char)
+                (incf destination)
+                (setf previous-column column previous-line line)
+                (if (eq char #\Newline)
+                    (setf column 0 line (1+ line))
+                    (incf column))))
+            (kiln.sys:%primop :set-standard-instance-access string slot destination)
+            (setf (slot-value stream '%position) destination
+                  (caar cursor) column (cdar cursor) line
+                  (caadr cursor) previous-column (cdadr cursor) previous-line)
+            t))))))
+
+;;; Append the selected range and update the output cursor.
+(defun append-output-string (stream seq start end)
   (let* ((string (stream-string stream))
-         (end (or end (length seq)))
-         (current-length (length string))
-         (new-length (+ current-length (- end start))))
-    (when (< start end)
+         (end (if (kiln.sys:%primop :stringp seq)
+                  (kiln.kernel::%string-bounds seq start end)
+                  (kiln.kernel::sequence-end seq start end))))
+    (when (or (= start end) (try-append-native-string stream string seq start end))
+      (return-from append-output-string seq))
+    (let* ((current-length (length string))
+           (new-length (+ current-length (- end start))))
       (when (< (array-total-size string) new-length)
         (adjust-array string (max new-length (* 2 (array-total-size string)))))
       (setf (fill-pointer string) new-length)
@@ -83,11 +119,18 @@
                      (setf column 0 line (1+ line))
                      (setf column (1+ column))))
         (setf (caar cursor) column (cdar cursor) line
-              (caadr cursor) previous-column (cdadr cursor) previous-line)))
-    seq))
+              (caadr cursor) previous-column (cdadr cursor) previous-line))
+      seq)))
+
+(defmethod stream-write-string
+    ((stream string-output-stream) seq &optional (start 0) end)
+  (append-output-string stream seq start end))
 
 (defmethod stream-write-sequence
     ((stream string-output-stream) seq &optional (start 0) end)
+  (when (stringp seq)
+    (return-from stream-write-sequence
+      (append-output-string stream seq start end)))
   (with-accessors ((string stream-string))
       stream
     (unless end

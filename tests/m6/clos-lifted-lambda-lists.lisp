@@ -83,3 +83,17 @@
                   (declare (notinline collect))
                   (collect ,@(loop repeat 1024 collect 1))))))
   (print (call-at-limit)))
+
+(defun small-keyword-snapshot (&key (value :missing present))
+  (list value present))
+
+(defun large-keyword-snapshot (&key a b c d e f g h i j k l m n o p (q :missing present))
+  (declare (ignore a b c d e f g h i j k l m n o p))
+  (list q present))
+
+(print (list (small-keyword-snapshot)
+             (small-keyword-snapshot :value nil :value 42)
+             (small-keyword-snapshot)
+             (large-keyword-snapshot)
+             (large-keyword-snapshot :q 9)
+             (large-keyword-snapshot)))

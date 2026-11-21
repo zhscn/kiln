@@ -62,6 +62,7 @@ pub enum VarKind {
     /// Holds a raw machine word.
     Raw,
     /// Unboxed binary64, spilled at safepoints for debugging but not traced.
+    F32,
     F64,
 }
 
@@ -75,6 +76,7 @@ pub struct Func {
     pub slots: Vec<(String, u32)>,
     pub blocks: Vec<Block>,
     pub block_entries: Vec<Option<usize>>,
+    pub cold_blocks: Vec<usize>,
     /// The function's debug info object.
     pub debug: Option<DebugRef>,
 }
@@ -112,6 +114,14 @@ pub enum BinOp {
     Sdiv,
     Srem,
     /// IEEE binary64 operations on unboxed bit patterns.
+    SingleAdd,
+    SingleSub,
+    SingleMul,
+    SingleDiv,
+    F32Add,
+    F32Sub,
+    F32Mul,
+    F32Div,
     F64Add,
     F64Sub,
     F64Mul,
@@ -139,6 +149,7 @@ pub enum CmpOp {
     Le,
     Gt,
     Ge,
+    Uge,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -154,6 +165,10 @@ pub enum Expr {
     Var(String),
     Local(usize),
     Bin(BinOp, Box<Expr>, Box<Expr>),
+    F32Bits(Box<Expr>),
+    UnpackSingle(Box<Expr>),
+    PackSingle(Box<Expr>),
+    F64FromSigned(Box<Expr>),
     Shift(ShiftOp, Box<Expr>, i64),
     Cmp(CmpOp, Box<Expr>, Box<Expr>),
     Load(Box<Expr>, i32),
@@ -788,6 +803,7 @@ fn parse_func(
         slots: vec![],
         blocks: vec![],
         block_entries: vec![],
+        cold_blocks: vec![],
         debug: None,
     };
     fn uses_prefix(value: &Sexp, prefix: &str) -> bool {
@@ -841,6 +857,7 @@ fn parse_func(
                     let kind = match sym(&pair[1])? {
                         "obj" => VarKind::Obj,
                         "raw" => VarKind::Raw,
+                        "f32" => VarKind::F32,
                         "f64" => VarKind::F64,
                         k => return Err(format!("vars: unknown kind {k}")),
                     };
@@ -1373,28 +1390,34 @@ fn parse_func(
                         lowered = Vec::new();
                         continue;
                     }
-                    if head_name == "special-ref" || head_name == "special-set" {
+                    if head_name == "special-ref" {
                         arity(head_name, operands, 2)?;
-                        let (result, symbol, value) = if head_name == "special-ref" {
-                            let result = sym(&operands[0])?.to_string();
-                            let symbol = sym(&operands[1])?.to_string();
-                            if result == symbol {
-                                return Err("special-ref result must differ from symbol".into());
-                            }
-                            (Some(result), symbol, None)
-                        } else {
-                            let symbol = sym(&operands[0])?.to_string();
-                            let value = parse_expr(&operands[1])?;
-                            if !matches!(value, Expr::Var(_) | Expr::Int(_)) {
-                                return Err("special-set requires a stable value".into());
-                            }
-                            (None, symbol, Some(value))
-                        };
+                        let result = sym(&operands[0])?.to_string();
+                        let symbol = sym(&operands[1])?.to_string();
+                        if result == symbol {
+                            return Err("special-ref result must differ from symbol".into());
+                        }
+                        let tls_value = format!("{prefix}{alloc_number}_tls_value");
+                        alloc_number += 1;
+                        f.vars.push((tls_value.clone(), VarKind::Obj));
+                        lowered.extend(crate::lir::special_read(
+                            Expr::Var(symbol),
+                            tls_value,
+                            result,
+                        )?);
+                        continue;
+                    }
+                    if head_name == "special-set" {
+                        arity(head_name, operands, 2)?;
+                        let symbol = sym(&operands[0])?.to_string();
+                        let value = parse_expr(&operands[1])?;
+                        if !matches!(value, Expr::Var(_) | Expr::Int(_)) {
+                            return Err("special-set requires a stable value".into());
+                        }
                         let name = format!("{prefix}{alloc_number}");
                         alloc_number += 1;
-                        let (vars, blocks, next_name) = crate::lir::special_access(
-                            &name, block_name, lowered, symbol, result, value,
-                        )?;
+                        let (vars, blocks, next_name) =
+                            crate::lir::special_write(&name, block_name, lowered, symbol, value)?;
                         f.vars.extend(vars);
                         f.blocks.extend(blocks);
                         block_name = next_name;
@@ -2272,8 +2295,21 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
     let (h, r) = head(list(s)?)?;
     let e = |i: usize| -> R<Box<Expr>> { Ok(Box::new(parse_expr(&r[i])?)) };
     Ok(match h {
+        "f32-bits" | "unpack-single" | "pack-single" => {
+            arity(h, r, 1)?;
+            match h {
+                "f32-bits" => Expr::F32Bits(e(0)?),
+                "unpack-single" => Expr::UnpackSingle(e(0)?),
+                _ => Expr::PackSingle(e(0)?),
+            }
+        }
+        "f64-from-signed" => {
+            arity(h, r, 1)?;
+            Expr::F64FromSigned(e(0)?)
+        }
         "add" | "sub" | "mul" | "and" | "or" | "xor" | "sdiv" | "srem" | "shlv" | "sarv"
-        | "shrv" | "f64-add" | "f64-sub" | "f64-mul" | "f64-div" | "f64-compare" => {
+        | "shrv" | "single-add" | "single-sub" | "single-mul" | "single-div"
+        | "f32-add" | "f32-sub" | "f32-mul" | "f32-div" | "f64-add" | "f64-sub" | "f64-mul" | "f64-div" | "f64-compare" => {
             arity(h, r, 2)?;
             let op = match h {
                 "add" => BinOp::Add,
@@ -2283,6 +2319,14 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
                 "or" => BinOp::Or,
                 "sdiv" => BinOp::Sdiv,
                 "srem" => BinOp::Srem,
+                "single-add" => BinOp::SingleAdd,
+                "single-sub" => BinOp::SingleSub,
+                "single-mul" => BinOp::SingleMul,
+                "single-div" => BinOp::SingleDiv,
+                "f32-add" => BinOp::F32Add,
+                "f32-sub" => BinOp::F32Sub,
+                "f32-mul" => BinOp::F32Mul,
+                "f32-div" => BinOp::F32Div,
                 "f64-add" => BinOp::F64Add,
                 "f64-sub" => BinOp::F64Sub,
                 "f64-mul" => BinOp::F64Mul,
@@ -2304,7 +2348,7 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
             };
             Expr::Shift(op, e(0)?, int(&r[1])?)
         }
-        "eq" | "ne" | "lt" | "le" | "gt" | "ge" => {
+        "eq" | "ne" | "lt" | "le" | "gt" | "ge" | "uge" => {
             arity(h, r, 2)?;
             let op = match h {
                 "eq" => CmpOp::Eq,
@@ -2312,6 +2356,7 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
                 "lt" => CmpOp::Lt,
                 "le" => CmpOp::Le,
                 "gt" => CmpOp::Gt,
+                "uge" => CmpOp::Uge,
                 _ => CmpOp::Ge,
             };
             Expr::Cmp(op, e(0)?, e(1)?)

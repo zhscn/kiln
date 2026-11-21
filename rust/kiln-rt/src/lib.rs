@@ -183,7 +183,6 @@ unsafe fn run_module_here(info: &ModuleInfo) -> i32 {
             std::slice::from_raw_parts(info.roots, info.nroots as usize),
         );
         debug::register(std::slice::from_raw_parts(info.debug, info.ndebug as usize));
-        image::note_executable();
         for e in std::slice::from_raw_parts(info.exports, info.nexports as usize) {
             let name = std::ffi::CStr::from_ptr(e.name as *const std::ffi::c_char);
             register_export(&name.to_string_lossy(), e.addr);

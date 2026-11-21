@@ -71,3 +71,23 @@
   (verify-mir unit)
   (assert (zerop (mir-list-test-count unit 'cons))))
 (format t "MIR list expansion preserves fallback policies, budgets and scalar proofs.~%")
+
+(dolist (entry '((1 (lambda (x) (values (car x) (cdr x))))
+                 (2 (lambda (x y) (values (car x) (cdr y))))
+                 (2 (lambda (x flag) (when flag (car x)) (cdr x)))
+                 (1 (lambda (x f) (values (first x) (funcall f) (rest x))))
+                 (0 (lambda (x) (declare (notinline car cdr)) (values (car x) (cdr x))))))
+  (let ((session (make-session)))
+    (call-with-front-end
+     session
+     (lambda ()
+       (let* ((*source-file* "mir-list-tests") (*toplevel-source* nil)
+              (module (compile-module (front-end-forms (list (second entry)))
+                                      "mir-list-tests" :pipeline :mir))
+              (class kiln.kir::+packet-class-cons+))
+         (labels ((checks (form)
+                    (if (consp form)
+                        (+ (if (and (eq (car form) :test-class) (eql (cadr form) class)) 1 0)
+                           (checks (car form)) (checks (cdr form)))
+                        0)))
+           (assert (= (first entry) (checks (kiln.kir::kmodule-funcs module))))))))))

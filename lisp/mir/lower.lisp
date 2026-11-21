@@ -2,6 +2,8 @@
 
 (defvar *mir-lir-values*)
 (defvar *mir-lir-doubles*)
+(defvar *mir-lir-single-scalars*)
+(defvar *mir-lir-single-unpacked* nil)
 (defvar *mir-lir-boxed*)
 (defvar *mir-lir-live*)
 (defvar *mir-lir-labels*)
@@ -9,6 +11,13 @@
 (defvar *mir-lir-functions*)
 (defvar *mir-lir-types*)
 (defvar *mir-lir-definitions*)
+(defvar *mir-lir-array-contents*)
+(defvar *mir-lir-array-sources*)
+(defvar *mir-lir-list-tests* nil)
+(defvar *mir-lir-index-bounds* nil)
+(defvar *mir-lir-inherited-index-bounds* nil)
+(defvar *mir-lir-in-loop* nil)
+(defvar *mir-lir-float-mode-cache* nil)
 (defvar *mir-lir-value-facts*)
 (defvar *mir-lir-carriers*)
 (defvar *mir-lir-bundle-demand*)
@@ -91,6 +100,18 @@
             (when (or (inline-typep-specifier-p type) (cached-typep-specifier-p type))
               (list type))))))))
 
+(defun mir-lir-unit-random-p (instruction)
+  (let ((operands (mir-instruction-operands instruction)))
+    (and (= (mir-instruction-kind instruction) 6)
+         (eq (mir-instruction-data instruction) 'random)
+         (<= 1 (length operands) 2)
+         (hir-policy-optimize-p (mir-instruction-policy instruction))
+         (not (mir-instruction-notinline instruction))
+         (let ((definition (svref *mir-lir-definitions*
+                                  (mir-primary-origin (svref operands 0) *mir-lir-definitions*))))
+           (and definition (= (mir-instruction-kind definition) 0)
+                (eql (mir-instruction-data definition) 1d0))))))
+
 (defun mir-lir-object-call-plan (instruction)
   "Find literal names and keys needed by guarded slot and constructor caches."
   (when (and (= (mir-instruction-kind instruction) 6)
@@ -127,41 +148,284 @@
            (count (length operands))
            (store (and (= count 3) (member name '((setf aref) (setf svref) (setf elt) (setf char) (setf schar)) :test #'equal)))
            (type (and (plusp count) (svref *mir-lir-types* (svref operands (if store 1 0))))))
-      (cond ((and (= count 1) (eq name 'length) (member type '(simple-vector :native-string))) :length)
-            ((and (= count 2) (member name '(aref svref elt)) (eq type 'simple-vector)) :vector-read)
-            ((and store (member name '((setf aref) (setf svref) (setf elt)) :test #'equal)
-                  (eq type 'simple-vector)) :vector-write)
-            ((and (= count 2) (member name '(aref char schar elt)) (eq type :native-string)) :string-read)
-            ((and store (member name '((setf aref) (setf char) (setf schar) (setf elt)) :test #'equal)
-                  (eq type :native-string)) :string-write)
-            ((and (= count 2) (eq name 'elt) (eq type :simple-array-vector)) :array-read)
-            ((and store (equal name '(setf elt)) (eq type :simple-array-vector)) :array-write)))))
+      (values
+       (cond ((and (= count 2) (eq name 'array-dimension)
+                   (hir-fixed-array-dimension type (svref *mir-lir-types* (svref operands 1))))
+              :fixed-array-dimension)
+             ((and (= count 1) (eq name 'length) (member type '(simple-vector :native-string))) :length)
+             ((and (= count 2) (eq name 'aref) (hir-simple-specialized-array-p type)) :specialized-array-read)
+             ((and store (equal name '(setf aref)) (hir-simple-specialized-array-p type)
+                   (hir-known-subtype-p (svref *mir-lir-types* (svref operands 0))
+                                        (hir-specialized-element-type (second type))))
+              :specialized-array-write)
+             ((and (= count 2) (member name '(aref svref elt)) (eq type 'simple-vector)) :vector-read)
+             ((and store (member name '((setf aref) (setf svref) (setf elt)) :test #'equal)
+                   (eq type 'simple-vector)) :vector-write)
+             ((and (= count 2) (member name '(aref char schar elt)) (eq type :native-string)) :string-read)
+             ((and store (member name '((setf aref) (setf char) (setf schar) (setf elt)) :test #'equal)
+                   (eq type :native-string)) :string-write)
+             ((and (= count 2) (eq name 'elt) (eq type :simple-array-vector)) :array-read)
+             ((and store (equal name '(setf elt)) (eq type :simple-array-vector)) :array-write))
+       type))))
 
-(defun mir-lir-container-value (operation instruction args)
-  (let* ((store (member operation '(:vector-write :string-write :array-write)))
+(defun mir-lir-specialized-vector-p (type)
+  (and (hir-simple-specialized-array-p type)
+       (consp (third type)) (null (cdr (third type)))))
+
+(defun mir-lir-vector-contents-candidate-p (type)
+  (and (hir-simple-specialized-array-p type)
+       (or (eq (third type) '*) (mir-lir-specialized-vector-p type))))
+
+(defun mir-lir-array-contents-source (value)
+  ;; A declaration can first prove the representation on a copy. Stop
+  ;; before any input that lacks the proof.
+  (loop for definition = (svref *mir-lir-definitions* value)
+        for input = (when (and definition (member (mir-instruction-kind definition) '(9 10 11 39)))
+                      (svref (mir-instruction-operands definition) 0))
+        while (and input (mir-lir-vector-contents-candidate-p (svref *mir-lir-types* input)))
+        do (setf value input)
+        finally (return value)))
+
+(defun mir-lir-plan-array-contents (function)
+  (when (some #'mir-lir-vector-contents-candidate-p *mir-lir-types*)
+    (let ((uses (make-hash-table :test #'eql))
+          (sources (make-hash-table :test #'eql))
+          (entry-values 0)
+          (entry (mir-at (mir-function-blocks function) 0)))
+      (loop for id across (hir-buffer-view (mir-block-instructions entry))
+            for instruction = (mir-at (mir-function-instructions function) id)
+            for result = (mir-instruction-result instruction)
+            until (and result
+                       (eq (mir-value-representation (mir-at (mir-function-values function) result))
+                           :bundle))
+            when (and result
+                      (or (member (mir-instruction-kind instruction) '(1 22))
+                          (and (= 11 (mir-instruction-kind instruction))
+                               (logbitp (mir-primary-origin result *mir-lir-definitions*) entry-values))))
+              do (setf entry-values (logior entry-values (ash 1 result))))
+      (loop for instruction across (hir-buffer-view (mir-function-instructions function))
+            do (multiple-value-bind (operation type) (mir-lir-container-call instruction)
+                 (when (and (member operation '(:specialized-array-read :specialized-array-write))
+                            (mir-lir-vector-contents-candidate-p type))
+                   (let* ((array (svref (mir-instruction-operands instruction)
+                                        (if (eq operation :specialized-array-write) 1 0)))
+                          (source (mir-lir-array-contents-source array))
+                          (definition (svref *mir-lir-definitions* source)))
+                     ;; The lookup makes a Lisp call. Use the argument and
+                     ;; capture setup, including its declaration checks,
+                     ;; before bundles exist, or follow a call
+                     ;; whose own result occupies at most the primary slot.
+                     (when (or (logbitp source entry-values)
+                               (and definition (= (mir-instruction-kind definition) 6)
+                                    (mir-lir-single-p source)))
+                       (let* ((result (mir-instruction-result instruction))
+                              (block (mir-value-block (mir-at (mir-function-values function) result))))
+                         (let* ((store (eq operation :specialized-array-write))
+                                (index (svref (mir-instruction-operands instruction) (if store 2 1)))
+                                (origin (mir-primary-origin index *mir-lir-definitions*))
+                                (dimension (and (mir-lir-specialized-vector-p type) (first (third type)))))
+                           (setf (gethash result sources)
+                                 (list source origin (and (integerp dimension) dimension))))
+                         (incf (gethash source uses 0)
+                               (if (logbitp block (mir-cyclic-blocks function)) 2 1))))))))
+      (values (sort (loop for value being the hash-keys of uses using (hash-value count)
+                          when (>= count 2)
+                            collect value)
+                    #'<)
+              sources))))
+
+(defun mir-lir-array-bound-match (fact facts)
+  (find-if (lambda (other)
+             (and (= (first fact) (first other))
+                  (eql (second fact) (second other))))
+           facts))
+
+(defun mir-lir-add-array-bound (fact facts)
+  (let ((prior (mir-lir-array-bound-match fact facts)))
+    (cond ((null prior) (cons fact facts))
+          ((and (third fact) (< (third fact) (third prior)))
+           (substitute fact prior facts :test #'eq))
+          (t facts))))
+
+(defun mir-lir-array-bound-edge (edge target facts blocks values)
+  (when facts
+    (let ((result nil)
+          (parameters (mir-block-parameters (svref blocks target))))
+      ;; Reentering the storage owner's block can produce a different array.
+      (setf facts (remove-if (lambda (fact)
+                              (let ((source (second fact)))
+                                (and source (= target (mir-value-block (svref values source))))))
+                            facts))
+      (dolist (fact facts)
+        (unless (= target (mir-value-block (svref values (first fact))))
+          (push fact result)))
+      (loop for argument across (mir-edge-arguments edge)
+            for parameter across parameters
+            for origin = (mir-primary-origin argument *mir-lir-definitions*)
+            do (dolist (fact facts)
+                 (when (= origin (first fact))
+                   (setf result
+                         (mir-lir-add-array-bound (cons parameter (cdr fact)) result)))))
+      result)))
+
+(defun mir-lir-array-bound-inputs (function blocks sources)
+  (let* ((inputs (make-array (length blocks) :initial-element :unseen))
+         (generated (make-array (length blocks) :initial-element nil))
+         (queued (make-array (length blocks) :element-type 'bit :initial-element 0))
+         (values (hir-buffer-view (mir-function-values function)))
+         (pending (list 0)))
+    (maphash (lambda (result access)
+               (destructuring-bind (source index limit) access
+                 (when (and index (gethash source *mir-lir-array-contents*))
+                   (let* ((block (mir-value-block (svref values result)))
+                          (fact (list index (unless limit source) limit)))
+                     (setf (svref generated block)
+                           (mir-lir-add-array-bound fact (svref generated block)))))))
+             sources)
+    (setf (svref inputs 0) nil
+          (sbit queued 0) 1)
+    ;; The first reachable edge seeds a block. Later inputs can only weaken
+    ;; its proof, so a backedge cannot establish its own premise.
+    (loop while pending
+          for id = (pop pending)
+          for term = (mir-block-terminator (svref blocks id))
+          for outgoing = (when (member (mir-terminator-kind term) '(0 1))
+                           (reduce #'mir-lir-add-array-bound (svref generated id)
+                                   :from-end t :initial-value (svref inputs id)))
+          do (setf (sbit queued id) 0)
+             (loop for edge across (mir-terminator-edges term)
+                   for target = (mir-edge-target edge)
+                   for previous = (svref inputs target)
+                   for candidates = (mir-lir-array-bound-edge edge target outgoing blocks values)
+                   for next = (if (eq previous :unseen)
+                                  candidates
+                                  (loop for fact in previous
+                                        for other = (mir-lir-array-bound-match fact candidates)
+                                        when other
+                                          collect (if (and (third fact) (> (third other) (third fact)))
+                                                      other fact)))
+                   unless (equal next previous)
+                     do (setf (svref inputs target) next)
+                        (when (zerop (sbit queued target))
+                          (setf (sbit queued target) 1)
+                          (push target pending))))
+    (map 'simple-vector
+         (lambda (facts)
+           (when (consp facts)
+             (let ((table (make-hash-table :test #'eql)))
+               (dolist (fact facts table)
+                 (destructuring-bind (index source limit) fact
+                   (push (cons source limit) (gethash index table)))))))
+         inputs)))
+
+(defun mir-lir-emit-vector-access (vector index value index-type slow-fn &optional length doublep singlep)
+  (emit-svref-fast-path
+   vector index
+   (lambda (result)
+     (mir-lir-vector-access vector index value doublep result singlep))
+   slow-fn t (hir-fixnum-type-p index-type)
+   length (cond (doublep :f64) (singlep :f32) (t :obj)) *mir-lir-in-loop*))
+
+(defun mir-lir-vector-access (vector index value doublep result &optional singlep)
+  (cond ((and doublep value)
+         (emit `(:lir-store :double-storage-set ,vector ,(emit-sequence-index index) ,value))
+         (kiln.kir::emit-lir-assignment result value))
+        (doublep
+         (emit `(:lir-set ,result (:double-storage-ref ,vector ,(emit-sequence-index index)))))
+        (singlep
+         (emit `(:lir-set ,result (:single-storage-ref ,vector ,(emit-sequence-index index)))))
+        (value
+         (emit-sequence-write :vector-set vector index value)
+         (kiln.kir::emit-lir-assignment result value))
+        (t (emit-sequence-read :vector-ref vector index result))))
+
+(defun mir-lir-double-array-access-p (operation type)
+  (and (member operation '(:specialized-array-read :specialized-array-write))
+       (eq (second type) 'double-float)))
+
+(defun mir-lir-array-index-proven-p (source limit index-type bounds)
+  (or (and limit (hir-fixnum-type-p index-type) (hir-range-p index-type)
+           (<= 0 (second index-type))
+           (< (third index-type) limit))
+      (loop for (checked-source . checked-limit) in bounds
+            thereis (if checked-limit
+                        (and limit (<= checked-limit limit))
+                        (eql source checked-source)))))
+
+(defun mir-lir-array-access-plan (instruction)
+  (when *mir-lir-array-sources*
+    (let* ((access (gethash (mir-instruction-result instruction) *mir-lir-array-sources*))
+           (storage (and access (gethash (first access) *mir-lir-array-contents*))))
+      (values access storage))))
+
+(defun mir-lir-container-value (operation instruction args type doublep &optional singlep)
+  (let* ((store (member operation '(:vector-write :string-write :array-write :specialized-array-write)))
          (name (mir-instruction-data instruction))
          (operands (mir-instruction-operands instruction))
          (index-type (and (> (length operands) 1)
                           (svref *mir-lir-types* (svref operands (if store 2 1)))))
          (object (if store (second args) (first args)))
-         (index (if store (third args) (second args))) (value (and store (first args))))
-    (case operation
+         (index (if store (third args) (second args)))
+         (value (when store
+                  (if doublep (mir-lir-double-bits (svref operands 0)) (first args))))
+         (rank-one (mir-lir-specialized-vector-p type)))
+    (flet ((specialized-access ()
+             (cond ((and store doublep)
+                    (emit-slow-call 'kiln.kernel::%set-simple-specialized-aref-1
+                                    (emit-box-double-bits value) object index (constant-object rank-one))
+                    value)
+                   (store
+                    (emit-slow-call 'kiln.kernel::%set-simple-specialized-aref-1
+                                    value object index (constant-object rank-one)))
+                   (t (let ((value (emit-slow-call 'kiln.kernel::%simple-specialized-aref-1
+                                                   object index (constant-object rank-one))))
+                        (cond (doublep (copy-to-var `(:unbox-double ,value) :f64))
+                              (singlep (copy-to-var `(:unpack-single ,value) :f32))
+                              (t value)))))))
+      (case operation
       (:length (copy-to-var (vector-length object)))
+      (:fixed-array-dimension
+       (constant-object (hir-fixed-array-dimension type index-type)))
+      ((:specialized-array-read :specialized-array-write)
+       (multiple-value-bind (access storage) (mir-lir-array-access-plan instruction)
+         (let* ((source (first access))
+                (contents (car storage))
+                (limit (and contents (third access)))
+                (origin (and contents (second access)))
+                (bounds (and origin *mir-lir-index-bounds*
+                             (gethash origin *mir-lir-index-bounds*)))
+                (inherited (and origin *mir-lir-inherited-index-bounds*
+                                (gethash origin *mir-lir-inherited-index-bounds*))))
+           (cond ((or (mir-lir-array-index-proven-p source limit index-type bounds)
+                      (and inherited
+                           (mir-lir-array-index-proven-p source limit nil inherited)))
+                  (let ((result (new-var (cond (doublep :f64) (singlep :f32) (t :obj)))))
+                    (mir-lir-vector-access contents index value doublep result singlep)
+                    result))
+                 (contents
+                  (prog1 (mir-lir-emit-vector-access contents index value index-type
+                                                    (lambda ()
+                                                      (prog1 (specialized-access)
+                                                        ;; A returning fallback may change the mode.
+                                                        (when *mir-lir-float-mode-cache*
+                                                          (emit `(:set ,*mir-lir-float-mode-cache*
+                                                                       (:ne ,(mir-lir-float-control-state)
+                                                                            ,(nil-value)))))))
+                                                    (cdr storage) doublep singlep)
+                    ;; The fallback signals on an invalid index or rank.
+                    ;; The backing store of a simple array has fixed length.
+                    (when origin
+                      (unless *mir-lir-index-bounds*
+                        (setf *mir-lir-index-bounds* (make-hash-table :test #'eql)))
+                      (push (cons source limit) (gethash origin *mir-lir-index-bounds*)))))
+                 (t (specialized-access))))))
       ((:vector-read :vector-write)
-       (emit-svref-fast-path
-        object index
-        (lambda (result)
-          (if store
-              (progn
-                (emit-sequence-write :vector-set object index value)
-                (kiln.kir::emit-lir-assignment result value))
-              (emit-sequence-read :vector-ref object index result)))
+       (mir-lir-emit-vector-access
+        object index value index-type
         (lambda () (if store (emit-slow-call name value object index)
-                       (emit-slow-call name object index))) t
-        (hir-fixnum-type-p index-type)
-        (and (hir-fixnum-type-p index-type) (hir-range-p index-type) (<= 0 (second index-type)))))
+                       (emit-slow-call name object index)))))
       ((:string-read :string-write) (emit-schar object index value name t))
-      ((:array-read :array-write) (emit-aref-1 object index value)))))
+      ((:array-read :array-write) (emit-aref-1 object index value))))))
 
 (defun mir-lir-fixnum-call-p (instruction)
   (let ((name (mir-instruction-data instruction))
@@ -171,19 +435,194 @@
          (not (mir-instruction-notinline instruction))
          (or (and (= (length operands) 2)
                   (member name '(+ - * logand logior logxor < > <= >= = /=)))
+             (and (> (length operands) 2) (eq name '+))
              (and (= (length operands) 1) (member name '(1+ 1- zerop plusp minusp))))
          (every (lambda (id) (hir-fixnum-type-p (svref *mir-lir-types* id))) operands))))
+
+(defun mir-lir-fixnum-sum (args bounded)
+  (if bounded
+      ;; With a proof for the final sum, modular additions give its exact
+      ;; fixnum representation even if a mathematical prefix exceeds it.
+      (reduce (lambda (a b) (emit-fixnum-arithmetic '+ a b t)) args)
+      (let ((sum (first args)) (overflow (new-var :raw)) (slow (new-block *mir-lir-in-loop*)))
+        (dolist (operand (rest args))
+          (let ((result (new-var)) (next (new-block)))
+            (emit-fixnum-overflow-operation '+ result overflow sum operand)
+            (br overflow slow next)
+            (start-block next)
+            (setf sum result)))
+        (let ((done (new-block)))
+          (jump done)
+          (start-block slow)
+          (kiln.kir::emit-lir-assignment sum (apply #'emit-slow-call '+ args))
+          (jump done)
+          (start-block done))
+        sum)))
 
 (defun mir-lir-fixnum-call (instruction args)
   (let* ((name (mir-instruction-data instruction)) (left (first args)) (right (second args))
          (bounded (hir-fixnum-type-p (svref *mir-lir-types* (mir-instruction-result instruction)))))
-    (cond ((member name '(+ - *)) (emit-fixnum-arithmetic name left right bounded))
+    (cond ((and (eq name '+) (cddr args)) (mir-lir-fixnum-sum args bounded))
+          ((member name '(+ - *))
+           (emit-fixnum-arithmetic name left right bounded nil *mir-lir-in-loop*))
           ((member name '(1+ 1-))
-           (emit-fixnum-arithmetic (if (eq name '1+) '+ '-) left '(:fixnum-tag 1) bounded))
+           (emit-fixnum-arithmetic (if (eq name '1+) '+ '-) left '(:fixnum-tag 1) bounded
+                                   nil *mir-lir-in-loop*))
           ((member name '(logand logior logxor))
            (copy-to-var `(,(ecase name (logand :and) (logior :or) (logxor :xor)) ,left ,right)))
           (t (boolean-value `(,(ecase name ((< minusp) :lt) ((> plusp) :gt) (<= :le) (>= :ge) ((= zerop) :eq) (/= :ne))
                               ,left ,(or right '(:fixnum-tag 0))))))))
+
+(defun mir-lir-power-of-two-divisor (instruction)
+  (let ((operands (mir-instruction-operands instruction)))
+    (when (and (= (mir-instruction-kind instruction) 6)
+               (= (length operands) 2)
+               (member (mir-instruction-data instruction) '(floor truncate /))
+               (hir-policy-optimize-p (mir-instruction-policy instruction))
+               (not (mir-instruction-notinline instruction)))
+      (hir-fixnum-power-of-two-divisor
+       (svref *mir-lir-types* (svref operands 0))
+       (svref *mir-lir-types* (svref operands 1))))))
+
+(defun mir-lir-power-of-two-expt (instruction base exponent)
+  (when (and (hir-policy-optimize-p (mir-instruction-policy instruction))
+             (not (mir-instruction-notinline instruction)))
+    (let* ((operands (mir-instruction-operands instruction))
+           (value (hir-positive-fixnum-constant (svref *mir-lir-types* (svref operands 0)))))
+      (when (and value (> value 1) (zerop (logand value (1- value))))
+        (let* ((factor (1- (integer-length value)))
+               (exponent-type (svref *mir-lir-types* (svref operands 1)))
+               (range (hir-type-range exponent-type))
+               (limit (1+ (floor (1- (integer-length kiln.kir::+backend-fixnum-max+)) factor)))
+               (shift `(:fixnum-untag ,exponent))
+               (scaled-shift (if (= factor 1) shift `(:word-mul ,shift ,factor)))
+               (power `(:fixnum-tag (:word-shift-left 1 ,scaled-shift))))
+          (when (and range (<= 0 (second range)) (< (third range) limit))
+            (return-from mir-lir-power-of-two-expt (copy-to-var power)))
+          (let ((result (new-var)) (fast (new-block)) (done (new-block))
+                (slow (new-block *mir-lir-in-loop*)))
+            (unless (hir-fixnum-type-p exponent-type)
+              (let ((fixnum (new-block)))
+                (br (emit-kind-test exponent kiln.kir::+packet-class-fixnum+) fixnum slow)
+                (start-block fixnum)))
+            ;; The unsigned comparison also sends negative exponents to EXPT.
+            (br `(:fixnum-uge ,exponent (:fixnum-tag ,limit)) slow fast)
+            (start-block fast)
+            (emit `(:set ,result ,power))
+            (jump done)
+            (start-block slow)
+            (kiln.kir::emit-lir-assignment result (emit-slow-call 'expt base exponent))
+            (jump done)
+            (start-block done)
+            result))))))
+
+(defun mir-lir-fixnum-mod (instruction dividend)
+  (let ((operands (mir-instruction-operands instruction)))
+    (when (and (= (length operands) 2)
+               (hir-policy-optimize-p (mir-instruction-policy instruction))
+               (not (mir-instruction-notinline instruction)))
+      (let ((type (svref *mir-lir-types* (svref operands 0)))
+            (divisor (hir-positive-fixnum-constant
+                      (svref *mir-lir-types* (svref operands 1)))))
+        (when (and divisor (hir-integer-type-p type))
+          (let ((tagged-divisor (constant-object divisor)))
+            (flet ((fixnum-mod ()
+                     (if (zerop (logand divisor (1- divisor)))
+                         (copy-to-var `(:fixnum-logand ,dividend ,(constant-object (1- divisor))))
+                         (let ((remainder
+                                 (copy-to-var `(:fixnum-remainder ,dividend ,tagged-divisor))))
+                           (if (hir-nonnegative-integer-type-p type)
+                               remainder
+                               (copy-to-var
+                                `(:select (:lt ,remainder ,(constant-object 0))
+                                          (:fixnum-add ,remainder ,tagged-divisor) ,remainder)))))))
+              (if (hir-fixnum-type-p type)
+                  (fixnum-mod)
+                  (let ((fast (new-block)) (slow (new-block)) (done (new-block)) (result (new-var)))
+                    (br `(:test-class ,kiln.kir::+packet-class-fixnum+ ,dividend) fast slow)
+                    (start-block fast)
+                    (kiln.kir::emit-lir-assignment result (fixnum-mod))
+                    (jump done)
+                    (start-block slow)
+                    (kiln.kir::emit-lir-assignment result (emit-slow-call 'mod dividend tagged-divisor))
+                    (jump done)
+                    (start-block done)
+                    result)))))))))
+
+(defun mir-lir-exact-power-of-two-division (dividend divisor)
+  (if (= divisor 1)
+      dividend
+      (let ((raw (copy-to-var `(:fixnum-untag ,dividend) :raw))
+            (result (new-var)) (exact (new-block)) (ratio (new-block)) (done (new-block)))
+        (br `(:eq (:and ,raw ,(1- divisor)) 0) exact ratio)
+        (start-block exact)
+        (emit `(:set ,result (:fixnum-tag (:sar ,raw ,(1- (integer-length divisor))))))
+        (jump done)
+        (start-block ratio)
+        (kiln.kir::emit-lir-assignment result
+          (emit-numeric-op :number-div (list dividend (constant-object divisor))))
+        (jump done)
+        (start-block done)
+        result)))
+
+(defun mir-lir-odd-offset-from-p (value base)
+  (let ((definition (svref *mir-lir-definitions*
+                          (mir-primary-origin value *mir-lir-definitions*))))
+    (when (and definition (= (mir-instruction-kind definition) 6)
+               (hir-policy-optimize-p (mir-instruction-policy definition))
+               (not (mir-instruction-notinline definition)))
+      (let ((operands (mir-instruction-operands definition)))
+        (flet ((base-p (index)
+                 (= base (mir-primary-origin (svref operands index) *mir-lir-definitions*)))
+               (odd-constant-p (index)
+                 (let ((range (hir-type-range (svref *mir-lir-types* (svref operands index)))))
+                   (and range (= (second range) (third range)) (oddp (second range))))))
+          (case (mir-instruction-data definition)
+            ((1+ 1-) (and (= (length operands) 1) (base-p 0)))
+            (+ (and (= (length operands) 2)
+                    (or (and (base-p 0) (odd-constant-p 1))
+                        (and (base-p 1) (odd-constant-p 0)))))
+            (- (and (= (length operands) 2) (base-p 0) (odd-constant-p 1)))))))))
+
+(defun mir-lir-even-product-p (value)
+  (let ((definition (svref *mir-lir-definitions*
+                          (mir-primary-origin value *mir-lir-definitions*))))
+    (when (and definition (= (mir-instruction-kind definition) 6)
+               (eq (mir-instruction-data definition) '*)
+               (hir-policy-optimize-p (mir-instruction-policy definition))
+               (not (mir-instruction-notinline definition)))
+      (let ((operands (mir-instruction-operands definition)))
+        (when (= (length operands) 2)
+          (let ((left (svref operands 0)) (right (svref operands 1)))
+            (and (hir-integer-type-p (svref *mir-lir-types* left))
+                 (hir-integer-type-p (svref *mir-lir-types* right))
+                 (or (mir-lir-odd-offset-from-p left (mir-primary-origin right *mir-lir-definitions*))
+                     (mir-lir-odd-offset-from-p right (mir-primary-origin left *mir-lir-definitions*))))))))))
+
+(defun mir-lir-power-of-two-division (instruction dividend divisor)
+  (let* ((result (mir-instruction-result instruction))
+         (shift (1- (integer-length divisor)))
+         (mask (1- divisor))
+         (raw (copy-to-var `(:fixnum-untag ,dividend) :raw))
+         (dividend-id (svref (mir-instruction-operands instruction) 0))
+         (type (svref *mir-lir-types* dividend-id))
+         (remainder-needed (svref *mir-lir-bundle-demand* result))
+         (bias-needed (and (plusp mask) (eq (mir-instruction-data instruction) 'truncate)
+                           (not (hir-nonnegative-integer-type-p type))))
+         (even (and (= divisor 2) (or bias-needed remainder-needed)
+                    (mir-lir-even-product-p dividend-id)))
+         ;; A signed shift rounds down. Only a negative, inexact result
+         ;; needs a bias to truncate towards zero.
+         (input (if (and bias-needed (not even))
+                    (copy-to-var `(:add ,raw (:and (:sar ,raw 63) ,mask)) :raw)
+                    raw))
+         (quotient (copy-to-var `(:sar ,input ,shift) :raw))
+         (primary (copy-to-var `(:fixnum-tag ,quotient))))
+    (when remainder-needed
+      (let ((remainder (if even (constant-object 0)
+                           (copy-to-var `(:fixnum-tag (:sub ,raw (:shl ,quotient ,shift)))))))
+        (emit `(:publish-values (,primary ,remainder)))))
+    (mir-lir-save result primary 2)))
 
 (defun mir-lir-double-call-p (instruction)
   "Select numeric operations only with a MIR double-float proof for every operand."
@@ -192,9 +631,76 @@
     (and (= (mir-instruction-kind instruction) 6)
          (hir-policy-optimize-p (mir-instruction-policy instruction))
          (not (mir-instruction-notinline instruction))
-         (or (and (= (length operands) 2) (member name '(+ - * / < > <= >= = /=)))
-             (and (= (length operands) 1) (member name '(- abs 1+ 1- zerop plusp minusp))))
+         (or (and (>= (length operands) 2) (member name '(+ - * /)))
+             (and (= (length operands) 2) (member name '(< > <= >= = /=)))
+             (and (= (length operands) 1) (member name '(- / abs 1+ 1- zerop plusp minusp))))
          (every (lambda (id) (eq (svref *mir-lir-types* id) 'double-float)) operands))))
+
+(defun mir-lir-double-conversion-p (instruction)
+  (let ((operands (mir-instruction-operands instruction)))
+    (and (= (mir-instruction-kind instruction) 6)
+         (eq 'float (mir-instruction-data instruction))
+         (hir-policy-optimize-p (mir-instruction-policy instruction))
+         (not (mir-instruction-notinline instruction))
+         (= (length operands) 2)
+         (eq 'double-float (svref *mir-lir-types* (svref operands 1)))
+         (let ((type (svref *mir-lir-types* (svref operands 0))))
+           (or (eq type t) (hir-integer-type-p type))))))
+
+(defun mir-lir-single-call-p (instruction)
+  (let ((operands (mir-instruction-operands instruction)))
+    (and (= (mir-instruction-kind instruction) 6)
+         (hir-policy-optimize-p (mir-instruction-policy instruction))
+         (not (mir-instruction-notinline instruction))
+         (member (mir-instruction-data instruction) '(+ - * /))
+         (= (length operands) 2)
+         (every (lambda (id) (eq (svref *mir-lir-types* id) 'single-float)) operands))))
+
+(defun mir-lir-single-forward-source (instruction)
+  (when (or (member (mir-instruction-kind instruction) '(9 10))
+            (and (= (mir-instruction-kind instruction) 11)
+                 (mir-check-proven-p instruction *mir-lir-types*)))
+    (svref (mir-instruction-operands instruction) 0)))
+
+(defun mir-lir-single-origin (id)
+  (loop for definition = (svref *mir-lir-definitions* id)
+        for source = (and definition (mir-lir-single-forward-source definition))
+        while source do (setf id source)
+        finally (return id)))
+
+(defun mir-lir-single-array-read-p (instruction)
+  (multiple-value-bind (operation type) (mir-lir-container-call instruction)
+    (and (eq operation :specialized-array-read) (eq (second type) 'single-float))))
+
+(defun mir-lir-plan-single-scalars (function)
+  (when (and (find 'single-float *mir-lir-types*)
+             (< (hir-policy-quality (mir-function-policy function) :debug) 2))
+    (let* ((instructions (hir-buffer-view (mir-function-instructions function)))
+           (scalars (make-hash-table :test #'eql)))
+      (loop for instruction across instructions
+            when (and (or (mir-lir-single-call-p instruction)
+                          (mir-lir-single-array-read-p instruction))
+                      (< (hir-policy-quality (mir-instruction-policy instruction) :debug) 2))
+              do (setf (gethash (mir-instruction-result instruction) scalars) t))
+      (when (plusp (hash-table-count scalars))
+        (flet ((require-object (id) (remhash (mir-lir-single-origin id) scalars)))
+          (loop for instruction across instructions
+                unless (or (mir-lir-single-call-p instruction)
+                           (mir-lir-single-forward-source instruction))
+                  do (map nil #'require-object (mir-instruction-operands instruction)))
+          (loop for block across (hir-buffer-view (mir-function-blocks function))
+                for terminator = (mir-block-terminator block)
+                do (map nil #'require-object (mir-terminator-operands terminator))
+                   (loop for edge across (mir-terminator-edges terminator)
+                         do (map nil #'require-object (mir-edge-arguments edge)))))
+        ;; Allocate in SSA order so host and native packets agree.
+        (dotimes (id (length *mir-lir-types*))
+          (when (gethash id scalars) (setf (gethash id scalars) (new-var :f32))))
+        (when (plusp (hash-table-count scalars)) scalars)))))
+
+(defun mir-lir-single-scalar (id)
+  (when *mir-lir-single-scalars*
+    (gethash (mir-lir-single-origin id) *mir-lir-single-scalars*)))
 
 (defun mir-lir-double-forward-source (instruction)
   (let ((operands (mir-instruction-operands instruction)))
@@ -275,7 +781,8 @@
                           (let* ((origin (mir-primary-origin id *mir-lir-definitions*))
                                  (definition (svref *mir-lir-definitions* origin)))
                             (and (not (svref observed origin)) definition
-                                 (mir-lir-double-call-p definition)))))
+                                 (or (mir-lir-double-call-p definition)
+                                     (mir-lir-double-conversion-p definition))))))
               do (setf (svref doubles id) (new-var :f64))))
     (unless (some #'identity doubles) (return-from mir-lir-double-plan (values doubles boxed)))
     (let ((work (make-hir-buffer))
@@ -290,10 +797,17 @@
                    (and source result (svref doubles source) (svref doubles result) source))))
         (loop for instruction across instructions
               unless (or (= 37 (mir-instruction-kind instruction))
-                         (mir-lir-double-call-p instruction) (forward-p instruction)
+                         (mir-lir-double-call-p instruction)
+                         (mir-lir-double-conversion-p instruction) (forward-p instruction)
                          (and (mir-lir-double-forward-source instruction)
                               (not (svref *mir-lir-live* (mir-instruction-result instruction)))))
-                do (map nil #'require-object (mir-instruction-operands instruction)))
+                do (let ((operands (mir-instruction-operands instruction)))
+                     (multiple-value-bind (operation type) (mir-lir-container-call instruction)
+                       (loop for id across operands for index from 0
+                             unless (and (zerop index) (eq operation :specialized-array-write)
+                                         (not (svref *mir-lir-live* (mir-instruction-result instruction)))
+                                         (mir-lir-double-array-access-p operation type))
+                               do (require-object id)))))
         (loop for block across blocks
               do (map nil #'require-object (mir-terminator-operands (mir-block-terminator block)))
                  (loop for id across (mir-block-parameters block)
@@ -316,30 +830,154 @@
       (let ((value (mir-lir-value id)))
         (copy-to-var `(:field-load ,kiln.kir::+packet-field-double-bits+ ,(if (consp value) (car value) value)) :f64))))
 
+(defun mir-lir-float-control-state ()
+  (emit-symbol-value (constant-object 'kiln.kernel::*float-control-active*)))
+
+(defun mir-lir-nonfinite-test (precision result)
+  ;; An all-ones exponent needs runtime handling even in the default mode.
+  (ecase precision
+    (:double
+     ;; Drop the sign and sign-extend the exponent to compare against -1.
+     `(:word-eq (:word-shift-right
+                  (:word-shift-left (:f64-bits ,result) 1) 53) -1))
+    (:single
+     `(:word-eq (:word-and (:single-float-bits ,result) #x7f800000) #x7f800000))))
+
+(defun mir-lir-float-fallback (precision name left right result reciprocal)
+  (ecase precision
+    (:double
+     (let ((value (if reciprocal
+                      (emit-slow-call '/ (emit-box-double-bits right))
+                      (let* ((a (emit-box-double-bits left))
+                             (b (emit-box-double-bits right)))
+                        (emit-slow-call 'kiln.kernel::controlled-real-arithmetic
+                                        (constant-object name) a b)))))
+       (emit `(:set ,result (:field-load ,kiln.kir::+packet-field-double-bits+ ,value)))))
+    (:single
+     (kiln.kir::emit-lir-assignment result
+       (emit-slow-call 'kiln.kernel::controlled-real-arithmetic (constant-object name) left right)))))
+
+(defun mir-lir-float-mode-cache ()
+  (when *mir-lir-in-loop*
+    (or *mir-lir-float-mode-cache*
+        (setf *mir-lir-float-mode-cache*
+              (copy-to-var `(:ne ,(mir-lir-float-control-state) ,(nil-value)) :raw)))))
+
+(defun mir-lir-unpack-single-once (id object)
+  (unless *mir-lir-single-unpacked*
+    (setf *mir-lir-single-unpacked* (make-hash-table :test #'eql)))
+  (let ((origin (mir-lir-single-origin id)))
+    (or (gethash origin *mir-lir-single-unpacked*)
+        (setf (gethash origin *mir-lir-single-unpacked*)
+              (copy-to-var `(:unpack-single ,object) :f32)))))
+
+(defun mir-lir-single-scalar-call (name left right left-raw right-raw result-raw operands)
+  (let* ((a-raw (or left-raw (mir-lir-unpack-single-once (svref operands 0) left)))
+         (b-raw (or right-raw (mir-lir-unpack-single-once (svref operands 1) right)))
+         (mode (mir-lir-float-mode-cache))
+         (fast (new-block)) (done (new-block))
+         (slow (new-block *mir-lir-in-loop*))
+         (raw (or result-raw (new-var :f32)))
+         (result (unless result-raw (new-var)))
+         (operation (ecase name (+ :f32-add) (- :f32-sub) (* :f32-mul) (/ :f32-div))))
+    (br (or mode `(:ne ,(mir-lir-float-control-state) ,(nil-value))) slow fast)
+    (start-block fast)
+    (emit `(:set ,raw (,operation ,a-raw ,b-raw)))
+    (if result
+        (progn
+          (emit `(:set ,result (:pack-single ,raw)))
+          (br (mir-lir-nonfinite-test :single result) slow done))
+        (br `(:word-eq (:word-and (:f32-bits ,raw) #x7f800000) #x7f800000) slow done))
+    (start-block slow)
+    (let* ((a (if left-raw (copy-to-var `(:pack-single ,left-raw)) left))
+           (b (if right-raw (copy-to-var `(:pack-single ,right-raw)) right))
+           (fallback (emit-slow-call 'kiln.kernel::controlled-real-arithmetic
+                                     (constant-object name) a b)))
+      (if result
+          (kiln.kir::emit-lir-assignment result fallback)
+          (emit `(:set ,raw (:unpack-single ,fallback)))))
+    (when mode
+      (emit `(:set ,mode (:ne ,(mir-lir-float-control-state) ,(nil-value)))))
+    (jump done)
+    (start-block done)
+    result))
+
+(defun mir-lir-float-chain (precision name left rights &key reciprocal)
+  (let* ((double (eq precision :double))
+         (operation (ecase name
+                      (+ (if double :f64-add :single-add))
+                      (- (if double :f64-sub :single-sub))
+                      (* (if double :f64-mul :single-mul))
+                      (/ (if double :f64-div :single-div))))
+         (fast (new-block))
+         (slow (new-block *mir-lir-in-loop*))
+         (mode-cache (mir-lir-float-mode-cache)))
+    (br (or mode-cache `(:ne ,(mir-lir-float-control-state) ,(nil-value))) slow fast)
+    (loop for (right . remaining) on rights
+          for result = (new-var (if double :f64 :obj))
+          for next-fast = (new-block)
+          for next-slow = (and remaining (new-block *mir-lir-in-loop*))
+          do (start-block fast)
+             (kiln.kir::emit-lir-assignment result (list operation left right))
+             (br (mir-lir-nonfinite-test precision result) slow next-fast)
+             (start-block slow)
+             (mir-lir-float-fallback precision name left right result reciprocal)
+             ;; A resumed slow call may have changed the dynamic setting.
+             (let ((active (and (or mode-cache next-slow)
+                                `(:ne ,(mir-lir-float-control-state) ,(nil-value)))))
+               (when mode-cache (emit `(:set ,mode-cache ,active)))
+               (if next-slow
+                   (br (or mode-cache active) next-slow next-fast)
+                   (jump next-fast)))
+             (setf left result fast next-fast slow next-slow))
+    (start-block fast)
+    left))
+
+(defun mir-lir-convert-double-bits (value type)
+  (let ((range (hir-type-range type)))
+    (if (and range (<= (- (ash 1 53)) (second range) (third range) (ash 1 53)))
+        (copy-to-var `(:f64-from-signed (:fixnum-untag ,value)) :f64)
+        (let* ((fixnum (hir-fixnum-type-p type))
+               (result (new-var :f64)) (fast (new-block)) (slow (new-block *mir-lir-in-loop*)) (done (new-block))
+               (rounding (new-block *mir-lir-in-loop*))
+               (sign-bit (- (ash 1 63))))
+          (unless fixnum
+            (let ((integer (new-block)))
+              (br `(:test-class ,kiln.kir::+packet-class-fixnum+ ,value) integer slow)
+              (start-block integer)))
+          ;; An exact integer conversion produces the same result in every
+          ;; rounding mode, even when the integer interval is only known at runtime.
+          ;; Translate the interval to start at the minimum signed word.
+          ;; Word addition wraps, leaving all other inputs above its end.
+          (let ((integer (copy-to-var `(:fixnum-untag ,value) :raw)))
+            (br `(:word-le (:word-add ,integer ,(+ sign-bit (ash 1 53)))
+                           ,(+ sign-bit (ash 1 54))) fast rounding)
+            (start-block rounding)
+            (let ((active (mir-lir-float-control-state)))
+              (br `(:ne ,active ,(nil-value)) slow fast))
+            (start-block fast)
+            (kiln.kir::emit-lir-assignment result `(:f64-from-signed ,integer)))
+          (jump done)
+          (start-block slow)
+          (mir-lir-load-field result kiln.kir::+packet-field-double-bits+
+            (if fixnum
+                (emit-slow-call 'kiln.kernel::controlled-float-conversion value (constant-object t))
+                (emit-slow-call 'float value (constant-object 0d0))))
+          (jump done)
+          (start-block done)
+          result))))
+
 (defun mir-lir-double-call (name operands)
   (let* ((bits (map 'list #'mir-lir-double-bits operands))
-         (left (first bits)) (right (second bits)))
-    (when (and (not right) (member name '(- abs)))
-      (return-from mir-lir-double-call
-        (copy-to-var (if (eq name '-) `(:xor ,left ,(- #x8000000000000000))
-                        `(:and ,left #x7fffffffffffffff)) :f64)))
-    (unless right
-      (setq right #x3ff0000000000000 name (ecase name (1+ '+) (1- '-))))
-    (let ((result (new-var :f64)) (fast (new-block)) (slow (new-block)) (done (new-block))
-          (active (emit-symbol-value (constant-object 'kiln.kernel::*float-control-active*))))
-      (br `(:ne ,active ,(nil-value)) slow fast)
-      (start-block fast)
-      (emit `(:set ,result (,(ecase name (+ :f64-add) (- :f64-sub) (* :f64-mul) (/ :f64-div)) ,left ,right)))
-      ;; Non-finite results need the same invalid/overflow checks as boxed
-      ;; arithmetic, even in the default nearest rounding mode.
-      (br `(:eq (:and ,result #x7ff0000000000000) #x7ff0000000000000) slow done)
-      (start-block slow)
-      (let* ((a (emit-box-double-bits left)) (b (emit-box-double-bits right))
-             (value (emit-slow-call 'kiln.kernel::controlled-real-arithmetic (constant-object name) a b)))
-        (emit `(:set ,result (:field-load ,kiln.kir::+packet-field-double-bits+ ,value))))
-      (jump done)
-      (start-block done)
-      result)))
+         (left (first bits)))
+    (if (rest bits)
+        (mir-lir-float-chain :double name left (rest bits))
+        (case name
+          (- (copy-to-var `(:xor ,left ,(- #x8000000000000000)) :f64))
+          (abs (copy-to-var `(:and ,left #x7fffffffffffffff) :f64))
+          (/ (mir-lir-float-chain :double '/ #x3ff0000000000000 (list left) :reciprocal t))
+          (1+ (mir-lir-float-chain :double '+ left '(#x3ff0000000000000)))
+          (1- (mir-lir-float-chain :double '- left '(#x3ff0000000000000)))))))
 
 (defun mir-lir-dead-pure-value-p (id)
   (let ((definition (svref *mir-lir-definitions* id)))
@@ -355,6 +993,27 @@
                         (list :field-ref (kiln.kir::lir-field-name field) object))
                     source))
         (emit (list :set target source)))))
+
+(defun mir-lir-list-access (name receiver object)
+  (let ((field (if (member name '(car first)) kiln.kir::+packet-field-cons-car+
+                   kiln.kir::+packet-field-cons-cdr+))
+        (type (svref *mir-lir-types* receiver)))
+    (case type
+      (cons (let ((result (new-var)))
+              (mir-lir-load-field result field object)
+              result))
+      (null (nil-value))
+      (otherwise
+       (let* ((origin (mir-primary-origin receiver *mir-lir-definitions*))
+              (tests (or *mir-lir-list-tests*
+                         (setf *mir-lir-list-tests* (make-hash-table :test #'eql))))
+              (prior (gethash origin tests))
+              (test (or prior (copy-to-var
+                               `(:test-class ,kiln.kir::+packet-class-cons+ ,object) :raw))))
+         ;; Every returning path establishes CONS or NIL for this SSA value.
+         ;; The proof stays inside the MIR block, including its emitted branches.
+         (prog1 (emit-car-cdr object field test (or prior (eq type 'list)))
+           (unless prior (setf (gethash origin tests) test))))))))
 
 (defun mir-lir-constant-assignment (target word)
   (case (first word)
@@ -379,10 +1038,23 @@
     (when (and result (not (svref *mir-lir-live* result))
                (mir-lir-double-forward-source instruction))
       (return-from mir-lir-instruction))
+    (when *mir-lir-single-scalars*
+      (let ((source (mir-lir-single-forward-source instruction)))
+        (when (and source (mir-lir-single-scalar source))
+          (return-from mir-lir-instruction))))
     (let ((specialization (mir-lir-typep-specialization instruction)))
       (when specialization
         (mir-lir-save result (emit-typep-test (first args) (first specialization)) 1)
         (return-from mir-lir-instruction)))
+    (when (mir-lir-unit-random-p instruction)
+      (let ((state (if (rest args)
+                       (second args)
+                       (let* ((symbol (constant-object '*random-state*))
+                              (value (emit-symbol-value symbol)))
+                         (emit-check-bound value symbol)
+                         value))))
+        (mir-lir-save result (emit-slow-call 'kiln.kernel::random-unit-double state) 1))
+      (return-from mir-lir-instruction))
     (let ((plan (mir-lir-object-call-plan instruction)))
       (when plan
         (multiple-value-bind (value count)
@@ -392,12 +1064,70 @@
               (:constructor (emit-constructor-call data args (second plan) (third plan))))
           (mir-lir-save result value (or count 1)))
         (return-from mir-lir-instruction)))
-    (let ((operation (mir-lir-container-call instruction)))
+    (when (and (= kind 6)
+               (or (eq data 'aref) (equal data '(setf aref)))
+               (hir-policy-optimize-p (mir-instruction-policy instruction))
+               (not (mir-instruction-notinline instruction)))
+      (let* ((store (equal data '(setf aref)))
+             (rank (- (length args) (if store 2 1))))
+        (case rank
+          (2 (mir-lir-save result
+               (apply #'emit-slow-call (if store 'kiln.kernel::%set-aref-2 'kiln.kernel::%aref-2) args)
+               1)
+             (return-from mir-lir-instruction))
+          (3 (destructuring-bind (array i j k) (if store (rest args) args)
+               (mir-lir-save result
+                 (emit-slow-call 'kiln.kernel::%ranked-aref array i j k
+                                 (constant-object 3) (constant-object store)
+                                 (if store (first args) (nil-value))) 1))
+             (return-from mir-lir-instruction)))))
+    (multiple-value-bind (operation type) (mir-lir-container-call instruction)
       (when operation
-        (mir-lir-save result (mir-lir-container-value operation instruction args) 1)
+        (let* ((doublep (mir-lir-double-array-access-p operation type))
+               (single (mir-lir-single-scalar result))
+               (value (mir-lir-container-value operation instruction args type doublep single))
+               (raw (svref *mir-lir-doubles* result)))
+          (cond (single (kiln.kir::emit-lir-assignment single value))
+                (doublep
+                 (when raw (kiln.kir::emit-lir-assignment raw value))
+                 (when (and (svref *mir-lir-live* result)
+                            (or (not raw) (svref *mir-lir-boxed* result)))
+                   (mir-lir-save result
+                                 (if (eq operation :specialized-array-write) (first args)
+                                     (emit-box-double-bits value)) 1)))
+                (t
+                 (mir-lir-save result value 1)
+                 (when raw
+                   (mir-lir-load-field raw kiln.kir::+packet-field-double-bits+ value)))))
         (return-from mir-lir-instruction)))
     (when (mir-lir-fixnum-call-p instruction)
       (mir-lir-save result (mir-lir-fixnum-call instruction args) 1)
+      (return-from mir-lir-instruction))
+    (when (and (= kind 6) (eq data 'mod))
+      (let ((value (mir-lir-fixnum-mod instruction (first args))))
+        (when value
+          (mir-lir-save result value 1)
+          (return-from mir-lir-instruction))))
+    (let ((divisor (mir-lir-power-of-two-divisor instruction)))
+      (when divisor
+        (if (eq data '/)
+            (mir-lir-save result (mir-lir-exact-power-of-two-division (first args) divisor) 1)
+            (mir-lir-power-of-two-division instruction (first args) divisor))
+        (return-from mir-lir-instruction)))
+    (when (and (= kind 6) (eq data 'expt) (= (length args) 2))
+      (let ((value (mir-lir-power-of-two-expt instruction (first args) (second args))))
+        (when value
+          (mir-lir-save result value 1)
+          (return-from mir-lir-instruction))))
+    (when (mir-lir-single-call-p instruction)
+      (let* ((operands (mir-instruction-operands instruction))
+             (left (mir-lir-single-scalar (svref operands 0)))
+             (right (mir-lir-single-scalar (svref operands 1)))
+             (raw (mir-lir-single-scalar result))
+             (value (if (or left right raw)
+                        (mir-lir-single-scalar-call data (first args) (second args) left right raw operands)
+                        (mir-lir-float-chain :single data (first args) (rest args)))))
+        (when value (mir-lir-save result value 1)))
       (return-from mir-lir-instruction))
     (when (and (mir-lir-double-call-p instruction) (member data '(< > <= >= = /= zerop plusp minusp)))
       (let* ((operands (mir-instruction-operands instruction))
@@ -413,12 +1143,25 @@
                          (t `(,(ecase data ((< minusp) :lt) (<= :le) ((= zerop) :eq) (/= :ne))
                                ,comparison 0)))) 1))
       (return-from mir-lir-instruction))
-    (when (mir-lir-double-call-p instruction)
-      (let ((bits (mir-lir-double-call data (mir-instruction-operands instruction)))
-            (raw (svref *mir-lir-doubles* result)))
-        (when raw (emit `(:set ,raw ,bits)))
-        (when (or (not raw) (svref *mir-lir-boxed* result))
-          (mir-lir-save result (emit-box-double-bits bits) 1)))
+    (let ((conversion (mir-lir-double-conversion-p instruction)))
+      (when (or conversion (mir-lir-double-call-p instruction))
+        (let* ((operands (mir-instruction-operands instruction))
+               (bits (if conversion
+                         (mir-lir-convert-double-bits (first args) (svref *mir-lir-types* (svref operands 0)))
+                         (mir-lir-double-call data operands)))
+               (raw (svref *mir-lir-doubles* result)))
+          (when raw (emit `(:set ,raw ,bits)))
+          (when (or (not raw) (svref *mir-lir-boxed* result))
+            (mir-lir-save result (emit-box-double-bits bits) 1)))
+        (return-from mir-lir-instruction)))
+    (when (and (= kind 6) (eq data '/) (<= 1 (length args) 2)
+               (hir-policy-optimize-p *hir-policy*)
+               (not (mir-instruction-notinline instruction)))
+      (mir-lir-save result
+                    (if (rest args)
+                        (emit-slow-call 'kiln.kernel::two-arg-/ (first args) (second args))
+                        (emit-slow-call 'kiln.kernel::two-arg-/ (constant-object 1) (first args)))
+                    1)
       (return-from mir-lir-instruction))
     (let ((source (mir-lir-double-forward-source instruction)))
       (when (and result source (svref *mir-lir-doubles* result) (svref *mir-lir-doubles* source))
@@ -483,6 +1226,9 @@
                                   (emit `(:stack-cons ,value (:slot ,slot) ,(first args) ,(second args)))
                                   (values value 1)))
                           ((eq data 'identity) (values (first args) 1))
+                          ((member data '(car cdr first rest))
+                           (values (mir-lir-list-access data
+                                     (svref (mir-instruction-operands instruction) 0) (first args)) 1))
                           (t (funcall (gethash data *primitives*) args)))))
                  ((and (= kind 6) (equal data '(setf fdefinition)) (= (length args) 2))
                   (let* ((id (svref (mir-instruction-operands instruction) 1))
@@ -721,7 +1467,10 @@
          (*mir-lir-bundle-demand* (mir-bundle-plan-demand (mir-bundle-plan function)))
          (predecessors (mir-lir-predecessor-index function))
          (*mir-lir-live* (mir-lir-live-values function predecessors))
+         (*mir-lir-single-scalars* (mir-lir-plan-single-scalars function))
          (*mir-lir-doubles* nil) (*mir-lir-boxed* nil)
+         (*mir-lir-array-contents* nil)
+         (*mir-lir-array-sources* nil)
          (*mir-lir-values*
            (let* ((values (hir-buffer-view (mir-function-values function)))
                   (locals (make-array (length values) :initial-element nil)))
@@ -740,11 +1489,24 @@
                                 (otherwise (new-var)))))
              locals))
          (blocks (hir-buffer-view (mir-function-blocks function)))
+         (cyclic (mir-cyclic-blocks function))
          (loop-polls (mir-loop-poll-blocks function))
          (labels (map 'simple-vector (lambda (block) (declare (ignore block)) (new-block)) blocks))
          (edge-blocks nil) (dispatches nil) (base-regions nil)
+         (bound-inputs nil)
          (arguments (make-array (mir-function-positional-count function))) (count (new-var :raw)))
     (multiple-value-setq (*mir-lir-doubles* *mir-lir-boxed*) (mir-lir-double-plan function predecessors))
+    (multiple-value-bind (owners sources) (mir-lir-plan-array-contents function)
+      (when owners
+        (setf *mir-lir-array-sources* sources)
+        (setf *mir-lir-array-contents* (make-hash-table :test #'eql))
+        (dolist (owner owners)
+          (let* ((type (svref *mir-lir-types* owner))
+                 (dimension (and (mir-lir-specialized-vector-p type) (first (third type)))))
+            (setf (gethash owner *mir-lir-array-contents*)
+                  (cons (new-var)
+                        (if (integerp dimension) (constant-object dimension) (new-var))))))
+        (setf bound-inputs (mir-lir-array-bound-inputs function blocks sources))))
     (dotimes (i (length arguments)) (setf (svref arguments i) (new-var)))
     (emit `(:receive-prefix ,(coerce arguments 'list) ,count))
     (when (and storage (not (zerop (mir-storage-analysis-rest storage))))
@@ -770,10 +1532,54 @@
                (setf *regions* (mir-lir-active-regions active base-regions)))
              (when (or (zerop (mir-block-id block)) (logbitp (mir-block-id block) loop-polls))
                (emit-poll :stack (zerop (mir-block-id block))))
-             (loop for id across (hir-buffer-view (mir-block-instructions block))
-                   for instruction = (mir-at (mir-function-instructions function) id)
-                   unless (member (mir-instruction-kind instruction) '(31 33 36))
-                     do (mir-lir-instruction instruction arguments count))
+             (let* ((*mir-lir-list-tests* nil)
+                    (*mir-lir-single-unpacked* nil)
+                    (*mir-lir-float-mode-cache* nil)
+                    (block-id (mir-block-id block))
+                    (*mir-lir-in-loop* (logbitp block-id cyclic))
+                    (*mir-lir-inherited-index-bounds* (and bound-inputs (svref bound-inputs block-id)))
+                    (*mir-lir-index-bounds* nil))
+               (loop for id across (hir-buffer-view (mir-block-instructions block))
+                     for instruction = (mir-at (mir-function-instructions function) id)
+                     unless (member (mir-instruction-kind instruction) '(31 33 36))
+                       do (when (and *mir-lir-float-mode-cache*
+                                     (not (or (member (mir-instruction-kind instruction) '(0 9 10))
+                                              (and (= (mir-instruction-kind instruction) 11)
+                                                   (mir-check-proven-p instruction *mir-lir-types*))
+                                              (mir-lir-single-call-p instruction)
+                                              (mir-lir-double-call-p instruction)
+                                              (nth-value 1 (mir-lir-array-access-plan instruction)))))
+                            (setf *mir-lir-float-mode-cache* nil))
+                          (mir-lir-instruction instruction arguments count)
+                          (let* ((result (mir-instruction-result instruction))
+                                 (storage (and result *mir-lir-array-contents*
+                                               (gethash result *mir-lir-array-contents*))))
+                            (when storage
+                              (setf *mir-lir-float-mode-cache* nil)
+                              (let* ((type (svref *mir-lir-types* result))
+                                     (value (mir-lir-value result))
+                                     (array (if (consp value) (car value) value))
+                                     (rank-one (mir-lir-specialized-vector-p type))
+                                     (contents (car storage))
+                                     (length (cdr storage))
+                                     (*call-source* (mir-instruction-source instruction)))
+                                (kiln.kir::emit-lir-assignment
+                                 contents
+                                 (emit-slow-call
+                                  (if rank-one
+                                      'kiln.kernel::%simple-specialized-array-contents
+                                      'kiln.kernel::%simple-specialized-vector-contents)
+                                  array))
+                                (unless rank-one
+                                  (let ((present (new-block)) (done (new-block)))
+                                    (kiln.kir::emit-lir-assignment length '(:fixnum-tag 0))
+                                    (br `(:eq ,contents ,(nil-value)) done present)
+                                    (start-block present)
+                                    (kiln.kir::emit-lir-assignment length (vector-length contents))
+                                    (jump done)
+                                    (start-block done)))
+                                (when (and rank-one (not (integerp (first (third type)))))
+                                  (kiln.kir::emit-lir-assignment length (vector-length contents))))))))
              (let* ((term (mir-block-terminator block))
                     (*call-source* (mir-terminator-source term))
                     (edges (mir-terminator-edges term))
@@ -826,31 +1632,52 @@
         (mir-lir-edge-copies function (second entry))
         (jump (svref labels (mir-edge-target (second entry))))))))
 
+(defvar *compiler-stage-observer* nil
+  "Optional diagnostic callback of (stage payload elapsed-ticks).
+Inspect mutable payloads synchronously. The callback must not edit them.")
+
+(defmacro observe-mir-pass (unit pass &rest options)
+  `(if *compiler-stage-observer*
+       (let ((start (get-internal-real-time)))
+         (prog1 (,pass ,unit ,@options)
+           (funcall *compiler-stage-observer* ',pass ,unit
+                    (- (get-internal-real-time) start))))
+       (,pass ,unit ,@options)))
+
 (defun mir-optimize-unit (unit)
   "Optimize a verified unit through passes that preserve its verification contracts."
   (with-compilation-phase (:mir-optimize)
-    (mir-simplify-block-parameters unit :preserve-refinements t)
-    (mir-specialize-value-calls unit)
-    (mir-specialize-sequence-calls unit)
-    (mir-fold-type-predicates unit)
-    (mir-lift-local-functions unit)
-    (mir-inline-local-functions unit)
-    (mir-expand-list-calls unit)
-    (mir-specialize-value-calls unit)
-    (mir-specialize-sequence-calls unit)
-    (mir-fold-type-predicates unit)
-    (mir-scalar-replace unit)
-    (mir-simplify-block-parameters unit)))
+    (observe-mir-pass unit mir-simplify-block-parameters :preserve-refinements t)
+    (observe-mir-pass unit mir-specialize-value-calls)
+    (observe-mir-pass unit mir-specialize-sequence-calls)
+    (observe-mir-pass unit mir-fold-type-predicates)
+    (observe-mir-pass unit mir-lift-local-functions)
+    (observe-mir-pass unit mir-inline-local-functions)
+    (observe-mir-pass unit mir-expand-list-calls)
+    (observe-mir-pass unit mir-specialize-value-calls)
+    (observe-mir-pass unit mir-specialize-sequence-calls)
+    (observe-mir-pass unit mir-fold-type-predicates)
+    (observe-mir-pass unit mir-scalar-replace)
+    (observe-mir-pass unit mir-simplify-block-parameters)))
 
 (defun mir-lower-toplevel (hir)
   (with-compilation-phase (:mir-lir)
-    (let* ((unit (mir-optimize-unit (hir-to-mir hir))) (*mir-lir-functions* (hir-buffer-view (mir-unit-functions unit)))
+    (when *compiler-stage-observer*
+      (funcall *compiler-stage-observer* :hir hir nil))
+    (let* ((initial (hir-to-mir hir))
+           (unit (progn
+                   (when *compiler-stage-observer*
+                     (funcall *compiler-stage-observer* :initial-mir initial nil))
+                   (mir-optimize-unit initial)))
+           (*mir-lir-functions* (hir-buffer-view (mir-unit-functions unit)))
            (functions *mir-lir-functions*)
            (*mir-lir-load-time-cells* (map 'simple-vector
                                           (lambda (id) (declare (ignore id)) (fresh-label "kiln_mir_ltv_"))
                                           (mir-unit-load-time-functions unit)))
            (*mir-lir-labels* (map 'simple-vector (lambda (function) (declare (ignore function))
                                                   (fresh-label "kiln_mir_")) functions)))
+      (when *compiler-stage-observer*
+        (funcall *compiler-stage-observer* :labels (cons functions *mir-lir-labels*) nil))
       (when (plusp (length *mir-lir-load-time-cells*))
         (setf (kiln.kir::kmodule-replayable-p *module*) nil)
         (loop for cell across *mir-lir-load-time-cells*

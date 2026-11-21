@@ -120,7 +120,7 @@ keeps one definition."
   slot handler target forward outer-handler)
 
 (defstruct kblock
-  name
+  name cold
   (stmts '())
   constants
   (terminator nil)
@@ -192,8 +192,8 @@ INDEX in the function's debug info (lower.lisp)."
     (push (list s size) (kfunc-slots *func*))
     s))
 
-(defun new-block ()
-  (let ((b (make-kblock :name (vector #\b (fresh-number)))))
+(defun new-block (&optional cold)
+  (let ((b (make-kblock :name (vector #\b (fresh-number)) :cold cold)))
     (push b (kfunc-blocks *func*))
     b))
 

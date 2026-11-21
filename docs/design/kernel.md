@@ -34,12 +34,20 @@ kernel 先给出简单的版本，后面的模块替换或扩充。钩子是 `ki
 算术参数的 `number` 检查与实数运算的 `real` 检查分开。单参数 `+`、`*`、`=`、`/=` 接受复数，单参数序比较和 `max`、`min` 仍要求实数。一元负号有独立的降级路径：fixnum 直接取负，溢出和其他数交给 kernel；浮点取负保留有符号零，复数分别对实部和虚部取负。 实数与复数的加法、乘法保留未参与运算的虚部或直接按实数缩放，避免多余的浮点零运算改变符号。`coerce` 到 `single-float` 或 `short-float` 使用单精度原型，`float` 则保留已有的浮点格式。
 
 - **运算在 Rust 里**：`kiln_rt_integer_op(ctx, op, a, b)`（`rust/kiln-rt/src/bignum.rs`，num-bigint）实现整数的加减乘、四种除法（商作为返回值，余数在 `ctx.values[0]`）、比较、位运算、`ash`、`gcd`、`expt`、`integer-length`。`kiln_rt_number_op`（`number.rs`，num-bigint 和 num-rational）处理全部实数的四则、四种除法（商是整数，余数和参数同类型）、比较、`eql`、转成浮点、`rational`、`sqrt`、`exp`、`log`、三角函数、`atan` 的两参数形式、`expt`。
+- `isqrt` 用整数 Newton 迭代。初值取输入位长一半向上取整后的二次幂，
+  从平方根附近的上界下降，省去初值接近输入本身时反复减半的迭代。
+- 大整数 `gcd` 从两个操作数的高位求商的上下界。两端给出同一个商时，
+  它把这一步欧几里得变换并入机器整数矩阵，再把一批变换应用到完整操作数。
+  无法确认下一步时使用精确余数继续，小整数交给二进制 GCD。
 - runtime 先把参数读成 BigInt 再分配结果，所以分配时的 GC 不影响参数；结果有多个堆对象时（ratio 的分子分母、除法的余数）先分配的用 `values_live` 登记为 root。
 - **快路径和慢路径**：编译器对 `+ - *`、比较、除法、`ash`、`logand` 等内联 fixnum 运算。参数不是 fixnum 或者溢出时，调用 kernel 的 `two-arg-+`、`two-arg-<` 等函数，由它们按类型分派。`eql` 对不是同一对象的数调用 `eql-slow`。
 - **数值错误是 condition**：kernel 在 Lisp 层检查参数与结果。`two-arg-*` 系列检查实数参数，除法在调用 runtime 前检查除数；`exp`、`expt` 在取得结果后检查浮点上溢。
 - `exp` 和 `expt` 对有限参数产生的无穷结果执行软件上溢检查，发出 `floating-point-overflow`；检查覆盖单精度结果窄化及复数分量。实数的单精度窄化上溢按 `coerce` 记录双精度结果和目标类型；双精度上溢的操作与参数槽为 NIL，与 SBCL 一致。复数整数正幂在乘法步骤后检查，浮点复数的负幂在对数域计算，避免先求正幂造成中间溢出。零底数配合非零、实部不为正的指数发出 `division-by-zero`。
 - **类型传染**按 CLHS 12.1.4：double > single > 有理数；有理数的初等函数结果是 single-float。比较是精确的：有限浮点数按它表示的有理数和有理数比较。无穷按符号排序；NaN 没有顺序关系，各种相等和有序比较返回假，`/=` 返回真。
 - `expt` 先检查两个参数均为数。零指数通过 `1 + base × power` 构造单位值，保留两参数的浮点格式和复数类型传染，复数结果的虚部规范为正零；有理复数仍按零虚部规范化为实数。
+  底数和指数都是整数，且指数绝对值在无符号 32 位范围内时，后端使用大整数幂。
+  底数的绝对值是二次幂时，按指数算出结果的位位置，直接移位并按奇偶性确定符号。
+  负指数返回精确倒数。
 - **浮点的分解**（CLHS 12.2）：`integer-decode-float`、`decode-float`、`scale-float`、`float-sign`、`float-digits`、`float-precision`、`float-radix` 按位实现在 kernel 里。
 - **complex**：运算在 kernel 里按两部分做（`two-arg-+` 等先判断有没有 complex 参数），部分之间的类型传染由实数的传染得到。`eql` 的慢路径、`=`、`zerop`、`abs`（浮点按比例缩放）、`phase`、`signum`、`conjugate`、`cis`，以及 `sqrt`/`exp`/`log`/`expt` 和三角、双曲函数及其反函数的 complex 版本；负数的 `sqrt`/`log` 和负底数的非整数次幂得到 complex。分支切割按 CLHS 12.1.5.3，在实轴上的取值和 SBCL 一致。双曲函数和反函数对实数也有。复数平方根使用双精度中间量，普通幅值直接计算，极端幅值按二进制指数缩放，避免通用缩放造成额外舍入；再由较大的结果分量计算另一分量。`asin` 和 `acos` 采用两个平方根的分解式，并在大幅值处使用渐近式，避免相消与中间结果溢出。实数 `asinh` 按绝对值计算后恢复符号，小量通过补偿的 log(1+x) 计算。实数 `atanh` 在 (-1, 1) 内使用浮点库，避免由复数公式组合多个舍入步骤。复数 `atanh` 用补偿的 log(1+x) 计算实部，用双参数 `atan` 确定虚部和分支方向；复数 `atan` 通过旋转参数和结果复用它，避免相近对数相减丢失小分量。
 - `float` 带 single-float 原型时把 double 转成 single；`ffloor`、`fceiling`、`ftruncate`、`fround`。
@@ -59,7 +67,7 @@ kernel 先给出简单的版本，后面的模块替换或扩充。钩子是 `ki
 
 ## 类型
 
-- **`typep`**（`types.lisp`）认识内建的原子类型和常用的复合类型（`or`、`and`、`not`、`member`、`eql`、`satisfies`、带范围的 `integer`/`rational`/`real`/`float`、`mod`、`unsigned-byte`、`signed-byte`、`cons`、带长度的字符串和向量、数组类型的维度）。其余的先用 `typexpand-1` 展开 `deftype` 定义的名字（展开函数在 plist 上）；展开不了的，symbol 交给 `*class-typep*`，复合类型交给 `*ctype-typep*`。`or`、`and`、`not` 和不是标准类型名的 symbol 先经过 `%cached-typep`：CLOS 载入后，只取决于对象的类的答案按 stamp 缓存（[clos.md](clos.md) 的“类名的 `typep`”）。缓存在 `*typep-cache*` 里；类型假设（`deftype`、`(setf find-class)`、类的重新 finalize）改变时，观察者调用 `invalidate-type-caches` 清空它（[specialization.md](specialization.md)）。
+- **`typep`**（`types.lisp`）认识内建的原子类型和常用的复合类型（`or`、`and`、`not`、`member`、`eql`、`satisfies`、带范围的 `integer`/`rational`/`real`/`float`、`mod`、`unsigned-byte`、`signed-byte`、`cons`、带长度的字符串和向量、数组类型的维度）。其余的先用 `typexpand-1` 展开 `deftype` 定义的名字（展开函数在 plist 上）；展开不了的，symbol 交给 `*class-typep*`，复合类型交给 `*ctype-typep*`。`or`、`and`、`not` 和不是标准类型名的 symbol 先经过 `%cached-typep`：CLOS 载入后，只取决于对象的类的答案按 stamp 缓存（[clos.md](clos.md) 的“类名的 `typep`”）。全局表保存 class stamp、答案和类型版本。类型假设改变后，查找忽略旧版本的条目（[specialization.md](specialization.md)）。
 - 字符串和向量类型中的长度约束检查数组维度。填充指针只决定活动长度，不改变类型判断；例如容量为 3、填充指针为 0 的字符串仍满足 `(string 3)`。
 - 编译期把常量原子类型的 `typep` 换成谓词调用，把类名的 `typep` 换成 `%typep-cached`（[lowering.md](lowering.md)）。
 - `equal` 按活动长度比较位向量，支持填充指针和位移。`equalp` 按元素递归比较数组，向量按活动长度、其他数组按维度匹配，忽略存储元素类型；哈希表按测试函数、条目数、对应键的值递归比较。

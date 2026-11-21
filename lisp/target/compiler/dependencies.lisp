@@ -34,6 +34,9 @@
 (defvar *dependents* (make-hash-table :test 'equal)
   "For a key (KIND NAME), the definition units that depend on it.")
 
+(defvar *dependent-tails* (make-hash-table :test 'equal)
+  "Last list cell of each reverse dependency bucket when known.")
+
 (defvar *definition-order* 0)
 
 (defvar *pending-redefinitions* '()
@@ -147,15 +150,19 @@ gensyms of a macro expansion)?"
                      (every (lambda (p q) (similar-literal-p p q 100)) (cdr x) (cdr y))))
               a b)))
 
+(defun remove-dependent-unit (key unit)
+  (let ((units (delete unit (gethash key *dependents*) :test #'eq :count 1)))
+    (remhash key *dependent-tails*)
+    (if units
+        (setf (gethash key *dependents*) units)
+        (remhash key *dependents*))))
+
 (defun remove-definition-unit (name)
   (let ((old (gethash name *definition-units*)))
     (when old
       (remhash name *definition-units*)
       (dolist (key (definition-unit-keys old))
-        (let ((units (delete old (gethash key *dependents*))))
-          (if units
-              (setf (gethash key *dependents*) units)
-              (remhash key *dependents*)))))
+        (remove-dependent-unit key old)))
     old))
 
 (defun prepare-definition-unit (name form keys outputs fingerprint)
@@ -168,15 +175,40 @@ gensyms of a macro expansion)?"
       (setf (definition-unit-source-range unit) (cst-source-range *eval-source-cst*))
       unit)))
 
+(defun insert-dependent-unit (key unit order)
+  (let* ((units (gethash key *dependents*))
+         (tail (or (gethash key *dependent-tails*) (last units))))
+    (cond ((null tail)
+           (let ((entry (list unit)))
+             (setf (gethash key *dependents*) entry
+                   (gethash key *dependent-tails*) entry)))
+          ((> order (definition-unit-order (car tail)))
+           (let ((entry (list unit)))
+             (setf (cdr tail) entry
+                   (gethash key *dependent-tails*) entry)))
+          (t
+           (setf (gethash key *dependents*)
+                 (merge 'list (list unit) units #'< :key #'definition-unit-order)
+                 (gethash key *dependent-tails*) tail)))))
+
 (defun install-definition-unit (name unit)
-  (remove-definition-unit name)
-  (when unit
-    (setf *definition-order* (max *definition-order* (definition-unit-order unit))
-          (gethash name *definition-units*) unit)
-    (dolist (key (definition-unit-keys unit))
-      (setf (gethash key *dependents*)
-            (merge 'list (list unit) (gethash key *dependents*) #'<
-                   :key #'definition-unit-order)))))
+  (let* ((old (gethash name *definition-units*))
+         (old-keys (and old (definition-unit-keys old)))
+         (keys (and unit (definition-unit-keys unit))))
+    (dolist (key old-keys)
+      (unless (member key keys :test #'equal)
+        (remove-dependent-unit key old)))
+    (if unit
+        (let ((order (definition-unit-order unit)))
+          (setf *definition-order* (max *definition-order* order)
+                (gethash name *definition-units*) unit)
+          (dolist (key keys)
+            (let ((entry (and old (member key old-keys :test #'equal)
+                              (member old (gethash key *dependents*) :test #'eq))))
+              (if entry
+                  (setf (car entry) unit)
+                  (insert-dependent-unit key unit order)))))
+        (remhash name *definition-units*))))
 
 (defun register-definition-unit (name form keys outputs fingerprint)
   (install-definition-unit name (prepare-definition-unit name form keys outputs fingerprint)))

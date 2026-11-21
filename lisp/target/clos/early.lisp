@@ -839,7 +839,7 @@ superclasses and metaclasses come first or are built already."
 (defun specializer-applicable-p (specializer argument)
   (if (eq (physical-class-of specializer) (find-class 'eql-specializer))
       (eql (%slot specializer '%object) argument)
-      (member specializer (%slot (physical-class-of argument) '%precedence-list))))
+      (kiln.kernel::%member-eq specializer (%slot (physical-class-of argument) '%precedence-list))))
 
 (defun early-method-more-specific-p (m1 m2 arguments)
   (loop for s1 in (%slot m1 '%specializers)
@@ -856,12 +856,22 @@ superclasses and metaclasses come first or are built already."
   ;; (lisp/macro-client.lisp).
   (funcall (%slot method '%function) arguments next-methods))
 
+(declaim (inline early-method-applicable-p))
+(defun early-method-applicable-p (method arguments)
+  (loop for specializer in (%slot method '%specializers)
+        for argument in arguments
+        always (specializer-applicable-p specializer argument)))
+
 (defun early-discriminate (gf arguments)
+  (let* ((methods (%slot gf '%methods))
+         (method (first methods)))
+    (when (and method (null (rest methods)) (null (%slot method '%qualifiers)))
+      (unless (early-method-applicable-p method arguments)
+        (error "no applicable method" (%slot gf '%name) arguments))
+      (return-from early-discriminate (call-method-function method arguments nil))))
   (let* ((applicable
            (loop for method in (%slot gf '%methods)
-                 when (loop for specializer in (%slot method '%specializers)
-                            for argument in arguments
-                            always (specializer-applicable-p specializer argument))
+                 when (early-method-applicable-p method arguments)
                    collect method))
          (sorted (sort applicable (lambda (m1 m2) (early-method-more-specific-p m1 m2 arguments))))
          (around '()) (before '()) (primary '()) (after '()))
@@ -875,15 +885,17 @@ superclasses and metaclasses come first or are built already."
     (setf around (nreverse around) before (nreverse before) primary (nreverse primary))
     (when (null primary)
       (error "no applicable method" (%slot gf '%name) arguments))
-    (let ((main (lambda (arguments next-methods)
-                  (declare (ignore next-methods))
-                  (dolist (method before)
-                    (call-method-function method arguments '()))
-                  (multiple-value-prog1
-                      (call-method-function (first primary) arguments (rest primary))
-                    (dolist (method after)
-                      (call-method-function method arguments '()))))))
+    (flet ((main (arguments)
+             (dolist (method before)
+               (call-method-function method arguments '()))
+             (multiple-value-prog1
+                 (call-method-function (first primary) arguments (rest primary))
+               (dolist (method after)
+                 (call-method-function method arguments '())))))
       (if (null around)
-          (funcall main arguments '())
+          (main arguments)
           (call-method-function (first around) arguments
-                                (append (rest around) (list main)))))))
+                                (append (rest around)
+                                        (list (lambda (arguments next-methods)
+                                                (declare (ignore next-methods))
+                                                (main arguments)))))))))

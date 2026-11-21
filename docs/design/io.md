@@ -48,9 +48,11 @@
 
 `peek-char` 的 peek-type 为 T 时，按当前 `*readtable*` 的语法类型跳过空白；`set-syntax-from-char` 对空白语法的修改立即生效。 字符流的 peek 先查看 `unread-char` 缓冲；字符串流的 `file-position` 和读入结束索引指向下一个字符，设置位置会丢弃回退字符。
 
+对字符串输出流写入字符串时，`write-sequence` 与 `write-string` 共用追加路径。已验证的原生来源和未位移字符缓冲区在容量充足时一次遍历完成复制和光标更新。需要扩容时按几何比例增大缓冲区，再复制指定区间；其他字符串表示使用通用复制路径。
+
 - Cyclosis 用 Trinsic 的 `make-define-interface` 生成 CL 的流函数和宏，展开在 kiln 的 client 文件（`streams.lisp`）里。
 - 上游的 intrinsic 接口在自己的包里遮蔽 `stream`、`close`、`streamp` 等名字，加载时再 `shadowing-import` 进 CL；kiln 的运行期包是宿主包的镜像，这一步做不了，所以补丁让 Cyclosis 直接使用这些 CL symbol。需要 client 参数的函数（`open`、`peek-char` 等）仍然遮蔽。
-- **标准流**：文件描述符 0、1、2 上的 POSIX 文件流，经 synonym stream 绑定到 `*standard-input*`、`*standard-output*`、`*error-output*` 等。标准流**没有缓冲**：runtime 的 `print` 和错误信息直接写 fd，Lisp 这边一缓冲，两边的输出顺序就会乱。`stream-write-string` 一次编码整个字符串、只写一次，`stream-write-octets` 按块拷贝。
+- **标准流**：文件描述符 0、1、2 上的 POSIX 流，经 synonym stream 绑定到 `*standard-input*`、`*standard-output*`、`*error-output*` 等。标准输入使用读缓冲。标准输出和标准错误写入后立即交给描述符，保持和 runtime 输出的顺序。`stream-write-string` 按块编码 UTF-8，并交给 `stream-write-octets` 写出。以字符串为输入的 `write-sequence` 在内建字符文件流上复用这条路径，保留指定的字符串范围和输出光标。
 - `nontrivial-gray-streams`：kiln 定义 `ngray` 包，转出 Cyclosis 中同名的 Gray 流 symbol（`ngray.lisp`），补上 `stream-element-type`、`stream-external-format`、`stream-line-length`。
 - 字符串输出流按倍数增长（上游每次只加长 32，写入是平方级）。
 - 上游修正：UTF-8 编码时三字节的上界、解码时的移位方向、`stream-advance-to-column` 写换行而不是空格。
@@ -80,11 +82,15 @@ echo stream 记录，两个输出通过 broadcast stream 复制，原有流保�
 - 限制：只支持 Unix 的物理 pathname，没有 host 对象（物理 pathname 的 host 是 NIL），名字里不能用反斜杠转义；`directory` 不解析符号链接；编译器不支持 pathname 常量。
 
 **文件流**（`files.lisp`）：`kiln-file-stream` 是 Cyclosis 的 `posix-file-stream` 加一个容量为 8192 八位组的缓冲，底层使用 simple vector。
+标准输入复用文件流的输入缓冲和 UTF-8 字符快路径。标准输出和标准错误直接写入描述符。
+恢复快照时，标准输入丢弃保存进程的预读字节和字符游标，因为新进程使用自己的描述符。
 
 文件流把字节缓冲、输入起止、待输出长度和 UTF-8 分类缓存放在原生结构
 `file-buffer-state` 中。ASCII 字符快路径只获取一次该结构，直接读取或更新字段；
 Cyclosis 的外层方法仍负责 unread 和游标，非 ASCII、缓冲补充及其他外部格式仍走
 转换器。文件位置、读写切换和输出刷新共享同一份缓冲状态。
+默认字符流的 `read-line` 用原生字符串积累字符，缓冲写满时扩容，返回时裁成实际行长。
+调用者可以直接用 `schar` 读取结果。输入在换行前结束时，第二返回值为真。
 八位组文件流与专用八位组向量之间的 `write-sequence` 直接分块写入缓冲。
 FASL 的包向量先检查元素范围。较大的 simple-vector 八位组区间先刷新待写数据，
 再由 runtime 分块打包并写入描述符。分块限制临时字节缓冲的大小，每次写入后
@@ -138,7 +144,7 @@ Incless 定义 `write`、`prin1`、`princ`、`print`、`print-object`、`print-u
   - 浮点的无穷和 NaN 通过 `float-triple` 判断；
   - 输出到带 fill pointer 的字符串时，先在它上面开一个字符串输出流；
   - 控制串的解析结果按内容缓存。
-- Cyclosis 的 `y-or-n-p` 经 Trinsic 的 `cell-value` 取 `format`，kiln 的 client 提供这个方法。输入按字符读，回答后面的换行也算一次无效回答，会多提示一次；`clear-input` 对 POSIX 流不起作用。
+- Cyclosis 的 `y-or-n-p` 经 Trinsic 的 `cell-value` 取 `format`，kiln 的 client 提供这个方法。输入按字符读，回答后面的换行也算一次无效回答，会多提示一次。`clear-input` 丢弃标准输入已读入缓冲的字节和回退字符。
 - 编译期不编译控制串（编译器宏被忽略），每次调用都解释。
 - 上游的舍入问题（未修）：`(format nil "~,1f" 0.05f0)` 给出 `"0.0"`，应该是 `"0.1"`；在 SBCL 上配原版 Quaviver 也一样。
 

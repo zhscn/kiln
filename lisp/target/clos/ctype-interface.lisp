@@ -6,9 +6,8 @@
 
 ;;; Parsed specifiers and SUBTYPEP answers use EQUAL hash tables. Syntax
 ;;; is copied into keys, and literal operands use EQL identity tokens. Entries
-;;; remain valid for one version of the type assumption: a new type, a new class or a
-;;; changed class definition empties them (kiln.kernel::invalidate-type-caches
-;;; clears the TYPEP tables, and this version tells when).
+;;; remain valid for one version of the type assumption. The next lookup
+;;; clears these tables when it observes a new version.
 (defvar *ctype-cache* (make-hash-table :test 'equal))
 (defvar *subtypep-cache* (make-hash-table :test 'equal))
 (defvar *ctype-cache-version* -1)

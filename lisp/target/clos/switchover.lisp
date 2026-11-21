@@ -174,18 +174,27 @@
   "Generic functions with more class combinations than this are not
 satiated; their call histories fill as they are called.")
 
-(defun all-classes ()
-  (mapcar (lambda (d) (desc-class d)) *descriptions*))
+(defun satiation-class-index ()
+  (let ((classes-by-specializer nil))
+    (dolist (description *descriptions*)
+      (let ((class (desc-class description)))
+        (dolist (specializer (%slot class '%precedence-list))
+          (let ((entry (kiln.kernel::%assoc-eq specializer classes-by-specializer)))
+            (if entry
+                (push class (cdr entry))
+                (push (list specializer class) classes-by-specializer))))))
+    (dolist (entry classes-by-specializer)
+      (setf (cdr entry) (nreverse (cdr entry))))
+    classes-by-specializer))
 
-(defun candidate-classes (methods position)
+(defun candidate-classes (methods position classes-by-specializer)
   (let ((result '()))
     (dolist (method methods)
       (let ((specializer (nth position (%slot method '%specializers))))
         (if (eq (physical-class-of specializer) (find-class 'eql-specializer))
             (pushnew (physical-class-of (%slot specializer '%object)) result)
-            (dolist (class (all-classes))
-              (when (member specializer (%slot class '%precedence-list))
-                (pushnew class result))))))
+            (dolist (class (cdr (kiln.kernel::%assoc-eq specializer classes-by-specializer)))
+              (pushnew class result :test #'eq)))))
     result))
 
 (defun cartesian-product (sets)
@@ -195,13 +204,14 @@ satiated; their call histories fill as they are called.")
         (loop for x in (first sets)
               append (loop for tail in rest collect (cons x tail))))))
 
-(defun satiate (gf)
+(defun satiate (gf classes-by-specializer)
   (let* ((profile (%slot gf '%specializer-profile))
          (methods (%slot gf '%methods))
          (class-t (find-class 't))
          (sets (loop for p in profile
                      for position from 0
-                     collect (if p (candidate-classes methods position) (list class-t)))))
+                     collect (if p (candidate-classes methods position classes-by-specializer)
+                                 (list class-t)))))
     (when (and methods
                (<= (reduce #'* (mapcar #'length sets)) *satiation-limit*))
       (dolist (classes (cartesian-product sets))
@@ -221,8 +231,9 @@ satiated; their call histories fill as they are called.")
     (dolist (gf gfs)
       (setf (%slot gf '%method-combination) standard
             (%slot gf '%call-history) '()))
-    (dolist (gf gfs)
-      (satiate gf))
+    (let ((classes-by-specializer (satiation-class-index)))
+      (dolist (gf gfs)
+        (satiate gf classes-by-specializer)))
     (let ((functions (mapcar #'compute-discriminating-function gfs)))
       (loop for gf in gfs
             for function in functions

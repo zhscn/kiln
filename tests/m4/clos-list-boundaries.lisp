@@ -47,3 +47,19 @@
   (print x))
 (let ((x 3))
   (print (multiple-value-list (ctypecase x (integer (values x 4))))))
+
+(defun read-pair-fields (pair callback)
+  (values (car pair) (progn (funcall callback) (cdr pair))))
+
+(let ((pair (cons :left :old)))
+  (print (multiple-value-list (read-pair-fields pair (lambda () (rplacd pair :new))))))
+(print (multiple-value-list (read-pair-fields nil (lambda () nil))))
+(print (handler-case (read-pair-fields 3 (lambda () (error "unexpected callback")))
+         (type-error (condition) (type-error-datum condition))))
+
+(let ((tail (cons :found :dotted)))
+  (assert (eq tail (kiln.kernel::%member-eq :found (cons :skip tail))))
+  (assert (null (kiln.kernel::%member-eq :missing (list :skip :found))))
+  (assert (eq :dotted
+              (handler-case (kiln.kernel::%member-eq :missing tail)
+                (type-error (condition) (type-error-datum condition))))))

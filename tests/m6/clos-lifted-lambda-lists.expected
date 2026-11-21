@@ -11,3 +11,4 @@
 :TYPE-ERROR
 "allowed"
 ("limit" 1024)
+((:MISSING NIL) (NIL T) (:MISSING NIL) (:MISSING NIL) (9 T) (:MISSING NIL))

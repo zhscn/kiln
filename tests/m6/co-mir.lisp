@@ -2027,3 +2027,19 @@
                     (go again)))))))))
   (print (list (handler-case (funcall test 0) (type-error () :type))
                (funcall test 1) (funcall test 100))))
+
+(defun mir-fixnum-sum (a b c)
+  (declare (fixnum a b c) (optimize (speed 3) (safety 3)))
+  (+ a b c 1))
+
+(defun mir-bounded-sum (a b c)
+  (declare (type (integer 0 10) a b c) (optimize (speed 3) (safety 3)))
+  (+ a b c))
+
+(let ((maximum most-positive-fixnum)
+      (minimum most-negative-fixnum))
+  (print (and (eql (mir-bounded-sum 3 4 5) 12)
+              (eql (mir-fixnum-sum maximum 1 -2) maximum)
+              (eql (mir-fixnum-sum maximum 1 0) (+ maximum 2))
+              (eql (mir-fixnum-sum minimum -2 0) (1- minimum))
+              (equal (multiple-value-list (mir-fixnum-sum 1 2 3)) '(7)))))

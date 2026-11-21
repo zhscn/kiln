@@ -26,6 +26,27 @@
         do (setf id (svref (mir-instruction-operands instruction) 0))
         finally (return id)))
 
+(defun mir-specialized-vector-constructor-type (args types definitions)
+  "Use literal MAKE-ARRAY options to prove simple specialized storage."
+  (unless (and (>= (length args) 3) (oddp (length args))
+               (hir-integer-type-p (svref types 0)))
+    (return-from mir-specialized-vector-constructor-type nil))
+  (flet ((literal (index)
+           (let ((definition (svref definitions (mir-primary-origin (svref args index) definitions))))
+             (when (and definition (= (mir-instruction-kind definition) 0))
+               (mir-instruction-data definition)))))
+    (let ((element nil))
+      (loop for index from 1 below (length args) by 2
+            do (case (literal index)
+                 (:element-type
+                  (when element (return-from mir-specialized-vector-constructor-type nil))
+                  (setf element (hir-upgraded-literal-element-type (literal (1+ index))))
+                  (unless element
+                    (return-from mir-specialized-vector-constructor-type nil)))
+                 ((:initial-element :initial-contents))
+                 (otherwise (return-from mir-specialized-vector-constructor-type nil))))
+      (when element (list :simple-specialized-array element '(*))))))
+
 (defun mir-edge-type (terminator positive argument type definitions types)
   "Refine only the actual SSA value tested on this conditional edge."
   (unless (= (mir-terminator-kind terminator) 1) (return-from mir-edge-type type))
@@ -117,8 +138,9 @@
          (users (mir-type-use-blocks function))
          (queued (make-array (length blocks) :initial-element nil))
          (work (make-hir-buffer)))
-    ;; A loop can keep expanding an integer interval. After two expansions
-    ;; of a value, widen to INTEGER; later transfers cannot narrow it again.
+    ;; A loop can keep expanding an integer interval. After two expansions,
+    ;; generalize it to a representation boundary. Later inputs may exceed
+    ;; that boundary, so continue joining them with the widened fact.
     (labels ((enqueue (block)
                (unless (svref queued block)
                  (setf (svref queued block) t)
@@ -192,7 +214,9 @@
                         (if (mir-standard-call-p name)
                             (let ((inputs (map 'simple-vector (lambda (id) (svref types id)) args)))
                               (if (find :unseen inputs) :unseen
-                                  (inferred-call-type name inputs)))
+                                  (or (and (eq name 'make-array)
+                                           (mir-specialized-vector-constructor-type args inputs definitions))
+                                      (inferred-call-type name inputs))))
                             t)))
                    ((7 15) (let ((target (and functions (svref functions (svref args 0)))))
                         (cond ((eq target :unseen) :unseen)

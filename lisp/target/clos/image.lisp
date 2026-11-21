@@ -35,3 +35,11 @@ starts from it by itself. Returns PATHNAME; the process continues."
 ;;; The process an image starts in has its own working directory.
 (push (lambda () (setf *default-pathname-defaults* (current-directory)))
       kiln.sys:*init-hooks*)
+
+;; Descriptor zero belongs to the new process. Bytes read ahead in the
+;; saving process have no relationship to it.
+(push (lambda ()
+        (let ((stream cyclosis::+standard-input+))
+          (cyclosis:stream-clear-input stream)
+          (setf (cyclosis::input-cursor stream) (cyclosis::make-cursor))))
+      kiln.sys:*init-hooks*)

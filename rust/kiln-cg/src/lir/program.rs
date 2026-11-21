@@ -20,6 +20,7 @@ type Result<T> = std::result::Result<T, String>;
 pub enum Type {
     Obj,
     Word,
+    F32,
     F64,
     Mv,
 }
@@ -141,6 +142,7 @@ struct Flow {
 #[derive(Debug)]
 pub struct Block {
     pub name: String,
+    pub cold: bool,
     pub instructions: Vec<Instruction>,
     pub terminator: Terminator,
 }
@@ -201,6 +203,7 @@ pub enum Class {
     Function,
     Vector,
     String,
+    DoubleStorage,
     Bignum,
     Ratio,
     Double,
@@ -222,6 +225,7 @@ impl Class {
             Self::Function => CLASS_FUNCTION,
             Self::Vector => CLASS_SIMPLE_VECTOR,
             Self::String => CLASS_STRING,
+            Self::DoubleStorage => CLASS_DOUBLE_STORAGE,
             Self::Bignum => CLASS_BIGNUM,
             Self::Ratio => CLASS_RATIO,
             Self::Double => CLASS_DOUBLE,
@@ -299,21 +303,34 @@ operations! {
     FixnumLe => ("fixnum-le", [Obj,Obj], Word),
     FixnumGt => ("fixnum-gt", [Obj,Obj], Word),
     FixnumGe => ("fixnum-ge", [Obj,Obj], Word),
+    FixnumUge => ("fixnum-uge", [Obj,Obj], Word),
     FixnumEven => ("fixnum-evenp", [Obj], Word),
     FixnumHalf => ("fixnum-half", [Obj], Obj),
     FixnumShl => ("fixnum-shift-left", [Obj,Obj], Obj),
     FixnumSar => ("fixnum-shift-right", [Obj,Obj], Obj),
+    SingleAdd => ("single-add", [Obj, Obj], Obj),
+    SingleSub => ("single-sub", [Obj, Obj], Obj),
+    SingleMul => ("single-mul", [Obj, Obj], Obj),
+    SingleDiv => ("single-div", [Obj, Obj], Obj),
     SingleTag => ("single-float-tag", [Word], Obj),
     SingleBits => ("single-float-bits", [Obj], Word),
     InvalidVectorLength => ("invalid-vector-length", [Obj], Word),
     InvalidRackLength => ("invalid-rack-length", [Obj], Word),
     CharacterTag => ("character-tag", [Word], Obj),
     CharacterUntag => ("character-untag", [Obj], Word),
+    F32Add => ("f32-add", [F32, F32], F32),
+    F32Sub => ("f32-sub", [F32, F32], F32),
+    F32Mul => ("f32-mul", [F32, F32], F32),
+    F32Div => ("f32-div", [F32, F32], F32),
+    F32Bits => ("f32-bits", [F32], Word),
+    UnpackSingle => ("unpack-single", [Obj], F32),
+    PackSingle => ("pack-single", [F32], Obj),
     F64Add => ("f64-add", [F64, F64], F64),
     F64Sub => ("f64-sub", [F64, F64], F64),
     F64Mul => ("f64-mul", [F64, F64], F64),
     F64Div => ("f64-div", [F64, F64], F64),
     F64Bits => ("f64-bits", [F64], Word),
+    F64FromSigned => ("f64-from-signed", [Word], F64),
     F64FromBits => ("f64-from-bits", [Word], F64),
     F64Compare => ("f64-compare", [F64,F64], Word),
     UnboxDouble => ("unbox-double", [Obj], F64),
@@ -328,6 +345,8 @@ operations! {
     UndefinedFunction => ("undefined-function-p", [Obj], Word),
     VectorLength => ("vector-length", [Obj], Word),
     VectorRef => ("vector-ref", [Obj, Word], Obj),
+    SingleStorageRef => ("single-storage-ref", [Obj, Word], F32),
+    DoubleStorageRef => ("double-storage-ref", [Obj, Word], F64),
     StringRef => ("string-ref", [Obj, Word], Obj),
 }
 
@@ -633,12 +652,21 @@ pub struct RestArguments {
 pub enum SequenceKind {
     Vector,
     String,
+    DoubleStorage,
 }
 impl SequenceKind {
     fn class(self) -> u32 {
         match self {
             Self::Vector => crate::packet::schema::CLASS_SIMPLE_VECTOR,
             Self::String => crate::packet::schema::CLASS_STRING,
+            Self::DoubleStorage => crate::packet::schema::CLASS_DOUBLE_STORAGE,
+        }
+    }
+
+    fn initial_type(self) -> Type {
+        match self {
+            Self::DoubleStorage => Type::F64,
+            Self::Vector | Self::String => Type::Obj,
         }
     }
 }
@@ -658,6 +686,7 @@ macro_rules! stores {
 }
 stores! {
     Vector => ("vector-set", [Obj,Word,Obj]),
+    DoubleStorage => ("double-storage-set", [Obj,Word,F64]),
     String => ("string-set", [Obj,Word,Obj]),
     InstanceRack => ("instance-rack-set", [Obj,Obj]),
     InstanceStamp => ("instance-stamp-set", [Obj,Obj]),

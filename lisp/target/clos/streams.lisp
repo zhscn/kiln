@@ -117,3 +117,13 @@
             (setf (caar cursor) column (cdar cursor) line
                   (caadr cursor) previous-column (cdadr cursor) previous-line))))
     string))
+
+(defmethod stream-write-sequence ((stream posix-file-stream) (sequence string)
+                                  &optional (start 0) end)
+  (let* ((length (length sequence))
+         (end (or end length)))
+    (if (and (eq (class-of stream) (find-class 'posix-file-stream))
+             (eq (stream-element-type stream) 'character)
+             (integerp start) (integerp end) (<= 0 start end length))
+        (stream-write-string stream sequence start end)
+        (call-next-method))))

@@ -48,12 +48,16 @@ if [ "$run_kiln" = 1 ] && [ "$build_exe" = 0 ]; then
 fi
 
 # The program: the harness around cl-bench's files, in its ASDF order.
+for implementation in kiln sbcl; do
+  mkdir -p "$build/misc/$implementation"
+  cp bench/cl-bench/misc/{gabriel.lisp,message.gz} "$build/misc/$implementation/"
+done
 src=$build/co-cl-bench.lisp
 {
   # This form runs at program entry, outside compilation-request bindings.
   # The same generated harness can also run in SBCL.
   printf '(let* ((package (find-package "KILN.COMPILER")) (symbol (and package (find-symbol "*COMPILER-PIPELINE*" package)))) (when symbol (setf (symbol-value symbol) :%s)))\n' "$pipeline"
-  sed "s|@MISC-DIR@|$root/bench/cl-bench/misc/|" bench/cl-bench-prelude.lisp
+  sed "s|@MISC-DIR@|$build/misc/|" bench/cl-bench-prelude.lisp
   for f in arrays bignum boehm-gc clos crc40 deflate gabriel hash math ratios richards misc; do
     printf '\n;;;; bench/cl-bench/files/%s.lisp\n' "$f"
     cat "bench/cl-bench/files/$f.lisp"
@@ -92,7 +96,6 @@ if [ $run_kiln = 1 ]; then
   (cd "$build" && BENCH_SELECT= BENCH_LIST=1 ./co-cl-bench) >"$build/kiln-all.txt"
   (cd "$build" && BENCH_LIST=1 ./co-cl-bench) >"$build/kiln-list.txt"
   while read -r name group; do
-    # walk-list/mess recurses deeply (SBCL skips it).
     status=0
     # The CLOS benchmarks build on the classes and methods the ones before
     # them define (cl-bench runs them in order in one image): run those
@@ -113,7 +116,8 @@ if [ $run_kiln = 1 ]; then
 fi
 if [ $run_sbcl = 1 ]; then
   echo "sbcl:" >&2
-  sbcl --dynamic-space-size 8GB --script "$src" 2>&1 | tee "$build/sbcl.txt" >&2
+  BENCH_SBCL_LARGE_STACK=1 sbcl --dynamic-space-size 8GB --control-stack-size 1024 \
+    --script "$src" 2>&1 | tee "$build/sbcl.txt" >&2
 fi
 
 # The table.

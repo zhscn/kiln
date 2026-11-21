@@ -27,3 +27,7 @@ warning: USE-STRICT could not be compiled again after the macro STRICT changed: 
 ; compiling (MACRO-FUNCTION ADD-TWO) again: the macro TWO changed
 ; (MACRO-FUNCTION ADD-TWO) is the same
 7
+(ORDER-ONE ORDER-TWO)
+(ORDER-ONE ORDER-THREE)
+(ORDER-ONE ORDER-TWO ORDER-THREE)
+(ORDER-ONE ORDER-FOUR)

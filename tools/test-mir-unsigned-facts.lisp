@@ -5,6 +5,13 @@
 (assert (not (hir-fixnum-type-p 'unsigned-byte)))
 (assert (not (hir-known-subtype-p 'unsigned-byte '(integer 0 255))))
 (assert (eq (hir-type-join 'unsigned-byte '(integer -1 -1)) 'integer))
+(assert (equal (hir-type-intersection 'unsigned-byte 'fixnum)
+               (list 'integer 0 +hir-fixnum-max+)))
+(assert (equal (hir-widen-integer-type '(integer 1 10))
+               (list 'integer 0 +hir-fixnum-max+)))
+(assert (eq (hir-widen-integer-type
+             (list 'integer 0 (1+ +hir-fixnum-max+)))
+            'unsigned-byte))
 (assert (equal '(t) (mir-test-checks '(the unsigned-byte 0))))
 (assert (equal '(nil t) (mir-test-checks
                         '(the unsigned-byte (1+ (the unsigned-byte (mir-unknown)))))))

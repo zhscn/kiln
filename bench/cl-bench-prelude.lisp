@@ -12,7 +12,8 @@
 (in-package :cl-bench)
 
 ;;; tools/bench.sh replaces the directory.
-(defparameter *misc-dir* (pathname "@MISC-DIR@"))
+(defparameter *misc-dir*
+  (merge-pathnames #+kiln "kiln/" #-kiln "sbcl/" (pathname "@MISC-DIR@")))
 
 (defvar *benchmarks* '())
 

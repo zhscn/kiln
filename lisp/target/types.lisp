@@ -164,36 +164,12 @@
 ;;; function of the type specifier and an environment, is kept on the
 ;;; plist of the name.
 ;;;
-;;; Everything cached from type facts (the answers of TYPEP, the parsed
-;;; specifiers and SUBTYPEP answers of ctype) holds until a type or a class
-;;; changes: the version of the type assumption (assumptions.lisp) guards
-;;; the call-site caches, and INVALIDATE-TYPE-CACHES empties the tables.
-
-;;; The results of TYPEP that depend only on the object's class, which
-;;; CLOS keeps (clos/conditions.lisp, %CACHED-TYPEP): pairs of a key (the
-;;; stamp of the object's class, doubled, plus 1 if the result is true)
-;;; and the type specifier, direct mapped by the stamp and the
-;;; specifier's identity hash. *UNCACHEABLE-TYPES* holds specifiers known
-;;; not to depend on the class alone, by their identity hash.
+;;; The global TYPEP tables use the shared type-assumption version.
+;;; An entry from an older version is replaced when its slot is reused.
 (defvar *typep-cache* (make-simple-vector (* 2 4096) nil))
+(defvar *typep-cache-versions* (make-simple-vector 4096 nil))
 (defvar *uncacheable-types* (make-simple-vector 512 nil))
-
-(defun clear-simple-vector (vector)
-  (dotimes (i (length vector) vector)
-    (setf (svref vector i) nil)))
-
-(defun invalidate-type-caches ()
-  "A type or a class changed: the answers in the TYPEP tables may not hold
-any longer."
-  (clear-simple-vector *typep-cache*)
-  (clear-simple-vector *uncacheable-types*))
-
-(defun type-assumption-changed (names)
-  "The watcher of the type assumptions: NAMES changed."
-  (declare (ignore names))
-  (invalidate-type-caches))
-
-(register-assumption-watcher :type #'type-assumption-changed)
+(defvar *uncacheable-type-versions* (make-simple-vector 512 nil))
 
 (defun kiln.sys::%deftype (name expander)
   (check-type-name name)
@@ -339,6 +315,8 @@ any longer."
           ((eq type 'list)
            (unless (typep object 'sequence) (coercion-error object output-type))
            (coerce-to-list object))
+          ((and (member head '(base-string simple-base-string)) (base-string-p object))
+           (replace (make-sequence type (length object)) object))
           ((member head '(cons null vector simple-vector array simple-array string simple-string
                           base-string simple-base-string bit-vector simple-bit-vector))
            (unless (typep object 'sequence) (coercion-error object output-type))

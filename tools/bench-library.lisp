@@ -45,13 +45,15 @@
   ;; Inspect record data without executing constructors or load-time forms.
   ;; This work is outside the timed compile/load intervals.
   (with-open-file (stream fasl :element-type '(unsigned-byte 8))
-    (dolist (byte '(137 75 70 65 83 2))
-      (assert (= (read-byte stream) byte)))
-    (kiln.kernel::fasl-read-uint stream)
-    (let ((number 0))
+    (let ((version (kiln.kernel::fasl-read-header stream))
+          (frames (kiln.kernel::make-simple-vector 128))
+          (number 0))
+      (kiln.kernel::fasl-read-uint stream)
       (dotimes (index (kiln.kernel::fasl-read-uint stream))
         (declare (ignore index))
-        (let ((record (kiln.kernel::fasl-read-data stream)))
+        (multiple-value-bind (record storage)
+            (kiln.kernel::fasl-read-file-record stream frames version)
+          (setf frames storage)
           (when (eq (first record) :run)
             (let ((path (format nil "~A-~D.lir" prefix (incf number))))
               (with-open-file (output path :direction :output :if-exists :supersede

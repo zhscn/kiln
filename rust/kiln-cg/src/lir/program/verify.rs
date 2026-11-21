@@ -281,13 +281,13 @@ fn instruction(
         }
         Instruction::AllocateSequence {
             result,
+            kind,
             length,
             initial,
-            ..
         } => {
             types.expect(result, Type::Obj)?;
             types.expect(length, Type::Word)?;
-            types.expect(initial, Type::Obj)?;
+            types.expect(initial, kind.initial_type())?;
         }
         Instruction::Vector { result, elements } => {
             types.expect(result, Type::Obj)?;

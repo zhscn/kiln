@@ -113,7 +113,20 @@
 ;;; type specifier are cached.
 (defvar *class-element-types* '())      ; (class . element-type)
 
+(defparameter *stamp-element-types*
+  (let ((types (kiln.kernel::make-simple-vector (length *stamp-kinds*))))
+    (loop for (class) in *class-kinds*
+          do (setf (svref types (clostrophilia::unique-number class))
+                   (list (class-element-type class))))
+    types))
+
 (defun element-type (array)
+  (let* ((stamp (kiln.sys:%primop :standard-instance-access array -2))
+         (types *stamp-element-types*)
+         (entry (when (locally (declare (optimize (safety 0)))
+                        (< (the fixnum stamp) (the fixnum (kiln.sys:%primop :length types))))
+                  (kiln.sys:%primop :svref-unchecked types stamp))))
+    (when entry (return-from element-type (car entry))))
   (let* ((class (clostrophilia::physical-class-of array))
          (entry (assoc class *class-element-types* :test #'eq)))
     (if entry
@@ -125,17 +138,8 @@
 (defvar *upgraded-element-types* '())
 (defvar *upgraded-element-types-version* -1)
 
-(defparameter *element-type-upgrades*
-  '(nil bit (unsigned-byte 2) (unsigned-byte 4) (unsigned-byte 7)
-    (signed-byte 8) (unsigned-byte 8) (unsigned-byte 15)
-    (signed-byte 16) (unsigned-byte 16) (unsigned-byte 31)
-    (signed-byte 32) (unsigned-byte 32) (unsigned-byte 62)
-    fixnum (unsigned-byte 63) (signed-byte 64) (unsigned-byte 64)
-    base-char character single-float double-float
-    (complex single-float) (complex double-float) t))
-
 (defun compute-upgraded-element-type (type environment)
-  (dolist (candidate *element-type-upgrades* t)
+  (dolist (candidate kiln.sys::*array-element-type-upgrades* t)
     (when (subtypep type candidate environment)
       (return candidate))))
 
@@ -171,6 +175,39 @@
 (defun dimensions (array)
   (array-dimensions array))
 
+(defun vector-storage-layout (name &optional simple-string)
+  (let* ((class (cl:find-class name))
+         (slots (clostrophilia:class-slots class)))
+    (flet ((location (slot)
+             (clostrophilia:slot-definition-location
+              (find slot slots :key #'clostrophilia:slot-definition-name))))
+      (let ((stamp (clostrophilia::unique-number class)))
+        (if simple-string
+            (cl:vector stamp (location '%underlying-array) (location '%fill-pointer)
+                       (location '%adjustable) (location '%contents))
+            (cl:vector stamp (location '%dimensions) (location '%underlying-array)
+                       (location '%fill-pointer) (location '%contents)))))))
+
+(setf kiln.kernel::*single-float-vector-layout* (vector-storage-layout 'vector-single-float))
+(setf kiln.kernel::*double-float-vector-layout* (vector-storage-layout 'vector-double-float))
+(setf kiln.kernel::*base-string-layout* (vector-storage-layout 'vector-base-char t))
+(defparameter *character-vector-layout* (vector-storage-layout 'string))
+
+(defun kiln.kernel::%float-vector-typep (object type)
+  (let ((layout (if (eq (second type) 'double-float)
+                    kiln.kernel::*double-float-vector-layout*
+                    kiln.kernel::*single-float-vector-layout*))
+        (size (third type)))
+    (if (and (kiln.sys:%primop :standard-instance-p object)
+             (eql (kiln.sys:%primop :standard-instance-access object -2) (svref layout 0)))
+        (let ((dimensions
+                (if (null (kiln.sys:%primop :standard-instance-access object (svref layout 2)))
+                    (kiln.sys:%primop :standard-instance-access object (svref layout 1))
+                    (dimensions object))))
+          (and (consp dimensions) (null (cdr dimensions))
+               (or (eq size '*) (eql size (car dimensions)))))
+        (typep object type))))
+
 (defun total-size (array)
   (let ((size 1))
     (dolist (d (dimensions array) size)
@@ -178,13 +215,45 @@
 
 (declaim (inline storage-ref storage-set check-vector-subscript))
 
+(defconstant +bit-storage-word-bits+ 62)
+(defconstant +bit-storage-word-mask+ most-positive-fixnum)
+
+(declaim (inline bit-storage-word-index bit-storage-offset bit-storage-ref set-bit-storage-ref))
+(defun bit-storage-word-index (index)
+  (kiln.sys:%primop :fixnum-quotient index +bit-storage-word-bits+))
+
+(defun bit-storage-offset (index word-index)
+  (locally (declare (optimize (safety 0)))
+    (the fixnum (- (the fixnum index)
+                   (the fixnum (* (the fixnum word-index) +bit-storage-word-bits+))))))
+
+(defun bit-storage-ref (storage index)
+  (let* ((word-index (bit-storage-word-index index))
+         (word (kiln.sys:%primop :svref-unchecked storage word-index))
+         (offset (bit-storage-offset index word-index)))
+    (kiln.sys:%primop :fixnum-logand (kiln.sys:%primop :fixnum-shift-right word offset) 1)))
+
+(defun set-bit-storage-ref (storage index value)
+  (let* ((word-index (bit-storage-word-index index))
+         (word (kiln.sys:%primop :svref-unchecked storage word-index))
+         (offset (bit-storage-offset index word-index))
+         (clear (kiln.sys:%primop :fixnum-logxor +bit-storage-word-mask+
+                                (kiln.sys:%primop :fixnum-shift-left 1 offset)))
+         (bits (kiln.sys:%primop :fixnum-shift-left value offset)))
+    (kiln.sys:%primop :set-svref-unchecked storage word-index
+      (kiln.sys:%primop :fixnum-logior (kiln.sys:%primop :fixnum-logand word clear) bits))
+    value))
+
 (defun storage-ref (array index)
-  (when (null (element-type array))
-    (error 'type-error :datum nil :expected-type nil))
-  (let ((target (underlying-array array)))
-    (if (null target)
-        (cl:aref (contents array) index)
-        (cl:row-major-aref target (+ index (displaced-index-offset array))))))
+  (let ((element-type (element-type array))
+        (target (underlying-array array)))
+    (when (null element-type)
+      (error 'type-error :datum nil :expected-type nil))
+    (cond (target (cl:row-major-aref target (+ index (displaced-index-offset array))))
+          ((eq element-type 'cl:bit) (bit-storage-ref (contents array) index))
+          ((eq element-type 'double-float)
+           (kiln.sys:%primop :double-storage-ref (contents array) index))
+          (t (cl:aref (contents array) index)))))
 
 (defun storage-set (array value index)
   (let ((element-type (element-type array)))
@@ -192,11 +261,13 @@
                 (if (eq element-type 'character)
                     (characterp value)
                     (typep value element-type)))
-      (error 'type-error :datum value :expected-type element-type)))
-  (let ((target (underlying-array array)))
-    (if (null target)
-        (setf (cl:aref (contents array) index) value)
-        (setf (cl:row-major-aref target (+ index (displaced-index-offset array))) value))))
+      (error 'type-error :datum value :expected-type element-type))
+    (let ((target (underlying-array array)))
+      (cond (target (setf (cl:row-major-aref target (+ index (displaced-index-offset array))) value))
+            ((eq element-type 'cl:bit) (set-bit-storage-ref (contents array) index value))
+            ((eq element-type 'double-float)
+             (kiln.sys:%primop :double-storage-set (contents array) index value))
+            (t (setf (cl:aref (contents array) index) value))))))
 
 (defun check-row-major-index (array index)
   (unless (and (integerp index) (<= 0 index) (< index (total-size array)))
@@ -230,13 +301,127 @@
       (error 'subscript-must-be-non-negative-and-less-than-dimension
              :array array :subscript-number 0))))
 
+(defun unsigned-fixnum-element-limit (type)
+  (when (and (consp type) (eq (car type) 'unsigned-byte)
+             (<= (cadr type) (integer-length most-positive-fixnum)))
+    (1- (ash 1 (cadr type)))))
+
+(defparameter *specialized-array-storage-slots*
+  (let ((layouts (kiln.kernel::make-simple-vector (length *stamp-kinds*) nil)))
+    (dolist (entry *class-kinds* layouts)
+      (let* ((class (car entry))
+             (slots (clostrophilia:class-slots class))
+             (contents (find '%contents slots :key #'clostrophilia:slot-definition-name))
+             (dimensions (find '%dimensions slots :key #'clostrophilia:slot-definition-name))
+             (target (find '%underlying-array slots :key #'clostrophilia:slot-definition-name)))
+        (when (and contents dimensions target)
+          (let ((contents (clostrophilia:slot-definition-location contents))
+                (dimensions (clostrophilia:slot-definition-location dimensions))
+                (target (clostrophilia:slot-definition-location target)))
+            (when (and (integerp contents) (integerp dimensions) (integerp target))
+              (let ((type (class-element-type class)))
+                (setf (svref layouts (clostrophilia::unique-number class))
+                      (cl:vector contents dimensions target type
+                                 (unsigned-fixnum-element-limit type)))))))))))
+
+;; The stamp identifies the layout carried by this instance. An array
+;; with another stamp uses ordinary slot lookup.
+(declaim (inline specialized-array-storage-layout specialized-array-contents
+                 simple-specialized-vector-storage))
+(defun specialized-array-storage-layout (array)
+  (let* ((stamp (kiln.sys:%primop :standard-instance-access array -2))
+         (layouts *specialized-array-storage-slots*))
+    (when (locally (declare (optimize (safety 0)))
+            (< (the fixnum stamp) (the fixnum (kiln.sys:%primop :length layouts))))
+      (kiln.sys:%primop :svref-unchecked layouts stamp))))
+
+(defun specialized-array-contents (array layout)
+  (if layout
+      (kiln.sys:%primop :standard-instance-access array (kiln.sys:%primop :svref-unchecked layout 0))
+      (slot-value array '%contents)))
+
+(defun kiln.kernel::%simple-specialized-array-contents (array)
+  (specialized-array-contents array (specialized-array-storage-layout array)))
+
+(declaim (inline specialized-array-dimensions))
+(defun specialized-array-dimensions (array layout)
+  (if layout
+      (kiln.sys:%primop :standard-instance-access array (kiln.sys:%primop :svref-unchecked layout 1))
+      (slot-value array '%dimensions)))
+
+(declaim (inline direct-boxed-vector-storage))
+(defun direct-boxed-vector-storage (array index layout)
+  (when layout
+    (let ((type (kiln.sys:%primop :svref-unchecked layout 3)))
+      (when (and type (not (eq type 'cl:bit))
+                 (null (kiln.sys:%primop :standard-instance-access array
+                                        (kiln.sys:%primop :svref-unchecked layout 2)))
+                 (kiln.sys:%primop :fixnump index))
+        (let ((dims (specialized-array-dimensions array layout))
+              (storage (specialized-array-contents array layout)))
+          (when (and (consp dims) (null (cdr dims))
+                     (kiln.sys:%primop :simple-vector-p storage)
+                     (locally (declare (optimize (safety 0)))
+                       (and (<= 0 (the fixnum index))
+                            (< (the fixnum index) (the fixnum (car dims))))))
+            storage))))))
+
 (defun vector-ref (array index)
-  (check-vector-subscript array index)
-  (storage-ref array index))
+  (let* ((layout (specialized-array-storage-layout array))
+         (storage (direct-boxed-vector-storage array index layout)))
+    (if storage
+        (kiln.sys:%primop :svref-unchecked storage index)
+        (progn (check-vector-subscript array index)
+               (storage-ref array index)))))
 
 (defun vector-set (array index value)
-  (check-vector-subscript array index)
-  (storage-set array value index))
+  (let* ((layout (specialized-array-storage-layout array))
+         (storage (direct-boxed-vector-storage array index layout)))
+    (if (and storage
+             (let ((limit (kiln.sys:%primop :svref-unchecked layout 4)))
+               (if limit
+                   (and (kiln.sys:%primop :fixnump value)
+                        (locally (declare (optimize (safety 0)))
+                          (and (<= 0 (the fixnum value))
+                               (<= (the fixnum value) (the fixnum limit)))))
+                   (let ((type (kiln.sys:%primop :svref-unchecked layout 3)))
+                     (or (eq type t) (typep value type))))))
+        (kiln.sys:%primop :set-svref-unchecked storage index value)
+        (progn (check-vector-subscript array index)
+               (storage-set array value index)))))
+
+(defun kiln.kernel::%simple-specialized-vector-contents (array)
+  (let* ((layout (specialized-array-storage-layout array))
+         (dimensions (specialized-array-dimensions array layout)))
+    (when (and (consp dimensions) (null (cdr dimensions)))
+      (specialized-array-contents array layout))))
+
+(defun simple-specialized-vector-storage (array index rank-one)
+  (let* ((layout (specialized-array-storage-layout array))
+         (storage (specialized-array-contents array layout))
+         (limit (if rank-one
+                    (kiln.sys:%primop :length storage)
+                    (let ((dimensions (specialized-array-dimensions array layout)))
+                      (and (consp dimensions) (null (cdr dimensions)) (car dimensions))))))
+    (unless (and limit
+                 (kiln.sys:%primop :fixnump index)
+                 (locally (declare (optimize (safety 0)))
+                   (let ((index (the fixnum index)))
+                     (and (<= 0 index) (< index (the fixnum limit))))))
+      (check-vector-subscript array index))
+    storage))
+
+(defun kiln.kernel::%simple-specialized-aref-1 (array index rank-one)
+  (let ((storage (simple-specialized-vector-storage array index rank-one)))
+    (if (kiln.sys:%primop :double-storage-p storage)
+        (kiln.sys:%primop :double-storage-ref storage index)
+        (kiln.sys:%primop :svref-unchecked storage index))))
+
+(defun kiln.kernel::%set-simple-specialized-aref-1 (value array index rank-one)
+  (let ((storage (simple-specialized-vector-storage array index rank-one)))
+    (if (kiln.sys:%primop :double-storage-p storage)
+        (kiln.sys:%primop :double-storage-set storage index value)
+        (kiln.sys:%primop :set-svref-unchecked storage index value))))
 
 ;;; General array operations call the storage helpers out of line.
 (declaim (notinline storage-ref storage-set))
@@ -249,11 +434,113 @@
        (not (adjustable array))
        (null (fill-pointer-of array))))
 
+(declaim (inline boxed-array-access-layout))
+(defun boxed-array-access-layout (array store value)
+  (let ((layout (specialized-array-storage-layout array)))
+    (when (and layout
+               (null (kiln.sys:%primop :standard-instance-access
+                                       array (kiln.sys:%primop :svref-unchecked layout 2))))
+      (let ((type (kiln.sys:%primop :svref-unchecked layout 3))
+            (limit (kiln.sys:%primop :svref-unchecked layout 4)))
+        (when (and type (not (eq type 'cl:bit))
+                   (or (not store)
+                       (eq type t)
+                       (and limit (kiln.sys:%primop :fixnump value)
+                            (locally (declare (optimize (safety 0)))
+                              (<= 0 (the fixnum value) (the fixnum limit))))))
+          layout)))))
+
+(defun direct-boxed-array-access (array subscripts store value)
+  (let ((layout (boxed-array-access-layout array store value)))
+    (unless layout (return-from direct-boxed-array-access nil))
+    (let ((storage (specialized-array-contents array layout))
+          (dimensions (specialized-array-dimensions array layout))
+          (index 0))
+      (declare (fixnum index))
+      ;; A zero dimension could follow a very large prefix.
+      (unless (and (kiln.sys:%primop :simple-vector-p storage)
+                   (not (eq (kiln.sys:%primop :length storage) 0)))
+        (return-from direct-boxed-array-access nil))
+      (loop while (and (consp dimensions) (consp subscripts))
+            for subscript = (car subscripts)
+            for dimension = (car dimensions)
+            do (unless (and (kiln.sys:%primop :fixnump subscript)
+                            (locally (declare (optimize (safety 0)))
+                              (and (<= 0 (the fixnum subscript))
+                                   (< (the fixnum subscript) (the fixnum dimension)))))
+                 (return-from direct-boxed-array-access nil))
+               (locally (declare (optimize (safety 0)))
+                 (setf index (the fixnum (+ (the fixnum (* index (the fixnum dimension)))
+                                             (the fixnum subscript)))))
+               (setf dimensions (cdr dimensions) subscripts (cdr subscripts)))
+      (when (and (null dimensions) (null subscripts))
+        (values t (if store
+                      (kiln.sys:%primop :set-svref-unchecked storage index value)
+                      (kiln.sys:%primop :svref-unchecked storage index)))))))
+
+(declaim (inline ranked-fixnum-subscript-p ranked-index-step))
+(defun ranked-fixnum-subscript-p (subscript dimension)
+  (and (kiln.sys:%primop :fixnump subscript)
+       (kiln.sys:%primop :fixnum-index-below subscript dimension)))
+
+(defun ranked-index-step (prefix dimension subscript)
+  (kiln.sys:%primop :fixnum+ (kiln.sys:%primop :fixnum* prefix dimension) subscript))
+
+(defun fixed-ranked-array-access (array i j k rank store value)
+  (declare (notinline cl:aref (setf cl:aref)))
+  (let ((layout (boxed-array-access-layout array store value)))
+    (when layout
+      (let ((storage (specialized-array-contents array layout))
+            (dimensions (specialized-array-dimensions array layout))
+            (three (eq rank 3)))
+        (when (kiln.sys:%primop :simple-vector-p storage)
+          (let ((di (first dimensions)) (dj (second dimensions)) (dk (third dimensions)))
+            (when (and dj (if three (and dk (null (cdddr dimensions))) (null dk))
+                       (ranked-fixnum-subscript-p i di)
+                       (ranked-fixnum-subscript-p j dj)
+                       (or (not three) (ranked-fixnum-subscript-p k dk)))
+              ;; Checked indices are below the dimensions, so each prefix
+              ;; fits within the size of the native backing vector.
+              (let* ((ij (ranked-index-step i dj j))
+                     (index (if three (ranked-index-step ij dk k) ij)))
+                (return-from fixed-ranked-array-access
+                  (if store (kiln.sys:%primop :set-svref-unchecked storage index value)
+                      (kiln.sys:%primop :svref-unchecked storage index))))))))))
+  (if store
+      (if (eq rank 2) (setf (cl:aref array i j) value) (setf (cl:aref array i j k) value))
+      (if (eq rank 2) (cl:aref array i j) (cl:aref array i j k))))
+
+(defmacro define-two-index-array-access (name store)
+  `(defun ,name (,@(when store '(value)) array i j)
+     (declare (notinline ,(if store '(setf cl:aref) 'cl:aref)))
+     (let ((layout (and (kiln.sys:%primop :standard-instance-p array)
+                        (boxed-array-access-layout array ,store ,(when store 'value)))))
+       (when layout
+         (let ((storage (specialized-array-contents array layout))
+               (dimensions (specialized-array-dimensions array layout)))
+           (when (and (kiln.sys:%primop :simple-vector-p storage)
+                      (consp (cdr dimensions)) (null (cddr dimensions))
+                      (ranked-fixnum-subscript-p i (first dimensions))
+                      (ranked-fixnum-subscript-p j (second dimensions)))
+             (let ((index (ranked-index-step i (second dimensions) j)))
+               (return-from ,name
+                 ,(if store '(kiln.sys:%primop :set-svref-unchecked storage index value)
+                      '(kiln.sys:%primop :svref-unchecked storage index))))))))
+     ,(if store '(setf (cl:aref array i j) value) '(cl:aref array i j))))
+
+(define-two-index-array-access kiln.kernel::%aref-2 nil)
+(define-two-index-array-access kiln.kernel::%set-aref-2 t)
+
 ;;; The kernel's entry point (the operations are keywords).
 (defun complex-array-op (op array &rest args)
   (ecase op
-    (:aref (storage-ref array (row-major-index array args)))
-    (:set-aref (storage-set array (first args) (row-major-index array (rest args))))
+    (:aref
+     (multiple-value-bind (found result) (direct-boxed-array-access array args nil nil)
+       (if found result (storage-ref array (row-major-index array args)))))
+    (:set-aref
+     (let ((value (first args)) (subscripts (rest args)))
+       (multiple-value-bind (found result) (direct-boxed-array-access array subscripts t value)
+         (if found result (storage-set array value (row-major-index array subscripts))))))
     (:row-major-aref
      (check-row-major-index array (first args))
      (storage-ref array (first args)))
@@ -272,11 +559,13 @@
     ;; it directly.
     (:native-storage
      (and (null (underlying-array array))
+          (not (member (element-type array) '(cl:bit double-float)))
           (= (length (dimensions array)) 1)
           (contents array)))))
 
 (setf kiln.kernel::*complex-array-kind* #'complex-array-kind
       kiln.kernel::*complex-array-op* #'complex-array-op
+      kiln.kernel::*complex-array-ranked-access* #'fixed-ranked-array-access
       kiln.kernel::*complex-array-ref-1* #'vector-ref
       kiln.kernel::*complex-array-set-1* #'vector-set)
 
@@ -319,9 +608,14 @@
   (check-and-canonicalize-dimensions dimensions))
 
 (defun make-storage (element-type size initial-element)
-  (if (member element-type '(character base-char))
-      (kiln.kernel::make-string size :initial-element initial-element)
-      (kiln.kernel::make-array size :initial-element initial-element)))
+  (cond ((member element-type '(character base-char))
+         (kiln.kernel::make-string size :initial-element initial-element))
+        ((eq element-type 'cl:bit)
+         (kiln.kernel::make-simple-vector (bit-storage-word-index (+ size (1- +bit-storage-word-bits+)))
+           (if (zerop initial-element) 0 +bit-storage-word-mask+)))
+        ((eq element-type 'double-float)
+         (kiln.sys:%primop :make-double-storage size initial-element))
+        (t (kiln.kernel::make-array size :initial-element initial-element))))
 
 (defun fill-from-contents (array dimensions contents)
   (let ((index 0))
@@ -444,10 +738,34 @@
 ;;; Resizing an adjustable vector that is not displaced replaces its native
 ;;; storage, copying the elements that remain (the common case of
 ;;; ADJUST-ARRAY and VECTOR-PUSH-EXTEND). New elements are INITIAL-ELEMENT.
+(defun copy-bit-storage-prefix (new old size)
+  (let* ((words (bit-storage-word-index size))
+         (tail (bit-storage-offset size words)))
+    (replace new old :end2 words)
+    (unless (zerop tail)
+      (let ((mask (1- (kiln.sys:%primop :fixnum-shift-left 1 tail))))
+        (setf (svref new words)
+              (logior (logand (svref old words) mask)
+                      (logandc2 (svref new words) mask)))))))
+
 (defun resize-vector (vector size initial-element)
   (let* ((old (contents vector))
-         (new (make-storage (if (stringp old) 'character t) size initial-element)))
-    (replace new old :end2 (min size (length old)))
+         (bitp (eq (element-type vector) 'cl:bit))
+         (doublep (eq (element-type vector) 'double-float))
+         (new (if (or bitp doublep)
+                  (progn
+                    (unless (valid-dimension-p size)
+                      (error 'invalid-dimensions :dimensions size))
+                    (if bitp (check-type initial-element cl:bit)
+                        (check-type initial-element double-float))
+                    (make-storage (element-type vector) size initial-element))
+                  (make-storage (if (stringp old) 'character t) size initial-element))))
+    (cond (bitp (copy-bit-storage-prefix new old (min size (first (dimensions vector)))))
+          (doublep
+           (dotimes (i (min size (first (dimensions vector))))
+             (kiln.sys:%primop :double-storage-set new i
+               (kiln.sys:%primop :double-storage-ref old i))))
+          (t (replace new old :end2 (min size (length old)))))
     (setf (contents vector) new
           (array-dimensions-slot vector) (list size))
     (let ((fp (vector-fill-pointer vector)))
@@ -459,6 +777,25 @@
   (and (adjustable array) (null (underlying-array array)) (typep array 'vector)))
 
 (defun cl:vector-push-extend (element vector &optional (extension 16))
+  (let ((layout kiln.kernel::*base-string-layout*))
+    (when (and layout (kiln.sys:%primop :standard-instance-p vector)
+               (eq (kiln.sys:%primop :standard-instance-access vector -2)
+                   (kiln.sys:%primop :svref-unchecked layout 0))
+               (null (kiln.sys:%primop :standard-instance-access
+                                      vector (kiln.sys:%primop :svref-unchecked layout 1))))
+      (let* ((slot (kiln.sys:%primop :svref-unchecked layout 2))
+             (fill (kiln.sys:%primop :standard-instance-access vector slot)))
+        (when (and (kiln.sys:%primop :fixnump fill)
+                   (kiln.sys:%primop :characterp element))
+          (let ((storage (kiln.sys:%primop :standard-instance-access
+                                         vector (kiln.sys:%primop :svref-unchecked layout 4))))
+            (locally (declare (optimize (speed 3) (safety 0)))
+              (when (and (< (the fixnum (kiln.sys:%primop :char-code element)) 128)
+                         (<= 0 (the fixnum fill))
+                         (< (the fixnum fill) (the fixnum (kiln.sys:%primop :length storage))))
+                (kiln.sys:%primop :set-schar-unchecked storage fill element)
+                (kiln.sys:%primop :set-standard-instance-access vector slot (1+ (the fixnum fill)))
+                (return-from cl:vector-push-extend fill))))))))
   (let ((fp (vector-fill-pointer (check-fill-pointer vector))))
     (when (>= fp (first (dimensions vector)))
       (if (resizable-vector-p vector)
@@ -582,32 +919,69 @@
         ((eq result t) array)
         (t result)))
 
-(defun bit-array-op (function a b result)
-  (unless (equal (cl:array-dimensions a) (cl:array-dimensions b))
-    (error "The bit arrays ~S and ~S do not have the same dimensions." a b))
-  (let ((result (bit-array-result a result)))
-    (dotimes (i (cl:array-total-size a) result)
-      (setf (cl:row-major-aref result i)
-            (logand 1 (funcall function (cl:row-major-aref a i) (cl:row-major-aref b i)))))))
+(defun bit-array-storage (array)
+  (when (and (cl:arrayp array)
+             (eq (cl:array-element-type array) 'cl:bit)
+             (null (underlying-array array)))
+    (contents array)))
 
-(macrolet ((define (name function)
-             `(defun ,name (bit-array1 bit-array2 &optional result)
-                (bit-array-op ,function bit-array1 bit-array2 result))))
-  (define cl:bit-and #'logand)
-  (define cl:bit-ior #'logior)
-  (define cl:bit-xor #'logxor)
-  (define cl:bit-eqv #'logeqv)
-  (define cl:bit-nand #'lognand)
-  (define cl:bit-nor #'lognor)
-  (define cl:bit-andc1 #'logandc1)
-  (define cl:bit-andc2 #'logandc2)
-  (define cl:bit-orc1 #'logorc1)
-  (define cl:bit-orc2 #'logorc2))
+(defun bit-array-op (function a b result)
+  (dotimes (i (cl:array-total-size a) result)
+    (setf (cl:row-major-aref result i)
+          (logand 1 (funcall function (cl:row-major-aref a i) (cl:row-major-aref b i))))))
+
+(defun bit-array-operands (a b result)
+  (let ((shape (cl:array-dimensions a)))
+    (unless (equal shape (cl:array-dimensions b))
+      (error "The bit arrays ~S and ~S do not have the same dimensions." a b))
+    (let ((result (bit-array-result a result)))
+      ;; Matching shapes give the same packed word count.
+      (if (equal shape (cl:array-dimensions result))
+          (values result (bit-array-storage a) (bit-array-storage b)
+                  (bit-array-storage result))
+          (values result nil nil nil)))))
+
+(macrolet ((define (name function expression)
+             `(defun ,name (a b &optional result)
+                (multiple-value-bind (result a-storage b-storage destination)
+                    (bit-array-operands a b result)
+                  (if (and a-storage b-storage destination)
+                      (do ((index 0 (kiln.sys:%primop :fixnum+ index 1))
+                           (limit (kiln.sys:%primop :length a-storage)))
+                          ((kiln.sys:%primop :fixnum-le limit index) result)
+                        (let ((x (kiln.sys:%primop :svref-unchecked a-storage index))
+                              (y (kiln.sys:%primop :svref-unchecked b-storage index)))
+                          (kiln.sys:%primop :set-svref-unchecked destination index ,expression)))
+                      (bit-array-op ,function a b result)))))
+           (and-bit (x y) `(kiln.sys:%primop :fixnum-logand ,x ,y))
+           (or-bit (x y) `(kiln.sys:%primop :fixnum-logior ,x ,y))
+           (xor-bit (x y) `(kiln.sys:%primop :fixnum-logxor ,x ,y))
+           (not-bit (x) `(kiln.sys:%primop :fixnum-logxor ,x +bit-storage-word-mask+)))
+  (define cl:bit-and #'logand (and-bit x y))
+  (define cl:bit-ior #'logior (or-bit x y))
+  (define cl:bit-xor #'logxor (xor-bit x y))
+  (define cl:bit-eqv #'logeqv (not-bit (xor-bit x y)))
+  (define cl:bit-nand #'lognand (not-bit (and-bit x y)))
+  (define cl:bit-nor #'lognor (not-bit (or-bit x y)))
+  (define cl:bit-andc1 #'logandc1 (and-bit (not-bit x) y))
+  (define cl:bit-andc2 #'logandc2 (and-bit x (not-bit y)))
+  (define cl:bit-orc1 #'logorc1 (or-bit (not-bit x) y))
+  (define cl:bit-orc2 #'logorc2 (or-bit x (not-bit y))))
 
 (defun cl:bit-not (bit-array &optional result)
-  (let ((result (bit-array-result bit-array result)))
-    (dotimes (i (cl:array-total-size bit-array) result)
-      (setf (cl:row-major-aref result i) (- 1 (cl:row-major-aref bit-array i))))))
+  (let* ((result (bit-array-result bit-array result))
+         (source (bit-array-storage bit-array))
+         (destination (bit-array-storage result)))
+    (if (and source destination
+             (equal (cl:array-dimensions bit-array) (cl:array-dimensions result)))
+        (do ((index 0 (kiln.sys:%primop :fixnum+ index 1))
+             (limit (kiln.sys:%primop :length source)))
+            ((kiln.sys:%primop :fixnum-le limit index) result)
+          (kiln.sys:%primop :set-svref-unchecked destination index
+            (kiln.sys:%primop :fixnum-logxor (kiln.sys:%primop :svref-unchecked source index)
+                             +bit-storage-word-mask+)))
+        (dotimes (i (cl:array-total-size bit-array) result)
+          (setf (cl:row-major-aref result i) (- 1 (cl:row-major-aref bit-array i)))))))
 
 (defun cl:bit-vector-p (object)
   (typep object 'cl:bit-vector))

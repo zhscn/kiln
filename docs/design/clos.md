@@ -29,11 +29,11 @@ CLOS 是 CLOS 模块的前半部分（`lisp/target/clos/`，加上 vendor 的 Cl
    - 有效槽定义里槽名和位置记下来，之后 early 代码按槽名经 rack 的槽列表读写元对象，不经过泛函。
    
    然后执行推迟的定义。
-4. **early 泛函**：真正的 `standard-generic-function` 实例，判别函数是 `early-discriminate`：按每个必需参数的物理类和优先级列表计算适用方法，按特化程度排序，按 standard 方法组合执行，不缓存。它很慢，但已经是完整的分派，足以运行 Clostrophilia 自己的初始化和终结方法。braid 里的类，访问器方法是真正的 `standard-reader-method`/`standard-writer-method`。在 early 阶段，`make-instance` 只按 initarg 和 initform 填槽，不调用 `initialize-instance`。
+4. **early 泛函**：真正的 `standard-generic-function` 实例，判别函数是 `early-discriminate`：按每个必需参数的物理类和优先级列表计算适用方法，按特化程度排序，按 standard 方法组合执行，不缓存。泛函只有一个无修饰方法时，确认适用后直接调用；有 around 方法时才构造包装主方法的闭包。braid 里的类，访问器方法是真正的 `standard-reader-method`/`standard-writer-method`。在 early 阶段，`make-instance` 只按 initarg 和 initform 填槽，不调用 `initialize-instance`。
 5. **Clostrophilia 的其余部分**：槽访问、方法组合、对象初始化、类终结、泛函调用、dependent 维护，以及泛函、类、方法、槽定义的初始化。`define-method-combination` 的展开函数要调用 Clostrophilia 自己的函数，这几个文件以 `:compile-time-too` 加载。Ecclesia 此时还编不了（要用哈希表和 `ignore-errors`），Clostrophilia 运行期要用的四个函数先用 `clos/ecclesia.lisp` 的简化版代替，它们不检查 lambda list。kiln 的引导代码和 Clostrophilia 在同一个包里，引导代码自己的辅助函数都以 `early-` 开头。
 6. **切换**（`switchover.lisp`）：
    - 所有 early 泛函换上 standard 方法组合，清空调用历史；
-   - **satiation**：early 判别函数还装着的时候，对每个泛函，按它的方法在每个特化位置可能遇到的类做笛卡尔积，对每组类调用 `compute-applicable-methods-using-classes`，有主方法的组合加进调用历史。组合数超过 `*satiation-limit*`（4000）的泛函跳过；
+   - **satiation**：early 判别函数还装着的时候，切换时遍历一次各类的优先级列表，按特化器索引候选类。对每个泛函，按它的方法在每个特化位置可能遇到的类做笛卡尔积，对每组类调用 `compute-applicable-methods-using-classes`，有主方法的组合加进调用历史。组合数超过 `*satiation-limit*`（4000）的泛函跳过；
    - 先算好所有泛函的判别函数，再一次性装上。之后调用遇到新的类，走 `default-discriminating-function`；它自己调用的泛函对现有的元类都已经 satiated，所以不会无限递归；
    - `*switched-p*` 置真。此后 `make-instance` 走 `allocate-instance-using-class`（按需终结类，补上 default initargs）再 `initialize-instance`；`ensure-class` 是 `make-instance` 元类再登记 `find-class`；`ensure-generic-function` 通过 `find-method-combination` 取方法组合；`ensure-method` 是 `make-instance` 方法类再 `add-method`。
 7. **内建类**：`t`、`symbol`、`cons`、`fixnum`、`integer`、`character`、`simple-vector`、`simple-string` 等（元类 `built-in-class`）。`class-of` 对标准实例取 rack 里的类，对结构对象取 layout 里的类，其他对象按 tag 和 kind 对应到内建类。非实例对象的类和 stamp 在切换之后按类型下标缓存在 simple vector 里（内建类不会重定义）。
@@ -102,7 +102,7 @@ CLOS 模块完成引导后，`make-instance` 检查初始化参数的成对结�
 - **调用历史**：`:class` 的观察者从所有泛函（`*early-generic-functions*`，switchover 之后新建的也加进去）的调用历史里删掉提到这些类的项，并让判别函数失效。这些项的可用方法可能已经变了（优先级列表变了），而且按旧 stamp 建的自动机只会匹配过时的实例。
 - **过时实例的更新**：判别函数的未命中路径发现过时实例时调用 `update-obsolete-instance`。实例的 rack 里还留着它创建时的槽列表，所以旧槽可以按旧位置读出。新建一个当前类的实例，同名的局部槽照搬，新类没有的局部槽把名字放进 discarded、值放进属性表，新增的局部槽放进 added；实例接管新实例的 rack（和 `change-class` 一样），然后调用 `update-instance-for-redefined-class`，默认方法用 added 调用 `shared-initialize`。
 - 还有 `find-method`、`make-instances-obsolete`、`slot-exists-p`。
-- **限制**：只在泛函分派时检查过时实例。`slot-value` 直接按实例自己的槽列表找位置，所以过时实例在下次分派之前，用 `slot-value` 读到的仍是旧布局（值是对的，只是还没有更新）。类名 `typep` 的调用点缓存以 stamp 为键，过时实例在更新之前，在已经见过它的调用点上得到的是旧类的结果（全局缓存在重定义时清空，没有这个问题）。泛函重新初始化先检查新 lambda list 与现有方法 congruent；成功后清空调用历史和 EQL 分派缓存，重建特化符概况并使判别函数及方法假设失效。结构重定义创建新的类和 layout，旧实例保留旧类、stamp 和槽布局，不走过时实例更新。结构的访问器是 inline 函数，已编译的调用者不会跟着变。
+- **限制**：只在泛函分派时检查过时实例。`slot-value` 直接按实例自己的槽列表找位置，所以过时实例在下次分派之前，用 `slot-value` 读到的仍是旧布局（值是对的，只是还没有更新）。泛函重新初始化先检查新 lambda list 与现有方法 congruent；成功后清空调用历史和 EQL 分派缓存，重建特化符概况并使判别函数及方法假设失效。结构重定义创建新的类和 layout，旧实例保留旧类、stamp 和槽布局，不走过时实例更新。结构的访问器是 inline 函数，已编译的调用者不会跟着变。
 
 
 ## 对象重建形式
@@ -127,6 +127,8 @@ CLOS 模块完成引导后，`make-instance` 检查初始化参数的成对结�
 
 ## 结构对象
 
+以单精度或双精度向量表示的结构会内联槽访问器。读取表达式经由向量元素类型细化槽类型，使调用者可以直接选择浮点算术。访问器继续使用 `elt`，由它处理下标、填充指针和位移。
+
 `defstruct` 的构造器按已知槽数直接分配原生结构对象，槽按位置读写。每个结构类有一个不可变的 layout，保存类、stamp、有效槽列表、继承深度、祖先 layout 向量和槽数；实例的 `class-of` 和分派 stamp 来自它。访问器内联比较祖先向量，`:include` 的实例使用同样的快速路径。
 
 `slot-value`、`slot-boundp`、`slot-makunbound` 通过 layout 的有效槽列表找到位置，再直接访问实例。`copy-structure` 保留 layout，逐字浅复制槽，包括未绑定标记。`equalp` 对相同 layout 的结构逐槽递归比较。共享初始化确认 layout 中已有的槽列表，不能改写 layout；`change-class` 拒绝结构实例和结构类。
@@ -144,7 +146,7 @@ CLOS 模块完成引导后，`make-instance` 检查初始化参数的成对结�
 - **全局缓存**（`*typep-cache*`，`%cached-typep`）：类型只取决于对象的类时，答案按 stamp 缓存，下标和调用点缓存的全局部分相同，两者共用一张表。kernel 的 `typep` 遇到 `or`、`and`、`not` 和不是标准类型名的 symbol 都先查它；类型不是常量、或者是复合类型（`(typep x '(or a-class b-class ...))`）时，调用点缓存帮不上忙，原来每次都要展开 `deftype`、`find-class`、再沿优先级列表找，这一处曾占自举时间的约 11%。
   - 哪些类型只取决于类（`class-determined-type-p`）：`typep` 用谓词判断、而谓词对一个内建类的对象全真或全假的 symbol（`null`、`cons`、`integer`、`character`、`function` 等）；其余命名了类又不是 deftype 的 symbol（`typep` 就是查优先级列表）；以及它们的 `or`、`and`、`not`。`keyword`、`bit` 这类不是类，字符串和向量类型只覆盖原生对象，都不缓存；`(integer 0 10)`、`satisfies`、`member` 也不缓存。判断过不能缓存的类型记在一张按 identity hash 直接映射的小表里，下次不再判断。
   - 以类型说明符本身（`eq`）为键，常量说明符因此每个调用点一项；运行期新构造的说明符只会不命中，结果仍然对。程序修改已经用过的类型说明符时缓存会过时（和修改常量一样不被允许）。
-  - **失效**：`deftype`、`(setf find-class)` 和类的重新 finalize 都改变类型假设（`(:type name)`，[specialization.md](specialization.md)）；`:type` 的观察者清空这张表、不能缓存的记录和 ctype 的缓存。重定义要清空，是因为过时实例的 stamp 仍是旧的 unique number，清空之后它们按 `class-of` 得到新类的答案。新类第一次终结时拿到新的 unique number，不会碰上旧项。`change-class` 换掉实例的 rack，stamp 随之变成新类的。
+  - **失效**：`deftype`、`(setf find-class)` 和类的重新终结都推进共享类型版本（[specialization.md](specialization.md)）。过时实例仍携带旧的 stamp，因此全局条目和调用点都检查类型版本；失效后按当前类重新判断。`change-class` 换掉实例的 rack，stamp 随之变成新类的。
   - `allocate-general-instance` 判断类是不是 funcallable 时也查这张表（`subclass-cached-p`，键是类的 unique number，类型是类对象），不再每次分配都沿优先级列表找。
   - 命中时一次 `typep` 约 18–26 ns（原来 `or` 约 90 ns，非常量的类名约 80 ns）。SBCL 用每个 layout 的 `inherits` 向量按继承深度 O(1) 判断子类；这里没有这样做，因为缓存命中后不再看优先级列表，剩下的未命中在自举里可以忽略。
 - 不命中时，类名作为类型经 kernel 的 `*class-typep*` 按类查优先级列表。`typecase`、`handler-case` 和 `check-type` 都依赖它。

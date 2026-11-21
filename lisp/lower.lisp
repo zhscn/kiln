@@ -622,18 +622,19 @@ if needed (not a safepoint)."
 
 ;;; Integer arithmetic
 
-(defun emit-fixnum-arithmetic (name a b bounded &optional error-on-overflow)
+(defun emit-fixnum-overflow-operation (name result overflow a b)
+  (emit (list (ecase name (+ :fixnum-add-ovf) (- :fixnum-sub-ovf) (* :fixnum-mul-ovf))
+              result overflow a b)))
+
+(defun emit-fixnum-arithmetic (name a b bounded &optional error-on-overflow cold)
   (if bounded
       (copy-to-var (case name
                      (+ `(:fixnum-add ,a ,b)) (- `(:fixnum-sub ,a ,b))
                      (* `(:fixnum-mul ,a ,b))))
       ;; Input types do not prove that the result fits. Keep the overflow
       ;; edge and its arbitrary-precision result.
-      (let ((r (new-var)) (ovf (new-var :raw)) (slow (new-block)) (done (new-block)))
-        (emit (case name
-                (+ `(:fixnum-add-ovf ,r ,ovf ,a ,b))
-                (- `(:fixnum-sub-ovf ,r ,ovf ,a ,b))
-                (* `(:fixnum-mul-ovf ,r ,ovf ,a ,b))))
+      (let ((r (new-var)) (ovf (new-var :raw)) (slow (new-block cold)) (done (new-block)))
+        (emit-fixnum-overflow-operation name r ovf a b)
         (br ovf slow done)
         (start-block slow)
         (emit `(:set ,r ,(emit-slow-call
@@ -653,8 +654,7 @@ if needed (not a safepoint)."
     result))
 
 (defun emit-box-double-bits (bits)
-  (let ((bits (copy-to-var bits :raw)))
-    (emit-fixed-object kiln.kir::+packet-class-double+ (list bits))))
+  (emit-fixed-object kiln.kir::+packet-class-double+ (list (copy-to-var bits :f64))))
 
 (defun establish-stack-object (class reference-count)
   "Allocate fixed storage and register only its contiguous Lisp reference fields.
@@ -782,6 +782,22 @@ returns LOW, HIGH and T; else NIL, NIL and NIL."
          (let ((head (first type)) (args (rest type)))
            (multiple-value-bind (low high)
                (case head
+                 (and
+                  ;; An unbounded unsigned-byte constraint contributes a
+                  ;; lower bound. At least one conjunct must bound both ends.
+                  (let ((low nil) (high nil) (nonnegative nil))
+                    (dolist (part args)
+                      (if (eq part 'unsigned-byte)
+                          (setf nonnegative t)
+                          (multiple-value-bind (part-low part-high bounded)
+                              (type-fixnum-bounds part)
+                            (unless bounded (return-from type-fixnum-bounds nil))
+                            (setf low (if low (max low part-low) part-low)
+                                  high (if high (min high part-high) part-high)))))
+                    (when (and low nonnegative)
+                      (setf low (max low 0)))
+                    (when (and low high (<= low high))
+                      (values low high))))
                  (integer
                   (when (<= (length args) 2)
                     (values (if (or (null args) (eq (first args) '*)) nil (integer-bound (first args) nil))
@@ -812,10 +828,17 @@ returns LOW, HIGH and T; else NIL, NIL and NIL."
       (setf cond `(:and ,cond (:le ,val (:fixnum-tag ,high)))))
     cond))
 
+(defun fast-float-vector-type-p (type)
+  (and (consp type) (eq (first type) 'vector) (hir-proper-list-p type)
+       (= (length type) 3)
+       (member (second type) '(single-float double-float))
+       (or (eq (third type) '*) (typep (third type) '(integer 0 #xffffffff)))))
+
 (defun inline-typep-specifier-p (type)
   (cond ((member type '(t nil boolean unsigned-byte signed-byte)) t)
         ((nth-value 2 (type-fixnum-bounds type)) t)
         ((and (symbolp type) (assoc type *type-predicates*)) t)
+        ((fast-float-vector-type-p type) t)
         ((and (consp type) (hir-proper-list-p (rest type)))
          (case (first type)
            (eql (= (length (rest type)) 1))
@@ -848,6 +871,8 @@ returns LOW, HIGH and T; else NIL, NIL and NIL."
            (emit-unbounded-byte-typep val (eq type 'unsigned-byte)))
           ((eq type 'boolean)
            (boolean-value `(:or (:eq ,val ,(nil-value)) (:eq ,val ,(t-value)))))
+          ((fast-float-vector-type-p type)
+           (emit-slow-call 'kiln.kernel::%float-vector-typep val (constant-object type)))
           ((symbolp type)
            (let* ((predicate (cdr (assoc type *type-predicates*)))
                   (primitive (gethash predicate *primitives*)))

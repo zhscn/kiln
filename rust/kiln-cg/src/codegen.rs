@@ -1000,7 +1000,11 @@ impl<'a, M: Module> FuncLowering<'a, M> {
             if self.vars.contains_key(&name) {
                 return Err(format!("duplicate variable {name}"));
             }
-            let v = b.declare_var(if kind == VarKind::F64 { ir::types::F64 } else { I64 });
+            let v = b.declare_var(match kind {
+                VarKind::F32 => ir::types::F32,
+                VarKind::F64 => ir::types::F64,
+                _ => I64,
+            });
             if kind == VarKind::Obj || (kind == VarKind::F64 && self.labels.contains_key(&name)) {
                 b.declare_var_needs_stack_map(v);
             }
@@ -1014,8 +1018,12 @@ impl<'a, M: Module> FuncLowering<'a, M> {
             let ss = b.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, *size, 3));
             self.slots.insert(name.as_str(), ss);
         }
-        for blk in &f.blocks {
+        let mut cold_blocks = f.cold_blocks.iter().peekable();
+        for (index, blk) in f.blocks.iter().enumerate() {
             let block = b.create_block();
+            if cold_blocks.next_if_eq(&&index).is_some() {
+                b.set_cold_block(block);
+            }
             self.indexed_blocks.push(block);
             if self.blocks.insert(blk.name.as_str(), block).is_some() {
                 return Err(format!("duplicate block {}", blk.name));
@@ -1406,6 +1414,7 @@ impl<'a, M: Module> FuncLowering<'a, M> {
             CmpOp::Le => IntCC::SignedLessThanOrEqual,
             CmpOp::Gt => IntCC::SignedGreaterThan,
             CmpOp::Ge => IntCC::SignedGreaterThanOrEqual,
+            CmpOp::Uge => IntCC::UnsignedGreaterThanOrEqual,
         };
         Ok(b.ins().icmp(cc, x, y))
     }
@@ -1414,6 +1423,10 @@ impl<'a, M: Module> FuncLowering<'a, M> {
         Ok(match e {
             Expr::Var(name) if self.var_kinds.get(name.as_str()) == Some(&VarKind::F64) => b.use_var(self.var(name)?),
             Expr::Local(id) if self.local(*id)?.1 == VarKind::F64 => b.use_var(self.local(*id)?.0),
+            Expr::F64FromSigned(word) => {
+                let word = self.expr(b, word)?;
+                b.ins().fcvt_from_sint(ir::types::F64, word)
+            }
             Expr::Int(bits) => b.ins().f64const(ir::immediates::Ieee64::with_bits(*bits as u64)),
             Expr::Load(address, offset) => {
                 let address = self.expr(b, address)?;
@@ -1438,11 +1451,56 @@ impl<'a, M: Module> FuncLowering<'a, M> {
         })
     }
 
+    fn unpack_single(b: &mut FunctionBuilder, value: Value) -> Value {
+        let high = b.ins().ushr_imm_s(value, 32);
+        let bits = b.ins().ireduce(ir::types::I32, high);
+        b.ins().bitcast(ir::types::F32, MemFlagsData::new(), bits)
+    }
+
+    fn pack_single(b: &mut FunctionBuilder, result: Value) -> Value {
+        // Place the tag and payload in the low two 32-bit lanes
+        // so the complete object crosses to a GPR in one move.
+        let tag = (kiln_rt::number::SINGLE_TAG as u128).to_le_bytes();
+        let constant = b.func.dfg.constants.insert(ir::ConstantData::from(tag.as_slice()));
+        let vector = b.ins().vconst(ir::types::F32X4, constant);
+        let packed = b.ins().insertlane(vector, result, 1);
+        let little = MemFlagsData::new().with_endianness(ir::Endianness::Little);
+        let packed = b.ins().bitcast(ir::types::F64X2, little, packed);
+        let low = b.ins().extractlane(packed, 0);
+        b.ins().bitcast(I64, MemFlagsData::new(), low)
+    }
+
     fn expr(&mut self, b: &mut FunctionBuilder, e: &Expr) -> R<Value> {
         Ok(match e {
             Expr::Int(n) => b.ins().iconst(I64, *n),
             Expr::Var(v) => Self::word_value(b, self.var(v)?),
             Expr::Local(id) => Self::word_value(b, self.local(*id)?.0),
+            Expr::UnpackSingle(input) => {
+                let high_word = if cfg!(target_endian = "little") { 4 } else { 0 };
+                if let Expr::Load(address, offset) = &**input
+                    && let Some(offset) = offset.checked_add(high_word)
+                {
+                    let address = self.expr(b, address)?;
+                    let flags = trusted(b);
+                    b.ins().load(ir::types::F32, flags, address, offset)
+                } else {
+                    let value = self.expr(b, input)?;
+                    Self::unpack_single(b, value)
+                }
+            }
+            Expr::PackSingle(input) => {
+                let result = self.expr(b, input)?;
+                Self::pack_single(b, result)
+            }
+            Expr::F32Bits(input) => {
+                let float = self.expr(b, input)?;
+                let bits = b.ins().bitcast(ir::types::I32, MemFlagsData::new(), float);
+                b.ins().uextend(I64, bits)
+            }
+            Expr::F64FromSigned(_) => {
+                let float = self.float_expr(b, e)?;
+                b.ins().bitcast(I64, MemFlagsData::new(), float)
+            }
             Expr::Bin(BinOp::F64Compare, x, y) => {
                 let x = self.float_expr(b, x)?;
                 let y = self.float_expr(b, y)?;
@@ -1461,6 +1519,22 @@ impl<'a, M: Module> FuncLowering<'a, M> {
                 let x = self.expr(b, x)?;
                 let y = self.expr(b, y)?;
                 match op {
+                    BinOp::SingleAdd | BinOp::SingleSub | BinOp::SingleMul | BinOp::SingleDiv => {
+                        let x = Self::unpack_single(b, x);
+                        let y = Self::unpack_single(b, y);
+                        let result = match op {
+                            BinOp::SingleAdd => b.ins().fadd(x, y),
+                            BinOp::SingleSub => b.ins().fsub(x, y),
+                            BinOp::SingleMul => b.ins().fmul(x, y),
+                            BinOp::SingleDiv => b.ins().fdiv(x, y),
+                            _ => unreachable!(),
+                        };
+                        Self::pack_single(b, result)
+                    }
+                    BinOp::F32Add => b.ins().fadd(x, y),
+                    BinOp::F32Sub => b.ins().fsub(x, y),
+                    BinOp::F32Mul => b.ins().fmul(x, y),
+                    BinOp::F32Div => b.ins().fdiv(x, y),
                     BinOp::F64Compare => unreachable!(),
                     BinOp::Add => b.ins().iadd(x, y),
                     BinOp::Sub => b.ins().isub(x, y),

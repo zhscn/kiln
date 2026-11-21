@@ -31,7 +31,7 @@ HIR 的树边是节点的子形式；变量、函数及退出点引用属于定�
 
 | 节点 | 内容 |
 |---|---|
-| `constant` | 对象 |
+| `constant` | 对象；交叉编译的槽存储数组常量保留定义它的符号 |
 | `var-ref`、`var-set` | `var`；引用保留作用域内的类型声明，赋值保留值形式 |
 | `special-ref`、`special-set` | 符号；值 |
 | `global-function` | 函数名（`#'f`、`(setf f)`） |

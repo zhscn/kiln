@@ -64,7 +64,12 @@
                (setf (gethash name *referenced-variables*) t)
                (warn 'undefined-variable-warning :name name))
              (cond ((typep description 'trucler:constant-variable-description)
-                    (hir-node 0 *hir-source* (trucler:value description)))
+                    (let ((value (trucler:value description)))
+                      (hir-node 0 *hir-source* value
+                                (and (arrayp value)
+                                     (not (or (stringp value) (typep value 'simple-vector)))
+                                     (not (compiles-into-image-p *client*))
+                                     name))))
                    ((typep description 'trucler:symbol-macro-description)
                     (hir-convert (invoke-macro-expander :symbol-macro
                                    (lambda (form env) (declare (ignore form env))

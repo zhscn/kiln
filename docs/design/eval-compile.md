@@ -6,7 +6,7 @@ compiler 模块安装 HIR → MIR → LIR → Rust 降级 → KIR → Cranelift 
 
 ## 目标后端交接
 
-原生路径为 Lisp 的 HIR → MIR 分析与表示选择 → LIR 请求 → Rust 布局与 ABI 降级 → 内存 KIR → Cranelift。HIR 求值器继续留在 Lisp。运行期批量提交结构化程序或二进制载荷，以及受保护的 literal 向量，不生成 LIR 或 KIR 文本；请求失败与产物发布采用 [compiler-protocol.md](compiler-protocol.md) 的所有权规则。独立 LIR 负责类型化交接，Rust 负责布局和 ABI 降级。FASL 版本 2 保存 packet，加载不解析 KIR 文本。
+原生路径为 Lisp 的 HIR → MIR 分析与表示选择 → LIR 请求 → Rust 布局与 ABI 降级 → 内存 KIR → Cranelift。HIR 求值器继续留在 Lisp。运行期批量提交结构化程序或二进制载荷，以及受保护的 literal 向量，不生成 LIR 或 KIR 文本；请求失败与产物发布采用 [compiler-protocol.md](compiler-protocol.md) 的所有权规则。独立 LIR 负责类型化交接，Rust 负责布局和 ABI 降级。FASL 保存 packet，加载不解析 KIR 文本。
 
 ## 模块与自举边界
 
@@ -122,10 +122,11 @@ LIR 的 octet 向量按长度成块读取，避免逐字节触发 Gray stream �
 读取只消费当前向量的字节；输入不足时报告 `end-of-file`。八位文件流直接在缓冲区
 之间复制，其他整数宽度和字符流继续使用各自的解码路径。
 
-二进制头为 `89 4B 46 41 53`（带非文本前缀的 KFAS），后接格式版本 2；
+二进制头为 `89 4B 46 41 53`（带非文本前缀的 KFAS），后接格式版本 4。每条记录先写一个字节的操作码，再写记录参数。
+创建 cons 和填写 car、cdr 的记录把对象编号直接写为变长整数。加载器也可读取版本 2 和 3 的通用记录参数；版本 2 将操作名编为关键字符号。
 非文本前缀使源文件以 `KFAS` 符号开头时仍按 Lisp 源码加载。整数使用七位分组的变长编码，字符使用
 Unicode code point。记录数据包含整数、字符、字符串、符号、列表及 packet octets，任意字面量
-通过有索引的对象记录表示。浮点保存 IEEE 位模式，保留非有限值、NaN payload 和负零。格式版本不匹配时加载器报错。文件格式是实现内部协议。
+通过有索引的对象记录表示。浮点保存 IEEE 位模式，保留非有限值、NaN payload 和负零。未知格式版本或操作码会报错。文件格式是实现内部协议。
 
 `compile-file` 返回产物的 truename、是否有告警、是否有非 style 告警。`:verbose`
 和 `:print` 动态绑定对应变量，并控制标准输出上的编译信息。读取或编译失败时，

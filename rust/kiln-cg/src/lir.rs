@@ -83,6 +83,7 @@ pub fn test_header_class(class: u32, object: Expr) -> Result<Expr, String> {
         ),
         CLASS_SIMPLE_VECTOR => (KIND_MASK, KIND_SIMPLE_VECTOR),
         CLASS_STRING => (KIND_MASK, KIND_STRING),
+        CLASS_DOUBLE_STORAGE => (KIND_MASK, KIND_DOUBLE_STORAGE),
         CLASS_BIGNUM => (KIND_MASK, KIND_BIGNUM),
         CLASS_RATIO => (KIND_MASK, KIND_RATIO),
         CLASS_DOUBLE => (KIND_MASK, KIND_DOUBLE),
@@ -528,14 +529,28 @@ pub fn ensure_tls_index(
     ))
 }
 
-#[allow(clippy::type_complexity, clippy::too_many_arguments)]
-pub fn special_access(
+pub fn special_read(symbol: Expr, tls_value: String, result: String) -> Result<[Stmt; 2], String> {
+    let value = Expr::Var(tls_value.clone());
+    Ok([
+        Stmt::Set(tls_value, tls_read(symbol.clone())?),
+        Stmt::Set(
+            result,
+            Expr::Select(
+                Box::new(no_tls_value(value.clone())),
+                Box::new(field_load(FIELD_SYMBOL_VALUE, symbol)?),
+                Box::new(value),
+            ),
+        ),
+    ])
+}
+
+#[allow(clippy::type_complexity)]
+pub fn special_write(
     name: &str,
     block: String,
     mut preceding: Vec<Stmt>,
     symbol: String,
-    result: Option<String>,
-    value: Option<Expr>,
+    value: Expr,
 ) -> Result<
     (
         Vec<(String, crate::kir::VarKind)>,
@@ -547,59 +562,35 @@ pub fn special_access(
     use crate::kir::{Block, VarKind};
     let addr = format!("{name}_tls");
     let global = format!("{name}_global");
+    let local = format!("{name}_local");
     let done = format!("{name}_done");
     let var = |name: &str| Expr::Var(name.to_string());
     preceding.push(Stmt::Set(
         addr.clone(),
         tls_address(field_load(FIELD_SYMBOL_TLS_INDEX, var(&symbol))?),
     ));
-    let mut blocks = Vec::new();
-    if let Some(result) = result {
-        preceding.push(Stmt::Set(
-            result.clone(),
-            Expr::Load(Box::new(var(&addr)), 0),
-        ));
-        preceding.push(Stmt::Br(
-            no_tls_value(var(&result)),
-            global.clone(),
-            done.clone(),
-        ));
-        blocks.push(Block {
+    preceding.push(Stmt::Br(
+        no_tls_value(Expr::Load(Box::new(var(&addr)), 0)),
+        global.clone(),
+        local.clone(),
+    ));
+    let blocks = vec![
+        Block {
             name: block,
             stmts: preceding,
-        });
-        blocks.push(Block {
-            name: global,
-            stmts: vec![
-                Stmt::Set(result, field_load(FIELD_SYMBOL_VALUE, var(&symbol))?),
-                Stmt::Jump(done.clone()),
-            ],
-        });
-    } else if let Some(value) = value {
-        let local = format!("{name}_local");
-        preceding.push(Stmt::Br(
-            no_tls_value(Expr::Load(Box::new(var(&addr)), 0)),
-            global.clone(),
-            local.clone(),
-        ));
-        blocks.push(Block {
-            name: block,
-            stmts: preceding,
-        });
-        blocks.push(Block {
+        },
+        Block {
             name: global,
             stmts: vec![
                 field_store(FIELD_SYMBOL_VALUE, var(&symbol), value.clone())?,
                 Stmt::Jump(done.clone()),
             ],
-        });
-        blocks.push(Block {
+        },
+        Block {
             name: local,
             stmts: vec![Stmt::Store(var(&addr), 0, value), Stmt::Jump(done.clone())],
-        });
-    } else {
-        return Err("special access requires a result or value".into());
-    }
+        },
+    ];
     Ok((vec![(addr, VarKind::Raw)], blocks, done))
 }
 
@@ -1353,10 +1344,11 @@ pub fn initialize_fixed(
 
 pub fn vector_layout(class: u32, length: &Expr) -> Result<(Expr, Expr, u32), String> {
     use crate::kir::{BinOp, ShiftOp};
-    use kiln_rt::object::{KIND_SIMPLE_VECTOR, KIND_STRING, LENGTH_SHIFT};
+    use kiln_rt::object::{KIND_DOUBLE_STORAGE, KIND_SIMPLE_VECTOR, KIND_STRING, LENGTH_SHIFT};
     let (kind, shift) = match class {
         CLASS_SIMPLE_VECTOR => (KIND_SIMPLE_VECTOR, 3),
         CLASS_STRING => (KIND_STRING, 2),
+        CLASS_DOUBLE_STORAGE => (KIND_DOUBLE_STORAGE, 3),
         _ => return Err("unsupported vector allocation class".into()),
     };
     if let Expr::Int(n) = length {

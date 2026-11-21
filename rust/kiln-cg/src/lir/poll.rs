@@ -146,6 +146,7 @@ fn retry_function() -> Result<Func, String> {
         labels: vec![],
         slots: vec![],
         block_entries: vec![],
+        cold_blocks: vec![],
         debug: None,
         blocks: vec![
             Block {

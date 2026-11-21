@@ -78,3 +78,14 @@
 (defmethod tc-twice ((x integer)) (* x 2))
 (show (list (tc-twice 21) (functionp #'tc-twice) (typep #'tc-twice '(or generic-function null))
             (functionp (make-instance 'tc-a))))
+
+(defun constant-alias-p (object)
+  (typep object 'tc-alias))
+
+(show (list (alias-row *a*) (constant-alias-p *a*)))
+(kiln.kernel::defer-assumption-changes
+ (lambda ()
+   (setf (find-class 'tc-alias) (find-class 'tc-a))
+   (show (list (alias-row *a*) (constant-alias-p *a*)))
+   (setf (find-class 'tc-alias) (find-class 'tc-b))
+   (show (list (alias-row *a*) (constant-alias-p *a*)))))

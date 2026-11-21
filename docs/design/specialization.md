@@ -57,13 +57,13 @@
 | 判别闭包的缓存（单分派、双分派） | 参数的 stamp | `(:class C)` 的观察者 → `forget-call-caches`（把提到这些类的调用缓存从所有泛函的调用历史里删掉，让判别函数失效） |
 | 读函数融合：缓存项是槽的位置 | stamp | 同上（类的重新 finalize 换掉 stamp，旧项不再命中） |
 | 常量类名 `make-instance` 的构造器对象 | 类的 unique number、类变化版本（`*class-change-version*`）和初始化版本 | 按类和 initarg 形状共享描述符；类名映射、布局或初始化协议变化后重新填入 |
-| `typep` 的全局表 | 按 stamp 直接映射，表在类型假设改变时清空 | `(:type NAME)` 的观察者 → `invalidate-type-caches` |
-| ctype 的解析结果和 `subtypep` 答案 | `(:type ...)` 的版本 | 同上（原来是自己检查 `*type-caches-valid*` 和 `*type-cache-epoch*`） |
+| `typep` 的全局表 | 按 stamp 直接映射，逐项检查类型假设版本 | 旧项在槽位复用时覆盖，类型变化时只需推进共享版本 |
+| ctype 的解析结果和 `subtypep` 答案 | `(:type ...)` 的版本 | 发现版本变化时清空哈希表 |
 | 调用点上的单项 `typep` 缓存 | `(:type ...)` 的版本（检查式） | 数据段里的缓存 cons：car 是全局表的项，cdr 是填入时的版本；版本不同就重新查全局表。这修掉了原来“被淘汰的实例在这个调用点上拿到旧类的答案”的问题 |
 | 常量槽名的 `slot-value`、`(setf (slot-value ...))` 调用点 | 对象的 stamp（检查式） | 数据段里的缓存 cons：car 是对象类的 stamp，cdr 是槽的位置。stamp 属于一次类终结，位置在它下面不会变；类重定义、`change-class`、实例更新都换 stamp，缓存自然失效。见“调用点特化” |
 | 内联函数、宏、setf 展开器、常量 | — | 依赖追踪：重定义钩子让依赖者重新求值 |
 
-原来的 `*construction-epoch*`、`invalidate-type-caches` 的计数器、`forget-call-caches` 的调用点都不再是各自独立的入口：增删方法、类重新 finalize、`deftype`、`(setf find-class)` 都只调用 `change-assumption`。
+增删方法、类重新终结、`deftype` 和 `(setf find-class)` 都通过 `change-assumption` 通知依赖者。加载模块会连续建立类和类型，逐次清空全局 `typep` 表会扫描整张表。逐项检查版本让每次失效的成本与表容量无关。旧条目仍持有其说明符，直到所在槽位被覆盖，保留数量受表容量限制。
 
 类终结和结构性重初始化的通知在协议方法上完成，覆盖直接 MOP 调用。只更新类名或文档时保留实例布局与类假设版本；指定超类、槽或默认 initarg 等结构选项时则通知依赖者。泛函重初始化会清空调用历史、重算特化参数的位置并使判别函数失效；初始化协议泛函的变更同时改变初始化假设；它们使用非标准方法组合时，构造器走通用协议。函数绑定通过 `(setf fdefinition)`、`(setf symbol-function)` 和 `fmakunbound` 通知；编译器直接写函数格的路径也执行通知，启动早期则检查通知函数是否已定义。
 

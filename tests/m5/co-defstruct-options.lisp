@@ -26,6 +26,16 @@
          (list (named-list-p object) (named-list-value object))))
 (print (unnamed-float-vector-value (make-unnamed-float-vector)))
 
+(defstruct (double-vector (:type (vector double-float)) (:initial-offset 1))
+  (value 1d0))
+(defun increment-double-vector (object)
+  (incf (double-vector-value object) 2d0))
+(let ((object (make-double-vector)))
+  (print (list (length object)
+               (increment-double-vector object)
+               (locally (declare (notinline double-vector-value))
+                 (double-vector-value object)))))
+
 (defstruct (boa-fixnums (:type (vector fixnum)) (:initial-offset 2)
                        (:constructor make-boa-fixnums (x &optional (y 9))))
   (x 0 :type fixnum) (y 0 :type fixnum))

@@ -9,6 +9,10 @@
 (defvar *list* (list 1 2 3))
 (defvar *string* (make-string 3 :initial-element #\a))
 (defvar *big* (expt 3 100))
+(defvar *double-array*
+  (make-array 2 :element-type 'double-float
+                :initial-contents
+                (list -0d0 (kiln.sys:%primop :make-double-float-bits #x3ff00000 5))))
 (defvar *gensym* (gensym "G"))
 (defvar *dynamic* :global)
 
@@ -64,6 +68,9 @@
   (push (make-instance 'image-point :x 5 :y 6) *list*)
   (dotimes (i 20000) (make-list 50))
   (kiln.sys:%gc)
+  (assert (eql -0d0 (aref *double-array* 0)))
+  (assert (eql (kiln.sys:%primop :make-double-float-bits #x3ff00000 5)
+               (aref *double-array* 1)))
   (format t "after gc ~a ~a~%" (gethash :fresh *table*) (image-point-x (first *list*)))
   (format t "error: ~a~%" (handler-case (error "boom") (error (e) (princ-to-string e))))
   (format t "read ~s~%" (read-from-string "(a b . \"c\")"))

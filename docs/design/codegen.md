@@ -22,6 +22,21 @@ Lisp 编译器输出布局无关的 LIR（[lir.md](lir.md)），通过[结构化
 
 编译器中的模块对象还记录 `replayable-p`，供顶层原生产物缓存判断初始化函数是否可重复执行。引入 `load-time-value` 单元的降级会清除此标志，保持不同编译结果的静态 cell 独立；该元数据不写入 KIR 文本。
 
+## 逐阶段查看编译结果
+
+用 SBCL、Quicklisp 和已构建的 `kiln-cg` 生成一份可离线查看的报告。例如：
+
+```sh
+python3 tools/ir-explorer.py bench/benchmarksgame/spectralnorm.sbcl \
+  --function eval-a-times-u --output build/ir-spectralnorm
+python3 tools/ir-explorer.py bench/cl-bench/files/gabriel.lisp \
+  --with-kernel --function fft --output build/ir-fft
+```
+
+`report.md` 把各顶层编译单元的 HIR、初始 MIR、逐 pass 快照及相邻差异串在一起。重复运行的 pass 按执行顺序记录，耗时取自宿主时钟并排除写快照的时间。`report.json` 提供相同的 MIR 计数和模块级 LIR 统计。用 `--function` 聚焦 MIR 和后端输出，报告仍保留完整的宏展开事件和模块产物。`--with-kernel` 准备 kernel 编译环境，重复指定 `--prelude` 可以按顺序引入其他源文件。
+
+后端产物包括规范化 LIR、送入 Cranelift 的 CLIF，以及带重定位信息的目标文件汇编。用函数标签在这些产物间定位同一入口。CLIF 取自 Cranelift 执行机器编译前，逐 pass 快照覆盖 Kiln 的 MIR。运行时收益由同一负载的基准计时验证。
+
 ## 当前 KIR 与目标后端接口
 
 生产文件以独立 LIR 的二进制 packet 交接，image 使用结构化记录或序列化载荷；文本输入保留用于诊断和迁移对照。KIR 保留为 Rust 内部表示，原因如下：
@@ -85,6 +100,10 @@ Lisp 编译器输出布局无关的 LIR（[lir.md](lir.md)），通过[结构化
 通过前端的 safepoint spill 机制保存，供调试器读取，但其槽从运行期 GC 根表排除。
 带源码名字的此类变量使用 `(:double-bits 名字)` 调试描述。GC 规则见 [gc.md](gc.md)。
 
+单精度算术返回带 tag 的 Lisp 立即数。后端在浮点寄存器中将 tag 和结果位模式
+放入低两个 32 位 lane，再按小端顺序取出低 64 位。这样可以一次把完整对象送到
+整数寄存器，并保留负零及 NaN 的位模式。
+
 ## 多模块
 
 - 共享定义：`(shared ...)` 列出本模块里可能被别的模块以相同内容定义的数据和函数：symbol 对象、它的名字字符串和未定义函数对象、`(setf f)` 的 cell、包名字符串、`kiln_undefined_function`。其他名字（函数、常量、`load-time-value` 的 cell、init 函数）都带模块名前缀，不会冲突。所以 symbol 在模块之间保持同一身份。
@@ -104,6 +123,9 @@ kiln-cg 输出的模块带一个 `kiln_module_info`（88 字节），runtime 启
 - `exports`、`nexports`：`[C 字符串名字, 地址]` 对的数组，见下文“运行期编译”。
 
 JIT 不写这些表，编译完直接用绝对地址注册。调用点表、栈图表、static root 表都按地址排序；新模块的地址在已有模块之上时，登记只需追加。
+启动器先注册 `NIL` 和 `T` 的根，它们的地址可能在模块根之后。对地址已严格递增的
+模块根批次，runtime 可以直接放在已有根之前。两批地址重叠或批内乱序时，仍按地址
+排序和去重。这样 GC 和镜像指纹可以共用有序的根表。
 
 ## 编译速度
 

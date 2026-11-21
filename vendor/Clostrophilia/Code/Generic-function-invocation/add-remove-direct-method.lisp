@@ -14,8 +14,11 @@
 ;;; EQL-SPECIALIZER and METHOD.
 
 (defun add-direct-method-default (specializer method)
-  (setf (specializer-direct-methods specializer)
-        (adjoin method (specializer-direct-methods specializer) :test #'eq)))
+  (let ((methods (specializer-direct-methods specializer)))
+    (setf (specializer-direct-methods specializer)
+          (if (kiln.kernel::%member-eq method methods)
+              methods
+              (cons method methods)))))
 
 ;;; For the specification of this method, see
 ;;; http://metamodular.com/CLOS-MOP/add-direct-method-class.html

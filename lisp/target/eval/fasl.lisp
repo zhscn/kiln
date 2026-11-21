@@ -155,9 +155,13 @@
   (write-byte integer stream))
 
 (defun fasl-read-uint (stream)
-  (loop for shift from 0 by 7 for byte = (read-byte stream)
-        sum (ash (logand byte 127) shift) into result
-        when (< byte 128) return result))
+  (let ((first (read-byte stream)))
+    (if (< first 128)
+        first
+        (loop with result = (logand first 127)
+              for shift from 7 by 7 for byte = (read-byte stream)
+              do (incf result (ash (logand byte 127) shift))
+              when (< byte 128) return result))))
 
 (defun fasl-write-data (object stream)
   (let ((pending (make-array 64 :adjustable t :fill-pointer 0)))
@@ -196,9 +200,12 @@
       (intern name (or (find-package package) (error "Missing FASL package ~S." package)))
       (make-symbol name)))
 
-(defun fasl-read-data (stream)
-  (let ((frames (make-array 64 :adjustable t :fill-pointer 0))
-        (need-value t) (value nil))
+(defun fasl-read-record (stream frames)
+  (declare (simple-vector frames))
+  ;; Each pending pair takes two slots. A negative tag means its first
+  ;; value has been read and is stored in the second slot.
+  (let ((top 0) (need-value t) (value nil))
+    (declare (fixnum top))
     (loop
       (when need-value
         (setf need-value nil)
@@ -212,8 +219,12 @@
                        (dotimes (index (length string) string)
                          (setf (schar string index) (code-char (fasl-read-uint stream))))))
                   ((3 4)
-                   (vector-push-extend (vector tag nil nil) frames)
-                   (setf need-value t)
+                   (when (= top (length frames))
+                     (let ((larger (make-simple-vector (* 2 top))))
+                       (replace larger frames)
+                       (setf frames larger)))
+                   (setf (svref frames top) tag need-value t)
+                   (incf top 2)
                    nil)
                   (5 (code-char (fasl-read-uint stream)))
                   (6 (let ((bytes (make-array (fasl-read-uint stream))))
@@ -222,21 +233,81 @@
                        bytes))
                   (t (error "Invalid FASL record encoding."))))))
       (unless need-value
-        (when (zerop (fill-pointer frames)) (return value))
-        (let ((frame (aref frames (1- (fill-pointer frames)))))
-          (if (svref frame 1)
-              (progn
-                (vector-pop frames)
-                (setf value (if (= 3 (svref frame 0))
-                                (fasl-intern-symbol (svref frame 2) value)
-                                (cons (svref frame 2) value))))
-              (setf (svref frame 1) t (svref frame 2) value need-value t)))))))
+        (when (zerop top) (return (values value frames)))
+        (let* ((tag-index (- top 2))
+               (value-index (1- top))
+               (tag (the fixnum (svref frames tag-index))))
+          (if (minusp tag)
+              (let ((first (svref frames value-index)))
+                (setf top tag-index
+                      (svref frames value-index) nil
+                      value (if (= tag -3) (fasl-intern-symbol first value)
+                                (cons first value))))
+              (setf (svref frames tag-index) (- tag)
+                    (svref frames value-index) value need-value t)))))))
+
+(defun fasl-read-data (stream)
+  (values (fasl-read-record stream (make-simple-vector 128))))
+
+;; Starting with version 3, the format assigns the record kinds their positions in this table.
+(defvar *fasl-record-kinds*
+  #(:symbol :integer :character :single-bits :double-bits :float :ratio :complex
+    :package :pathname :string :cons :set-cons :array :set-array :hash-table
+    :set-hash-table :create :initialize :run))
 
 (defun write-native-fasl (unit stream)
-  (dolist (byte '(137 75 70 65 83 2)) (write-byte byte stream))
+  (dolist (byte '(137 75 70 65 83 4)) (write-byte byte stream))
   (fasl-write-uint (first unit) stream)
   (fasl-write-uint (length (second unit)) stream)
-  (dolist (record (second unit)) (fasl-write-data record stream)))
+  (dolist (record (second unit))
+    (write-byte (or (position (car record) *fasl-record-kinds* :test #'eq)
+                    (error "Unknown FASL operation ~S." (car record)))
+                stream)
+    (case (car record)
+      ((:cons :set-cons)
+       (dolist (index (cdr record)) (fasl-write-uint index stream)))
+      (otherwise (fasl-write-data (cdr record) stream)))))
+
+(defun fasl-read-header (stream)
+  (dolist (byte '(137 75 70 65 83))
+    (unless (= (read-byte stream) byte) (error "Invalid native FASL header.")))
+  (let ((version (read-byte stream)))
+    (unless (member version '(2 3 4))
+      (error "Unsupported native FASL version ~D." version))
+    version))
+
+(declaim (inline fasl-read-kind))
+(defun fasl-read-kind (stream)
+  (let ((code (read-byte stream)))
+    (unless (<= 0 code (1- (length *fasl-record-kinds*)))
+      (error "Unknown FASL opcode ~D." code))
+    (svref *fasl-record-kinds* code)))
+
+(defun fasl-read-tagged-record (kind stream frames)
+  (multiple-value-bind (fields storage) (fasl-read-record stream frames)
+    (values (cons kind fields) storage)))
+
+(defun fasl-read-file-record (stream frames version)
+  (if (= version 2)
+      (fasl-read-record stream frames)
+      (let ((kind (fasl-read-kind stream)))
+        (if (= version 3)
+            (fasl-read-tagged-record kind stream frames)
+            (case kind
+              (:cons (values (list :cons (fasl-read-uint stream)) frames))
+              (:set-cons
+               (values (list :set-cons (fasl-read-uint stream) (fasl-read-uint stream)
+                             (fasl-read-uint stream))
+                       frames))
+              (otherwise (fasl-read-tagged-record kind stream frames)))))))
+
+(defun fasl-allocate-cons (index)
+  (setf (svref *fasl-load-objects* index) (cons nil nil)))
+
+(defun fasl-initialize-cons (index head tail)
+  (let ((object (fasl-reference index)))
+    (setf (car object) (fasl-reference head)
+          (cdr object) (fasl-reference tail))))
 
 (defun execute-fasl-record (record)
   (let* ((kind (first record)) (index (second record)) (fields (cddr record)))
@@ -258,9 +329,8 @@
                       (or (find-package (first fields)) (error "Missing FASL package ~S." (first fields)))))
       (:pathname (setf (svref *fasl-load-objects* index) (parse-namestring (first fields))))
       (:string (setf (svref *fasl-load-objects* index) (first fields)))
-      (:cons (setf (svref *fasl-load-objects* index) (cons nil nil)))
-      (:set-cons (setf (car (fasl-reference index)) (fasl-reference (first fields))
-                       (cdr (fasl-reference index)) (fasl-reference (second fields))))
+      (:cons (fasl-allocate-cons index))
+      (:set-cons (fasl-initialize-cons index (first fields) (second fields)))
       (:array (destructuring-bind (dimensions type adjustable fill target offset) fields
                 (setf (svref *fasl-load-objects* index)
                       (make-array dimensions :element-type type :adjustable adjustable
@@ -280,9 +350,22 @@
 
 (defun load-native-fasl (stream &key verbose)
   (declare (ignore verbose))
-  (dolist (byte '(137 75 70 65 83 2))
-    (unless (= (read-byte stream) byte) (error "Unsupported native FASL header or version.")))
-  (let ((*fasl-load-objects* (make-array (fasl-read-uint stream))))
+  (let* ((version (fasl-read-header stream))
+         (*fasl-load-objects* (make-array (fasl-read-uint stream)))
+        (frames (make-simple-vector 128)))
     (dotimes (i (fasl-read-uint stream))
-      (execute-fasl-record (fasl-read-data stream))))
+      (if (= version 4)
+          (let ((kind (fasl-read-kind stream)))
+            (case kind
+              (:cons (fasl-allocate-cons (fasl-read-uint stream)))
+              (:set-cons
+               (fasl-initialize-cons (fasl-read-uint stream) (fasl-read-uint stream)
+                                     (fasl-read-uint stream)))
+              (otherwise
+               (multiple-value-bind (record storage) (fasl-read-tagged-record kind stream frames)
+                 (setf frames storage)
+                 (execute-fasl-record record)))))
+          (multiple-value-bind (record storage) (fasl-read-file-record stream frames version)
+            (setf frames storage)
+            (execute-fasl-record record)))))
   t)

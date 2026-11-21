@@ -521,7 +521,9 @@
              (when *mir-block*
                (if primary-p (mir-instruction 10 :obj (vector value)) value))))
       (case (hir-node-kind node)
-        (0 (single (mir-instruction 0 :obj #() (hir-node-a node))))
+        (0 (single (if (hir-node-b node)
+                       (mir-instruction 2 :obj #() (hir-node-b node))
+                       (mir-instruction 0 :obj #() (hir-node-a node)))))
         (1 (let ((value (mir-binding-value (hir-node-a node))))
              (when (hir-node-b node) (setf value (mir-check value (hir-node-b node))))
              (single value)))
@@ -693,7 +695,7 @@
               (setf (svref *mir-environment* (+ binding-count index))
                     (mir-instruction 10 :obj
                       (vector (mir-instruction 8 :bundle
-                                (vector snapshot (mir-instruction 0 :obj #() index)) :svref)))))))
+                                (vector snapshot (mir-instruction 0 :obj #() index)) :svref-unchecked)))))))
         (loop for variable across (hir-lambda-list-required ll) for index from 0
               do (mir-bind-parameter variable (mir-instruction 1 :obj #() index))
                  (mir-activate-parameter variable))

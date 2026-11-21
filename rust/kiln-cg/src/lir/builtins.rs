@@ -101,6 +101,7 @@ pub fn install(module: &mut Module, kind: Kind, image: bool) -> Result<(), Strin
         labels: vec![],
         slots: vec![],
         block_entries: vec![],
+        cold_blocks: vec![],
         blocks,
         debug: None,
     });

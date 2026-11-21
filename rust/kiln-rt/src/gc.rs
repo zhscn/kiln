@@ -200,6 +200,24 @@ unsafe fn segment_slots(maps: &[StackMap], top: usize, base: usize, out: &mut Ve
 static STATIC_ROOTS: std::sync::RwLock<Vec<usize>> = std::sync::RwLock::new(Vec::new());
 
 pub fn register_static_roots(addrs: &[usize]) {
+    if let (Some(first), Some(last)) = (addrs.first(), addrs.last())
+        && addrs.windows(2).all(|pair| pair[0] < pair[1])
+    {
+        let mut roots = STATIC_ROOTS.write().unwrap();
+        if roots.last().is_none_or(|previous| previous < first) {
+            roots.extend_from_slice(addrs);
+            return;
+        }
+        // The launcher can register NIL and T above the module's roots.
+        if roots.first().is_some_and(|previous| last < previous) {
+            let mut merged = Vec::with_capacity(addrs.len() + roots.len());
+            merged.extend_from_slice(addrs);
+            merged.extend_from_slice(&roots);
+            *roots = merged;
+            return;
+        }
+    }
+
     let mut new = addrs.to_vec();
     new.sort_unstable();
     new.dedup();
@@ -719,9 +737,14 @@ pub fn in_mmtk_space(v: u64) -> bool {
     in_heap_range(object::untag(v))
 }
 
+/// Inspect the sorted root addresses while holding the registration read lock.
+pub(crate) fn with_static_roots<T>(visit: impl FnOnce(&[usize]) -> T) -> T {
+    visit(&STATIC_ROOTS.read().unwrap())
+}
+
 /// The addresses of the static roots, sorted.
 pub fn static_roots() -> Vec<usize> {
-    STATIC_ROOTS.read().unwrap().clone()
+    with_static_roots(<[usize]>::to_vec)
 }
 
 /// Is ADDR in the address range of MMTk's spaces?

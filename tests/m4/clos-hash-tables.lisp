@@ -71,3 +71,37 @@
   (setf (gethash 'x h) t (gethash 'y h) t (gethash 'z h) t)
   (maphash (lambda (k v) (declare (ignore v)) (push k keys)) h)
   (print (reverse keys)))
+
+(let* ((first (make-string 1000 :initial-element #\X))
+       (second (copy-seq first))
+       (storage (make-array 1005 :element-type 'character :initial-element #\X))
+       (view (make-array 1002 :element-type 'character :displaced-to storage
+                         :displaced-index-offset 2 :fill-pointer 1000))
+       (table (make-hash-table :test 'equal)))
+  (setf (char second 500) #\Y
+        (char view 500) #\Y
+        (gethash (list first) table) :first
+        (gethash (list second) table) :second)
+  (print (and (equal second view)
+              (= (salmagundi::kiln-equal-hash second)
+                 (salmagundi::kiln-equal-hash view))
+              (/= (salmagundi::kiln-equal-hash first)
+                  (salmagundi::kiln-equal-hash second))
+              (eq (gethash (list view) table) :second)
+              (remhash (list view) table)
+              (eq (gethash (list first) table) :first)
+              (= (hash-table-count table) 1))))
+
+(loop for size in '(0 1 3 4 5 7 8 9 63 64 65 66)
+      for native = (make-string size)
+      for view = (make-array (+ size 2) :element-type 'character :fill-pointer size)
+      do (dotimes (i size)
+           (let ((character (code-char (+ 33 i))))
+             (setf (aref native i) character
+                   (aref view i) character)))
+         (assert (equal native view))
+         (assert (= (salmagundi::kiln-equal-hash native)
+                    (salmagundi::kiln-equal-hash view)))
+         (let ((table (make-hash-table :test 'equal)))
+           (setf (gethash native table) size)
+           (assert (eql (gethash view table) size))))

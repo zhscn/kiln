@@ -5,7 +5,7 @@ fn source(body: &str) -> String {
     format!(
         r#"(lir-module "test" (init "body")
       (function "body" (receive 5)
-        (vars (a obj) (b obj) (f obj) (x word) (y word) (m mv) (n mv) (d f64))
+        (vars (a obj) (b obj) (f obj) (x word) (y word) (m mv) (n mv) (s f32) (d f64))
         {body}))"#
     )
 }
@@ -17,6 +17,16 @@ fn compile(text: &str) -> Result<kiln_cg::kir::Module, String> {
 fn reject(body: &str, message: &str) {
     let err = compile(&source(body)).unwrap_err();
     assert!(err.contains(message), "expected {message:?}, got {err:?}");
+}
+
+#[test]
+fn cold_block_hint_survives_lowering() {
+    let text = source("(block entry (jump fallback)) (block fallback (cold) (return ()))");
+    let module = compile(&text).unwrap();
+    let body = module.funcs.iter().find(|f| f.name == "body").unwrap();
+    assert_eq!(body.cold_blocks, vec![body.block_entries[1].unwrap()]);
+    reject("(block entry (cold 1) (return ()))", "expected");
+    reject("(block entry (set a (fixnum 12)) (cold) (return (a)))", "unknown instruction");
 }
 
 #[test]
@@ -47,6 +57,22 @@ fn independent_payload_is_typed_and_does_not_accept_kir_escape_hatches() {
     ] {
         assert!(compile(&source(body)).is_err(), "accepted {body}");
     }
+}
+
+#[test]
+fn single_precision_locals_require_explicit_object_conversion() {
+    let accepts = source(
+        "(block entry
+            (set a (single-float 1065353216))
+            (set s (unpack-single a))
+            (set s (f32-add s s))
+            (set x (f32-bits s))
+            (set a (pack-single s))
+            (return (a)))",
+    );
+    assert!(compile(&accepts).is_ok());
+    reject("(block entry (set a (nil)) (set s (f32-add a a)) (return (a)))", "expected F32");
+    reject("(block entry (set a (nil)) (set s (unpack-single a)) (return (s)))", "expected Obj");
 }
 
 #[test]

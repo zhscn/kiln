@@ -563,12 +563,13 @@ fn special_access_expands_global_and_dynamic_paths() {
     let result =
         packet::load(&packet::encode(&program, packet::schema::KIR_PAYLOAD).unwrap()).unwrap();
     let blocks = &result.funcs[0].blocks;
-    assert_eq!(blocks.len(), 6);
+    assert_eq!(blocks.len(), 4);
     assert!(format!("{:?}", blocks[0]).contains("Int(35)"));
-    assert!(format!("{:?}", blocks[1]).contains("Load(Var(\"a0\"), 27)"));
-    assert!(format!("{:?}", blocks[3]).contains("Store(Var(\"a0\"), 27, Var(\"a1\"))"));
+    assert!(format!("{:?}", blocks[0]).contains("Select("));
+    assert!(format!("{:?}", blocks[0]).contains("Load(Var(\"a0\"), 27)"));
+    assert!(format!("{:?}", blocks[1]).contains("Store(Var(\"a0\"), 27, Var(\"a1\"))"));
     assert!(
-        format!("{:?}", blocks[4]).contains("Store(Var(\"__kiln_lir_1_tls\"), 0, Var(\"a1\"))")
+        format!("{:?}", blocks[2]).contains("Store(Var(\"__kiln_lir_1_tls\"), 0, Var(\"a1\"))")
     );
     for body in [
         "(special-ref v v)",

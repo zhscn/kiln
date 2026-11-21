@@ -175,13 +175,35 @@
      (check-type object ,(anatomicl::defstruct-name description))
      (copy-structure object)))
 
+(defun float-vector-structure-accessors (layout element-type)
+  (let ((definitions
+          (loop for slot in (first layout)
+                for index from 0
+                when slot
+                  append
+                  (let* ((name (anatomicl::slot-accessor-name slot))
+                         (slot-type (anatomicl::slot-type slot))
+                         (type (if (eq slot-type t) element-type
+                                   `(and ,element-type ,slot-type))))
+                    `((defun ,name (object)
+                        (the ,type (elt object ,index)))
+                      ,@(unless (anatomicl::slot-read-only slot)
+                          `((defun (setf ,name) (value object)
+                              (setf (elt object ,index) (the ,slot-type value))))))))))
+    (when definitions
+      `((declaim (inline ,@(mapcar #'second definitions))) ,@definitions))))
+
 ;;; Typed structures (:TYPE LIST or VECTOR) have no class: the description
 ;;; is kept for :INCLUDE, and only accessors are generated.
 (defmethod anatomicl::generate-defstruct-bits
     ((client anatomicl-client) (description anatomicl::defstruct-typed-description) layout environment)
   (setf (anatomicl:structure-description client (anatomicl::defstruct-name description) environment)
         description)
-  `(progn ,@(anatomicl::generate-typed-slot-accessors description layout)))
+  (let ((type (anatomicl::defstruct-type description)))
+    `(progn ,@(if (and (consp type) (eq (first type) 'vector)
+                      (member (second type) '(single-float double-float)))
+                 (float-vector-structure-accessors layout (second type))
+                 (anatomicl::generate-typed-slot-accessors description layout)))))
 
 (defun expand-defstruct (form environment)
   (destructuring-bind (name-and-options &rest slots) (rest form)

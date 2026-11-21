@@ -55,12 +55,15 @@ def lir_stats(path):
                         result['variables'] += len(fields) - 1
                     elif name == b'block':
                         result['blocks'] += 1
-                        result['statements'] += len(fields) - 2
-                        for statement in fields[2:]:
+                        statements = fields[2:]
+                        if statements and symbol(children(statements[0])[0]) == b'cold':
+                            statements = statements[1:]
+                        result['statements'] += len(statements)
+                        for statement in statements:
                             operation = children(statement)
                             if operation:
                                 opcode = symbol(operation[0])
-                                result['jump_only_blocks'] += len(fields) == 3 and opcode == b'jump'
+                                result['jump_only_blocks'] += len(statements) == 1 and opcode == b'jump'
                                 if opcode == b'set':
                                     result['sets'] += 1
                                     expression = children(operation[2])

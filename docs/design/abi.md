@@ -6,6 +6,14 @@
 引用由数据区基址和对象偏移组成。对象标签、静态根、初始化入口和字面量补丁
 都以对象地址为基准，模块信息表继续提交已重定位的地址。
 
+独立 LIR 可以用 binary32 局部变量保存单精度中间结果。Lisp 调用约定和对象存储继续使用带标签的单精度值。
+
+特化单精度数组的后备向量按对象字保存带标签的元素。对只需 binary32 的读取，
+后端从已检查的元素位置读取对象字的高 32 位，按目标字节序选择相应地址。
+
+内部双精度数组存储由 header 和连续的 binary64 位模式组成。
+header 长度以元素计，GC 和快照都不把这些位模式当成 Lisp 引用。
+
 
 本文是编译出的 Lisp 代码、kiln-cg 和 kiln-rt 之间的约定。值和对象的表示见 [objects.md](objects.md)，KIR 和模块信息见 [codegen.md](codegen.md)，GC 的规则见 [gc.md](gc.md)。修改 ABI 前先改这里，并同步 `rust/kiln-rt/src/{object,context}.rs` 和 `lisp/abi.lisp`；kiln 对 ABI 的承诺见 [abi-policy.md](abi-policy.md)。
 
@@ -158,7 +166,7 @@ HIR 前端转换 lambda list 之后（`lisp/hir/convert.lisp`），每个 `&opti
 
 - symbol 第一次被动态绑定时，runtime（`kiln_rt_tls_index`）给它分配一个 TLS 下标，写进 symbol 的 TLS 下标槽。下标从 1 开始。
 - 每个 context 有一张 TLS 表（`ctx.tls`，目前固定 4096 项）。表项是 NO_TLS 表示这个 context 里没有绑定，回退到 symbol 的全局值。第 0 项永远是 NO_TLS，所以读一个从没被绑定过的 symbol 时不需要先判断下标是否为 0。
-- **读**：`v = tls[sym.index]`，是 NO_TLS 就读 `sym.value`，最后检查 UNBOUND。**写**（`setq`、`(setf symbol-value)`）：TLS 表项有值就写表项，否则写全局值。
+- **读**：加载 `tls[sym.index]` 和 `sym.value`，以 TLS 表项是否为 NO_TLS 为条件选择结果，再按调用语义检查 UNBOUND。读取不需要分支访问全局值。**写**（`setq`、`(setf symbol-value)`）：TLS 表项有值就写表项，否则写全局值。
 - **绑定**：在栈上建立一个绑定条目（kind 6），然后写入新值。正常离开和本地退出时从条目恢复旧值；展开经过绑定条目时，unwinder 恢复旧值。
 - **`progv`**：绑定的个数运行期才知道，所以只建立一个 progv 条目（kind 7）。先把所有旧值存进列表，再链接条目，最后写入新值，所以展开时看到的列表总是完整的。值不够时，多出来的 symbol 变为未绑定。
 - GC 扫描每个 context 的 TLS 表里已分配的项。

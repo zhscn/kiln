@@ -235,21 +235,23 @@ are compared (no short circuit), which also checks every argument."
 
 (define-primitive cons (a b) (emit-cons a b))
 
-(defun emit-car-cdr (x field)
-  (let ((r (new-var))
-        (is-cons (new-block)) (other (new-block)) (is-nil (new-block))
-        (bad (new-block)) (join (new-block)))
-    (br `(:test-class ,kiln.kir::+packet-class-cons+ ,x) is-cons other)
+(defun emit-car-cdr (x field &optional cons-test list-proven)
+  (let* ((r (new-var))
+         (is-cons (new-block)) (other (unless list-proven (new-block)))
+         (is-nil (new-block)) (bad (unless list-proven (new-block))) (join (new-block)))
+    (br (or cons-test `(:test-class ,kiln.kir::+packet-class-cons+ ,x)) is-cons (or other is-nil))
     (start-block is-cons)
     (emit `(:set ,r (:field-load ,field ,x)))
     (jump join)
-    (start-block other)
-    (br `(:eq ,x ,(nil-value)) is-nil bad)
+    (when other
+      (start-block other)
+      (br `(:eq ,x ,(nil-value)) is-nil bad))
     (start-block is-nil)
     (emit `(:set ,r ,(nil-value)))
     (jump join)
-    (start-block bad)
-    (emit-error +err-not-list+ x)
+    (when bad
+      (start-block bad)
+      (emit-error +err-not-list+ x))
     (start-block join)
     r))
 
@@ -560,8 +562,13 @@ are compared (no short circuit), which also checks every argument."
 (define-primop :schar (s i)
   (emit-check-index s i)
   (emit-sequence-read :string-ref s i))
+(define-primop :schar-unchecked (s i)
+  (emit-sequence-read :string-ref s i))
 (define-primop :set-schar (s i c)
   (emit-check-index s i)
+  (emit-sequence-write :string-set s i c)
+  c)
+(define-primop :set-schar-unchecked (s i c)
   (emit-sequence-write :string-set s i c)
   c)
 
@@ -590,19 +597,23 @@ are compared (no short circuit), which also checks every argument."
 ;;; strings, for LENGTH); anything else, and a bad index, takes the slow
 ;;; path: a call to the kernel's function, which signals the error or
 ;;; handles the other sequences.
-(defun emit-svref-fast-path (v i fast-fn slow-fn &optional known-vector known-fixnum nonnegative)
+(defun emit-svref-fast-path (v i fast-fn slow-fn
+                            &optional known-vector known-fixnum length (kind :obj) cold)
   "FAST-FN writes the result in the checked vector block.
-SLOW-FN returns an operand in the fallback block. KNOWN-FIXNUM and
-NONNEGATIVE carry index proofs. The length check remains."
-  (let ((r (new-var)) (vector (new-block)) (fast (new-block)) (slow (new-block))
+SLOW-FN returns an operand in the fallback block. KNOWN-FIXNUM carries
+the index representation proof. The length check remains."
+  (let ((r (new-var kind)) (fast (new-block)) (slow (new-block cold))
         (done (new-block)))
-    (if known-vector (jump vector)
-        (br (emit-kind-test v kiln.kir::+packet-class-simple-vector+) vector slow))
-    (start-block vector)
-    (let* ((bounds `(:ge ,i ,(vector-length v)))
-           (bounds (if nonnegative bounds `(:or (:lt ,i (:fixnum-tag 0)) ,bounds))))
-      (br (if known-fixnum bounds
-              `(:or (:eq (:test-class ,kiln.kir::+packet-class-fixnum+ ,i) 0) ,bounds)) slow fast))
+    (unless (or known-vector length)
+      (let ((vector (new-block)))
+        (br (emit-kind-test v kiln.kir::+packet-class-simple-vector+) vector slow)
+        (start-block vector)))
+    ;; The sign bit of a negative tagged fixnum places it above every length.
+    (unless known-fixnum
+      (let ((fixnum (new-block)))
+        (br `(:test-class ,kiln.kir::+packet-class-fixnum+ ,i) fixnum slow)
+        (start-block fixnum)))
+    (br `(:fixnum-uge ,i ,(or length (vector-length v))) slow fast)
     (start-block fast)
     (funcall fast-fn r)
     (jump done)
@@ -717,6 +728,32 @@ NONNEGATIVE carry index proofs. The length check remains."
          (x (copy-to-var x)))
     (emit-vector-object kiln.kir::+packet-class-simple-vector+ len x)))
 
+(define-primop :double-fraction-53 (bits)
+  ;; For a 53-bit unsigned fixnum both operations are exact, independently
+  ;; of the rounding mode. The binary64 constant is 2^-53.
+  (let ((value (copy-to-var `(:f64-from-signed (:fixnum-untag ,bits)) :f64)))
+    (emit-box-double-bits (copy-to-var `(:f64-mul ,value #x3ca0000000000000) :f64))))
+
+(define-primop :make-double-storage (length initial)
+  (emit-check-length length)
+  (emit-vector-object kiln.kir::+packet-class-double-storage+
+                      (emit-sequence-index length)
+                      (copy-to-var `(:unbox-double ,initial) :f64)))
+
+(define-primop :double-storage-p (storage)
+  (boolean-value (emit-kind-test storage kiln.kir::+packet-class-double-storage+)))
+
+(define-primop :double-storage-ref (storage index)
+  (emit-box-double-bits
+   (copy-to-var `(:double-storage-ref ,storage ,(emit-sequence-index index)) :f64)))
+
+(define-primop :double-storage-set (storage index value)
+  (let ((value (copy-to-var value))
+        (index (emit-sequence-index index)))
+    (emit `(:lir-store :double-storage-set ,(copy-to-var storage) ,index
+                       ,(copy-to-var `(:unbox-double ,value) :f64)))
+    value))
+
 (define-nary-primitive kiln.kernel::make-simple-vector (vals)
   (unless (<= 1 (length vals) 2)
     (hir-error "MAKE-SIMPLE-VECTOR takes 1 or 2 arguments"))
@@ -819,6 +856,11 @@ NONNEGATIVE carry index proofs. The length check remains."
 (define-primop :fixnum-remainder (a b) (copy-to-var `(:fixnum-remainder ,a ,b)))
 (define-primop :fixnum-logand (a b) (copy-to-var `(:fixnum-logand ,a ,b)))
 (define-primop :fixnum+ (a b) (copy-to-var `(:fixnum-add ,a ,b)))
+;;; The caller proves that the product fits in a fixnum.
+(define-primop :fixnum* (a b) (copy-to-var `(:fixnum-mul ,a ,b)))
+;;; An unsigned comparison rejects negative tagged fixnums as indices.
+(define-primop :fixnum-index-below (a b)
+  (boolean-value `(:eq (:fixnum-uge ,a ,b) 0)))
 (define-primop :fixnum-le (a b) (boolean-value `(:fixnum-le ,a ,b)))
 (define-primop :fixnum-logior (a b) (copy-to-var `(:fixnum-logior ,a ,b)))
 (define-primop :fixnum-logxor (a b) (copy-to-var `(:fixnum-logxor ,a ,b)))
@@ -831,6 +873,10 @@ NONNEGATIVE carry index proofs. The length check remains."
 
 (define-primop :ratiop (x) (boolean-value (emit-kind-test x kiln.kir::+packet-class-ratio+)))
 (define-primop :double-float-p (x) (boolean-value (emit-kind-test x kiln.kir::+packet-class-double+)))
+(define-primop :double-float-one-p (x)
+  ;; The caller has already checked the double-float representation.
+  (boolean-value
+   `(:word-eq (:f64-bits (:unbox-double ,x)) #x3ff0000000000000)))
 ;;; Complex numbers (the kernel's COMPLEX makes them canonical).
 (define-primop :complexp (x) (boolean-value (emit-kind-test x kiln.kir::+packet-class-complex+)))
 (define-primop :make-complex (r i)

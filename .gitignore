@@ -3,3 +3,4 @@
 *.o
 /build
 /deps
+/tools/__pycache__/

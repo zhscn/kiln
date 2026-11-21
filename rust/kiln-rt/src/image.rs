@@ -41,9 +41,8 @@ static IMAGE_END: AtomicUsize = AtomicUsize::new(IMAGE_BASE);
 /// code.rs): images cannot hold its code.
 static RUNTIME_CODE: AtomicBool = AtomicBool::new(false);
 static MODULE_INFO: AtomicUsize = AtomicUsize::new(0);
-/// Fingerprint of the executable (see `fingerprint`), once its tables are
-/// registered.
-static FINGERPRINT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// Fingerprint of the executable's roots before compiled code adds more.
+static FINGERPRINT: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
 
 pub(crate) fn note_runtime_code() {
     RUNTIME_CODE.store(true, Ordering::Relaxed);
@@ -53,10 +52,9 @@ pub(crate) fn note_module_info(info: usize) {
     MODULE_INFO.store(info, Ordering::Relaxed);
 }
 
-/// Called once the executable's static roots are registered, before any
-/// code is compiled into the image.
-pub(crate) fn note_executable() {
-    FINGERPRINT.store(fingerprint(&crate::gc::static_roots()), Ordering::Relaxed);
+/// Cache the executable's fingerprint before the initial root set changes.
+pub(crate) fn executable_fingerprint() -> u64 {
+    *FINGERPRINT.get_or_init(|| crate::gc::with_static_roots(fingerprint))
 }
 
 /// Is ADDR in the mapped image region?
@@ -95,23 +93,53 @@ struct Header {
 
 const HEADER_WORDS: usize = std::mem::size_of::<Header>() / 8;
 
+const FNV_PRIME: u64 = 0x100_0000_01b3;
+
+fn fingerprint_word(mut hash: u64, word: u64) -> u64 {
+    for byte in (word as u32).to_le_bytes() {
+        hash = (hash ^ u64::from(byte)).wrapping_mul(FNV_PRIME);
+    }
+    let high = (word >> 32) as u32;
+    if high == 0 {
+        // The linked executable's addresses usually fit in 32 bits.
+        // XOR with a zero byte is the identity, leaving four multiplications.
+        return hash.wrapping_mul(FNV_PRIME.wrapping_pow(4));
+    }
+    for byte in high.to_le_bytes() {
+        hash = (hash ^ u64::from(byte)).wrapping_mul(FNV_PRIME);
+    }
+    hash
+}
+
 /// Identifies the executable: the address of its module info and the
 /// addresses of its static roots.
 fn fingerprint(roots: &[usize]) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    let mut mix = |x: u64| {
-        for b in x.to_le_bytes() {
-            h ^= b as u64;
-            h = h.wrapping_mul(0x100_0000_01b3);
-        }
-    };
-    mix(MODULE_INFO.load(Ordering::Relaxed) as u64);
-    mix(roots.len() as u64);
-    for &r in roots {
-        mix(r as u64);
+    let mut hash = 0xcbf2_9ce4_8422_2325;
+    hash = fingerprint_word(hash, MODULE_INFO.load(Ordering::Relaxed) as u64);
+    hash = fingerprint_word(hash, roots.len() as u64);
+    for &root in roots {
+        hash = fingerprint_word(hash, root as u64);
     }
-    h
+    hash
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{FNV_PRIME, fingerprint_word};
+
+    #[test]
+    fn fingerprint_word_matches_bytewise_fnv() {
+        for seed in [0, u64::MAX, 0xcbf2_9ce4_8422_2325] {
+            for word in [0, 1, 0x1234_5678, u32::MAX.into(), 1 << 32, 1 << 63, u64::MAX] {
+                let expected = word.to_le_bytes().into_iter().fold(seed, |hash, byte| {
+                    (hash ^ u64::from(byte)).wrapping_mul(FNV_PRIME)
+                });
+                assert_eq!(fingerprint_word(seed, word), expected);
+            }
+        }
+    }
+}
+
 
 /// (offset of the first Lisp field, number of Lisp fields) of an object
 /// with header `h` (the GC scans the same fields).
@@ -125,7 +153,7 @@ pub fn lisp_fields(h: u64) -> (usize, usize) {
         // name, package, function, value, TLS index (a fixnum), plist,
         // setf function
         KIND_SYMBOL => (8, 7),
-        KIND_STRING | KIND_BIGNUM | KIND_DOUBLE => (8, 0),
+        KIND_STRING | KIND_BIGNUM | KIND_DOUBLE | KIND_DOUBLE_STORAGE => (8, 0),
         KIND_RATIO | KIND_COMPLEX => (8, 2),
         KIND_INSTANCE => (8, 1),
         KIND_STRUCTURE_INSTANCE => (8, 1 + header_length(h)),
@@ -337,7 +365,7 @@ pub unsafe fn save(path: &std::path::Path, toplevel: u64, executable: bool) -> R
     };
     let header = Header {
         magic: MAGIC,
-        fingerprint: FINGERPRINT.load(Ordering::Relaxed),
+        fingerprint: executable_fingerprint(),
         base: IMAGE_BASE as u64,
         bytes: (s.out.len() * 8) as u64,
         toplevel,
@@ -458,7 +486,7 @@ pub fn load() -> Result<Option<u64>, String> {
     if h.magic != MAGIC {
         return Err("not a kiln image".into());
     }
-    if h.base as usize != IMAGE_BASE || h.fingerprint != FINGERPRINT.load(Ordering::Relaxed) {
+    if h.base as usize != IMAGE_BASE || h.fingerprint != executable_fingerprint() {
         return Err("the image was saved by a different executable".into());
     }
     let bytes = h.bytes as usize;
@@ -478,14 +506,9 @@ pub fn load() -> Result<Option<u64>, String> {
             return Err(format!("cannot map the image at {IMAGE_BASE:#x}: {}", std::io::Error::last_os_error()));
         }
     }
-    let mut statics = vec![0u64; 2 * h.nstatic as usize];
-    f.read_exact_at(
-        unsafe { std::slice::from_raw_parts_mut(statics.as_mut_ptr() as *mut u8, statics.len() * 8) },
-        start + (PAGE + mapped) as u64,
-    )
-    .map_err(err)?;
-    // The code region, whose tables add static roots.
-    let statics_end = start + (PAGE + mapped) as u64 + 16 * h.nstatic;
+    // The code region's tables contribute roots, so restore them first.
+    let statics_start = start + (PAGE + mapped) as u64;
+    let statics_end = statics_start + 16 * h.nstatic;
     let code_len = h.code_top as usize - crate::code::CODE_BASE;
     let mut cw = vec![0u64; h.code_words as usize];
     f.read_exact_at(
@@ -503,12 +526,30 @@ pub fn load() -> Result<Option<u64>, String> {
         segments,
         tables,
     )?;
-    if crate::gc::static_roots().len() != h.nstatic as usize {
-        return Err("the image's static roots are not the executable's".into());
-    }
-    for [addr, value] in statics.as_chunks::<2>().0 {
-        unsafe { *(*addr as *mut u64) = *value };
-    }
+    crate::gc::with_static_roots(|roots| {
+        let mismatch = || "the image's static roots are not the executable's".to_string();
+        if roots.len() != h.nstatic as usize {
+            return Err(mismatch());
+        }
+        const BATCH: usize = 4096;
+        let mut words = [0u64; BATCH * 2];
+        let mut offset = statics_start;
+        for batch in roots.chunks(BATCH) {
+            let buffer = &mut words[..2 * batch.len()];
+            let bytes = unsafe {
+                std::slice::from_raw_parts_mut(buffer.as_mut_ptr().cast::<u8>(), buffer.len() * 8)
+            };
+            f.read_exact_at(bytes, offset).map_err(err)?;
+            offset += bytes.len() as u64;
+            for (&root, &[addr, value]) in batch.iter().zip(buffer.as_chunks::<2>().0) {
+                if root as u64 != addr {
+                    return Err(mismatch());
+                }
+                unsafe { *(root as *mut u64) = value };
+            }
+        }
+        Ok(())
+    })?;
     crate::special::set_tls_used(h.next_tls_index);
     crate::rtfun::set_next_identity_hash(h.next_identity_hash);
     IMAGE_END.store(IMAGE_BASE + bytes, Ordering::Relaxed);

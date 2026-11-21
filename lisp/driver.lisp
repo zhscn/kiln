@@ -3,7 +3,7 @@
 (defparameter *kernel-files*
   (mapcar (lambda (name)
             (asdf:system-relative-pathname "kiln" (format nil "lisp/target/~A.lisp" name)))
-          '("assumptions" "kernel" "early" "types" "sequences"))
+          '("assumptions" "kernel" "early" "types" "sequences" "../array-element-types"))
   "Target kernel sources, compiled into the kernel module.")
 
 (defun clostrophilia-file (system-directory name)
