@@ -40,6 +40,11 @@
   (cond ((hir-range-p type) type)
         ((eq type 'fixnum) (hir-integer-range +hir-fixnum-min+ +hir-fixnum-max+))))
 
+(defun hir-constant-right-shift (type)
+  (when (and (hir-range-p type) (= (second type) (third type)) (<= (third type) 0))
+    ;; A signed word has already reached its sign bit by this count.
+    (min 63 (- (third type)))))
+
 (defun hir-simple-specialized-array-p (type)
   (and (consp type) (eq (car type) :simple-specialized-array)))
 
@@ -172,6 +177,12 @@
       ((eq name 'list) (if (zerop count) 'null 'cons))
       ((eq name 'vector) 'simple-vector)
       ((eq name 'make-array) 'array)
+      ((and (= count 2) (eq name 'ash)
+            (hir-fixnum-type-p (svref types 0))
+            (hir-constant-right-shift (svref types 1)))
+       (let ((range (hir-type-range (svref types 0)))
+             (shift (- (hir-constant-right-shift (svref types 1)))))
+         (hir-integer-range (ash (second range) shift) (ash (third range) shift))))
       ((and (= count 2) (eq name 'mod) (hir-integer-type-p (svref types 0))
             (hir-positive-fixnum-constant (svref types 1)))
        (hir-integer-range 0 (1- (second (svref types 1)))))

@@ -435,6 +435,8 @@
          (not (mir-instruction-notinline instruction))
          (or (and (= (length operands) 2)
                   (member name '(+ - * logand logior logxor < > <= >= = /=)))
+             (and (eq name 'ash) (= (length operands) 2)
+                  (hir-constant-right-shift (svref *mir-lir-types* (svref operands 1))))
              (and (> (length operands) 2) (eq name '+))
              (and (= (length operands) 1) (member name '(1+ 1- zerop plusp minusp))))
          (every (lambda (id) (hir-fixnum-type-p (svref *mir-lir-types* id))) operands))))
@@ -468,6 +470,12 @@
           ((member name '(1+ 1-))
            (emit-fixnum-arithmetic (if (eq name '1+) '+ '-) left '(:fixnum-tag 1) bounded
                                    nil *mir-lir-in-loop*))
+          ((eq name 'ash)
+           (let* ((count (svref (mir-instruction-operands instruction) 1))
+                  (shift (hir-constant-right-shift (svref *mir-lir-types* count))))
+             (if (zerop shift)
+                 left
+                 (copy-to-var `(:fixnum-tag (:word-shift-right (:fixnum-untag ,left) ,shift))))))
           ((member name '(logand logior logxor))
            (copy-to-var `(,(ecase name (logand :and) (logior :or) (logxor :xor)) ,left ,right)))
           (t (boolean-value `(,(ecase name ((< minusp) :lt) ((> plusp) :gt) (<= :le) (>= :ge) ((= zerop) :eq) (/= :ne))

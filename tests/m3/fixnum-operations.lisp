@@ -6,3 +6,9 @@
 (print (fixnum-operations 19 -5))
 (print (list (ash -4611686018427387904 -62) (ash 1 61)
              (ash 4611686018427387903 -61)))
+
+(defun fixnum-right-shifts (n)
+  (declare (fixnum n) (optimize (speed 3)))
+  (list (ash n 0) (ash n -1) (ash n -63) (ash n -64)))
+(print (fixnum-right-shifts -19))
+(print (fixnum-right-shifts 19))
