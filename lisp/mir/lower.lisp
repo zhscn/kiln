@@ -1384,7 +1384,7 @@
     (start-block done)
     result))
 
-(defun mir-lir-float-chain (precision name left rights &key reciprocal finite-result)
+(defun mir-lir-float-chain (precision name left rights &key reciprocal finite-result zero-divisor)
   (let* ((double (eq precision :double))
          (operation (ecase name
                       (+ (if double :f64-add :single-add))
@@ -1394,7 +1394,8 @@
          (fast (new-block))
          (slow (new-block *mir-lir-in-loop*))
          (mode-cache (mir-lir-float-mode-cache)))
-    (br (or mode-cache `(:ne ,(mir-lir-float-control-state) ,(nil-value))) slow fast)
+    (let ((controlled (or mode-cache `(:ne ,(mir-lir-float-control-state) ,(nil-value)))))
+      (br (if zero-divisor `(:or ,controlled ,zero-divisor) controlled) slow fast))
     (loop for (right . remaining) on rights
           for result = (new-var (if double :f64 :obj))
           for next-fast = (new-block)
@@ -1487,8 +1488,16 @@
         (case name
           (- (copy-to-var `(:xor ,left ,(- #x8000000000000000)) :f64))
           (abs (copy-to-var `(:and ,left #x7fffffffffffffff) :f64))
-          (/ (mir-lir-float-chain :double '/ #x3ff0000000000000 (list left) :reciprocal t
-                                  :finite-result (mir-lir-nonzero-fixnum-conversion-p (svref operands 0))))
+          (/ (let* ((operand (svref operands 0))
+                    (fixnum (mir-lir-double-fixnum-input-type operand)))
+               ;; Converting a fixnum preserves zero and cannot produce NaN.
+               ;; Check the divisor before the divide so the fast path does
+               ;; not have to inspect the floating-point result.
+               (mir-lir-float-chain
+                :double '/ #x3ff0000000000000 (list left) :reciprocal t
+                :finite-result fixnum
+                :zero-divisor (and fixnum (not (mir-lir-nonzero-fixnum-conversion-p operand))
+                                   `(:word-eq (:f64-bits ,left) 0)))))
           (1+ (mir-lir-float-chain :double '+ left '(#x3ff0000000000000)))
           (1- (mir-lir-float-chain :double '- left '(#x3ff0000000000000)))))))
 

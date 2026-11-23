@@ -223,7 +223,7 @@
   (operations '(defun maybe-zero-reciprocal (n)
                  (declare (type (integer 0 100) n) (optimize (speed 3)))
                  (/ (float n 0d0)))
-              '((:f64-div 1) (:word-shift-left 1)))
+              '((:f64-div 1) (:f64-bits 1) (:word-shift-left 0)))
   (operations '(defun converted-fixnum-product (a b)
                  (declare (fixnum a b) (optimize (speed 3)))
                  (* (float a 0d0) (float b 0d0)))

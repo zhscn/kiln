@@ -12,6 +12,10 @@
   (declare (fixnum n) (optimize (speed 3) (debug 0)))
   (/ (float n 0d0)))
 (assert (= (unboxed-reciprocal 4d0) (reciprocal-of-fixnum 4) 0.25d0))
+(assert (= (reciprocal-of-fixnum -4) -0.25d0))
+(assert (handler-case (progn (reciprocal-of-fixnum 0) nil) (division-by-zero () t)))
+(assert (kiln.sys:float-infinity-p (kiln.sys:with-float-traps-masked t
+                                    (reciprocal-of-fixnum 0))))
 (let ((integer -3)
       (ratio (/ 2 7)))
   (declare (notinline + /))
