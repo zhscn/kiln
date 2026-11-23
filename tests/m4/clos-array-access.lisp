@@ -274,3 +274,15 @@
 (let ((array (make-array 2 :element-type 'fixnum :initial-contents '(2 3))))
   (assert (handler-case (progn (reverse-prefix-unrolled array 2) nil) (error () t)))
   (assert (equalp array #(2 3))))
+
+(defun copy-prefix-allocated (n)
+  (declare (fixnum n) (optimize (speed 3) (space 1) (debug 0)))
+  (let ((source (make-array n :element-type 'fixnum :initial-element 7))
+        (dest (make-array n :element-type 'fixnum :initial-element 0)))
+    (loop for i from 0 to (- n 1)
+          do (setf (aref dest i) (aref source i)))
+    dest))
+
+(dolist (n '(0 1 8 9 10 19))
+  (assert (equal (coerce (copy-prefix-allocated n) 'list)
+                 (make-list n :initial-element 7))))
