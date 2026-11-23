@@ -353,6 +353,7 @@ operations! {
     SingleStorageRefFixnum => ("single-storage-ref-fixnum", [Obj, Obj], F32),
     DoubleStorageRefFixnum => ("double-storage-ref-fixnum", [Obj, Obj], F64),
     StringRef => ("string-ref", [Obj, Word], Obj),
+    F64Nonfinite => ("f64-nonfinite", [F64], Word),
 }
 
 #[derive(Debug)]

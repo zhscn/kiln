@@ -169,6 +169,7 @@ pub enum Expr {
     UnpackSingle(Box<Expr>),
     PackSingle(Box<Expr>),
     F64FromSigned(Box<Expr>),
+    F64Nonfinite(Box<Expr>),
     Shift(ShiftOp, Box<Expr>, i64),
     Cmp(CmpOp, Box<Expr>, Box<Expr>),
     Load(Box<Expr>, i32),
@@ -2306,6 +2307,10 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
         "f64-from-signed" => {
             arity(h, r, 1)?;
             Expr::F64FromSigned(e(0)?)
+        }
+        "f64-nonfinite" => {
+            arity(h, r, 1)?;
+            Expr::F64Nonfinite(e(0)?)
         }
         "add" | "sub" | "mul" | "and" | "or" | "xor" | "sdiv" | "srem" | "shlv" | "sarv"
         | "shrv" | "single-add" | "single-sub" | "single-mul" | "single-div"

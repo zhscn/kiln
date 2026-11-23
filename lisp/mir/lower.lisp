@@ -1318,10 +1318,7 @@
 (defun mir-lir-nonfinite-test (precision result)
   ;; An all-ones exponent needs runtime handling even in the default mode.
   (ecase precision
-    (:double
-     ;; Drop the sign and sign-extend the exponent to compare against -1.
-     `(:word-eq (:word-shift-right
-                  (:word-shift-left (:f64-bits ,result) 1) 53) -1))
+    (:double `(:f64-nonfinite ,result))
     (:single
      `(:word-eq (:word-and (:single-float-bits ,result) #x7f800000) #x7f800000))))
 

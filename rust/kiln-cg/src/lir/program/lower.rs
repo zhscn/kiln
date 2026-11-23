@@ -701,6 +701,7 @@ impl Lowerer<'_> {
                 Expr::Bin(op, Box::new(a), Box::new(b()))
             }
             WordEq | ObjEq => compare(CmpOp::Eq, a, b()),
+            F64Nonfinite => Expr::F64Nonfinite(Box::new(a)),
             WordLt => compare(CmpOp::Lt, a, b()),
             WordNot => Expr::Bin(BinOp::Xor, Box::new(a), Box::new(Expr::Int(-1))),
             WordNe | ObjNe => compare(CmpOp::Ne, a, b()),

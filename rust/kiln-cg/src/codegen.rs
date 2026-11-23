@@ -1644,6 +1644,16 @@ impl<'a, M: Module> FuncLowering<'a, M> {
                 let float = self.float_expr(b, e)?;
                 b.ins().bitcast(I64, MemFlagsData::new(), float)
             }
+            Expr::F64Nonfinite(input) => {
+                let value = self.float_expr(b, input)?;
+                let bits = b.ins().bitcast(I64, MemFlagsData::new(), value);
+                // Drop the sign, then sign-extend the exponent. An all-ones
+                // exponent classifies both infinities and every NaN payload.
+                let signless = b.ins().ishl_imm_s(bits, 1);
+                let exponent = b.ins().sshr_imm_s(signless, 53);
+                let nonfinite = b.ins().icmp_imm_s(IntCC::Equal, exponent, -1);
+                b.ins().uextend(I64, nonfinite)
+            }
             Expr::Bin(BinOp::F64Compare, x, y) => {
                 let x = self.float_expr(b, x)?;
                 let y = self.float_expr(b, y)?;

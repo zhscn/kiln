@@ -231,7 +231,7 @@
   (operations '(defun arbitrary-double-product (a b)
                  (declare (fixnum a) (double-float b) (optimize (speed 3)))
                  (* (float a 0d0) b))
-              '((:f64-mul 1) (:f64-bits 1)))
+              '((:f64-mul 1) (:f64-nonfinite 1) (:f64-bits 0)))
   (operations '(defun double-array-sum (array)
                  (declare ((simple-array double-float (2)) array)
                           (optimize (speed 3) (safety 3)))
