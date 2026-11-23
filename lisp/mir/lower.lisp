@@ -1384,11 +1384,13 @@
     (start-block fast)
     left))
 
-(defun mir-lir-convert-double-bits (value type)
+(defun mir-lir-convert-double-bits (value type cache-mode-p)
   (let ((range (hir-type-range type)))
     (if (and range (<= (- (ash 1 53)) (second range) (third range) (ash 1 53)))
         (copy-to-var `(:f64-from-signed (:fixnum-untag ,value)) :f64)
         (let* ((fixnum (hir-fixnum-type-p type))
+               (mode (or *mir-lir-float-mode-cache*
+                         (and cache-mode-p (mir-lir-float-mode-cache))))
                (result (new-var :f64)) (fast (new-block)) (slow (new-block *mir-lir-in-loop*)) (done (new-block))
                (rounding (new-block *mir-lir-in-loop*))
                (sign-bit (- (ash 1 63))))
@@ -1401,11 +1403,17 @@
           ;; Translate the interval to start at the minimum signed word.
           ;; Word addition wraps, leaving all other inputs above its end.
           (let ((integer (copy-to-var `(:fixnum-untag ,value) :raw)))
-            (br `(:word-le (:word-add ,integer ,(+ sign-bit (ash 1 53)))
-                           ,(+ sign-bit (ash 1 54))) fast rounding)
-            (start-block rounding)
-            (let ((active (mir-lir-float-control-state)))
-              (br `(:ne ,active ,(nil-value)) slow fast))
+            (let ((exact `(:word-le (:word-add ,integer ,(+ sign-bit (ash 1 53)))
+                                    ,(+ sign-bit (ash 1 54)))))
+              (if mode
+                  (progn
+                    (br mode rounding fast)
+                    (start-block rounding)
+                    (br exact fast slow))
+                  (progn
+                    (br exact fast rounding)
+                    (start-block rounding)
+                    (br `(:ne ,(mir-lir-float-control-state) ,(nil-value)) slow fast))))
             (start-block fast)
             (kiln.kir::emit-lir-assignment result `(:f64-from-signed ,integer)))
           (jump done)
@@ -1414,6 +1422,8 @@
             (if fixnum
                 (emit-slow-call 'kiln.kernel::controlled-float-conversion value (constant-object t))
                 (emit-slow-call 'float value (constant-object 0d0))))
+          (when mode
+            (emit `(:set ,mode (:ne ,(mir-lir-float-control-state) ,(nil-value)))))
           (jump done)
           (start-block done)
           result))))
@@ -1529,7 +1539,8 @@
             fallback))
       fallback))
 
-(defun mir-lir-instruction (instruction arguments argument-count &optional fixnum-result-check known-fixnum-input)
+(defun mir-lir-instruction (instruction arguments argument-count
+                            &optional fixnum-result-check known-fixnum-input cache-conversion-mode-p)
   (let* ((*call-source* (mir-instruction-source instruction)) (*hir-policy* (mir-instruction-policy instruction))
          (kind (mir-instruction-kind instruction)) (result (mir-instruction-result instruction))
          (out (and result (mir-lir-value result))) (data (mir-instruction-data instruction))
@@ -1668,7 +1679,9 @@
       (when (or conversion (mir-lir-double-call-p instruction))
         (let* ((operands (mir-instruction-operands instruction))
                (bits (if conversion
-                         (mir-lir-convert-double-bits (first args) (svref *mir-lir-types* (svref operands 0)))
+                         (mir-lir-convert-double-bits (first args)
+                                                      (svref *mir-lir-types* (svref operands 0))
+                                                      cache-conversion-mode-p)
                          (mir-lir-double-call data operands)))
                (raw (svref *mir-lir-doubles* result)))
           (when raw (emit `(:set ,raw ,bits)))
@@ -2265,6 +2278,16 @@
                          (mir-lir-fixnum-call-p instruction))
                     next)))))))
 
+(defun mir-lir-double-call-follows-p (instructions block position)
+  ;; Look past at most one primary-value projection in the same block.
+  (loop for index from (1+ position) below (min (length block) (+ position 3))
+        for instruction = (mir-at instructions (svref block index))
+        unless (= (mir-instruction-kind instruction) 10)
+          return (and (mir-lir-double-call-p instruction)
+                      (case (mir-instruction-data instruction)
+                        ((+ * / 1+ 1-) t)
+                        (- (> (length (mir-instruction-operands instruction)) 1))))))
+
 (defun mir-lir-function-body (function &optional unit)
   (setf (kiln.kir::kfunc-direct-regions-p kiln.kir::*func*) t)
   (let* ((*mir-lir-debug-bindings* (make-array (length (mir-function-bindings function)) :initial-element nil))
@@ -2463,12 +2486,19 @@
                                                    (mir-check-proven-p instruction *mir-lir-types*))
                                               (mir-lir-single-call-p instruction)
                                               (mir-lir-double-call-p instruction)
+                                              (mir-lir-double-conversion-p instruction)
                                               (nth-value 1 (mir-lir-array-access-plan instruction)))))
                             (setf *mir-lir-float-mode-cache* nil))
                           (let ((result-check (mir-lir-fixnum-result-check
                                                instruction instructions block-instructions position)))
                             (mir-lir-instruction instruction arguments count result-check
-                                                 (eq instruction checked-result))
+                                                 (eq instruction checked-result)
+                                                 (and *mir-lir-in-loop*
+                                                      (not *mir-lir-float-mode-cache*)
+                                                      (= (mir-instruction-kind instruction) 6)
+                                                      (eq (mir-instruction-data instruction) 'float)
+                                                      (mir-lir-double-call-follows-p
+                                                       instructions block-instructions position)))
                             (when (mir-instruction-p result-check)
                               (setf checked-result result-check)))
                           (let* ((result (mir-instruction-result instruction))

@@ -201,6 +201,18 @@
   (declare (fixnum n) (optimize (speed 3) (safety 3)))
   (float n 0d0))
 
+(defun convert-and-add-in-loop (n count)
+  (declare (fixnum n count) (optimize (speed 3) (safety 3)))
+  (let ((value 0d0))
+    (dotimes (i count value)
+      (setf value (+ (float n 0d0) 1d0)))))
+
+(assert (= 43d0 (convert-and-add-in-loop 42 2)))
+(assert (= 9007199254740992d0 (convert-and-add-in-loop 9007199254740993 2)))
+(kiln.sys:with-rounding-mode :positive
+  (assert (= 9007199254740994d0 (convert-and-add-in-loop 9007199254740992 2)))
+  (assert (= 9007199254740996d0 (convert-and-add-in-loop 9007199254740993 2))))
+
 (defun bounded-fixnum-to-double (n sample)
   (declare (type (integer -65536 65536) n) (optimize (speed 3) (safety 3)))
   (float n (the double-float (funcall sample))))
