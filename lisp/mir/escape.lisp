@@ -293,8 +293,11 @@
                                  :closures (logand closure-sites (lognot escaped)) :cyclic cyclic))))
 
 (defun mir-select-stack-cells (unit plans aliases)
-  "A cell may live on its owner's stack only if every capturing closure does."
-  (let* ((functions (hir-buffer-view (mir-unit-functions unit))) (escaped 0))
+  "Keep cells off the stack when a heap environment captures them."
+  (let* ((functions (hir-buffer-view (mir-unit-functions unit)))
+         (packed (mir-packed-array-environments unit))
+         (identities (and packed (mir-function-flow-identities (mir-infer-function-flow unit))))
+         (escaped 0))
     (loop for function across functions for id from 0
           for points = (svref (mir-cell-aliases-points aliases) id)
           for reachable = (mir-reachable-blocks function) do
@@ -302,14 +305,24 @@
             when (logbitp (mir-block-id block) reachable) do
         (loop for index across (hir-buffer-view (mir-block-instructions block))
               for instruction = (mir-at (mir-function-instructions function) index)
-              when (= (mir-instruction-kind instruction) 24) do
-          (let* ((args (mir-instruction-operands instruction))
-                 (stored (svref args 1)) (receiver (svref args 0)))
-            (when (eq (mir-value-representation (mir-at (mir-function-values function) stored)) :cell)
-              (let ((definition (svref (mir-value-definitions function) receiver)))
-                (unless (logbitp (1+ (mir-instruction-id definition))
-                                 (mir-storage-analysis-closures (svref plans id)))
-                  (setf escaped (logior escaped (svref points stored))))))))))
+              for kind = (mir-instruction-kind instruction)
+              for args = (mir-instruction-operands instruction)
+              do (cond ((= kind 24)
+                        (let ((stored (svref args 1)) (receiver (svref args 0)))
+                          (when (eq (mir-value-representation (mir-at (mir-function-values function) stored))
+                                    :cell)
+                            (let ((definition (svref (mir-value-definitions function) receiver)))
+                              (unless (logbitp (1+ (mir-instruction-id definition))
+                                               (mir-storage-analysis-closures (svref plans id)))
+                                (setf escaped (logior escaped (svref points stored))))))))
+                       ((and packed (= kind 7))
+                        (let ((target (svref (svref identities id) (svref args 0))))
+                          (when (and (integerp target) (/= target id) (svref packed target))
+                            (loop for position below (mir-function-internal-prefix (svref functions target))
+                                  for stored = (svref args (1+ position))
+                                  when (eq (mir-value-representation
+                                            (mir-at (mir-function-values function) stored)) :cell)
+                                    do (setf escaped (logior escaped (svref points stored)))))))))))
     ;; An unknown captured handle may alias any of the unit's allocation sites.
     (when (logbitp 0 escaped) (setf escaped (1- (ash 1 (1+ (mir-cell-aliases-count aliases))))))
     (loop for function across functions for id from 0
@@ -450,11 +463,18 @@
 
 (defun mir-compute-borrows (unit)
   (let* ((functions (hir-buffer-view (mir-unit-functions unit))) (calls (mir-infer-calls unit))
-         (summaries (map 'simple-vector
-                         (lambda (function)
-                           (make-mir-parameter-summary :required (mir-function-required function)
-                                                       :maximum (mir-function-maximum function)
-                                                       :borrow (1- (ash 1 (mir-function-positional-count function))))) functions))
+         (packed (mir-packed-array-environments unit))
+         (summaries
+           (map 'simple-vector
+                (lambda (function)
+                  (let ((borrow (1- (ash 1 (mir-function-positional-count function)))))
+                    (when (and packed (svref packed (mir-function-id function)))
+                      ;; The caller stores the lifted prefix in a heap vector.
+                      (setf borrow (logandc2 borrow (1- (ash 1 (mir-function-internal-prefix function))))))
+                    (make-mir-parameter-summary :required (mir-function-required function)
+                                                :maximum (mir-function-maximum function)
+                                                :borrow borrow)))
+                functions))
          (changed t))
     ;; Start with a borrow assumption, then remove it whenever a member's
     ;; body disproves it. Return aliases and effects grow at the same time;

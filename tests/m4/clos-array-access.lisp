@@ -310,3 +310,27 @@
 (assert (equalp #() (shift-with-invalid-start 0)))
 (assert (handler-case (progn (shift-with-invalid-start 1) nil)
           (error () t)))
+
+(defun packed-array-recursion (size)
+  (declare (fixnum size) (optimize (speed 3) (space 1) (debug 0)))
+  (let ((source (make-array size :element-type 'fixnum :initial-element 7))
+        (dest (make-array size :element-type 'fixnum :initial-element 0))
+        (state (cons 3 nil))
+        (total 0))
+    (labels ((step-array (depth)
+               (declare (fixnum depth))
+               (if (zerop depth)
+                   (progn
+                     (kiln.sys:%gc)
+                     (dotimes (index size)
+                       (let ((value (aref source index)))
+                         (setf (aref dest index) (+ value (car state)))
+                         (incf total value))))
+                   (progn
+                     (step-array (1- depth))
+                     (incf total depth)))))
+      (step-array size))
+    (list total (coerce dest 'list))))
+
+(assert (equal (packed-array-recursion 0) '(0 nil)))
+(assert (equal (packed-array-recursion 4) '(38 (10 10 10 10))))

@@ -13,6 +13,9 @@
 (defvar *mir-lir-types*)
 (defvar *mir-lir-definitions*)
 (defvar *mir-lir-array-contents*)
+(defvar *mir-lir-packed-array-plans* nil)
+(defvar *mir-lir-packed-environment* nil)
+(defvar *mir-lir-emitting-function* nil)
 (defvar *mir-lir-array-sources*)
 (defvar *mir-lir-list-tests* nil)
 (defvar *mir-lir-condition-source*)
@@ -1365,6 +1368,33 @@
            (emit (list :set target (word-operand word))))))
     (otherwise (emit (list :set target (word-operand word))))))
 
+(defun mir-lir-known-call-args (target instruction args)
+  (let* ((positions (and *mir-lir-packed-array-plans*
+                         (svref *mir-lir-packed-array-plans* target)))
+         (ordinary (rest args)))
+    (if positions
+        (let* ((width (mir-function-internal-prefix (svref *mir-lir-functions* target)))
+               (tail (nthcdr width ordinary)))
+          (if (eql target *mir-lir-emitting-function*)
+              (cons *mir-lir-packed-environment* tail)
+              (let* ((operands (mir-instruction-operands instruction))
+                     (backings
+                       (loop for position in positions
+                             for id = (svref operands (1+ position))
+                             for source = (mir-lir-array-contents-source id)
+                             for storage = (and *mir-lir-array-contents*
+                                                (gethash source *mir-lir-array-contents*))
+                             collect (or (car storage)
+                                         (mir-lir-known-vector-backing (nth position ordinary)))))
+                     (environment (emit-vector-object kiln.kir::+packet-class-simple-vector+
+                                                      (+ width (length positions)) (nil-value))))
+                (loop for value in ordinary for index from 0 below width
+                      do (emit `(:vector-set-fixnum ,environment (:fixnum-tag ,index) ,value)))
+                (loop for value in backings for index from width
+                      do (emit `(:vector-set-fixnum ,environment (:fixnum-tag ,index) ,value)))
+                (cons environment tail))))
+        ordinary)))
+
 (defun mir-lir-instruction (instruction arguments argument-count &optional declared-fixnum-result-p)
   (let* ((*call-source* (mir-instruction-source instruction)) (*hir-policy* (mir-instruction-policy instruction))
          (kind (mir-instruction-kind instruction)) (result (mir-instruction-result instruction))
@@ -1611,7 +1641,8 @@
                                         (not (mir-instruction-notinline instruction))
                                         (svref *mir-lir-known-functions* id))))
                       (if (integerp target)
-                          (emit-lisp-call (first args) (rest args) (svref *mir-lir-labels* target))
+                          (emit-lisp-call (first args) (mir-lir-known-call-args target instruction args)
+                                          (svref *mir-lir-labels* target))
                           (emit-lisp-call (emit-function-designator (first args)) (rest args))))))
          (mir-lir-save result value (or count 1))))
       (15 (let ((acc (nil-value)))
@@ -2090,6 +2121,12 @@
          (version-cost nil)
          (version-labels nil) (version-guard nil)
          (copy-plans nil) (copy-entry-labels nil)
+         (*mir-lir-emitting-function* (mir-function-id function))
+         (incoming-backing
+           (when *mir-lir-packed-array-plans*
+             (loop for position in (svref *mir-lir-packed-array-plans* (mir-function-id function))
+                   collect (cons position (new-var)))))
+         (*mir-lir-packed-environment* (and incoming-backing (new-var)))
          (arguments (make-array (mir-function-positional-count function))) (count (new-var :raw)))
     (multiple-value-setq (*mir-lir-doubles* *mir-lir-boxed*) (mir-lir-double-plan function predecessors))
     (multiple-value-bind (owners sources) (mir-lir-plan-array-contents function)
@@ -2125,7 +2162,20 @@
                          (gethash entry copy-entry-labels)
                          (svref (first copies) (mir-edge-target entry)))))))
     (dotimes (i (length arguments)) (setf (svref arguments i) (new-var)))
-    (emit `(:receive-prefix ,(coerce arguments 'list) ,count))
+    (if incoming-backing
+        (let ((physical-count (new-var :raw))
+              (width (mir-function-internal-prefix function)))
+          (emit `(:receive-prefix ,(cons *mir-lir-packed-environment*
+                                          (coerce (subseq arguments width) 'list))
+                                  ,physical-count))
+          (emit `(:set ,count (:word-add ,physical-count ,(1- width))))
+          (dotimes (position width)
+            (emit `(:set ,(svref arguments position)
+                         (:vector-ref-fixnum ,*mir-lir-packed-environment* (:fixnum-tag ,position)))))
+          (loop for (nil . dest) in incoming-backing for position from width
+                do (emit `(:set ,dest
+                                (:vector-ref-fixnum ,*mir-lir-packed-environment* (:fixnum-tag ,position))))))
+        (emit `(:receive-prefix ,(coerce arguments 'list) ,count)))
     (when (and storage (not (zerop (mir-storage-analysis-rest storage))))
       (dotimes (index 8)
         (multiple-value-bind (slot region) (establish-stack-object kiln.kir::+packet-class-cons+ 2)
@@ -2189,17 +2239,20 @@
                                      (rank-one (hir-simple-specialized-vector-p type))
                                      (contents (car storage))
                                      (length (cdr storage))
+                                     (backing (and (= (mir-instruction-kind instruction) 1)
+                                                   (cdr (assoc (mir-instruction-data instruction) incoming-backing))))
                                      (*call-source* (mir-instruction-source instruction)))
                                 (kiln.kir::emit-lir-assignment
                                  contents
-                                 (if (and rank-one recursive-private-entry
-                                          (= (mir-instruction-kind instruction) 1))
-                                     (mir-lir-known-vector-backing array)
-                                     (emit-slow-call
-                                      (if rank-one
-                                          'kiln.kernel::%simple-specialized-array-contents
-                                          'kiln.kernel::%simple-specialized-vector-contents)
-                                      array)))
+                                 (or backing
+                                     (if (and rank-one recursive-private-entry
+                                              (= (mir-instruction-kind instruction) 1))
+                                         (mir-lir-known-vector-backing array)
+                                         (emit-slow-call
+                                          (if rank-one
+                                              'kiln.kernel::%simple-specialized-array-contents
+                                              'kiln.kernel::%simple-specialized-vector-contents)
+                                          array))))
                                 (unless rank-one
                                   (let ((present (new-block)) (done (new-block)))
                                     (kiln.kir::emit-lir-assignment length '(:fixnum-tag 0))
@@ -2346,6 +2399,7 @@ Inspect mutable payloads synchronously. The callback must not edit them.")
                    (mir-optimize-unit initial)))
            (*mir-lir-functions* (hir-buffer-view (mir-unit-functions unit)))
            (functions *mir-lir-functions*)
+           (*mir-lir-packed-array-plans* (mir-packed-array-environments unit))
            (*mir-lir-load-time-cells* (map 'simple-vector
                                           (lambda (id) (declare (ignore id)) (fresh-label "kiln_mir_ltv_"))
                                           (mir-unit-load-time-functions unit)))

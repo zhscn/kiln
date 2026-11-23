@@ -393,6 +393,75 @@
                   (pushnew pair (svref lengths target) :test #'equal))))))
         lengths))))
 
+(defun mir-packed-array-environments (unit)
+  "Select private recursive entries whose invariant captures can share a vector."
+  (mir-unit-analysis unit :packed-array-environments
+    (lambda (unit)
+      (let ((functions (hir-buffer-view (mir-unit-functions unit))))
+        (when (> (length functions) 1)
+          (let* ((flow (mir-infer-function-flow unit))
+                 (pairs (when (plusp (mir-function-flow-recursive flow))
+                          (mir-vector-call-lengths unit)))
+                 (plans nil))
+            (when pairs
+              (loop for function across functions for id from 0
+                    for width = (mir-function-internal-prefix function)
+                    for count = (mir-function-positional-count function)
+                    for policy = (mir-function-policy function)
+                    when (and (<= 4 width 8) (svref pairs id)
+                              (member id (svref (mir-function-flow-outgoing flow) id))
+                              (not (logbitp id (mir-function-flow-external flow)))
+                              (eql count (mir-function-required function))
+                              (eql count (mir-function-maximum function))
+                              (hir-policy-optimize-p policy)
+                              (< (hir-policy-quality policy :debug) 2)
+                              (< (hir-policy-quality policy :space) (hir-policy-quality policy :speed)))
+                      do (let ((positions (sort (remove-duplicates (mapcar #'car (svref pairs id))) #'<)))
+                           (when (and (<= (length positions) 2) (< (car (last positions)) width))
+                             (unless plans
+                               (setf plans (make-array (length functions) :initial-element nil)))
+                             (setf (svref plans id) positions))))
+              (when plans
+                (mir-check-packed-array-call-sites functions flow plans)
+                (and (some #'identity plans) plans)))))))))
+
+(defun mir-check-packed-array-call-sites (functions flow plans)
+  (loop for caller across functions
+        for known across (mir-function-flow-identities flow)
+        for outgoing across (mir-function-flow-outgoing flow)
+        when (some (lambda (target) (svref plans target)) outgoing)
+          do (let ((reachable (mir-reachable-blocks caller))
+                   (definitions (mir-value-definitions caller)))
+               (loop for block across (hir-buffer-view (mir-function-blocks caller))
+                     for block-id = (mir-block-id block)
+                     when (logbitp block-id reachable)
+                       do (loop for id across (hir-buffer-view (mir-block-instructions block))
+                                for instruction = (mir-at (mir-function-instructions caller) id)
+                                for kind = (mir-instruction-kind instruction)
+                                when (member kind '(7 15))
+                                  do (let* ((args (mir-instruction-operands instruction))
+                                            (target (svref known (svref args 0))))
+                                       (when (and (integerp target) (svref plans target)
+                                                  (not (mir-packed-array-call-p
+                                                        instruction caller (svref functions target)
+                                                        block-id definitions)))
+                                         (setf (svref plans target) nil))))))))
+
+(defun mir-packed-array-call-p (instruction caller callee block-id definitions)
+  (let ((args (mir-instruction-operands instruction)))
+    (and (= (mir-instruction-kind instruction) 7)
+         (not (mir-instruction-notinline instruction))
+         (hir-policy-optimize-p (mir-instruction-policy instruction))
+         (= (1- (length args)) (mir-function-positional-count callee))
+         (if (eq caller callee)
+             (loop for position below (mir-function-internal-prefix callee)
+                   for origin = (mir-primary-origin (svref args (1+ position)) definitions)
+                   for definition = (svref definitions origin)
+                   always (and definition (= (mir-instruction-kind definition) 1)
+                               (= (mir-instruction-data definition) position)))
+             ;; Allocate one environment per entry from outside the recursion.
+             (not (logbitp block-id (mir-cyclic-blocks caller)))))))
+
 (defun mir-call-argument-types (instruction facts packets required
                                 &optional (maximum required) checks definitions prior)
   "Flatten call facts, or return :UNSEEN, :UNKNOWN or :WRONG-ARITY.
