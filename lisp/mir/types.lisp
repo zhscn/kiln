@@ -338,6 +338,26 @@
                                do (setf (gethash parameter result) source)))
             result))))))
 
+(defun mir-shift-guarded-increments (function guards definitions values)
+  "Index increments that depend on a shift guard's upper operand for their range."
+  (when (and guards (plusp (hash-table-count guards)))
+    (mir-analysis function :shift-guarded-increments
+      (lambda (function)
+        (let ((sources (make-hash-table :test #'eql))
+              (users (make-hash-table :test #'eql)))
+          (loop for instruction across (hir-buffer-view (mir-function-instructions function))
+                for result = (mir-instruction-result instruction)
+                when (and result (= (mir-instruction-kind instruction) 6)
+                          (member (mir-instruction-data instruction) '(1+ +)))
+                  do (loop for input across (mir-instruction-operands instruction)
+                           for index = (mir-primary-origin input definitions)
+                           for source = (gethash index guards)
+                           when (and source (mir-induction-add-one-p result index definitions))
+                             do (setf (gethash result sources) source)
+                                (pushnew (mir-value-block (svref values result)) (gethash source users))
+                                (return)))
+          (cons sources users))))))
+
 (defun mir-compute-types (function &key summaries value-summaries functions inputs captures cell-types cell-points (finalize t))
   "Infer primary-value types. :UNSEEN is solver bottom; T is unknown."
   (let* ((types (make-array (hir-buffer-count (mir-function-values function))
@@ -350,6 +370,7 @@
          (definitions (mir-value-definitions function))
          (induction (mir-induction-bounds function blocks definitions reachable))
          (shift-guards (mir-shift-guarded-indices function blocks definitions reachable))
+         (shift-increments (mir-shift-guarded-increments function shift-guards definitions values))
          (changes (make-array (length types) :initial-element 0))
          (users (mir-type-use-blocks function))
          (queued (make-array (length blocks) :initial-element nil))
@@ -362,7 +383,10 @@
                  (setf (svref queued block) t)
                  (hir-push block work)))
              (enqueue-users (id)
-               (dolist (block (svref users id)) (enqueue block)))
+               (dolist (block (svref users id)) (enqueue block))
+               ;; An increment may depend on the guard's bound without reading it.
+               (when shift-increments
+                 (dolist (block (gethash id (cdr shift-increments))) (enqueue block))))
              (merge-type (id type)
                (let ((joined (mir-type-join (svref types id) type)))
                  (when (and (hir-range-p (svref types id)) (hir-range-p joined)
@@ -443,6 +467,15 @@
                                                  (eql (mir-primary-origin (svref args 0) definitions)
                                                       (gethash index shift-guards)))
                                             (hir-integer-range 0 +hir-fixnum-max+))))
+                                      (when shift-increments
+                                        (let ((source (gethash (mir-instruction-result instruction)
+                                                               (car shift-increments))))
+                                          (when source
+                                            (let ((source-type (svref types source)))
+                                              (cond ((eq source-type :unseen) :unseen)
+                                                    ;; The guard proves index <= floor(source / 2).
+                                                    ((hir-fixnum-type-p source-type)
+                                                     (hir-integer-range 1 (1+ (ash +hir-fixnum-max+ -1)))))))))
                                       (inferred-call-type name inputs))))
                             t)))
                    ((7 15) (let ((target (and functions (svref functions (svref args 0)))))

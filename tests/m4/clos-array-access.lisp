@@ -244,3 +244,14 @@
             (error () t)))
   ;; The original loop stores before it reaches the failing access.
   (assert (equalp array #(99 3 2 1))))
+
+(defun guarded-index-prefix (array wide)
+  (declare ((simple-array fixnum (*)) array) (optimize (speed 3) (safety 3)))
+  (let ((z (if wide (ash 1 100) (aref array 0))))
+    (loop for i from 0 to (ash z -1)
+          collect i
+          until (= i 4))))
+
+(let ((array (make-array 1 :element-type 'fixnum :initial-element 6)))
+  (assert (equal (guarded-index-prefix array nil) '(0 1 2 3)))
+  (assert (equal (guarded-index-prefix array t) '(0 1 2 3 4))))
