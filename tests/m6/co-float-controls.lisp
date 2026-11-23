@@ -51,6 +51,23 @@
       (throw 'restore nil))))
 (assert (= 4.5d0 (controlled-add 3.2d0 1.3d0)))
 (assert (handler-case (progn (unboxed-divide 1d0 0d0) nil) (division-by-zero () t)))
+(defun returned-double-product (initial count)
+  (declare (double-float initial) (fixnum count))
+  (dotimes (index count initial)
+    (setf initial (* initial 2d0))))
+(let ((seed (kiln.sys:bits-double-float #x8000000000000000)))
+  (assert (eq seed (returned-double-product seed 0)))
+  (assert (= #x8000000000000000
+             (kiln.sys:double-float-bits (returned-double-product seed 4)))))
+(assert (= 48d0 (returned-double-product 3d0 4)))
+(defun observed-double-product (initial count observer)
+  (declare (double-float initial) (fixnum count))
+  (dotimes (index count initial)
+    (setf initial (* initial 2d0))
+    (funcall observer initial)))
+(let ((last nil))
+  (assert (eq (observed-double-product 3d0 4 (lambda (value) (setf last value)))
+              last)))
 (kiln.sys:with-rounding-mode :positive
   (assert (= 4.500000000000001d0 (kiln.sys:with-rounding-mode :negative
                                   (kiln.sys:with-rounding-mode :positive (controlled-add 3.2d0 1.3d0)))))
