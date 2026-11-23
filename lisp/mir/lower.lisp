@@ -1034,7 +1034,7 @@
     (start-block done)
     result))
 
-(defun mir-lir-float-chain (precision name left rights &key reciprocal)
+(defun mir-lir-float-chain (precision name left rights &key reciprocal finite-result)
   (let* ((double (eq precision :double))
          (operation (ecase name
                       (+ (if double :f64-add :single-add))
@@ -1051,7 +1051,9 @@
           for next-slow = (and remaining (new-block *mir-lir-in-loop*))
           do (start-block fast)
              (kiln.kir::emit-lir-assignment result (list operation left right))
-             (br (mir-lir-nonfinite-test precision result) slow next-fast)
+             (if finite-result
+                 (jump next-fast)
+                 (br (mir-lir-nonfinite-test precision result) slow next-fast))
              (start-block slow)
              (mir-lir-float-fallback precision name left right result reciprocal)
              ;; A resumed slow call may have changed the dynamic setting.
@@ -1099,6 +1101,14 @@
           (start-block done)
           result))))
 
+(defun mir-lir-nonzero-fixnum-conversion-p (value)
+  (let ((definition (svref *mir-lir-definitions*
+                           (mir-primary-origin value *mir-lir-definitions*))))
+    (when (and definition (mir-lir-double-conversion-p definition))
+      (let ((type (svref *mir-lir-types* (svref (mir-instruction-operands definition) 0))))
+        (and (hir-range-p type) (hir-fixnum-type-p type)
+             (or (plusp (second type)) (minusp (third type))))))))
+
 (defun mir-lir-double-call (name operands)
   (let* ((bits (map 'list #'mir-lir-double-bits operands))
          (left (first bits)))
@@ -1107,7 +1117,8 @@
         (case name
           (- (copy-to-var `(:xor ,left ,(- #x8000000000000000)) :f64))
           (abs (copy-to-var `(:and ,left #x7fffffffffffffff) :f64))
-          (/ (mir-lir-float-chain :double '/ #x3ff0000000000000 (list left) :reciprocal t))
+          (/ (mir-lir-float-chain :double '/ #x3ff0000000000000 (list left) :reciprocal t
+                                  :finite-result (mir-lir-nonzero-fixnum-conversion-p (svref operands 0))))
           (1+ (mir-lir-float-chain :double '+ left '(#x3ff0000000000000)))
           (1- (mir-lir-float-chain :double '- left '(#x3ff0000000000000)))))))
 
