@@ -306,7 +306,7 @@
              (<= (cadr type) (integer-length most-positive-fixnum)))
     (1- (ash 1 (cadr type)))))
 
-(defparameter *specialized-array-storage-slots*
+(defparameter kiln.kernel::*specialized-array-storage-slots*
   (let ((layouts (kiln.kernel::make-simple-vector (length *stamp-kinds*) nil)))
     (dolist (entry *class-kinds* layouts)
       (let* ((class (car entry))
@@ -330,7 +330,7 @@
                  simple-specialized-vector-storage))
 (defun specialized-array-storage-layout (array)
   (let* ((stamp (kiln.sys:%primop :standard-instance-access array -2))
-         (layouts *specialized-array-storage-slots*))
+         (layouts kiln.kernel::*specialized-array-storage-slots*))
     (when (locally (declare (optimize (safety 0)))
             (< (the fixnum stamp) (the fixnum (kiln.sys:%primop :length layouts))))
       (kiln.sys:%primop :svref-unchecked layouts stamp))))
@@ -341,7 +341,8 @@
       (slot-value array '%contents)))
 
 (defun kiln.kernel::%simple-specialized-array-contents (array)
-  (specialized-array-contents array (specialized-array-storage-layout array)))
+  (or (kiln.sys:%primop :registered-array-backing array kiln.kernel::*specialized-array-storage-slots*)
+      (specialized-array-contents array (specialized-array-storage-layout array))))
 
 (declaim (inline specialized-array-dimensions))
 (defun specialized-array-dimensions (array layout)

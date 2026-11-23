@@ -1652,6 +1652,13 @@
     (cons (make-region :kind :cleanup-running :slot (region-slot region) :outer outer
                        :handler (and handler (region-handler handler))) outer)))
 
+(defun mir-lir-known-vector-backing (array)
+  (let ((layouts (copy-to-var
+                  (emit-symbol-value (constant-object 'kiln.kernel::*specialized-array-storage-slots*)))))
+    (emit-registered-array-backing
+     array layouts
+     (lambda () (emit-slow-call 'kiln.kernel::%simple-specialized-array-contents array)))))
+
 (defun mir-lir-function-body (function &optional unit)
   (setf (kiln.kir::kfunc-direct-regions-p kiln.kir::*func*) t)
   (let* ((*mir-lir-debug-bindings* (make-array (length (mir-function-bindings function)) :initial-element nil))
@@ -1672,6 +1679,11 @@
          (*mir-lir-types* (mir-infer-types function type-unit))
          (*mir-lir-definitions* (mir-value-definitions function))
          (*mir-lir-value-facts* (mir-infer-value-facts function type-unit))
+         (recursive-private-entry
+           (and unit (plusp (mir-function-internal-prefix function))
+                (let* ((id (mir-function-id function))
+                       (flow (mir-infer-function-flow unit)))
+                  (member id (svref (mir-function-flow-outgoing flow) id)))))
          (storage (when (and unit (mir-storage-candidate-p function))
                     (if (and local-only (notany (lambda (instruction) (= (mir-instruction-kind instruction) 19))
                                   (hir-buffer-view (mir-function-instructions function))))
@@ -1785,11 +1797,14 @@
                                      (*call-source* (mir-instruction-source instruction)))
                                 (kiln.kir::emit-lir-assignment
                                  contents
-                                 (emit-slow-call
-                                  (if rank-one
-                                      'kiln.kernel::%simple-specialized-array-contents
-                                      'kiln.kernel::%simple-specialized-vector-contents)
-                                  array))
+                                 (if (and rank-one recursive-private-entry
+                                          (= (mir-instruction-kind instruction) 1))
+                                     (mir-lir-known-vector-backing array)
+                                     (emit-slow-call
+                                      (if rank-one
+                                          'kiln.kernel::%simple-specialized-array-contents
+                                          'kiln.kernel::%simple-specialized-vector-contents)
+                                      array)))
                                 (unless rank-one
                                   (let ((present (new-block)) (done (new-block)))
                                     (kiln.kir::emit-lir-assignment length '(:fixnum-tag 0))

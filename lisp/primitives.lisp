@@ -443,6 +443,31 @@ are compared (no short circuit), which also checks every argument."
   "Fixnum length of the vector or string V."
   `(:fixnum-tag (:vector-length ,v)))
 
+(defun emit-registered-array-backing (array layouts slow-function)
+  (let ((result (new-var))
+        (vector (new-block)) (layout-block (new-block)) (hit (new-block))
+        (slow (new-block t)) (done (new-block)))
+    (br (emit-kind-test layouts kiln.kir::+packet-class-simple-vector+) vector slow)
+    (start-block vector)
+    (let ((stamp (copy-to-var `(:instance-stamp ,array))))
+      (br `(:fixnum-uge ,stamp ,(vector-length layouts)) slow layout-block)
+      (start-block layout-block)
+      (let ((layout (copy-to-var `(:vector-ref-fixnum ,layouts ,stamp))))
+        (br `(:eq ,layout ,(nil-value)) slow hit)
+        (start-block hit)
+        (let ((slot (copy-to-var `(:vector-ref-fixnum ,layout ,(constant-object 0)))))
+          (kiln.kir::emit-lir-assignment result `(:instance-slot ,array (:fixnum-untag ,slot))))))
+    (jump done)
+    (start-block slow)
+    (kiln.kir::emit-lir-assignment result
+      (funcall slow-function))
+    (jump done)
+    (start-block done)
+    result))
+
+(define-primop :registered-array-backing (array layouts)
+  (emit-registered-array-backing array layouts #'nil-value))
+
 (defun emit-check-index (v i)
   (let ((bad (new-block)) (ok (new-block)))
     (br `(:or (:eq (:test-class ,kiln.kir::+packet-class-fixnum+ ,i) 0) (:or (:lt ,i (:fixnum-tag 0)) (:ge ,i ,(vector-length v)))) bad ok)
