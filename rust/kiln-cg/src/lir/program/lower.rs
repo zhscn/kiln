@@ -553,6 +553,10 @@ impl Lowerer<'_> {
             false,
             handler,
         )?;
+        // The expansion starts with the flag check. Its other blocks run
+        // only when that check requests a runtime poll.
+        let first = self.function.blocks.len();
+        self.function.cold_blocks.extend(first + 1..first + expansion.1.len());
         self.append_expansion(expansion);
         self.imports.insert(kiln_rt::STACK_EXHAUSTED_SYMBOL.into());
         Ok(())

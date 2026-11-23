@@ -24,7 +24,8 @@ fn cold_block_hint_survives_lowering() {
     let text = source("(block entry (jump fallback)) (block fallback (cold) (return ()))");
     let module = compile(&text).unwrap();
     let body = module.funcs.iter().find(|f| f.name == "body").unwrap();
-    assert_eq!(body.cold_blocks, vec![body.block_entries[1].unwrap()]);
+    assert!(!body.cold_blocks.contains(&body.block_entries[0].unwrap()));
+    assert!(body.cold_blocks.contains(&body.block_entries[1].unwrap()));
     reject("(block entry (cold 1) (return ()))", "expected");
     reject("(block entry (set a (fixnum 12)) (cold) (return (a)))", "unknown instruction");
 }
@@ -672,6 +673,54 @@ fn lowering_owns_argument_snapshots_calling_convention_and_cycle_polls() {
         .unwrap()
     );
     assert_eq!(first, second, "lowering order must be deterministic");
+}
+
+#[test]
+fn explicit_polls_cover_only_cycles_that_pass_through_them() {
+    let module = compile(&source(
+        r#"(block entry (set x (word 1)) (jump checked))
+        (block checked (poll) (jump body))
+        (block body (branch x checked unchecked))
+        (block unchecked (jump unchecked))"#,
+    ))
+    .unwrap();
+    let poll_calls = module.funcs[0]
+        .blocks
+        .iter()
+        .flat_map(|block| &block.stmts)
+        .filter(|stmt| {
+            matches!(stmt,
+                kiln_cg::kir::Stmt::CallRt { name, .. } if name == "kiln_rt_poll")
+        })
+        .count();
+    assert_eq!(poll_calls, 3, "entry, explicit poll, and uncovered cycle");
+}
+
+#[test]
+fn unwind_before_explicit_poll_can_require_its_own_poll() {
+    let module = compile(&source(
+        r#"(region r catch nil land)
+        (block entry (set a (nil)) (jump again))
+        (block again (enter r (a)) (jump checked))
+        (block checked (set f (function "body"))
+          (call m f () (region r)) (poll) (leave r) (return ()))
+        (block land (landing r n) (jump again))"#,
+    ))
+    .unwrap();
+    let function = &module.funcs[0];
+    let poll_blocks: Vec<_> = function
+        .blocks
+        .iter()
+        .enumerate()
+        .filter(|(_, block)| {
+            block.stmts.iter().any(|stmt| {
+                matches!(stmt, kiln_cg::kir::Stmt::CallRt { name, .. } if name == "kiln_rt_poll")
+            })
+        })
+        .map(|(index, _)| index)
+        .collect();
+    assert_eq!(poll_blocks.len(), 3, "entry, explicit poll, and unwind cycle");
+    assert!(poll_blocks.iter().all(|index| function.cold_blocks.contains(index)));
 }
 
 struct Temp(PathBuf);
