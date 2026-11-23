@@ -18,6 +18,8 @@
 (defvar *mir-lir-condition-word*)
 (defvar *mir-lir-index-bounds* nil)
 (defvar *mir-lir-inherited-index-bounds* nil)
+(defvar *mir-lir-shift-guarded-indices* nil)
+(defvar *mir-lir-value-owners*)
 (defvar *mir-lir-in-loop* nil)
 (defvar *mir-lir-float-mode-cache* nil)
 (defvar *mir-lir-value-facts*)
@@ -496,6 +498,36 @@
                         (and limit (<= checked-limit limit))
                         (eql source checked-source)))))
 
+(defun mir-lir-reverse-index-upper-bound (index result)
+  (when (and *mir-lir-shift-guarded-indices* index (not (minusp index)))
+    (let* ((block (mir-value-block (svref *mir-lir-value-owners* result)))
+           (definition (svref *mir-lir-definitions* index))
+           (subtract (and definition (= (mir-instruction-kind definition) 6)
+                          (eq (mir-instruction-data definition) '-)
+                          (= (length (mir-instruction-operands definition)) 2)))
+           (parameter (if subtract
+                          (mir-primary-origin (svref (mir-instruction-operands definition) 1)
+                                              *mir-lir-definitions*)
+                          index))
+           (upper (gethash parameter *mir-lir-shift-guarded-indices*)))
+      ;; The guard belongs to this activation of the receiving block. The
+      ;; forward and reverse indices are both between zero and UPPER.
+      (when (and upper (= block (mir-value-block (svref *mir-lir-value-owners* parameter)))
+                 (or (not subtract)
+                     (and (= block (mir-value-block (svref *mir-lir-value-owners* index)))
+                          (= upper
+                             (mir-primary-origin (svref (mir-instruction-operands definition) 0)
+                                                 *mir-lir-definitions*)))))
+        (mir-lir-array-index-origin upper)))))
+
+(defun mir-lir-array-index-checked-p (index source limit)
+  (and index
+       (or (and *mir-lir-index-bounds*
+                (mir-lir-array-index-proven-p source limit nil (gethash index *mir-lir-index-bounds*)))
+           (and *mir-lir-inherited-index-bounds*
+                (mir-lir-array-index-proven-p source limit nil
+                                              (gethash index *mir-lir-inherited-index-bounds*))))))
+
 (defun mir-lir-array-access-plan (instruction)
   (when *mir-lir-array-sources*
     (let* ((access (gethash (mir-instruction-result instruction) *mir-lir-array-sources*))
@@ -544,13 +576,10 @@
                 (contents (car storage))
                 (limit (and contents (third access)))
                 (origin (and contents (second access)))
-                (bounds (and origin *mir-lir-index-bounds*
-                             (gethash origin *mir-lir-index-bounds*)))
-                (inherited (and origin *mir-lir-inherited-index-bounds*
-                                (gethash origin *mir-lir-inherited-index-bounds*))))
-           (cond ((or (mir-lir-array-index-proven-p source limit index-type bounds)
-                      (and inherited
-                           (mir-lir-array-index-proven-p source limit nil inherited)))
+                (upper (mir-lir-reverse-index-upper-bound origin (mir-instruction-result instruction))))
+           (cond ((or (mir-lir-array-index-proven-p source limit index-type nil)
+                      (mir-lir-array-index-checked-p origin source limit)
+                      (mir-lir-array-index-checked-p upper source limit))
                   (let ((result (new-var (cond (doublep :f64) (singlep :f32) (t :obj)))))
                     (mir-lir-vector-access contents index value doublep result singlep)
                     result))
@@ -1680,6 +1709,8 @@
          (type-unit (unless local-only unit))
          (*mir-lir-types* (mir-infer-types function type-unit))
          (*mir-lir-definitions* (mir-value-definitions function))
+         (*mir-lir-value-owners* (hir-buffer-view (mir-function-values function)))
+         (*mir-lir-shift-guarded-indices* nil)
          (*mir-lir-value-facts* (mir-infer-value-facts function type-unit))
          (recursive-private-entry
            (and unit (plusp (mir-function-internal-prefix function))
@@ -1727,6 +1758,9 @@
     (multiple-value-bind (owners sources) (mir-lir-plan-array-contents function)
       (when owners
         (setf *mir-lir-array-sources* sources)
+        (setf *mir-lir-shift-guarded-indices*
+              (mir-shift-guarded-indices function blocks *mir-lir-definitions*
+                                         (mir-reachable-blocks function)))
         (setf *mir-lir-array-contents* (make-hash-table :test #'eql))
         (dolist (owner owners)
           (let* ((type (svref *mir-lir-types* owner))
