@@ -125,6 +125,105 @@
                 (pushnew block-id (svref users id))))))
         users))))
 
+(defun mir-induction-limit-type (id definitions)
+  (let ((definition (svref definitions id)))
+    (when definition
+      (case (mir-instruction-kind definition)
+        (0 (hir-constant-type (mir-instruction-data definition)))
+        (11 (hir-declaration-type (mir-instruction-data definition)))
+        ((9 10) (mir-induction-limit-type (svref (mir-instruction-operands definition) 0) definitions))
+        (6 (let ((args (mir-instruction-operands definition)))
+             (when (and (eq (mir-instruction-data definition) 'length) (= (length args) 1))
+               (let ((type (mir-induction-limit-type (svref args 0) definitions)))
+                 (when (or (member type '(simple-vector :native-string))
+                           (hir-simple-specialized-vector-p type))
+                   (inferred-call-type 'length (vector type)))))))))))
+
+(defun mir-induction-integer-constant-p (id integer definitions)
+  (let ((definition (svref definitions (mir-primary-origin id definitions))))
+    (and definition (= (mir-instruction-kind definition) 0)
+         (eql (mir-instruction-data definition) integer))))
+
+(defun mir-induction-add-one-p (value parameter definitions)
+  (let* ((origin (mir-primary-origin value definitions))
+         (instruction (svref definitions origin)))
+    (when (and instruction (= (mir-instruction-kind instruction) 6))
+      (let ((name (mir-instruction-data instruction))
+            (operands (mir-instruction-operands instruction)))
+        (flet ((argument (index) (mir-primary-origin (svref operands index) definitions)))
+          (or (and (eq name '1+) (= (length operands) 1) (= (argument 0) parameter))
+              (and (eq name '+) (= (length operands) 2)
+                   (or (and (= (argument 0) parameter)
+                            (mir-induction-integer-constant-p (argument 1) 1 definitions))
+                       (and (= (argument 1) parameter)
+                            (mir-induction-integer-constant-p (argument 0) 1 definitions))))))))))
+
+(defun mir-induction-bound-candidates (function blocks definitions reachable)
+  (let ((values (hir-buffer-view (mir-function-values function)))
+        (candidates nil))
+    (loop for header across blocks
+          for id = (mir-block-id header)
+          for parameters = (mir-block-parameters header)
+          for term = (mir-block-terminator header)
+          when (and (plusp (length parameters)) (= (mir-terminator-kind term) 1)
+                    (logbitp id reachable))
+            do (let* ((test (mir-primary-origin (svref (mir-terminator-operands term) 0) definitions))
+                      (comparison (svref definitions test)))
+                 (when (and comparison (= (mir-instruction-kind comparison) 6)
+                            (eq (mir-instruction-data comparison) '>=)
+                            (= (length (mir-instruction-operands comparison)) 2)
+                            (= (mir-value-block (svref values test)) id))
+                   (let* ((args (mir-instruction-operands comparison))
+                          (index (mir-primary-origin (svref args 0) definitions))
+                          (position (position index parameters :test #'eql))
+                          (limit (svref args 1)))
+                     (when position
+                       (let ((range (hir-type-range (mir-induction-limit-type limit definitions))))
+                         (when (and range (hir-fixnum-type-p range))
+                           (push (list id index position
+                                       (mir-edge-target (svref (mir-terminator-edges term) 1))
+                                       (hir-integer-range 0 (max 0 (third range))))
+                                 candidates))))))))
+    candidates))
+
+(defun mir-compute-induction-bounds (function blocks definitions reachable)
+  (let ((candidates (mir-induction-bound-candidates function blocks definitions reachable)))
+    (when candidates
+      (let ((incoming (make-array (length blocks) :initial-element nil))
+            (bounds nil)
+            (dominators (nth-value 1 (mir-cached-control-flow function))))
+        (loop for block across blocks
+              for id = (mir-block-id block)
+              when (logbitp id reachable)
+                do (loop for edge across (mir-terminator-edges (mir-block-terminator block))
+                         do (push (cons id edge) (svref incoming (mir-edge-target edge)))))
+        (dolist (candidate candidates)
+          (destructuring-bind (header index position body range) candidate
+            (let ((body-entries (svref incoming body))
+                  (initial nil) (increment nil))
+              ;; The continuation block must have no entry besides the
+              ;; guard edge. Every increment then starts below the limit.
+              (when (and (consp body-entries) (null (cdr body-entries))
+                         (= (caar body-entries) header) (/= body header)
+                         (loop for (source . edge) in (svref incoming header)
+                               for argument = (svref (mir-edge-arguments edge) position)
+                               always
+                               (if (mir-block-dominates-p dominators body source)
+                                   (when (mir-induction-add-one-p argument index definitions)
+                                     (setf increment t))
+                                   (when (mir-induction-integer-constant-p argument 0 definitions)
+                                     (setf initial t))))
+                         initial increment)
+                (unless bounds
+                  (setf bounds (make-array (length definitions) :initial-element nil)))
+                (setf (svref bounds index) range)))))
+        bounds))))
+
+(defun mir-induction-bounds (function blocks definitions reachable)
+  (mir-analysis function :induction-bounds
+    (lambda (function)
+      (mir-compute-induction-bounds function blocks definitions reachable))))
+
 (defun mir-compute-types (function &key summaries value-summaries functions inputs captures cell-types cell-points (finalize t))
   "Infer primary-value types. :UNSEEN is solver bottom; T is unknown."
   (let* ((types (make-array (hir-buffer-count (mir-function-values function))
@@ -134,6 +233,7 @@
          (blocks (hir-buffer-view (mir-function-blocks function)))
          (reachable (mir-reachable-blocks function))
          (definitions (mir-value-definitions function))
+         (induction (mir-induction-bounds function blocks definitions reachable))
          (changes (make-array (length types) :initial-element 0))
          (users (mir-type-use-blocks function))
          (queued (make-array (length blocks) :initial-element nil))
@@ -244,9 +344,10 @@
                        for argument across (mir-edge-arguments edge)
                        for input = (svref types argument)
                        do (merge-type parameter
-                            (if (eq input :unseen) :unseen
-                                (mir-edge-type (mir-block-terminator block) (zerop index)
-                                               argument input definitions types)))
+                            (or (and induction (svref induction parameter))
+                                (if (eq input :unseen) :unseen
+                                    (mir-edge-type (mir-block-terminator block) (zerop index)
+                                                   argument input definitions types))))
                           (when (eq (mir-value-representation (mir-at (mir-function-values function) parameter)) :bundle)
                             (merge-packet parameter (svref packets argument)))))))
     ;; Unreachable definitions and cyclic facts with no seed prove nothing.

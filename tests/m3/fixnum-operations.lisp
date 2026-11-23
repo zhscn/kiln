@@ -12,3 +12,18 @@
   (list (ash n 0) (ash n -1) (ash n -63) (ash n -64)))
 (print (fixnum-right-shifts -19))
 (print (fixnum-right-shifts 19))
+
+(defun bounded-counter (size)
+  (declare (type (integer -100 100) size) (optimize (speed 3)))
+  (dotimes (i size i)))
+
+(defun reassigned-counter (size replacement)
+  (declare (type (integer -100 100) size) (unsigned-byte replacement)
+           (optimize (speed 3)))
+  (dotimes (i size i)
+    (setq i replacement)))
+
+(assert (= (bounded-counter -1) (bounded-counter 0) 0))
+(assert (= (bounded-counter 100) 100))
+(let ((bignum (1+ most-positive-fixnum)))
+  (assert (= (reassigned-counter 1 bignum) (1+ bignum))))
