@@ -66,3 +66,20 @@
                '(t nil nil t)))
 (assert (equal (compare-fixnum-with-decrement 1 2) '(t nil t nil)))
 (assert (equal (compare-fixnum-with-increment 2 1) '(t nil t nil)))
+
+(defun masked-arithmetic (a b)
+  (declare (fixnum a b) (optimize (speed 3) (safety 3)))
+  (logand 255 (+ (* a b) (1- a))))
+
+(defun observed-masked-arithmetic (a b flag)
+  (declare (fixnum a b) (optimize (speed 3) (safety 3)))
+  (let ((sum (+ a b)))
+    (if flag sum (logand 255 sum))))
+
+(dolist (a (list most-negative-fixnum most-positive-fixnum -1 0 1))
+  (dolist (b (list most-negative-fixnum most-positive-fixnum -1 0 1))
+    (assert (= (masked-arithmetic a b)
+               (locally (declare (notinline logand))
+                 (logand 255 (+ (* a b) (1- a))))))
+    (assert (= (observed-masked-arithmetic a b t) (+ a b)))
+    (assert (= (observed-masked-arithmetic a b nil) (logand 255 (+ a b))))))
