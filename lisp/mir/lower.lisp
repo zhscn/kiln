@@ -17,6 +17,7 @@
 (defvar *mir-lir-list-tests* nil)
 (defvar *mir-lir-condition-source*)
 (defvar *mir-lir-condition-word*)
+(defvar *mir-lir-condition-inverted*)
 (defvar *mir-lir-index-bounds* nil)
 (defvar *mir-lir-inherited-index-bounds* nil)
 (defvar *mir-lir-shift-guarded-indices* nil)
@@ -669,6 +670,23 @@
           (jump done)
           (start-block done))
         sum)))
+
+(defun mir-lir-branch-condition (term)
+  (when (= (mir-terminator-kind term) 1)
+    ;; NOT and NULL invert the branch without changing evaluation of the test.
+    (loop with inverted = nil
+          for operand = (svref (mir-terminator-operands term) 0)
+            then (svref (mir-instruction-operands instruction) 0)
+          for origin = (mir-primary-origin operand *mir-lir-definitions*)
+          for instruction = (svref *mir-lir-definitions* origin)
+          while (and instruction
+                     (= (mir-instruction-kind instruction) 6)
+                     (member (mir-instruction-data instruction) '(not null))
+                     (= (length (mir-instruction-operands instruction)) 1)
+                     (hir-policy-optimize-p (mir-instruction-policy instruction))
+                     (not (mir-instruction-notinline instruction)))
+          do (setf inverted (not inverted))
+          finally (return (values origin inverted)))))
 
 (defun mir-lir-condition-value (instruction test)
   (when (eql (mir-instruction-result instruction) *mir-lir-condition-source*)
@@ -1940,6 +1958,7 @@
   (setf (kiln.kir::kfunc-direct-regions-p kiln.kir::*func*) t)
   (let* ((*mir-lir-debug-bindings* (make-array (length (mir-function-bindings function)) :initial-element nil))
          (*mir-lir-condition-source* nil) (*mir-lir-condition-word* nil)
+         (*mir-lir-condition-inverted* nil)
          (*mir-lir-debug-cells* (mir-function-binding-cells function))
          (*regions* *regions*)
          (*mir-lir-stack-regions* nil) (*mir-lir-rest-slots* nil)
@@ -2065,11 +2084,9 @@
     (labels ((emit-block (block labels &optional backedge skip-header-poll)
              (start-block (svref labels (mir-block-id block)))
              (let ((term (mir-block-terminator block)))
-               (setf *mir-lir-condition-word* nil
-                     *mir-lir-condition-source*
-                     (when (= (mir-terminator-kind term) 1)
-                       (mir-primary-origin (svref (mir-terminator-operands term) 0)
-                                           *mir-lir-definitions*))))
+               (setf *mir-lir-condition-word* nil)
+               (multiple-value-setq (*mir-lir-condition-source* *mir-lir-condition-inverted*)
+                 (mir-lir-branch-condition term)))
              (let ((active (svref (mir-binding-analysis-inputs (mir-binding-regions function)) (mir-block-id block))))
                (setf *regions* (mir-lir-active-regions active base-regions)))
              (when (and (or (zerop (mir-block-id block)) (logbitp (mir-block-id block) loop-polls))
@@ -2159,7 +2176,9 @@
                (case (mir-terminator-kind term)
                  (0 (jump (svref targets 0)))
                  (1 (if *mir-lir-condition-word*
-                        (br *mir-lir-condition-word* (svref targets 0) (svref targets 1))
+                        (if *mir-lir-condition-inverted*
+                            (br *mir-lir-condition-word* (svref targets 1) (svref targets 0))
+                            (br *mir-lir-condition-word* (svref targets 0) (svref targets 1)))
                         (br `(:eq ,(mir-lir-value (svref (mir-terminator-operands term) 0)) ,(nil-value))
                             (svref targets 1) (svref targets 0))))
                  (2 (multiple-value-bind (primary n)

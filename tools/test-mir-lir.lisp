@@ -138,6 +138,27 @@
                          do (setf (aref array (- i 1)) (aref array i)))
                    array))
               '((:vector-ref-fixnum 1) (:vector-set-fixnum 1) (:fixnum-uge 1)))
+  (let* ((form '(defun inverted-fixnum-branch (a b)
+                  (declare (fixnum a b) (optimize (speed 3)))
+                  (if (not (< a b)) :greater-or-equal :less)))
+         (session (make-session))
+         (module (compile-module (front-end-forms (list form) session)
+                                 "inverted-fixnum-branch" :session session)))
+    (assert
+     (loop for function in (kiln.kir::kmodule-funcs module)
+           thereis
+           (loop for block in (cddr function)
+                 thereis
+                 (when (eq (car block) :block)
+                   (let* ((statements (cddr block))
+                          (branch (car (last statements))))
+                     (and (eq (car branch) :br)
+                          (loop for statement in statements
+                                thereis
+                                (and (eq (car statement) :set)
+                                     (equalp (second statement) (second branch))
+                                     (consp (third statement))
+                                     (eq (caaddr statement) :lt)))))))))
   (operations '(defun fixnum-oddp (n)
                  (declare (fixnum n) (optimize (speed 3)))
                  (oddp n)) '((:fixnum-evenp 1)))

@@ -82,3 +82,16 @@
 (print (flow-unary-overflow 4611686018427387903))
 (print (flow-unary-overflow -4611686018427387904))
 (print (handler-case (flow-pipeline "bad") (type-error () 'type-error)))
+
+(defun inverted-fixnum-branch (a b)
+  (declare (fixnum a b) (optimize (speed 3)))
+  (if (not (< a b)) :greater-or-equal :less))
+
+(defun double-inverted-fixnum-branch (a b)
+  (declare (fixnum a b) (optimize (speed 3)))
+  (if (null (not (< a b))) :less :greater-or-equal))
+
+(dolist (branch (list #'inverted-fixnum-branch #'double-inverted-fixnum-branch))
+  (assert (eq (funcall branch 1 2) :less))
+  (assert (eq (funcall branch 2 2) :greater-or-equal))
+  (assert (eq (funcall branch 2 1) :greater-or-equal)))
