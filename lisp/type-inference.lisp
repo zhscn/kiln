@@ -228,6 +228,11 @@
       ((and (= count 1) (member name '(+ - * / abs 1+ 1-))
             (member (svref types 0) '(single-float double-float)))
        (svref types 0))
+      ((and (= count 1) (eq name '-) (hir-integer-type-p (svref types 0)))
+       (let ((range (hir-type-range (svref types 0))))
+         (if range
+             (hir-integer-range (- (third range)) (- (second range)))
+             'integer)))
       ((and (>= count 2) (member name '(+ - * /))
             (some (lambda (type) (member type '(single-float double-float))) types)
             (every (lambda (type)

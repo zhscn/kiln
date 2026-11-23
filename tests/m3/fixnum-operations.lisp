@@ -13,6 +13,14 @@
 (print (fixnum-right-shifts -19))
 (print (fixnum-right-shifts 19))
 
+(defun negate-fixnum (n)
+  (declare (fixnum n) (optimize (speed 3)))
+  (- n))
+
+(assert (= (negate-fixnum most-negative-fixnum) (1+ most-positive-fixnum)))
+(assert (= (negate-fixnum -19) 19))
+(assert (= (negate-fixnum 19) -19))
+
 (defun bounded-counter (size)
   (declare (type (integer -100 100) size) (optimize (speed 3)))
   (dotimes (i size i)))

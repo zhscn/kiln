@@ -590,7 +590,7 @@
              (and (eq name 'ash) (= (length operands) 2)
                   (hir-constant-right-shift (svref *mir-lir-types* (svref operands 1))))
              (and (> (length operands) 2) (eq name '+))
-             (and (= (length operands) 1) (member name '(1+ 1- zerop plusp minusp))))
+             (and (= (length operands) 1) (member name '(- 1+ 1- zerop plusp minusp))))
          (every (lambda (id) (hir-fixnum-type-p (svref *mir-lir-types* id))) operands))))
 
 (defun mir-lir-fixnum-sum (args bounded)
@@ -624,7 +624,9 @@
          (bounded (hir-fixnum-type-p (svref *mir-lir-types* (mir-instruction-result instruction)))))
     (cond ((and (eq name '+) (cddr args)) (mir-lir-fixnum-sum args bounded))
           ((member name '(+ - *))
-           (emit-fixnum-arithmetic name left right bounded nil *mir-lir-in-loop*))
+           (if right
+               (emit-fixnum-arithmetic name left right bounded nil *mir-lir-in-loop*)
+               (emit-fixnum-arithmetic '- '(:fixnum-tag 0) left bounded nil *mir-lir-in-loop*)))
           ((member name '(1+ 1-))
            (emit-fixnum-arithmetic (if (eq name '1+) '+ '-) left '(:fixnum-tag 1) bounded
                                    nil *mir-lir-in-loop*))
@@ -633,7 +635,7 @@
                   (shift (hir-constant-right-shift (svref *mir-lir-types* count))))
              (if (zerop shift)
                  left
-                 (copy-to-var `(:fixnum-tag (:word-shift-right (:fixnum-untag ,left) ,shift))))))
+                 (copy-to-var `(:fixnum-shift-right ,left (:fixnum-tag ,shift))))))
           ((member name '(logand logior logxor))
            (copy-to-var `(,(ecase name (logand :and) (logior :or) (logxor :xor)) ,left ,right)))
           (t (mir-lir-condition-value
