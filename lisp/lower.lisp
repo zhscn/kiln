@@ -626,7 +626,7 @@ if needed (not a safepoint)."
   (emit (list (ecase name (+ :fixnum-add-ovf) (- :fixnum-sub-ovf) (* :fixnum-mul-ovf))
               result overflow a b)))
 
-(defun emit-fixnum-arithmetic (name a b bounded &optional error-on-overflow cold)
+(defun emit-fixnum-arithmetic (name a b bounded &optional check-overflow-result cold)
   (if bounded
       (copy-to-var (case name
                      (+ `(:fixnum-add ,a ,b)) (- `(:fixnum-sub ,a ,b))
@@ -641,8 +641,7 @@ if needed (not a safepoint)."
                          (case name (+ 'kiln.kernel::two-arg-+)
                                     (- 'kiln.kernel::two-arg--)
                                     (* 'kiln.kernel::two-arg-*)) a b)))
-        (when error-on-overflow
-          (emit-slow-call 'kiln.kernel::%declared-type-error r (constant-object 'fixnum)))
+        (when check-overflow-result (funcall check-overflow-result r))
         (jump done) (start-block done) r)))
 
 ;;; Allocation

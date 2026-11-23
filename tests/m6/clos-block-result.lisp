@@ -72,3 +72,13 @@
       (leave)
       (setq value 4)))
   (print value))
+(defun checked-declared-product (a b)
+  (declare (fixnum a b) (optimize (speed 3) (safety 3)))
+  (the fixnum (* a b)))
+
+(assert (= (checked-declared-product -4 3) -12))
+(dolist (a (list most-positive-fixnum most-negative-fixnum))
+  (assert (handler-case (progn (checked-declared-product a 2) nil)
+            (type-error (condition)
+              (and (eq (type-error-expected-type condition) 'fixnum)
+                   (= (type-error-datum condition) (* a 2)))))))

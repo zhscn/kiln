@@ -828,20 +828,25 @@
             (and *mir-lir-inherited-index-bounds*
                  (gethash origin *mir-lir-inherited-index-bounds*)))))))
 
-(defun mir-lir-fixnum-call (instruction args declared-fixnum-result-p)
+(defun mir-lir-fixnum-call (instruction args declared-fixnum-result-p checked-result)
   (let* ((name (mir-instruction-data instruction)) (left (first args)) (right (second args))
          (bounded (or declared-fixnum-result-p
                       (and (eq name '-) (mir-lir-positive-decrement (mir-instruction-result instruction)))
                       (hir-fixnum-type-p (svref *mir-lir-types* (mir-instruction-result instruction)))
-                      (mir-lir-vector-index-increment-p instruction))))
+                      (mir-lir-vector-index-increment-p instruction)))
+         (check-overflow-result
+           (when (and checked-result (not bounded))
+             (lambda (value)
+               (let ((*call-source* (mir-instruction-source checked-result)))
+                 (emit-slow-call 'kiln.kernel::%declared-type-error value (constant-object 'fixnum)))))))
     (cond ((and (eq name '+) (cddr args)) (mir-lir-fixnum-sum args bounded))
           ((member name '(+ - *))
            (if right
-               (emit-fixnum-arithmetic name left right bounded nil *mir-lir-in-loop*)
-               (emit-fixnum-arithmetic '- '(:fixnum-tag 0) left bounded nil *mir-lir-in-loop*)))
+               (emit-fixnum-arithmetic name left right bounded check-overflow-result *mir-lir-in-loop*)
+               (emit-fixnum-arithmetic '- '(:fixnum-tag 0) left bounded check-overflow-result *mir-lir-in-loop*)))
           ((member name '(1+ 1-))
            (emit-fixnum-arithmetic (if (eq name '1+) '+ '-) left '(:fixnum-tag 1) bounded
-                                   nil *mir-lir-in-loop*))
+                                   check-overflow-result *mir-lir-in-loop*))
           ((eq name 'ash)
            (let* ((count (svref (mir-instruction-operands instruction) 1))
                   (shift (hir-constant-right-shift (svref *mir-lir-types* count))))
@@ -1524,7 +1529,7 @@
             fallback))
       fallback))
 
-(defun mir-lir-instruction (instruction arguments argument-count &optional declared-fixnum-result-p)
+(defun mir-lir-instruction (instruction arguments argument-count &optional fixnum-result-check known-fixnum-input)
   (let* ((*call-source* (mir-instruction-source instruction)) (*hir-policy* (mir-instruction-policy instruction))
          (kind (mir-instruction-kind instruction)) (result (mir-instruction-result instruction))
          (out (and result (mir-lir-value result))) (data (mir-instruction-data instruction))
@@ -1609,7 +1614,9 @@
       (when (or masked (mir-lir-fixnum-call-p instruction))
         (mir-lir-save result
                       (mir-lir-fixnum-call instruction args
-                                           (or declared-fixnum-result-p (eq masked :wrap))) 1)
+                                           (or (eq fixnum-result-check :unchecked) (eq masked :wrap))
+                                           (when (mir-instruction-p fixnum-result-check)
+                                             fixnum-result-check)) 1)
         (return-from mir-lir-instruction)))
     (when (and (= kind 6) (member data '(< <= > >= = /=))
                (hir-policy-optimize-p *hir-policy*) (not (mir-instruction-notinline instruction)))
@@ -1792,7 +1799,7 @@
       (10 (multiple-value-bind (value count) (mir-lir-restore (svref (mir-instruction-operands instruction) 0))
             (declare (ignore count)) (emit `(:set ,out ,value))))
       (11 (let ((input (first args)))
-            (unless (mir-check-proven-p instruction *mir-lir-types*)
+            (unless (or known-fixnum-input (mir-check-proven-p instruction *mir-lir-types*))
               (if (consp input)
                   (multiple-value-bind (primary count)
                       (mir-lir-restore (svref (mir-instruction-operands instruction) 0))
@@ -2231,12 +2238,11 @@
           do (setf (svref copy id) (new-block)))
     copy))
 
-(defun mir-lir-declared-fixnum-result-p (instruction instructions block position)
+(defun mir-lir-fixnum-result-check (instruction instructions block position)
   (when (and (= (mir-instruction-kind instruction) 6)
-             (member (mir-instruction-data instruction) '(+ - * 1+ 1-))
-             (zerop (hir-policy-quality (mir-instruction-policy instruction) :safety)))
-    ;; An immediately following declaration constrains this result before
-    ;; any other instruction can observe it. Keep overflow for checked code.
+             (member (mir-instruction-data instruction) '(+ - * 1+ 1-)))
+    ;; An immediately following declaration can share the overflow edge.
+    ;; Multi-operand sums can overflow at a prefix but still fit at the end.
     (flet ((following (offset)
              (let ((index (+ position offset)))
                (when (< index (length block))
@@ -2249,8 +2255,15 @@
                 next (following 2)))
         (and next (= (mir-instruction-kind next) 11)
              (eql result (svref (mir-instruction-operands next) 0))
-             (zerop (hir-policy-quality (mir-instruction-policy next) :safety))
-             (hir-fixnum-type-p (hir-declaration-type (mir-instruction-data next))))))))
+             (cond ((and (zerop (hir-policy-quality (mir-instruction-policy next) :safety))
+                         (zerop (hir-policy-quality (mir-instruction-policy instruction) :safety))
+                         (hir-fixnum-type-p (hir-declaration-type (mir-instruction-data next))))
+                    :unchecked)
+                   ((and (plusp (hir-policy-quality (mir-instruction-policy next) :safety))
+                         (eq (mir-instruction-data next) 'fixnum)
+                         (<= (length (mir-instruction-operands instruction)) 2)
+                         (mir-lir-fixnum-call-p instruction))
+                    next)))))))
 
 (defun mir-lir-function-body (function &optional unit)
   (setf (kiln.kir::kfunc-direct-regions-p kiln.kir::*func*) t)
@@ -2440,6 +2453,7 @@
                     (*mir-lir-index-bounds* nil))
                (loop with block-instructions = (hir-buffer-view (mir-block-instructions block))
                      with instructions = (mir-function-instructions function)
+                     with checked-result = nil
                      for id across block-instructions for position from 0
                      for instruction = (mir-at instructions id)
                      unless (member (mir-instruction-kind instruction) '(31 33 36))
@@ -2451,10 +2465,12 @@
                                               (mir-lir-double-call-p instruction)
                                               (nth-value 1 (mir-lir-array-access-plan instruction)))))
                             (setf *mir-lir-float-mode-cache* nil))
-                          (mir-lir-instruction
-                           instruction arguments count
-                           (mir-lir-declared-fixnum-result-p instruction instructions
-                                                              block-instructions position))
+                          (let ((result-check (mir-lir-fixnum-result-check
+                                               instruction instructions block-instructions position)))
+                            (mir-lir-instruction instruction arguments count result-check
+                                                 (eq instruction checked-result))
+                            (when (mir-instruction-p result-check)
+                              (setf checked-result result-check)))
                           (let* ((result (mir-instruction-result instruction))
                                  (storage (and result *mir-lir-array-contents*
                                                (gethash result *mir-lir-array-contents*))))
