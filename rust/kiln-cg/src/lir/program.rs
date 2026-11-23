@@ -347,6 +347,9 @@ operations! {
     VectorRef => ("vector-ref", [Obj, Word], Obj),
     SingleStorageRef => ("single-storage-ref", [Obj, Word], F32),
     DoubleStorageRef => ("double-storage-ref", [Obj, Word], F64),
+    VectorRefFixnum => ("vector-ref-fixnum", [Obj, Obj], Obj),
+    SingleStorageRefFixnum => ("single-storage-ref-fixnum", [Obj, Obj], F32),
+    DoubleStorageRefFixnum => ("double-storage-ref-fixnum", [Obj, Obj], F64),
     StringRef => ("string-ref", [Obj, Word], Obj),
 }
 
@@ -687,6 +690,8 @@ macro_rules! stores {
 stores! {
     Vector => ("vector-set", [Obj,Word,Obj]),
     DoubleStorage => ("double-storage-set", [Obj,Word,F64]),
+    VectorFixnum => ("vector-set-fixnum", [Obj,Obj,Obj]),
+    DoubleStorageFixnum => ("double-storage-set-fixnum", [Obj,Obj,F64]),
     String => ("string-set", [Obj,Word,Obj]),
     InstanceRack => ("instance-rack-set", [Obj,Obj]),
     InstanceStamp => ("instance-stamp-set", [Obj,Obj]),

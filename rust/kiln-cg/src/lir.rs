@@ -646,25 +646,33 @@ fn invalid_length(value: Expr, max: u64) -> Expr {
     )
 }
 
-fn vector_element_address(object: Expr, index: Expr) -> Expr {
+fn vector_element_address(object: Expr, index: Expr, tagged: bool) -> Expr {
     use crate::kir::{BinOp, ShiftOp};
     Expr::Bin(
         BinOp::Add,
         Box::new(object),
-        Box::new(Expr::Shift(ShiftOp::Shl, Box::new(index), 3)),
+        Box::new(Expr::Shift(ShiftOp::Shl, Box::new(index), if tagged { 2 } else { 3 })),
     )
 }
 
 pub fn vector_ref(object: Expr, index: Expr) -> Expr {
+    vector_load(object, index, false)
+}
+
+pub fn vector_load(object: Expr, index: Expr, tagged: bool) -> Expr {
     Expr::Load(
-        Box::new(vector_element_address(object, index)),
+        Box::new(vector_element_address(object, index, tagged)),
         size_of::<u64>() as i32 - TAG_GENERAL as i32,
     )
 }
 
 pub fn vector_set(object: Expr, index: Expr, value: Expr) -> Stmt {
+    vector_store(object, index, value, false)
+}
+
+pub fn vector_store(object: Expr, index: Expr, value: Expr, tagged: bool) -> Stmt {
     Stmt::Store(
-        vector_element_address(object, index),
+        vector_element_address(object, index, tagged),
         size_of::<u64>() as i32 - TAG_GENERAL as i32,
         value,
     )

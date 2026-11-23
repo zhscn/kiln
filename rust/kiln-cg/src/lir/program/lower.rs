@@ -773,6 +773,8 @@ impl Lowerer<'_> {
             VectorLength => layout::vector_length(a),
             SingleStorageRef => Expr::UnpackSingle(Box::new(layout::vector_ref(a, b()))),
             VectorRef | DoubleStorageRef => layout::vector_ref(a, b()),
+            SingleStorageRefFixnum => Expr::UnpackSingle(Box::new(layout::vector_load(a, b(), true))),
+            VectorRefFixnum | DoubleStorageRefFixnum => layout::vector_load(a, b(), true),
             StringRef => layout::string_ref(a, b()),
             UnboxDouble => layout::field_load(crate::packet::schema::FIELD_DOUBLE_BITS, a)?,
         })
@@ -904,6 +906,9 @@ impl Lowerer<'_> {
                 let statement = match operation {
                     StoreOperation::Vector | StoreOperation::DoubleStorage => {
                         layout::vector_set(object, args[1].clone(), value)
+                    }
+                    StoreOperation::VectorFixnum | StoreOperation::DoubleStorageFixnum => {
+                        layout::vector_store(object, args[1].clone(), value, true)
                     }
                     StoreOperation::String => layout::string_set(object, args[1].clone(), value),
                     StoreOperation::InstanceRack => layout::set_instance_rack(object, value)?,

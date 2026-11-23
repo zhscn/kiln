@@ -1536,6 +1536,21 @@ fn sequence_allocations_snapshot_aliases_initialize_unicode_and_keep_fields_root
 }
 
 #[test]
+fn tagged_vector_indices_select_the_same_slots_as_raw_indices() {
+    let original = include_str!("fixtures/lir-sequences.lisp-expr");
+    let tagged = original
+        .replace("(vector-set v index b)",
+                 "(set garbage (fixnum 16)) (vector-set-fixnum v garbage b)")
+        .replace("(set a (vector-ref a index)) (return",
+                 "(set garbage (fixnum 16)) (set a (vector-ref-fixnum a garbage)) (return");
+    check_object_results(&tagged, 6, "6\n(43)\n\"λ!λλ𐀀\"\n#()\n\"\"\n#\\!\n1\n");
+    assert!(
+        compile(&tagged.replace("(vector-set-fixnum v garbage b)", "(vector-set-fixnum v index b)"))
+            .unwrap_err().contains("expected Obj")
+    );
+}
+
+#[test]
 fn indexed_objects_initialize_all_fields_and_hide_rack_and_callable_layouts() {
     let text = include_str!("fixtures/lir-objects.lisp-expr");
     check_object_results(

@@ -472,16 +472,16 @@
 
 (defun mir-lir-vector-access (vector index value doublep result &optional singlep)
   (cond ((and doublep value)
-         (emit `(:lir-store :double-storage-set ,vector ,(emit-sequence-index index) ,value))
+         (emit `(:lir-store :double-storage-set-fixnum ,vector ,index ,value))
          (kiln.kir::emit-lir-assignment result value))
         (doublep
-         (emit `(:lir-set ,result (:double-storage-ref ,vector ,(emit-sequence-index index)))))
+         (emit `(:lir-set ,result (:double-storage-ref-fixnum ,vector ,index))))
         (singlep
-         (emit `(:lir-set ,result (:single-storage-ref ,vector ,(emit-sequence-index index)))))
+         (emit `(:lir-set ,result (:single-storage-ref-fixnum ,vector ,index))))
         (value
-         (emit-sequence-write :vector-set vector index value)
+         (emit `(:lir-store :vector-set-fixnum ,vector ,index ,value))
          (kiln.kir::emit-lir-assignment result value))
-        (t (emit-sequence-read :vector-ref vector index result))))
+        (t (emit `(:lir-set ,result (:vector-ref-fixnum ,vector ,index))))))
 
 (defun mir-lir-double-array-access-p (operation type)
   (and (member operation '(:specialized-array-read :specialized-array-write))
