@@ -741,6 +741,40 @@
                             ((= zerop) :eq) (/= :ne))
                 ,left ,(or right '(:fixnum-tag 0))))))))
 
+(defun mir-lir-bignum-side (type)
+  (cond ((hir-nonnegative-integer-type-p type) :above)
+        ((hir-range-p type)
+         (cond ((<= +hir-fixnum-min+ (second type)) :above)
+               ((<= (third type) +hir-fixnum-max+) :below)))))
+
+(defun mir-lir-mixed-integer-comparison (instruction args)
+  (let ((operands (mir-instruction-operands instruction)))
+    (when (= (length operands) 2)
+      (let* ((name (mir-instruction-data instruction))
+             (left (svref *mir-lir-types* (svref operands 0)))
+             (right (svref *mir-lir-types* (svref operands 1)))
+             (left-fixnum (hir-fixnum-type-p left))
+             (other (if left-fixnum right left)))
+        (when (and (or left-fixnum (hir-fixnum-type-p right))
+                   (hir-integer-type-p other)
+                   (not (hir-fixnum-type-p other)))
+          ;; Two equal fixnums have identical bits. A bignum cannot be
+          ;; equal to a fixnum, and its order is known if only one side of
+          ;; the fixnum range can contain it.
+          (let ((test `(,(ecase name (< :lt) (<= :le) (> :gt) (>= :ge)
+                                  (= :eq) (/= :ne)) ,@args)))
+            (if (member name '(= /=))
+                (mir-lir-condition-value instruction test)
+                (let ((side (mir-lir-bignum-side other)))
+                  (when side
+                    (let* ((other-value (if left-fixnum (second args) (first args)))
+                           (left-smaller (if left-fixnum (eq side :above) (eq side :below)))
+                           (bignum-true (if (member name '(< <=)) left-smaller (not left-smaller)))
+                           (fixnump `(:test-class ,kiln.kir::+packet-class-fixnum+ ,other-value)))
+                      (mir-lir-condition-value
+                       instruction (if bignum-true `(:or (:eq ,fixnump 0) ,test)
+                                       `(:and ,fixnump ,test)))))))))))))
+
 (defun mir-lir-parity-call (instruction argument)
   (let* ((name (mir-instruction-data instruction))
          (type (svref *mir-lir-types* (svref (mir-instruction-operands instruction) 0)))
@@ -1415,6 +1449,12 @@
     (when (mir-lir-fixnum-call-p instruction)
       (mir-lir-save result (mir-lir-fixnum-call instruction args declared-fixnum-result-p) 1)
       (return-from mir-lir-instruction))
+    (when (and (= kind 6) (member data '(< <= > >= = /=))
+               (hir-policy-optimize-p *hir-policy*) (not (mir-instruction-notinline instruction)))
+      (let ((value (mir-lir-mixed-integer-comparison instruction args)))
+        (when value
+          (mir-lir-save result value 1)
+          (return-from mir-lir-instruction))))
     (when (and (= kind 6) (eq data 'mod))
       (let ((value (mir-lir-fixnum-mod instruction (first args))))
         (when value

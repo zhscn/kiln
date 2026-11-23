@@ -49,3 +49,20 @@
 (assert (handler-case (progn (checked-declared-increment most-positive-fixnum) nil)
           (type-error (condition)
             (= (type-error-datum condition) (1+ most-positive-fixnum)))))
+
+(defun compare-fixnum-with-decrement (a b)
+  (declare (fixnum a b) (optimize (speed 3) (safety 3)))
+  (let ((limit (1- b)))
+    (list (<= a limit) (< limit a) (= a limit) (/= limit a))))
+
+(defun compare-fixnum-with-increment (a b)
+  (declare (fixnum a b) (optimize (speed 3) (safety 3)))
+  (let ((limit (1+ b)))
+    (list (<= a limit) (< limit a) (= a limit) (/= limit a))))
+
+(assert (equal (compare-fixnum-with-decrement most-negative-fixnum most-negative-fixnum)
+               '(nil t nil t)))
+(assert (equal (compare-fixnum-with-increment most-positive-fixnum most-positive-fixnum)
+               '(t nil nil t)))
+(assert (equal (compare-fixnum-with-decrement 1 2) '(t nil t nil)))
+(assert (equal (compare-fixnum-with-increment 2 1) '(t nil t nil)))
