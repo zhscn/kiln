@@ -158,7 +158,7 @@
                                 (and (eq (car statement) :set)
                                      (equalp (second statement) (second branch))
                                      (consp (third statement))
-                                     (eq (caaddr statement) :lt)))))))))
+                                     (eq (caaddr statement) :lt))))))))))
   (operations '(defun fixnum-oddp (n)
                  (declare (fixnum n) (optimize (speed 3)))
                  (oddp n)) '((:fixnum-evenp 1)))
