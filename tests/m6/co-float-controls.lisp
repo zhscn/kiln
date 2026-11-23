@@ -60,6 +60,18 @@
   (assert (= #x8000000000000000
              (kiln.sys:double-float-bits (returned-double-product seed 4)))))
 (assert (= 48d0 (returned-double-product 3d0 4)))
+(defun loop-reciprocal-of-positive-fixnum (n count)
+  (declare (type (integer 1 36028797018963968) n) (fixnum count))
+  (let ((result 0d0))
+    (dotimes (index count result)
+      (setf result (/ (float n 0d0))))))
+(let ((n (1+ (ash 1 54))))
+  (declare (notinline float /))
+  (assert (= (loop-reciprocal-of-positive-fixnum n 2) (/ (float n 0d0))))
+  (kiln.sys:with-rounding-mode :positive
+    (assert (= (loop-reciprocal-of-positive-fixnum n 2) (/ (float n 0d0)))))
+  (kiln.sys:with-rounding-mode :negative
+    (assert (= (loop-reciprocal-of-positive-fixnum n 2) (/ (float n 0d0))))))
 (defun observed-double-product (initial count observer)
   (declare (double-float initial) (fixnum count))
   (dotimes (index count initial)
