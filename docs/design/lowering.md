@@ -66,6 +66,9 @@ HIR 词法准备收集 `load-time-value`，MIR 为其建立独立初始化函数
 目标端的 `defconstant` 初始化式构造数组，供后续引用共享。
 
 - fixnum、字符、single-float、NIL、T 是立即数或静态对象。
+  后端可从赋值证明临时值的 fixnum 标签位始终为零。检查溢出的加减和乘法
+  也能参与这个证明，因为结果按机器字长回绕时最低位不变。只有所有赋值都
+  能证明标签位为零时，后端才把该临时值从 GC 栈图中省去。调试器需要的栈槽仍会生成。
 - symbol 是静态 symbol（或运行期 image 里的符号，见 [eval-compile.md](eval-compile.md)）。
 - cons 树、字符串、向量、bignum、ratio、double-float 作为静态数据输出，GC 不移动也不扫描。静态字符串常量按内容合并，cons 常量按 car 和 cdr 合并。编译进活 image 时，literal 表保留原对象身份。
 - MIR 从 SSA 定义证明函数名为常量后，可将 `(setf fdefinition)` 调用降级为函数对象检查、函数 cell 写入和定义变更通知。

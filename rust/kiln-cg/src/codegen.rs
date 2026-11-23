@@ -1027,6 +1027,10 @@ fn fixnum_bit_inputs(
             fixnum_bit_inputs(left, variable_index, inputs)
                 && fixnum_bit_inputs(right, variable_index, inputs)
         }
+        Expr::Bin(BinOp::Mul, _, right) if !definitely_fixnum_bits(expr) => {
+            // Tagged fixnum multiplication untags its left operand.
+            fixnum_bit_inputs(right, variable_index, inputs)
+        }
         _ => definitely_fixnum_bits(expr),
     }
 }
@@ -1054,16 +1058,32 @@ impl<'a, M: Module> FuncLowering<'a, M> {
             }
         };
         for stmt in f.blocks.iter().flat_map(|block| &block.stmts) {
+            inputs.clear();
             let assignment = match stmt {
                 Stmt::SetLocal(id, expr) => self.indexed_vars.get(*id)
-                    .map(|local| (index(local.0), expr)),
+                    .map(|local| (index(local.0), fixnum_bit_inputs(expr, &variable_index, &mut inputs))),
                 Stmt::Set(name, expr) => self.vars.get(name.as_str())
-                    .map(|&var| (index(var), expr)),
+                    .map(|&var| (index(var), fixnum_bit_inputs(expr, &variable_index, &mut inputs))),
+                Stmt::Ovf { op, result, overflow, a, b } => {
+                    mark_name(overflow, &mut may_hold_pointer);
+                    self.vars.get(result.as_str()).map(|&var| {
+                        // Overflow arithmetic returns the wrapped word and
+                        // an independent flag. Wrapping preserves parity.
+                        let immediate = match op {
+                            OvfOp::Add | OvfOp::Sub =>
+                                fixnum_bit_inputs(a, &variable_index, &mut inputs)
+                                    && fixnum_bit_inputs(b, &variable_index, &mut inputs),
+                            OvfOp::Mul =>
+                                definitely_fixnum_bits(a)
+                                    || fixnum_bit_inputs(b, &variable_index, &mut inputs),
+                        };
+                        (index(var), immediate)
+                    })
+                }
                 _ => None,
             };
-            if let Some((dest, expr)) = assignment {
-                inputs.clear();
-                if fixnum_bit_inputs(expr, &variable_index, &mut inputs) {
+            if let Some((dest, immediate)) = assignment {
+                if immediate {
                     for &source in &inputs {
                         dependencies.push((dest, first_dependency[source]));
                         first_dependency[source] = dependencies.len() - 1;
@@ -1082,10 +1102,6 @@ impl<'a, M: Module> FuncLowering<'a, M> {
                     for name in results {
                         mark_name(name, &mut may_hold_pointer);
                     }
-                }
-                Stmt::Ovf { result, overflow, .. } => {
-                    mark_name(result, &mut may_hold_pointer);
-                    mark_name(overflow, &mut may_hold_pointer);
                 }
                 _ => (),
             }
