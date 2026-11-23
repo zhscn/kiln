@@ -622,6 +622,17 @@
            (storage (and access (gethash (first access) *mir-lir-array-contents*))))
       (values access storage))))
 
+(defun mir-lir-direct-array-index-p (source limit origin upper index-type)
+  (or (mir-lir-array-index-proven-p source limit index-type nil)
+      (mir-lir-array-index-checked-p origin source limit)
+      (let ((input (mir-lir-positive-decrement origin)))
+        (and input (member source (gethash input *mir-lir-length-arguments*))))
+      (mir-lir-array-index-checked-p (mir-lir-previous-array-index origin) source limit)
+      (mir-lir-array-index-checked-p upper source limit)
+      (and upper *mir-lir-versioned-bound*
+           (eql upper (car *mir-lir-versioned-bound*))
+           (eql source (cdr *mir-lir-versioned-bound*)))))
+
 (defun mir-lir-container-value (operation instruction args type doublep &optional singlep)
   (let* ((store (member operation '(:vector-write :string-write :array-write :specialized-array-write)))
          (name (mir-instruction-data instruction))
@@ -665,15 +676,7 @@
                 (limit (and contents (third access)))
                 (origin (and contents (second access)))
                 (upper (mir-lir-reverse-index-upper-bound origin (mir-instruction-result instruction))))
-           (cond ((or (mir-lir-array-index-proven-p source limit index-type nil)
-                      (mir-lir-array-index-checked-p origin source limit)
-                      (let ((input (mir-lir-positive-decrement origin)))
-                        (and input (member source (gethash input *mir-lir-length-arguments*))))
-                      (mir-lir-array-index-checked-p (mir-lir-previous-array-index origin) source limit)
-                      (mir-lir-array-index-checked-p upper source limit)
-                      (and upper *mir-lir-versioned-bound*
-                           (eql upper (car *mir-lir-versioned-bound*))
-                           (eql source (cdr *mir-lir-versioned-bound*))))
+           (cond ((mir-lir-direct-array-index-p source limit origin upper index-type)
                   (let ((result (new-var (cond (doublep :f64) (singlep :f32) (t :obj)))))
                     (mir-lir-vector-access contents index value doublep result singlep)
                     result))
@@ -2418,6 +2421,58 @@
                  (or (< (second type) (- (ash 1 53))) (> (third type) (ash 1 53))))
         consumer))))
 
+(defun mir-lir-emit-double-multiply-add (mul instructions block position arguments count)
+  (when (and *mir-lir-in-loop*
+             (eq (mir-instruction-data mul) '*)
+             (= (length (mir-instruction-operands mul)) 2)
+             (mir-lir-double-call-p mul)
+             (< (+ position 4) (length block)))
+    (flet ((at (offset) (mir-at instructions (svref block (+ position offset))))
+           (raw-only (instruction)
+             (let ((id (mir-instruction-result instruction)))
+               (and id (not (svref *mir-lir-boxed* id)) (svref *mir-lir-doubles* id))))
+           (projects (primary definition)
+             (and (= (mir-instruction-kind primary) 10)
+                  (eql (svref (mir-instruction-operands primary) 0)
+                       (mir-instruction-result definition)))))
+      (let* ((product (at 1)) (load (at 2)) (element (at 3)) (add (at 4))
+             (mul-args (mir-instruction-operands mul))
+             (add-args (mir-instruction-operands add)))
+        (when (and (raw-only mul)
+                   (projects product mul) (raw-only product)
+                   (eq (mir-instruction-data load) 'aref)
+                   (projects element load) (raw-only load) (raw-only element)
+                   (eq (mir-instruction-data add) '+) (= (length add-args) 2)
+                   (mir-lir-double-call-p add) (raw-only add)
+                   (eql (svref add-args 0) (mir-instruction-result element))
+                   (eql (svref add-args 1) (mir-instruction-result product)))
+          (multiple-value-bind (access storage) (mir-lir-array-access-plan load)
+            (when (and (car storage)
+                       (mir-lir-direct-array-index-p
+                        (first access) (third access) (second access)
+                        (mir-lir-reverse-index-upper-bound (second access)
+                                                           (mir-instruction-result load))
+                        (svref *mir-lir-types* (svref (mir-instruction-operands load) 1))))
+              (let ((mode (mir-lir-float-mode-cache))
+                    (fast (new-block)) (slow (new-block t)) (done (new-block)))
+                (br mode slow fast)
+                (start-block fast)
+                (emit `(:set ,(raw-only mul)
+                             (:f64-mul ,(mir-lir-double-bits (svref mul-args 0))
+                                       ,(mir-lir-double-bits (svref mul-args 1)))))
+                (dolist (instruction (list product load element))
+                  (mir-lir-instruction instruction arguments count))
+                (let ((sum (raw-only add)))
+                  (emit `(:set ,sum (:f64-add ,(raw-only element) ,(raw-only product))))
+                  ;; Adding a nonfinite product cannot produce a finite sum.
+                  (br (mir-lir-nonfinite-test :double sum) slow done))
+                (start-block slow)
+                (dolist (instruction (list mul product load element add))
+                  (mir-lir-instruction instruction arguments count))
+                (jump done)
+                (start-block done)
+                t))))))))
+
 (defun mir-lir-function-body (function &optional unit)
   (setf (kiln.kir::kfunc-direct-regions-p kiln.kir::*func*) t)
   (let* ((*mir-lir-debug-bindings* (make-array (length (mir-function-bindings function)) :initial-element nil))
@@ -2608,9 +2663,11 @@
                (loop with block-instructions = (hir-buffer-view (mir-block-instructions block))
                      with instructions = (mir-function-instructions function)
                      with checked-result = nil
+                     with skip-through = -1
                      for id across block-instructions for position from 0
                      for instruction = (mir-at instructions id)
-                     unless (member (mir-instruction-kind instruction) '(31 33 36))
+                     when (and (> position skip-through)
+                               (not (member (mir-instruction-kind instruction) '(31 33 36))))
                        do (when (and *mir-lir-float-mode-cache*
                                      (not (or (member (mir-instruction-kind instruction) '(0 9 10))
                                               (and (= (mir-instruction-kind instruction) 11)
@@ -2620,55 +2677,59 @@
                                               (mir-lir-double-conversion-p instruction)
                                               (nth-value 1 (mir-lir-array-access-plan instruction)))))
                             (setf *mir-lir-float-mode-cache* nil))
-                          (let ((result-check (mir-lir-fixnum-result-check
-                                               instruction instructions block-instructions position)))
-                            (mir-lir-instruction instruction arguments count result-check
-                                                 (eq instruction checked-result)
-                                                 (and *mir-lir-in-loop*
-                                                      (not *mir-lir-float-mode-cache*)
-                                                      (= (mir-instruction-kind instruction) 6)
-                                                      (eq (mir-instruction-data instruction) 'float)
-                                                      (mir-lir-double-call-follows-p
-                                                       instructions block-instructions position))
-                                                 (mir-lir-following-reciprocal
-                                                  instruction instructions block-instructions position))
-                            (when (mir-instruction-p result-check)
-                              (setf checked-result result-check)))
-                          (let* ((result (mir-instruction-result instruction))
-                                 (storage (and result *mir-lir-array-contents*
-                                               (gethash result *mir-lir-array-contents*))))
-                            (when storage
-                              (setf *mir-lir-float-mode-cache* nil)
-                              (let* ((type (svref *mir-lir-types* result))
-                                     (value (mir-lir-value result))
-                                     (array (if (consp value) (car value) value))
-                                     (rank-one (hir-simple-specialized-vector-p type))
-                                     (contents (car storage))
-                                     (length (cdr storage))
-                                     (backing (and (= (mir-instruction-kind instruction) 1)
-                                                   (cdr (assoc (mir-instruction-data instruction) incoming-backing))))
-                                     (*call-source* (mir-instruction-source instruction)))
-                                (kiln.kir::emit-lir-assignment
-                                 contents
-                                 (or backing
-                                     (if (and rank-one recursive-private-entry
-                                              (= (mir-instruction-kind instruction) 1))
-                                         (mir-lir-known-vector-backing array)
-                                         (emit-slow-call
-                                          (if rank-one
-                                              'kiln.kernel::%simple-specialized-array-contents
-                                              'kiln.kernel::%simple-specialized-vector-contents)
-                                          array))))
-                                (unless rank-one
-                                  (let ((present (new-block)) (done (new-block)))
-                                    (kiln.kir::emit-lir-assignment length '(:fixnum-tag 0))
-                                    (br `(:eq ,contents ,(nil-value)) done present)
-                                    (start-block present)
-                                    (kiln.kir::emit-lir-assignment length (vector-length contents))
-                                    (jump done)
-                                    (start-block done)))
-                                (when (and rank-one (not (integerp (first (third type)))))
-                                  (kiln.kir::emit-lir-assignment length (vector-length contents))))))))
+                          (if (mir-lir-emit-double-multiply-add
+                               instruction instructions block-instructions position arguments count)
+                              (setf skip-through (+ position 4))
+                              (progn
+                              (let ((result-check (mir-lir-fixnum-result-check
+                                                   instruction instructions block-instructions position)))
+                                (mir-lir-instruction instruction arguments count result-check
+                                                     (eq instruction checked-result)
+                                                     (and *mir-lir-in-loop*
+                                                          (not *mir-lir-float-mode-cache*)
+                                                          (= (mir-instruction-kind instruction) 6)
+                                                          (eq (mir-instruction-data instruction) 'float)
+                                                          (mir-lir-double-call-follows-p
+                                                           instructions block-instructions position))
+                                                     (mir-lir-following-reciprocal
+                                                      instruction instructions block-instructions position))
+                                (when (mir-instruction-p result-check)
+                                  (setf checked-result result-check)))
+                              (let* ((result (mir-instruction-result instruction))
+                                     (storage (and result *mir-lir-array-contents*
+                                                   (gethash result *mir-lir-array-contents*))))
+                                (when storage
+                                  (setf *mir-lir-float-mode-cache* nil)
+                                  (let* ((type (svref *mir-lir-types* result))
+                                         (value (mir-lir-value result))
+                                         (array (if (consp value) (car value) value))
+                                         (rank-one (hir-simple-specialized-vector-p type))
+                                         (contents (car storage))
+                                         (length (cdr storage))
+                                         (backing (and (= (mir-instruction-kind instruction) 1)
+                                                       (cdr (assoc (mir-instruction-data instruction) incoming-backing))))
+                                         (*call-source* (mir-instruction-source instruction)))
+                                    (kiln.kir::emit-lir-assignment
+                                     contents
+                                     (or backing
+                                         (if (and rank-one recursive-private-entry
+                                                  (= (mir-instruction-kind instruction) 1))
+                                             (mir-lir-known-vector-backing array)
+                                             (emit-slow-call
+                                              (if rank-one
+                                                  'kiln.kernel::%simple-specialized-array-contents
+                                                  'kiln.kernel::%simple-specialized-vector-contents)
+                                              array))))
+                                    (unless rank-one
+                                      (let ((present (new-block)) (done (new-block)))
+                                        (kiln.kir::emit-lir-assignment length '(:fixnum-tag 0))
+                                        (br `(:eq ,contents ,(nil-value)) done present)
+                                        (start-block present)
+                                        (kiln.kir::emit-lir-assignment length (vector-length contents))
+                                        (jump done)
+                                        (start-block done)))
+                                    (when (and rank-one (not (integerp (first (third type)))))
+                                      (kiln.kir::emit-lir-assignment length (vector-length contents))))))))))
              (let* ((term (mir-block-terminator block))
                     (*call-source* (mir-terminator-source term))
                     (edges (mir-terminator-edges term))

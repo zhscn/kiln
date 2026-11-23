@@ -344,3 +344,19 @@
               (eq '*random-state* (cell-error-name condition))))))
 
 (print :float-controls)
+
+(defun multiply-add-array (n x y initial)
+  (declare (fixnum n) (double-float x y initial) (optimize (speed 3) (debug 0)))
+  (let ((result (make-array n :element-type 'double-float :initial-element initial)))
+    (dotimes (i n result)
+      (incf (aref result i) (* x y)))))
+
+(assert (equalp #(7d0 7d0) (multiply-add-array 2 2d0 3d0 1d0)))
+(assert (handler-case (progn (multiply-add-array 2 most-positive-double-float 2d0 0d0) nil)
+          (floating-point-overflow (condition) (eq '* (arithmetic-error-operation condition)))))
+(assert (handler-case (progn (multiply-add-array 2 most-positive-double-float 1d0
+                                                 most-positive-double-float) nil)
+          (floating-point-overflow (condition) (eq '+ (arithmetic-error-operation condition)))))
+(assert (equalp #(1.0000000000000002d0 1.0000000000000002d0)
+                (kiln.sys:with-rounding-mode :positive
+                  (multiply-add-array 2 (scale-float 1d0 -53) 1d0 1d0))))
