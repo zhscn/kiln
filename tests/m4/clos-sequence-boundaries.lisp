@@ -74,3 +74,7 @@
   (assert (eql (position-in-simple-vector other array) 1))
   (assert (null (position-in-simple-vector :absent array)))
   (assert (null (find-in-simple-vector number #()))))
+
+(locally (declare (optimize (speed 3) (space 1) (safety 3)))
+  (assert (handler-case (progn (evenp :not-an-integer) nil)
+            (type-error () t))))

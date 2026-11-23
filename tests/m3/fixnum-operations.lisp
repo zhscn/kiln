@@ -27,3 +27,13 @@
 (assert (= (bounded-counter 100) 100))
 (let ((bignum (1+ most-positive-fixnum)))
   (assert (= (reassigned-counter 1 bignum) (1+ bignum))))
+
+(defun integer-parity (n)
+  (declare (optimize (speed 3) (space 1) (safety 3)))
+  (if (evenp n) :even :odd))
+
+(assert (eq (integer-parity -8) :even))
+(assert (eq (integer-parity -7) :odd))
+(let ((bignum (1+ most-positive-fixnum)))
+  (assert (eq (integer-parity bignum) :even))
+  (assert (eq (integer-parity (1+ bignum)) :odd)))

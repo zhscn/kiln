@@ -580,6 +580,12 @@
           (start-block done))
         sum)))
 
+(defun mir-lir-condition-value (instruction test)
+  (when (eql (mir-instruction-result instruction) *mir-lir-condition-source*)
+    (setf test (copy-to-var test :raw)
+          *mir-lir-condition-word* test))
+  (boolean-value test))
+
 (defun mir-lir-fixnum-call (instruction args)
   (let* ((name (mir-instruction-data instruction)) (left (first args)) (right (second args))
          (bounded (hir-fixnum-type-p (svref *mir-lir-types* (mir-instruction-result instruction)))))
@@ -597,13 +603,34 @@
                  (copy-to-var `(:fixnum-tag (:word-shift-right (:fixnum-untag ,left) ,shift))))))
           ((member name '(logand logior logxor))
            (copy-to-var `(,(ecase name (logand :and) (logior :or) (logxor :xor)) ,left ,right)))
-          (t (let ((test `(,(ecase name ((< minusp) :lt) ((> plusp) :gt) (<= :le) (>= :ge)
-                                                     ((= zerop) :eq) (/= :ne))
-                           ,left ,(or right '(:fixnum-tag 0)))))
-               (when (eql (mir-instruction-result instruction) *mir-lir-condition-source*)
-                 (setf test (copy-to-var test :raw)
-                       *mir-lir-condition-word* test))
-               (boolean-value test))))))
+          (t (mir-lir-condition-value
+              instruction
+              `(,(ecase name ((< minusp) :lt) ((> plusp) :gt) (<= :le) (>= :ge)
+                            ((= zerop) :eq) (/= :ne))
+                ,left ,(or right '(:fixnum-tag 0))))))))
+
+(defun mir-lir-parity-call (instruction argument)
+  (let* ((name (mir-instruction-data instruction))
+         (type (svref *mir-lir-types* (svref (mir-instruction-operands instruction) 0)))
+         (even `(:fixnum-evenp ,argument))
+         (test (if (eq name 'evenp) even `(:eq ,even 0))))
+    (cond ((hir-fixnum-type-p type)
+           (mir-lir-condition-value instruction test))
+          ((or *mir-lir-in-loop*
+               (> (hir-policy-quality *hir-policy* :speed)
+                  (hir-policy-quality *hir-policy* :space)))
+           (let ((result (new-var :raw))
+                 (fast (new-block)) (slow (new-block t)) (done (new-block)))
+             (br (emit-kind-test argument kiln.kir::+packet-class-fixnum+) fast slow)
+             (start-block fast)
+             (kiln.kir::emit-lir-assignment result test)
+             (jump done)
+             (start-block slow)
+             (kiln.kir::emit-lir-assignment result
+               `(:ne ,(emit-slow-call name argument) ,(nil-value)))
+             (jump done)
+             (start-block done)
+             (mir-lir-condition-value instruction result))))))
 
 (defun mir-lir-power-of-two-divisor (instruction)
   (let ((operands (mir-instruction-operands instruction)))
@@ -1247,6 +1274,12 @@
                  (when raw
                    (mir-lir-load-field raw kiln.kir::+packet-field-double-bits+ value)))))
         (return-from mir-lir-instruction)))
+    (when (and (= kind 6) (member data '(evenp oddp)) (= (length args) 1)
+               (hir-policy-optimize-p *hir-policy*) (not (mir-instruction-notinline instruction)))
+      (let ((value (mir-lir-parity-call instruction (first args))))
+        (when value
+          (mir-lir-save result value 1)
+          (return-from mir-lir-instruction))))
     (when (mir-lir-fixnum-call-p instruction)
       (mir-lir-save result (mir-lir-fixnum-call instruction args) 1)
       (return-from mir-lir-instruction))

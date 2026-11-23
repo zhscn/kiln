@@ -177,7 +177,7 @@
           (return-from inferred-call-type (hir-integer-range dimension dimension)))))
     (cond
       ((hir-predicate-type name) 'boolean)
-      ((member name '(< > <= >= = /= eq eql equal equalp zerop plusp minusp)) 'boolean)
+      ((member name '(< > <= >= = /= eq eql equal equalp zerop plusp minusp evenp oddp)) 'boolean)
       ((eq name 'cons) 'cons)
       ((eq name 'list) (if (zerop count) 'null 'cons))
       ((eq name 'vector) 'simple-vector)

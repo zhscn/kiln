@@ -106,7 +106,7 @@
   (or (member name '((setf aref) (setf svref) (setf elt) (setf char) (setf schar)) :test #'equal)
       (hir-predicate-type name)
       (member name '(car cdr first rest rplaca rplacd identity + - * / mod abs 1+ 1- logand logior logxor
-                     < > <= >= = /= eq eql equal equalp zerop plusp minusp
+                     < > <= >= = /= eq eql equal equalp zerop plusp minusp evenp oddp
                      cons list vector make-array array-dimension length char schar aref elt char-code float))))
 
 (defun mir-return-value-owners (function carriers)
