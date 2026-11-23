@@ -76,7 +76,7 @@
                  (declare (fixnum n) (optimize (speed 3) (safety 3) (debug 0)))
                  (funcall callback)
                  n)
-              '((:fixnum-untag 1)))
+              '((:fixnum-untag 1) (:trap 1)))
   (operations '(defun unchecked-fixnum-across-call (n callback)
                  (declare (fixnum n) (optimize (speed 3) (safety 0) (debug 0)))
                  (funcall callback)

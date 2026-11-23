@@ -97,11 +97,12 @@
 
 (defun mir-lir-check (value type)
   (unless (or (zerop (hir-policy-quality *hir-policy* :safety)) (eq (hir-declaration-expanded type) t))
-    (let ((bad (new-block)) (done (new-block)))
+    (let ((bad (new-block t)) (done (new-block)))
       (br `(:eq ,(emit-typep-test value (hir-declaration-check-type type)) ,(nil-value)) bad done)
       (start-block bad)
       (emit-slow-call 'kiln.kernel::%declared-type-error value (constant-object (hir-declaration-original type)))
-      (jump done) (start-block done))))
+      (emit '(:trap))
+      (start-block done))))
 
 (defun mir-lir-typep-specialization (instruction)
   "Return a known type specifier only for optimizable two-argument TYPEP calls."
