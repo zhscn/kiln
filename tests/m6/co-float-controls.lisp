@@ -201,6 +201,20 @@
   (declare (fixnum n) (optimize (speed 3) (safety 3)))
   (float n 0d0))
 
+(defun multiply-converted-fixnums (a b)
+  (declare (fixnum a b) (optimize (speed 3) (safety 3)))
+  (* (float a 0d0) (float b 0d0)))
+
+(defun reference-converted-product (a b)
+  (declare (notinline float *))
+  (* (float a 0d0) (float b 0d0)))
+
+(dolist (a (list most-negative-fixnum -9007199254740993 0 most-positive-fixnum))
+  (dolist (b (list most-negative-fixnum 3 most-positive-fixnum))
+    (assert (eql (multiply-converted-fixnums a b) (reference-converted-product a b)))
+    (kiln.sys:with-rounding-mode :positive
+      (assert (eql (multiply-converted-fixnums a b) (reference-converted-product a b))))))
+
 (defun convert-and-add-in-loop (n count)
   (declare (fixnum n count) (optimize (speed 3) (safety 3)))
   (let ((value 0d0))

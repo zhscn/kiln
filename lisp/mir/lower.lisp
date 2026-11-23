@@ -1458,19 +1458,29 @@
           (start-block done)
           result))))
 
-(defun mir-lir-nonzero-fixnum-conversion-p (value)
+(defun mir-lir-double-fixnum-input-type (value)
   (let ((definition (svref *mir-lir-definitions*
                            (mir-primary-origin value *mir-lir-definitions*))))
     (when (and definition (mir-lir-double-conversion-p definition))
       (let ((type (svref *mir-lir-types* (svref (mir-instruction-operands definition) 0))))
-        (and (hir-range-p type) (hir-fixnum-type-p type)
-             (or (plusp (second type)) (minusp (third type))))))))
+        (when (hir-fixnum-type-p type) type)))))
+
+(defun mir-lir-nonzero-fixnum-conversion-p (value)
+  (let ((type (mir-lir-double-fixnum-input-type value)))
+    (and (hir-range-p type)
+         (or (plusp (second type)) (minusp (third type))))))
 
 (defun mir-lir-double-call (name operands)
   (let* ((bits (map 'list #'mir-lir-double-bits operands))
          (left (first bits)))
     (if (rest bits)
-        (mir-lir-float-chain :double name left (rest bits))
+        (mir-lir-float-chain :double name left (rest bits)
+                             ;; Two converted fixnums have magnitude at most
+                             ;; 2^62. These operations stay finite in binary64.
+                             :finite-result
+                             (and (= (length operands) 2)
+                                  (member name '(+ - *))
+                                  (every #'mir-lir-double-fixnum-input-type operands)))
         (case name
           (- (copy-to-var `(:xor ,left ,(- #x8000000000000000)) :f64))
           (abs (copy-to-var `(:and ,left #x7fffffffffffffff) :f64))
