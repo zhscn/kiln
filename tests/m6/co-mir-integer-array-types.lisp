@@ -77,3 +77,15 @@
   (assert (handler-case (progn (reverse-fixnum-prefix array 2) nil)
             (type-error () t)))
   (assert (equal (coerce array 'list) '(1 2))))
+
+(defun checked-fixnum-with-live-object (index object)
+  (declare (fixnum index) (optimize (speed 3) (safety 3) (debug 0)))
+  (kiln.sys:%gc)
+  (values index object))
+
+(let ((object (list :live)))
+  (dolist (index (list most-negative-fixnum 0 most-positive-fixnum))
+    (multiple-value-bind (value returned) (checked-fixnum-with-live-object index object)
+      (assert (and (eql value index) (eq returned object) (equal returned '(:live))))))
+  (assert (handler-case (progn (checked-fixnum-with-live-object object nil) nil)
+            (type-error (condition) (eq (type-error-datum condition) object)))))

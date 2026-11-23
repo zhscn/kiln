@@ -1925,8 +1925,10 @@
       (9 (mir-lir-save result (first args) 1))
       (10 (multiple-value-bind (value count) (mir-lir-restore (svref (mir-instruction-operands instruction) 0))
             (declare (ignore count)) (emit `(:set ,out ,value))))
-      (11 (let ((input (first args)))
-            (unless (or known-fixnum-input (mir-check-proven-p instruction *mir-lir-types*))
+      (11 (let ((input (first args))
+                (check (not (or known-fixnum-input
+                                (mir-check-proven-p instruction *mir-lir-types*)))))
+            (when check
               (if (consp input)
                   (multiple-value-bind (primary count)
                       (mir-lir-restore (svref (mir-instruction-operands instruction) 0))
@@ -1936,7 +1938,12 @@
             ;; Both carrier and primary/count locals survive TYPEP calls.
             (if (consp input)
                 (mir-lir-copy-bundle result (svref (mir-instruction-operands instruction) 0))
-                (emit `(:set ,out ,input)))))
+                ;; Preserve the tag proof after the check so the backend can
+                ;; omit this value and its copies from the GC root set.
+                (emit `(:set ,out ,(if (and check (eq data 'fixnum)
+                                            (plusp (hir-policy-quality *hir-policy* :safety)))
+                                       `(:fixnum-tag (:fixnum-untag ,input))
+                                       input))))))
       (37 (let* ((source (svref (mir-instruction-operands instruction) 0))
                  (fact (svref *mir-lir-value-facts* source))
                  (count (and (mir-values-fact-p fact) (mir-values-fact-count fact))))
