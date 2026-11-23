@@ -343,11 +343,13 @@
                     (when (zerop (mir-value-block (svref values origin)))
                       (push source (gethash origin arrays)))))
                  ((and pairs (= (mir-instruction-kind definition) 1))
-                  (let ((position (cdr (assoc (mir-instruction-data definition) pairs))))
-                    (when position
+                  (let ((positions (loop for (array-position . size-position) in pairs
+                                         when (= array-position (mir-instruction-data definition))
+                                           collect size-position)))
+                    (when positions
                       (loop for value across *mir-lir-definitions* for id from 0
                             when (and value (= (mir-instruction-kind value) 1)
-                                      (= (mir-instruction-data value) position))
+                                      (member (mir-instruction-data value) positions))
                               do (push source (gethash id arrays))))))))))
      sources)
     arrays))

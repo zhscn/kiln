@@ -164,3 +164,19 @@
 
 (assert (zerop (length (fill-private-array 0))))
 (assert (equalp (fill-private-array 3) #(2d0 2d0 2d0)))
+
+(defun fill-recursive-array (size change)
+  (declare (fixnum size change) (optimize (speed 3) (safety 3)))
+  (let ((array (make-array size :element-type 'double-float :initial-element 0d0)))
+    (labels ((fill-array (n pending)
+               (declare (fixnum n))
+               (if pending
+                   (fill-array (+ n change) nil)
+                   (dotimes (i n array)
+                     (setf (aref array i) 2d0)))))
+      (declare (notinline fill-array))
+      (fill-array size t))))
+
+(assert (equalp (fill-recursive-array 3 -1) #(2d0 2d0 0d0)))
+(assert (handler-case (progn (fill-recursive-array 3 1) nil)
+          (error () t)))
