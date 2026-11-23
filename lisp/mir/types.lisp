@@ -26,10 +26,10 @@
         do (setf id (svref (mir-instruction-operands instruction) 0))
         finally (return id)))
 
-(defun mir-specialized-vector-constructor-type (args types definitions)
+(defun mir-specialized-vector-constructor-type (args dimension-type definitions)
   "Use literal MAKE-ARRAY options to prove simple specialized storage."
   (unless (and (>= (length args) 3) (oddp (length args))
-               (hir-integer-type-p (svref types 0)))
+               (hir-integer-type-p dimension-type))
     (return-from mir-specialized-vector-constructor-type nil))
   (flet ((literal (index)
            (let ((definition (svref definitions (mir-primary-origin (svref args index) definitions))))
@@ -182,15 +182,43 @@
                          (when (and range (hir-fixnum-type-p range))
                            (push (list id index position
                                        (mir-edge-target (svref (mir-terminator-edges term) 1))
-                                       (hir-integer-range 0 (max 0 (third range))))
+                                       (hir-integer-range 0 (max 0 (third range)))
+                                       (mir-primary-origin limit definitions))
                                  candidates))))))))
     candidates))
+
+(defun mir-induction-array-limits (candidates values definitions reachable)
+  (let ((witnesses (make-hash-table :test #'eql)))
+    (dolist (candidate candidates)
+      (destructuring-bind (header index position body range limit) candidate
+        (declare (ignore header index position body))
+        (when (and (> (third range) +hir-vector-max-length+)
+                   (zerop (mir-value-block (svref values limit))))
+          (setf (gethash limit witnesses) nil))))
+    (when (plusp (hash-table-count witnesses))
+      (loop for instruction across definitions
+            when (and instruction (= (mir-instruction-kind instruction) 6)
+                      (eq (mir-instruction-data instruction) 'make-array))
+              do (let ((operands (mir-instruction-operands instruction)))
+                   (when (plusp (length operands))
+                     (let* ((origin (mir-primary-origin (svref operands 0) definitions))
+                            (block (mir-value-block (svref values (mir-instruction-result instruction)))))
+                       (when (and (nth-value 1 (gethash origin witnesses))
+                                  (logbitp block reachable)
+                                  (mir-specialized-vector-constructor-type
+                                   operands (mir-induction-limit-type (svref operands 0) definitions)
+                                   definitions))
+                         (pushnew block (gethash origin witnesses))))))))
+    witnesses))
 
 (defun mir-compute-induction-bounds (function blocks definitions reachable)
   (let ((candidates (mir-induction-bound-candidates function blocks definitions reachable)))
     (when candidates
       (let ((incoming (make-array (length blocks) :initial-element nil))
             (bounds nil)
+            (array-limits (mir-induction-array-limits
+                           candidates (hir-buffer-view (mir-function-values function))
+                           definitions reachable))
             (dominators (nth-value 1 (mir-cached-control-flow function))))
         (loop for block across blocks
               for id = (mir-block-id block)
@@ -198,7 +226,7 @@
                 do (loop for edge across (mir-terminator-edges (mir-block-terminator block))
                          do (push (cons id edge) (svref incoming (mir-edge-target edge)))))
         (dolist (candidate candidates)
-          (destructuring-bind (header index position body range) candidate
+          (destructuring-bind (header index position body range limit) candidate
             (let ((body-entries (svref incoming body))
                   (initial nil) (increment nil))
               ;; The continuation block must have no entry besides the
@@ -216,7 +244,14 @@
                          initial increment)
                 (unless bounds
                   (setf bounds (make-array (length definitions) :initial-element nil)))
-                (setf (svref bounds index) range)))))
+                (setf (svref bounds index)
+                      (if (and (> (third range) +hir-vector-max-length+)
+                               (some (lambda (block)
+                                       (and (/= block header)
+                                            (mir-block-dominates-p dominators block header)))
+                                     (gethash limit array-limits)))
+                          (hir-integer-range 0 +hir-vector-max-length+)
+                          range))))))
         bounds))))
 
 (defun mir-induction-bounds (function blocks definitions reachable)
@@ -315,7 +350,7 @@
                             (let ((inputs (map 'simple-vector (lambda (id) (svref types id)) args)))
                               (if (find :unseen inputs) :unseen
                                   (or (and (eq name 'make-array)
-                                           (mir-specialized-vector-constructor-type args inputs definitions))
+                                           (mir-specialized-vector-constructor-type args (svref inputs 0) definitions))
                                       (inferred-call-type name inputs))))
                             t)))
                    ((7 15) (let ((target (and functions (svref functions (svref args 0)))))
