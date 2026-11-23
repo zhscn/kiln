@@ -230,6 +230,17 @@
         do (setf value input)
         finally (return value)))
 
+(defun mir-lir-array-index-origin (id)
+  (let* ((origin (mir-primary-origin id *mir-lir-definitions*))
+         (instruction (svref *mir-lir-definitions* origin))
+         (index (and instruction (= (mir-instruction-kind instruction) 0)
+                     (mir-instruction-data instruction))))
+    ;; Negative keys identify literals by value. SSA definitions have
+    ;; nonnegative IDs and may denote a new index on each iteration.
+    (if (and (integerp index) (<= 0 index +hir-vector-max-length+))
+        (lognot index)
+        origin)))
+
 (defun mir-lir-plan-array-contents (function)
   (when (some #'mir-lir-vector-contents-candidate-p *mir-lir-types*)
     (let ((uses (make-hash-table :test #'eql))
@@ -266,7 +277,7 @@
                               (block (mir-value-block (mir-at (mir-function-values function) result))))
                          (let* ((store (eq operation :specialized-array-write))
                                 (index (svref (mir-instruction-operands instruction) (if store 2 1)))
-                                (origin (mir-primary-origin index *mir-lir-definitions*))
+                                (origin (mir-lir-array-index-origin index))
                                 (dimension (and (hir-simple-specialized-vector-p type) (first (third type)))))
                            (setf (gethash result sources)
                                  (list source origin (and (integerp dimension) dimension))))
@@ -301,11 +312,12 @@
                                 (and source (= target (mir-value-block (svref values source))))))
                             facts))
       (dolist (fact facts)
-        (unless (= target (mir-value-block (svref values (first fact))))
+        (unless (and (not (minusp (first fact)))
+                     (= target (mir-value-block (svref values (first fact)))))
           (push fact result)))
       (loop for argument across (mir-edge-arguments edge)
             for parameter across parameters
-            for origin = (mir-primary-origin argument *mir-lir-definitions*)
+            for origin = (mir-lir-array-index-origin argument)
             do (dolist (fact facts)
                  (when (= origin (first fact))
                    (setf result
@@ -377,7 +389,7 @@
              (type (svref *mir-lir-types* index))
              (length (mir-lir-upper-bound-length (svref args 1) (member name '(<= >)))))
         (when (and length (hir-nonnegative-integer-type-p type))
-          (let ((origin (mir-primary-origin index *mir-lir-definitions*))
+          (let ((origin (mir-lir-array-index-origin index))
                 (array (mir-lir-array-length-argument length values)))
             (when array
               (setf facts (mir-lir-add-array-bound (list origin array nil) facts)))
