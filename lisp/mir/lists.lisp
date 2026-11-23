@@ -62,15 +62,14 @@
     (mir-run-passes unit (nreverse transformations)))
   unit)
 
-(defun mir-sequence-call-helper (instruction definitions)
-  "Select a two-argument search when its complete keyword contract is known."
-  (let ((name (mir-instruction-data instruction))
-        (args (mir-instruction-operands instruction)))
-    (when (and (= (mir-instruction-kind instruction) 6) (member name '(member assoc))
+(defun mir-simple-search-test (instruction definitions)
+  "Recognize a search with its default bounds and a fixed equality test."
+  (let ((args (mir-instruction-operands instruction)))
+    (when (and (= (mir-instruction-kind instruction) 6)
                (member (length args) '(2 4))
                (hir-policy-optimize-p (mir-instruction-policy instruction))
                (not (mir-instruction-notinline instruction)))
-      (labels ((definition (index)
+      (flet ((definition (index)
                  (svref definitions (mir-primary-origin (svref args index) definitions))))
         (let ((test (if (= (length args) 2) 'eql
                         (let ((key (definition 2)) (value (definition 3)))
@@ -78,11 +77,15 @@
                                (eq (mir-instruction-data key) :test)
                                value (member (mir-instruction-kind value) '(0 4))
                                (mir-instruction-data value))))))
-          (cdr (assoc (list name test)
-                      '(((member eq) . kiln.kernel::%member-eq)
-                        ((member eql) . kiln.kernel::%member-eql)
-                        ((assoc eq) . kiln.kernel::%assoc-eq)
-                        ((assoc eql) . kiln.kernel::%assoc-eql)) :test #'equal)))))))
+          (when (member test '(eq eql)) test))))))
+
+(defun mir-sequence-call-helper (instruction definitions)
+  (let ((name (mir-instruction-data instruction)))
+    (when (member name '(member assoc))
+      (let ((test (mir-simple-search-test instruction definitions)))
+        (case name
+          (member (case test (eq 'kiln.kernel::%member-eq) (eql 'kiln.kernel::%member-eql)))
+          (assoc (case test (eq 'kiln.kernel::%assoc-eq) (eql 'kiln.kernel::%assoc-eql))))))))
 
 (defun mir-specialize-sequence-calls (unit)
   (let ((transformations nil))

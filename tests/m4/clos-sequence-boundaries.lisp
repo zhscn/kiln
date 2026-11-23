@@ -59,3 +59,18 @@
             (type-error () t))))
 (assert (= (find-if #'minusp (make-array 2 :element-type '(signed-byte 8)
                                            :initial-contents '(3 -3))) -3))
+(defun find-in-simple-vector (item array)
+  (declare (simple-vector array) (optimize (speed 3) (space 1) (safety 3)))
+  (find item array))
+
+(defun position-in-simple-vector (item array)
+  (declare (simple-vector array) (optimize (speed 3) (space 1) (safety 3)))
+  (position item array :test #'eq))
+
+(let* ((number (1+ most-positive-fixnum))
+       (other (+ number 0))
+       (array (vector :first other other)))
+  (assert (eq (find-in-simple-vector number array) other))
+  (assert (eql (position-in-simple-vector other array) 1))
+  (assert (null (position-in-simple-vector :absent array)))
+  (assert (null (find-in-simple-vector number #()))))
