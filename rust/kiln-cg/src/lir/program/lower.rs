@@ -739,6 +739,7 @@ impl Lowerer<'_> {
                 a,
                 None,
             )?,
+            FixnumHalfExact => layout::fixnum_untag(a),
             SingleTag => layout::single_float_tag(a),
             F32Bits => Expr::F32Bits(Box::new(a)),
             PackSingle => Expr::PackSingle(Box::new(a)),

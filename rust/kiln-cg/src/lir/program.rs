@@ -307,6 +307,7 @@ operations! {
     FixnumUge => ("fixnum-uge", [Obj,Obj], Word),
     FixnumEven => ("fixnum-evenp", [Obj], Word),
     FixnumHalf => ("fixnum-half", [Obj], Obj),
+    FixnumHalfExact => ("fixnum-half-exact", [Obj], Obj),
     FixnumShl => ("fixnum-shift-left", [Obj,Obj], Obj),
     FixnumSar => ("fixnum-shift-right", [Obj,Obj], Obj),
     SingleAdd => ("single-add", [Obj, Obj], Obj),

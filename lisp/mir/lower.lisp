@@ -1076,28 +1076,31 @@
 
 (defun mir-lir-power-of-two-division (instruction dividend divisor)
   (let* ((result (mir-instruction-result instruction))
-         (shift (1- (integer-length divisor)))
-         (mask (1- divisor))
-         (raw (copy-to-var `(:fixnum-untag ,dividend) :raw))
          (dividend-id (svref (mir-instruction-operands instruction) 0))
-         (type (svref *mir-lir-types* dividend-id))
-         (remainder-needed (svref *mir-lir-bundle-demand* result))
-         (bias-needed (and (plusp mask) (eq (mir-instruction-data instruction) 'truncate)
-                           (not (hir-nonnegative-integer-type-p type))))
-         (even (and (= divisor 2) (or bias-needed remainder-needed)
-                    (mir-lir-even-product-p dividend-id)))
-         ;; A signed shift rounds down. Only a negative, inexact result
-         ;; needs a bias to truncate towards zero.
-         (input (if (and bias-needed (not even))
-                    (copy-to-var `(:add ,raw (:and (:sar ,raw 63) ,mask)) :raw)
-                    raw))
-         (quotient (copy-to-var `(:sar ,input ,shift) :raw))
-         (primary (copy-to-var `(:fixnum-tag ,quotient))))
-    (when remainder-needed
-      (let ((remainder (if even (constant-object 0)
-                           (copy-to-var `(:fixnum-tag (:sub ,raw (:shl ,quotient ,shift)))))))
-        (emit `(:publish-values (,primary ,remainder)))))
-    (mir-lir-save result primary 2)))
+         (remainder-needed (svref *mir-lir-bundle-demand* result)))
+    (when (and (= divisor 2) (mir-lir-even-product-p dividend-id))
+      (let ((primary (copy-to-var `(:fixnum-half-exact ,dividend))))
+        (when remainder-needed
+          (emit `(:publish-values (,primary ,(constant-object 0)))))
+        (mir-lir-save result primary 2)
+        (return-from mir-lir-power-of-two-division)))
+    (let* ((shift (1- (integer-length divisor)))
+           (mask (1- divisor))
+           (raw (copy-to-var `(:fixnum-untag ,dividend) :raw))
+           (type (svref *mir-lir-types* dividend-id))
+           (bias-needed (and (plusp mask) (eq (mir-instruction-data instruction) 'truncate)
+                             (not (hir-nonnegative-integer-type-p type))))
+           ;; A signed shift rounds down. Only a negative, inexact result
+           ;; needs a bias to truncate towards zero.
+           (input (if bias-needed
+                      (copy-to-var `(:add ,raw (:and (:sar ,raw 63) ,mask)) :raw)
+                      raw))
+           (quotient (copy-to-var `(:sar ,input ,shift) :raw))
+           (primary (copy-to-var `(:fixnum-tag ,quotient))))
+      (when remainder-needed
+        (let ((remainder (copy-to-var `(:fixnum-tag (:sub ,raw (:shl ,quotient ,shift))))))
+          (emit `(:publish-values (,primary ,remainder)))))
+      (mir-lir-save result primary 2))))
 
 (defun mir-lir-double-call-p (instruction)
   "Select numeric operations only with a MIR double-float proof for every operand."

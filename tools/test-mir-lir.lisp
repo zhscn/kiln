@@ -50,7 +50,7 @@
   (operations '(defun division-even-product (n)
                  (declare (fixnum n) (optimize (speed 3)))
                  (truncate (the fixnum (* n (the fixnum (1+ n)))) 2))
-              '((:sar 1) (:publish-values 1)))
+              '((:fixnum-half-exact 1) (:sar 0) (:publish-values 1)))
   (operations '(defun division-notinline (n)
                  (declare (fixnum n) (notinline floor) (optimize (speed 3)))
                  (floor n 2)) '((:sar 0) (:publish-values 0)))

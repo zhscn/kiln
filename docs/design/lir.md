@@ -305,6 +305,8 @@ Lisp 发射端可以按操作签名直接构造 LIR 赋值。对于参数和结�
 `(fixnum-le-half left right)` 返回 `left <= floor(right / 2)` 的机器布尔结果。
 两个输入须为 fixnum。左操作数的带标签字为偶数，右操作数算术右移一位即可
 用于带符号比较，最低位无需清零。
+`(fixnum-half-exact value)` 接收已证明为偶数的 fixnum，返回它除以二的
+fixnum。输入的带标签字最低两位均为零，算术右移一位后仍有合法标签。
 
 ## 受检 fixnum 运算
 

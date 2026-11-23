@@ -969,6 +969,7 @@ fn fixnum_integer_operations_preserve_kir() {
     for (old, new) in [
         ("(eq (and a0 2) 0)", "(fixnum-evenp a0)"),
         ("(and (sar a0 1) -2)", "(fixnum-half a0)"),
+        ("(sar a0 1)", "(fixnum-half-exact a0)"),
         ("(shl (sdiv a0 a1) 1)", "(fixnum-quotient a0 a1)"),
         ("(srem a0 a1)", "(fixnum-remainder a0 a1)"),
         ("(and a0 a1)", "(fixnum-logand a0 a1)"),

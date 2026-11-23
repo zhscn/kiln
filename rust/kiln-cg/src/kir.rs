@@ -2376,7 +2376,7 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
             arity(h, r, 0)?;
             crate::lir::unwind_packed()
         }
-        "fixnum-evenp" | "fixnum-half" => {
+        "fixnum-evenp" | "fixnum-half" | "fixnum-half-exact" => {
             arity(h, r, 1)?;
             return crate::lir::fixnum_operation(h, parse_expr(&r[0])?, None);
         }

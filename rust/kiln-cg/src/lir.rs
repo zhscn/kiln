@@ -362,6 +362,7 @@ pub fn fixnum_operation(op: &str, a: Expr, b: Option<Expr>) -> Result<Expr, Stri
             Box::new(bin(BinOp::And, a, Expr::Int(2))),
             Box::new(Expr::Int(0)),
         ),
+        "fixnum-half-exact" => fixnum_untag(a),
         "fixnum-half" => bin(
             BinOp::And,
             Expr::Shift(ShiftOp::Sar, Box::new(a), 1),
