@@ -21,6 +21,22 @@
 (assert (= (negate-fixnum -19) 19))
 (assert (= (negate-fixnum 19) -19))
 
+(defun reverse-indices (z)
+  (declare (fixnum z) (optimize (speed 3)))
+  (loop for i from 0 to (ash z -1) collect (- z i)))
+
+(assert (null (reverse-indices most-negative-fixnum)))
+(assert (equal (reverse-indices 0) '(0)))
+(assert (equal (reverse-indices 7) '(7 6 5 4)))
+(assert (equal (reverse-indices 8) '(8 7 6 5 4)))
+
+(defun reverse-index-from-negative (z)
+  (declare (fixnum z) (optimize (speed 3)))
+  (loop for i from -1 to (ash z -1)
+        when (= i -1) do (return (- z i))))
+
+(assert (= (reverse-index-from-negative most-positive-fixnum) (1+ most-positive-fixnum)))
+
 (defun bounded-counter (size)
   (declare (type (integer -100 100) size) (optimize (speed 3)))
   (dotimes (i size i)))

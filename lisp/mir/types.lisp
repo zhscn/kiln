@@ -261,6 +261,83 @@
     (lambda (function)
       (mir-compute-induction-bounds function blocks definitions reachable))))
 
+(defun mir-shift-guard-relation (term definitions)
+  (let* ((test (mir-primary-origin (svref (mir-terminator-operands term) 0) definitions))
+         (comparison (svref definitions test)))
+    (when (and comparison (= (mir-instruction-kind comparison) 6)
+               (eq (mir-instruction-data comparison) '<=)
+               (= (length (mir-instruction-operands comparison)) 2))
+      (let* ((args (mir-instruction-operands comparison))
+             (limit (svref definitions (mir-primary-origin (svref args 1) definitions))))
+        (when (and limit (= (mir-instruction-kind limit) 6)
+                   (eq (mir-instruction-data limit) 'ash)
+                   (= (length (mir-instruction-operands limit)) 2)
+                   (mir-induction-integer-constant-p
+                    (svref (mir-instruction-operands limit) 1) -1 definitions))
+          (cons (mir-primary-origin (svref args 0) definitions)
+                (mir-primary-origin (svref (mir-instruction-operands limit) 0) definitions)))))))
+
+(defun mir-shift-guarded-indices (function blocks definitions reachable)
+  "Map guarded zero-based index parameters to the value they traverse toward."
+  (mir-analysis function :shift-guarded-indices
+    (lambda (function)
+      (let ((guards nil))
+        (loop for block across blocks
+              for term = (mir-block-terminator block)
+              when (and (logbitp (mir-block-id block) reachable)
+                        (= (mir-terminator-kind term) 1))
+                do (let ((relation (mir-shift-guard-relation term definitions)))
+                     (when relation
+                       (push (cons (svref (mir-terminator-edges term) 0) relation) guards))))
+        (when guards
+          (let ((incoming (make-array (length blocks) :initial-element nil))
+                (guarded (make-hash-table :test #'eq))
+                (result (make-hash-table :test #'eql))
+                (values (hir-buffer-view (mir-function-values function))))
+            (loop for block across blocks
+                  when (logbitp (mir-block-id block) reachable)
+                    do (loop for edge across (mir-terminator-edges (mir-block-terminator block))
+                             do (push edge (svref incoming (mir-edge-target edge)))))
+            (dolist (guard guards)
+              (destructuring-bind (edge index . source) guard
+                ;; LOOP may put empty control-flow connectors on the taken
+                ;; edge. Stop before a merge or a block that can rebind an
+                ;; SSA value used by the proof.
+                (loop for target = (mir-edge-target edge)
+                      for block = (svref blocks target)
+                      for term = (mir-block-terminator block)
+                      while (and (null (cdr (svref incoming target)))
+                                 (zerop (length (mir-block-parameters block)))
+                                 (/= target (mir-value-block (svref values index)))
+                                 (/= target (mir-value-block (svref values source)))
+                                 (zerop (mir-terminator-kind term)))
+                      do (setf edge (svref (mir-terminator-edges term) 0)))
+                (setf (gethash edge guarded) (cons index source))))
+            ;; Every entry supplies zero or advances a previously established
+            ;; index, and the taken comparison bounds either value by Z >> 1.
+            (loop for block across blocks
+                  for edges = (svref incoming (mir-block-id block))
+                  when (and edges (every (lambda (edge) (gethash edge guarded)) edges))
+                    do (loop for parameter across (mir-block-parameters block)
+                             for position from 0
+                             for source = (cdr (gethash (first edges) guarded))
+                             when (and (/= (mir-block-id block)
+                                           (mir-value-block (svref values source)))
+                                       (some (lambda (edge)
+                                               (mir-induction-integer-constant-p
+                                                (svref (mir-edge-arguments edge) position) 0 definitions))
+                                             edges)
+                                       (every (lambda (edge)
+                                                (let* ((argument (svref (mir-edge-arguments edge) position))
+                                                       (guard (gethash edge guarded)))
+                                                  (and (= source (cdr guard))
+                                                       (= (car guard) (mir-primary-origin argument definitions))
+                                                       (or (mir-induction-integer-constant-p argument 0 definitions)
+                                                           (mir-induction-add-one-p argument parameter definitions)))))
+                                              edges))
+                               do (setf (gethash parameter result) source)))
+            result))))))
+
 (defun mir-compute-types (function &key summaries value-summaries functions inputs captures cell-types cell-points (finalize t))
   "Infer primary-value types. :UNSEEN is solver bottom; T is unknown."
   (let* ((types (make-array (hir-buffer-count (mir-function-values function))
@@ -268,9 +345,11 @@
          (packets (make-array (length types) :initial-element :unseen))
          (packet-changes (make-array (length types) :initial-element nil))
          (blocks (hir-buffer-view (mir-function-blocks function)))
+         (values (hir-buffer-view (mir-function-values function)))
          (reachable (mir-reachable-blocks function))
          (definitions (mir-value-definitions function))
          (induction (mir-induction-bounds function blocks definitions reachable))
+         (shift-guards (mir-shift-guarded-indices function blocks definitions reachable))
          (changes (make-array (length types) :initial-element 0))
          (users (mir-type-use-blocks function))
          (queued (make-array (length blocks) :initial-element nil))
@@ -353,6 +432,17 @@
                               (if (find :unseen inputs) :unseen
                                   (or (and (eq name 'make-array)
                                            (mir-specialized-vector-constructor-type args (svref inputs 0) definitions))
+                                      (when (and shift-guards (eq name '-) (= (length args) 2)
+                                                 (hir-fixnum-type-p (svref inputs 0)))
+                                        (let ((index (mir-primary-origin (svref args 1) definitions)))
+                                          ;; Use the relation in the receiving block,
+                                          ;; where neither input can have been rebound.
+                                          (when (and
+                                                 (= (mir-value-block (svref values (mir-instruction-result instruction)))
+                                                    (mir-value-block (svref values index)))
+                                                 (eql (mir-primary-origin (svref args 0) definitions)
+                                                      (gethash index shift-guards)))
+                                            (hir-integer-range 0 +hir-fixnum-max+))))
                                       (inferred-call-type name inputs))))
                             t)))
                    ((7 15) (let ((target (and functions (svref functions (svref args 0)))))
