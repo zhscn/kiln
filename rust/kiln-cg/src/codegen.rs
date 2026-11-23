@@ -1006,23 +1006,47 @@ fn definitely_fixnum_bits(expr: &Expr) -> bool {
     }
 }
 
+// For these operations, even inputs imply an even output. Record variable
+// inputs as dependencies and reject any other input with unknown tag bits.
+fn fixnum_bit_inputs(
+    expr: &Expr,
+    variable_index: &impl Fn(&Expr) -> Option<usize>,
+    inputs: &mut Vec<usize>,
+) -> bool {
+    match expr {
+        Expr::Var(_) | Expr::Local(_) => {
+            let Some(index) = variable_index(expr) else {
+                return false;
+            };
+            inputs.push(index);
+            true
+        }
+        Expr::Bin(BinOp::Add | BinOp::Sub | BinOp::Or | BinOp::Xor, left, right)
+        | Expr::Select(_, left, right) => {
+            fixnum_bit_inputs(left, variable_index, inputs)
+                && fixnum_bit_inputs(right, variable_index, inputs)
+        }
+        _ => definitely_fixnum_bits(expr),
+    }
+}
+
 impl<'a, M: Module> FuncLowering<'a, M> {
     fn declare_stack_map_variables(&self, b: &mut FunctionBuilder, f: &kir::Func) {
         let first_local = kir::PREDEFINED_VARS.len();
         let mut may_hold_pointer = vec![false; first_local + f.vars.len()];
         may_hold_pointer[..first_local].fill(true);
         let index = |var: Variable| var.as_u32() as usize;
-        let alias = |expr: &Expr| match expr {
+        let variable_index = |expr: &Expr| match expr {
             Expr::Local(id) => self.indexed_vars.get(*id).map(|local| index(local.0)),
             Expr::Var(name) => self.vars.get(name.as_str()).copied().map(index),
             _ => None,
         };
         // A variable is immediate only if every assignment proves it.
-        // Record copies by source so a possible reference reaches every
-        // destination, including variables assigned along a loop backedge.
-        let no_copy = usize::MAX;
-        let mut first_copy = vec![no_copy; may_hold_pointer.len()];
-        let mut copies = Vec::new();
+        // Record dependencies by source, including assignments along loop backedges.
+        let no_dependency = usize::MAX;
+        let mut first_dependency = vec![no_dependency; may_hold_pointer.len()];
+        let mut dependencies = Vec::new();
+        let mut inputs = Vec::new();
         let mark_name = |name: &str, may_hold_pointer: &mut [bool]| {
             if let Some(&var) = self.vars.get(name) {
                 may_hold_pointer[index(var)] = true;
@@ -1037,10 +1061,13 @@ impl<'a, M: Module> FuncLowering<'a, M> {
                 _ => None,
             };
             if let Some((dest, expr)) = assignment {
-                if let Some(src) = alias(expr) {
-                    copies.push((dest, first_copy[src]));
-                    first_copy[src] = copies.len() - 1;
-                } else if !definitely_fixnum_bits(expr) {
+                inputs.clear();
+                if fixnum_bit_inputs(expr, &variable_index, &mut inputs) {
+                    for &source in &inputs {
+                        dependencies.push((dest, first_dependency[source]));
+                        first_dependency[source] = dependencies.len() - 1;
+                    }
+                } else {
                     may_hold_pointer[dest] = true;
                 }
                 continue;
@@ -1063,19 +1090,19 @@ impl<'a, M: Module> FuncLowering<'a, M> {
             }
         }
         let mut work: Vec<_> = may_hold_pointer.iter().enumerate()
-            .filter_map(|(id, &possible)| (possible && first_copy[id] != no_copy).then_some(id))
+            .filter_map(|(id, &possible)| (possible && first_dependency[id] != no_dependency).then_some(id))
             .collect();
         while let Some(source) = work.pop() {
-            let mut copy = first_copy[source];
-            while copy != no_copy {
-                let (dest, next) = copies[copy];
+            let mut dependency = first_dependency[source];
+            while dependency != no_dependency {
+                let (dest, next) = dependencies[dependency];
                 if !may_hold_pointer[dest] {
                     may_hold_pointer[dest] = true;
-                    if first_copy[dest] != no_copy {
+                    if first_dependency[dest] != no_dependency {
                         work.push(dest);
                     }
                 }
-                copy = next;
+                dependency = next;
             }
         }
         for (name, kind) in kir::PREDEFINED_VARS.iter().copied()

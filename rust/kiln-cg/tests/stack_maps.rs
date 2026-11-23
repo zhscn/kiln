@@ -33,7 +33,7 @@ fn immediate_temporaries_need_stack_slots_only_when_debug_visible() {
           (br (eq remaining 0) done rotate))
         (block rotate
           (set saved left)
-          (set left right)
+          (set left (add right 2))
           (set right saved)
           (set remaining (sub remaining 1))
           (jump check))
@@ -51,7 +51,7 @@ fn immediate_temporaries_need_stack_slots_only_when_debug_visible() {
           (set maybe-object a2)
           (jump join))
         (block join
-          (set saved maybe-object)
+          (set saved (or maybe-object 0))
           (call-rt "opaque" () () nil (loc 0 1))
           (return (xor saved visible) 1))))"#;
     let input = kir::parse_module(&sexp::parse_one(source).unwrap()).unwrap();
