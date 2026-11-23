@@ -388,10 +388,37 @@
             (when (mir-induction-integer-constant-p (svref args 1) 1 *mir-lir-definitions*)
               (mir-primary-origin (svref args 0) *mir-lir-definitions*)))))))
 
+(defun mir-lir-add-length-bound (index length lengths values block dominators facts)
+  (let ((array (mir-lir-array-length-argument length values)))
+    (when array
+      (setf facts (mir-lir-add-array-bound (list index array nil) facts))))
+  (dolist (source (gethash length lengths) facts)
+    (when (mir-block-dominates-p dominators (mir-value-block (svref values source)) block)
+      (setf facts (mir-lir-add-array-bound (list index source nil) facts)))))
+
+(defun mir-lir-array-nonempty-bounds (minimum size lengths values block dominators facts)
+  (let ((range (hir-type-range (svref *mir-lir-types* minimum))))
+    (if (and range (plusp (second range)))
+        (mir-lir-add-length-bound (lognot 0) (mir-primary-origin size *mir-lir-definitions*)
+                                  lengths values block dominators facts)
+        facts)))
+
 (defun mir-lir-array-branch-bounds (term block lengths values dominators facts)
   (let* ((test (svref (mir-terminator-operands term) 0))
          (definition (svref *mir-lir-definitions*
                             (mir-primary-origin test *mir-lir-definitions*))))
+    (when (and definition (= (mir-instruction-kind definition) 6)
+               (not (mir-instruction-notinline definition))
+               (= (length (mir-instruction-operands definition)) 2)
+               (member (mir-instruction-data definition) '(= <=)))
+      (let ((args (mir-instruction-operands definition)))
+        (setf facts (mir-lir-array-nonempty-bounds (svref args 0) (svref args 1)
+                                                   lengths values block dominators facts))
+        (when (eq (mir-instruction-data definition) '=)
+          (return-from mir-lir-array-branch-bounds
+            (values (mir-lir-array-nonempty-bounds (svref args 1) (svref args 0)
+                                                  lengths values block dominators facts)
+                    0)))))
     (when (and definition (= (mir-instruction-kind definition) 6)
                (member (mir-instruction-data definition) '(< >= <= >))
                (= (length (mir-instruction-operands definition)) 2))
@@ -402,13 +429,8 @@
              (type (svref *mir-lir-types* index))
              (length (mir-lir-upper-bound-length (svref args 1) (member name '(<= >)))))
         (when (and length (hir-nonnegative-integer-type-p type))
-          (let ((origin (mir-lir-array-index-origin index))
-                (array (mir-lir-array-length-argument length values)))
-            (when array
-              (setf facts (mir-lir-add-array-bound (list origin array nil) facts)))
-            (dolist (source (gethash length lengths))
-              (when (mir-block-dominates-p dominators (mir-value-block (svref values source)) block)
-                (setf facts (mir-lir-add-array-bound (list origin source nil) facts))))))
+          (setf facts (mir-lir-add-length-bound (mir-lir-array-index-origin index) length
+                                                lengths values block dominators facts)))
         (return-from mir-lir-array-branch-bounds (values facts accepted-edge))))
     (values facts nil)))
 

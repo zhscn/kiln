@@ -338,3 +338,19 @@
 
 (assert (equal (packed-array-recursion 0) '(0 nil)))
 (assert (equal (packed-array-recursion 4) '(38 (10 10 10 10))))
+
+(defun read-first-after-length-test (n minimum mode)
+  (declare (fixnum n) (type (integer 1 8) minimum)
+           (optimize (speed 3) (safety 3)))
+  (let ((array (make-array n :element-type 'fixnum :initial-element 7)))
+    (case mode
+      (:equal (if (= n 1) (+ (aref array 0) (aref array 0)) :empty))
+      (:at-least (if (<= minimum n) (+ (aref array 0) (aref array 0)) :short))
+      (:unchecked-branch (unless (= n 1) (+ (aref array 0) (aref array 0)))))))
+
+(assert (eq :empty (read-first-after-length-test 0 1 :equal)))
+(assert (= 14 (read-first-after-length-test 1 1 :equal)))
+(assert (eq :short (read-first-after-length-test 1 2 :at-least)))
+(assert (= 14 (read-first-after-length-test 2 2 :at-least)))
+(assert (handler-case (progn (read-first-after-length-test 0 1 :unchecked-branch) nil)
+          (error () t)))
