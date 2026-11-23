@@ -264,21 +264,31 @@
     (lambda (function)
       (mir-compute-induction-bounds function blocks definitions reachable))))
 
-(defun mir-shift-guard-relation (term definitions)
+(defun mir-shift-guard-relation (term definitions &optional allow-decrement)
   (let* ((test (mir-primary-origin (svref (mir-terminator-operands term) 0) definitions))
          (comparison (svref definitions test)))
     (when (and comparison (= (mir-instruction-kind comparison) 6)
-               (eq (mir-instruction-data comparison) '<=)
+               (member (mir-instruction-data comparison) (if allow-decrement '(< <=) '(<=)))
+               (not (mir-instruction-notinline comparison))
                (= (length (mir-instruction-operands comparison)) 2))
       (let* ((args (mir-instruction-operands comparison))
              (limit (svref definitions (mir-primary-origin (svref args 1) definitions))))
         (when (and limit (= (mir-instruction-kind limit) 6)
                    (eq (mir-instruction-data limit) 'ash)
+                   (not (mir-instruction-notinline limit))
                    (= (length (mir-instruction-operands limit)) 2)
                    (mir-induction-integer-constant-p
                     (svref (mir-instruction-operands limit) 1) -1 definitions))
-          (cons (mir-primary-origin (svref args 0) definitions)
-                (mir-primary-origin (svref (mir-instruction-operands limit) 0) definitions)))))))
+          (let* ((source (mir-primary-origin (svref (mir-instruction-operands limit) 0) definitions))
+                 (decrement (and allow-decrement (svref definitions source))))
+            (when (and decrement (= (mir-instruction-kind decrement) 6)
+                       (eq (mir-instruction-data decrement) '1-)
+                       (not (mir-instruction-notinline decrement))
+                       (= (length (mir-instruction-operands decrement)) 1))
+              ;; An index bounded by (Z - 1) >> 1 also lies below Z.
+              (setf source (mir-primary-origin
+                             (svref (mir-instruction-operands decrement) 0) definitions)))
+            (cons (mir-primary-origin (svref args 0) definitions) source)))))))
 
 (defun mir-shift-guarded-indices (function blocks definitions reachable)
   "Map guarded zero-based index parameters to the value they traverse toward."
@@ -289,7 +299,7 @@
               for term = (mir-block-terminator block)
               when (and (logbitp (mir-block-id block) reachable)
                         (= (mir-terminator-kind term) 1))
-                do (let ((relation (mir-shift-guard-relation term definitions)))
+                do (let ((relation (mir-shift-guard-relation term definitions t)))
                      (when relation
                        (push (cons (svref (mir-terminator-edges term) 0) relation) guards))))
         (when guards

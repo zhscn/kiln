@@ -145,6 +145,19 @@
 (assert (handler-case (progn (fill-with-invalid-index 1) nil)
           (error () t)))
 
+(defun reverse-without-middle (array z)
+  (declare ((simple-array fixnum (*)) array) (fixnum z)
+           (optimize (speed 3) (space 1) (debug 0)))
+  (loop for i from 0 to (ash (1- z) -1)
+        do (rotatef (aref array i) (aref array (- z i))))
+  array)
+
+(let ((empty (make-array 0 :element-type 'fixnum))
+      (values (make-array 5 :element-type 'fixnum :initial-contents '(0 1 2 3 4))))
+  (assert (eq empty (reverse-without-middle empty 0)))
+  (assert (eq empty (reverse-without-middle empty most-negative-fixnum)))
+  (assert (equalp (reverse-without-middle values 4) #(4 3 2 1 0))))
+
 (defun fill-input-vector (array)
   (declare ((simple-array double-float (*)) array) (optimize (speed 3) (safety 3)))
   (dotimes (i (length array) array)
