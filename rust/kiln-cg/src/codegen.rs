@@ -1040,6 +1040,8 @@ impl<'a, M: Module> FuncLowering<'a, M> {
         let first_local = kir::PREDEFINED_VARS.len();
         let mut may_hold_pointer = vec![false; first_local + f.vars.len()];
         may_hold_pointer[..first_local].fill(true);
+        let mut fixed_symbol = vec![true; may_hold_pointer.len()];
+        fixed_symbol[..first_local].fill(false);
         let index = |var: Variable| var.as_u32() as usize;
         let variable_index = |expr: &Expr| match expr {
             Expr::Local(id) => self.indexed_vars.get(*id).map(|local| index(local.0)),
@@ -1052,20 +1054,28 @@ impl<'a, M: Module> FuncLowering<'a, M> {
         let mut first_dependency = vec![no_dependency; may_hold_pointer.len()];
         let mut dependencies = Vec::new();
         let mut inputs = Vec::new();
-        let mark_name = |name: &str, may_hold_pointer: &mut [bool]| {
+        let mark_name = |name: &str, may_hold_pointer: &mut [bool], fixed_symbol: &mut [bool]| {
             if let Some(&var) = self.vars.get(name) {
                 may_hold_pointer[index(var)] = true;
+                fixed_symbol[index(var)] = false;
             }
+        };
+        let is_fixed_symbol = |expr: &Expr| {
+            matches!(expr, Expr::Addr(name, addend)
+                if matches!(name.as_str(), "kiln_nil" | "kiln_t")
+                    && *addend == kiln_rt::object::TAG_GENERAL as i64)
         };
         for stmt in f.blocks.iter().flat_map(|block| &block.stmts) {
             inputs.clear();
             let assignment = match stmt {
                 Stmt::SetLocal(id, expr) => self.indexed_vars.get(*id)
-                    .map(|local| (index(local.0), fixnum_bit_inputs(expr, &variable_index, &mut inputs))),
+                    .map(|local| (index(local.0), is_fixed_symbol(expr),
+                                  fixnum_bit_inputs(expr, &variable_index, &mut inputs))),
                 Stmt::Set(name, expr) => self.vars.get(name.as_str())
-                    .map(|&var| (index(var), fixnum_bit_inputs(expr, &variable_index, &mut inputs))),
+                    .map(|&var| (index(var), is_fixed_symbol(expr),
+                                  fixnum_bit_inputs(expr, &variable_index, &mut inputs))),
                 Stmt::Ovf { op, result, overflow, a, b } => {
-                    mark_name(overflow, &mut may_hold_pointer);
+                    mark_name(overflow, &mut may_hold_pointer, &mut fixed_symbol);
                     self.vars.get(result.as_str()).map(|&var| {
                         // Overflow arithmetic returns the wrapped word and
                         // an independent flag. Wrapping preserves parity.
@@ -1077,12 +1087,13 @@ impl<'a, M: Module> FuncLowering<'a, M> {
                                 definitely_fixnum_bits(a)
                                     || fixnum_bit_inputs(b, &variable_index, &mut inputs),
                         };
-                        (index(var), immediate)
+                        (index(var), false, immediate)
                     })
                 }
                 _ => None,
             };
-            if let Some((dest, immediate)) = assignment {
+            if let Some((dest, fixed, immediate)) = assignment {
+                fixed_symbol[dest] &= fixed;
                 if immediate {
                     for &source in &inputs {
                         dependencies.push((dest, first_dependency[source]));
@@ -1095,12 +1106,12 @@ impl<'a, M: Module> FuncLowering<'a, M> {
             }
             match stmt {
                 Stmt::CallLisp { v0, nv, .. } => {
-                    mark_name(v0, &mut may_hold_pointer);
-                    mark_name(nv, &mut may_hold_pointer);
+                    mark_name(v0, &mut may_hold_pointer, &mut fixed_symbol);
+                    mark_name(nv, &mut may_hold_pointer, &mut fixed_symbol);
                 }
                 Stmt::CallRt { results, .. } => {
                     for name in results {
-                        mark_name(name, &mut may_hold_pointer);
+                        mark_name(name, &mut may_hold_pointer, &mut fixed_symbol);
                     }
                 }
                 _ => (),
@@ -1127,7 +1138,8 @@ impl<'a, M: Module> FuncLowering<'a, M> {
         {
             let var = self.vars[name];
             let debug_visible = self.labels.contains_key(name);
-            if (kind == VarKind::Obj && (may_hold_pointer[var.as_u32() as usize] || debug_visible))
+            if (kind == VarKind::Obj
+                && ((may_hold_pointer[index(var)] && !fixed_symbol[index(var)]) || debug_visible))
                 || (kind == VarKind::F64 && debug_visible)
             {
                 b.declare_var_needs_stack_map(var);
