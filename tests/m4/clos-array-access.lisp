@@ -153,6 +153,17 @@
 (assert (zerop (length (fill-input-vector (fill-with-index 0)))))
 (assert (equalp (fill-input-vector (fill-with-index 3)) #(1d0 1d0 1d0)))
 
+(defun fill-input-array (array)
+  (declare ((simple-array double-float) array) (optimize (speed 3) (safety 3)))
+  (dotimes (i (length array) array)
+    (setf (aref array i) 1d0)))
+
+(assert (zerop (length (fill-input-array (fill-with-index 0)))))
+(assert (equalp (fill-input-array (fill-with-index 3)) #(1d0 1d0 1d0)))
+(assert (handler-case
+            (progn (fill-input-array (make-array '(1 1) :element-type 'double-float)) nil)
+          (type-error () t)))
+
 (defun fill-private-array (size)
   (declare (fixnum size) (optimize (speed 3) (safety 3)))
   (let ((array (make-array size :element-type 'double-float)))

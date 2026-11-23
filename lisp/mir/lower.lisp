@@ -371,11 +371,14 @@
   (let ((definition (svref *mir-lir-definitions* length)))
     (when (and definition (= (mir-instruction-kind definition) 6)
                (eq (mir-instruction-data definition) 'length)
+               (not (mir-instruction-notinline definition))
                (= (length (mir-instruction-operands definition)) 1))
       (let* ((argument (svref (mir-instruction-operands definition) 0))
              (source (mir-lir-array-contents-source argument)))
         (when (and (gethash source *mir-lir-array-contents*)
-                   (hir-simple-specialized-vector-p (svref *mir-lir-types* source))
+                   ;; LENGTH returning normally proves that a simple array
+                   ;; with unspecified rank is a vector.
+                   (mir-lir-vector-contents-candidate-p (svref *mir-lir-types* source))
                    (zerop (mir-value-block (svref values source))))
           source)))))
 
