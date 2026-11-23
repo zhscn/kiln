@@ -393,7 +393,19 @@
             (when (mir-induction-integer-constant-p (svref args 1) 1 *mir-lir-definitions*)
               (mir-primary-origin (svref args 0) *mir-lir-definitions*)))))))
 
-(defun mir-lir-add-length-bound (index length lengths values block dominators facts)
+(defun mir-lir-add-length-bound (index length lengths values block dominators facts &optional (through-min t))
+  (let ((definition (svref *mir-lir-definitions* length)))
+    (when (and through-min definition (= (mir-instruction-kind definition) 6)
+               (eq (mir-instruction-data definition) 'min)
+               (not (mir-instruction-notinline definition)))
+      (let ((operands (mir-instruction-operands definition)))
+        (when (and (= (length operands) 2)
+                   (every (lambda (operand) (hir-fixnum-type-p (svref *mir-lir-types* operand)))
+                          operands))
+          (loop for operand across operands
+                do (setf facts (mir-lir-add-length-bound
+                                index (mir-primary-origin operand *mir-lir-definitions*)
+                                lengths values block dominators facts nil)))))))
   (let ((array (mir-lir-array-length-argument length values)))
     (when array
       (setf facts (mir-lir-add-array-bound (list index array nil) facts))))

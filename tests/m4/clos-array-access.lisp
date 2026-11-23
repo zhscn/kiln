@@ -153,6 +153,18 @@
 (assert (zerop (length (fill-input-vector (fill-with-index 0)))))
 (assert (equalp (fill-input-vector (fill-with-index 3)) #(1d0 1d0 1d0)))
 
+(defun fill-up-to-length (array count)
+  (declare ((simple-array double-float (*)) array) (fixnum count) (optimize (speed 3)))
+  (let ((limit (min count (length array))))
+    (declare (fixnum limit))
+    (dotimes (i limit array)
+      (setf (aref array i) 1d0))))
+
+(assert (equalp (fill-up-to-length (fill-with-index 3) -1) #(0d0 1d0 2d0)))
+(assert (equalp (fill-up-to-length (fill-with-index 3) 1) #(1d0 1d0 2d0)))
+(assert (equalp (fill-up-to-length (fill-with-index 3) 8) #(1d0 1d0 1d0)))
+(assert (zerop (length (fill-up-to-length (fill-with-index 0) 1))))
+
 (defun fill-input-array (array)
   (declare ((simple-array double-float) array) (optimize (speed 3) (safety 3)))
   (dotimes (i (length array) array)
