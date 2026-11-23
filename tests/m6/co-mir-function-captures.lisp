@@ -59,6 +59,18 @@
  '(labels ((f (x) (kiln.sys:%gc) (if (zerop x) n (f (1- x))))) (f 4))
  10)
 
+(let* ((maker (mir-capture-compile
+               '(labels ((walk (left)
+                           (incf n)
+                           (kiln.sys:%gc)
+                           (if (zerop left) n (walk (1- left)))))
+                  #'walk)))
+       (a (funcall maker 10))
+       (b (funcall maker 100)))
+  (assert (= (funcall a 2) 13))
+  (assert (= (funcall b 1) 102))
+  (assert (= (funcall a 0) 14)))
+
 (let ((function (mir-capture-compile
                  '(flet ((g (x) (+ n x))) (flet ((f (x) (g x))) (f))))))
   (print (handler-case (progn (funcall function 10) nil) (program-error () t))))

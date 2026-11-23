@@ -730,7 +730,7 @@ it is a function, the global function of F if it is a symbol."
     (emit-error +err-not-symbol+ s)
     (start-block ok)))
 
-(defun emit-lisp-call (fobj vals)
+(defun emit-lisp-call (fobj vals &optional entry)
   "Calls FOBJ after evaluating all operands; the backend arranges the ABI."
   (when (> (length vals) kiln.kir::+backend-argument-limit+)
     (fail "calls with more than ~D arguments are not supported"
@@ -740,7 +740,9 @@ it is a function, the global function of F if it is a symbol."
                               (if (or (integerp v) (kiln.kir::kvar-p v)) v (copy-to-var v)))
                             vals))
          (v0 (new-var)) (nv (new-var :raw)))
-    (emit `(:invoke ,v0 ,nv ,callee ,arguments ,(handler) ,@(call-loc)))
+    (emit (if entry
+              `(:invoke-known ,v0 ,nv ,entry ,callee ,arguments ,(handler) ,@(call-loc))
+              `(:invoke ,v0 ,nv ,callee ,arguments ,(handler) ,@(call-loc))))
     (values v0 nv)))
 
 (defun function-cell-value (name)
