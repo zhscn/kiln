@@ -266,10 +266,11 @@
                    (aref array k) first)))
   array)
 
-(dolist (z '(-1 0 1 2 3 4 5 6 7 8))
-  (let* ((array (make-array 9 :element-type 'fixnum :initial-contents '(0 1 2 3 4 5 6 7 8)))
-         (expected (loop for i from 0 below 9 collect (if (<= i z) (- z i) i))))
-    (assert (equal (coerce (reverse-prefix-unrolled array z) 'list) expected))))
+(loop for z from -1 below 15
+      do (let* ((array (make-array 15 :element-type 'fixnum
+                                   :initial-contents (loop for i below 15 collect i)))
+                (expected (loop for i below 15 collect (if (<= i z) (- z i) i))))
+           (assert (equal (coerce (reverse-prefix-unrolled array z) 'list) expected))))
 (let ((array (make-array 2 :element-type 'fixnum :initial-contents '(2 3))))
   (assert (handler-case (progn (reverse-prefix-unrolled array 2) nil) (error () t)))
   (assert (equalp array #(2 3))))

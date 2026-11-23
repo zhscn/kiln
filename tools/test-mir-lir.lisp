@@ -115,7 +115,7 @@
                             (setf (aref array i) (aref array k)
                                   (aref array k) first)))
                  array)
-              '((:vector-ref-fixnum 6) (:fixnum-uge 3)))
+              '((:vector-ref-fixnum 16) (:fixnum-uge 3)))
   (operations '(defun fixnum-oddp (n)
                  (declare (fixnum n) (optimize (speed 3)))
                  (oddp n)) '((:fixnum-evenp 1)))

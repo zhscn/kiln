@@ -2029,16 +2029,33 @@
                  ((4 7) (multiple-value-bind (primary n)
                         (mir-lir-restore (svref (mir-terminator-operands term) 1))
                       (emit-nonlocal-values (if (= 4 (mir-terminator-kind term)) :throw :exit-to)
-                        (mir-lir-value (svref (mir-terminator-operands term) 0)) primary n)))))))
+                        (mir-lir-value (svref (mir-terminator-operands term) 0)) primary n))))))
+             (emit-loop-copy (copy-labels backedge &optional skip-header-poll)
+               (loop for block across blocks for id = (mir-block-id block)
+                     when (logbitp id version-members)
+                       do (emit-block block copy-labels backedge skip-header-poll))))
       (loop for block across blocks do (emit-block block labels))
       (when version-members
         (let* ((header (mir-edge-target version-entry))
                (active (svref (mir-binding-analysis-inputs (mir-binding-regions function)) header))
                (*regions* (mir-lir-active-regions active base-regions))
-               (length (cdr (gethash (cdr version-bound) *mir-lir-array-contents*))))
+               (length (cdr (gethash (cdr version-bound) *mir-lir-array-contents*)))
+               (prefix-copies
+                 (when (and (logbitp header loop-polls) (<= (logcount version-members) 3)
+                            (<= version-cost 38))
+                   (loop repeat 5 collect
+                     (let ((copy (copy-seq labels)))
+                       (dotimes (id (length blocks) copy)
+                         (when (logbitp id version-members)
+                           (setf (svref copy id) (new-block)))))))))
           (start-block version-guard)
           (br `(:fixnum-uge ,(mir-lir-value version-value) ,length)
-              (svref labels header) (svref version-labels header)))
+              (svref labels header) (svref (or (first prefix-copies) version-labels) header))
+          (let ((*mir-lir-versioned-bound* version-bound))
+            ;; The header edges link successive copies before entering the
+            ;; regular loop. Internal cycles still use the original polls.
+            (loop for (copy next) on prefix-copies
+                  do (emit-loop-copy copy (svref (or next version-labels) header) t))))
         (let* ((*mir-lir-versioned-bound* version-bound)
                (header (mir-edge-target version-entry))
                (second-labels (when (and (logbitp header loop-polls)
@@ -2048,15 +2065,11 @@
             (dotimes (id (length blocks))
               (when (logbitp id version-members)
                 (setf (svref second-labels id) (new-block)))))
-          (loop for block across blocks for id = (mir-block-id block)
-                when (logbitp id version-members)
-                  do (emit-block block version-labels (and second-labels (svref second-labels header))))
+          (emit-loop-copy version-labels (and second-labels (svref second-labels header)))
           (when second-labels
             ;; A header backedge from this copy returns to the first copy's
             ;; poll. Any cycles internal to either copy keep their polls.
-            (loop for block across blocks for id = (mir-block-id block)
-                  when (logbitp id version-members)
-                    do (emit-block block second-labels (svref version-labels header) t))))))
+            (emit-loop-copy second-labels (svref version-labels header) t)))))
     (dolist (entry dispatches)
       (let ((*regions* (region-outer (car entry)))) (start-dispatch (car entry) (cdr entry))))
     (dolist (entry (nreverse edge-blocks))
