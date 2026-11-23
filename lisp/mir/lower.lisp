@@ -16,6 +16,7 @@
 (defvar *mir-lir-array-contents*)
 (defvar *mir-lir-packed-array-plans* nil)
 (defvar *mir-lir-packed-environment* nil)
+(defvar *mir-lir-packed-width* 0)
 (defvar *mir-lir-emitting-function* nil)
 (defvar *mir-lir-array-sources*)
 (defvar *mir-lir-list-tests* nil)
@@ -1465,6 +1466,19 @@
                 (cons environment tail))))
         ordinary)))
 
+(defun mir-lir-cell-operand (instruction fallback)
+  ;; The environment slot holds the same cell throughout recursion. Load it
+  ;; at the read or write so the cell itself need not stay live across loops.
+  (if *mir-lir-packed-environment*
+      (let* ((id (svref (mir-instruction-operands instruction) 0))
+             (definition (svref *mir-lir-definitions* (mir-primary-origin id *mir-lir-definitions*))))
+        (if (and definition (= (mir-instruction-kind definition) 1)
+                 (< (mir-instruction-data definition) *mir-lir-packed-width*))
+            `(:vector-ref-fixnum ,*mir-lir-packed-environment*
+                                (:fixnum-tag ,(mir-instruction-data definition)))
+            fallback))
+      fallback))
+
 (defun mir-lir-instruction (instruction arguments argument-count &optional declared-fixnum-result-p)
   (let* ((*call-source* (mir-instruction-source instruction)) (*hir-policy* (mir-instruction-policy instruction))
          (kind (mir-instruction-kind instruction)) (result (mir-instruction-result instruction))
@@ -1768,8 +1782,10 @@
       (19 (let ((slot (svref *mir-lir-stack-slots* (mir-instruction-id instruction))))
             (if slot (emit `(:stack-cons ,out (:slot ,slot) ,(first args) ,(nil-value)))
                 (emit `(:set ,out ,(emit-cons (first args) (nil-value)))))))
-      (20 (mir-lir-load-field out kiln.kir::+packet-field-cons-car+ (first args)))
-      (21 (emit-field-store kiln.kir::+packet-field-cons-car+ (first args) (second args)))
+      (20 (mir-lir-load-field out kiln.kir::+packet-field-cons-car+
+                               (mir-lir-cell-operand instruction (first args))))
+      (21 (emit-field-store kiln.kir::+packet-field-cons-car+
+                            (mir-lir-cell-operand instruction (first args)) (second args)))
       (22 (emit `(:set ,out (:closure-ref ,*self* ,data))))
       (23 (let ((slot (svref *mir-lir-stack-slots* (mir-instruction-id instruction))))
             (if slot
@@ -2277,6 +2293,7 @@
              (loop for position in (svref *mir-lir-packed-array-plans* (mir-function-id function))
                    collect (cons position (new-var)))))
          (*mir-lir-packed-environment* (and incoming-backing (new-var)))
+         (*mir-lir-packed-width* (mir-function-internal-prefix function))
          (arguments (make-array (mir-function-positional-count function))) (count (new-var :raw)))
     (multiple-value-setq (*mir-lir-doubles* *mir-lir-boxed*) (mir-lir-double-plan function predecessors))
     (multiple-value-bind (owners sources) (mir-lir-plan-array-contents function)
