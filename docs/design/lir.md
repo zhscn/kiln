@@ -139,7 +139,8 @@ image 编译中的调试记录原本作为一个整体放在 literal 向量中�
 对象变量在 safepoint 处存活时通常需要栈槽，以便 GC 扫描并更新引用。
 生成 Cranelift IR 前，后端扫描函数中的赋值。若变量的所有赋值都由常量或
 整数运算证明最低位为零，该变量始终持有 fixnum，无需为 safepoint 保留栈槽。
-调用结果和异常 payload 等来源仍按可能含有引用处理，调试器可见的变量仍保留位置。
+后端沿拷贝传播可能含有引用的事实，直到处理完合流和循环回边。调用结果和异常
+payload 等来源按可能含有引用处理，调试器可见的变量保留位置。
 
 核心操作包括机器字计算与比较、对象同一性、fixnum 计算和装拆箱、字符装拆箱、binary64 计算及 double 拆箱、simple-vector 和字符串读取。操作表同时定义纯操作的名称、参数表示和结果表示。`test` 接收表示类名，对任意 Lisp 值安全；`field-ref` 和 `field-set` 使用 `cons.car`、`symbol.function` 等字段名。`alloc` 接收结果、对象种类、存储方式和字段列表，例如 `(alloc pair cons heap (head tail))`。目前支持 cons、double-float、complex 和普通实例的堆分配。Rust 保存所有字段后分配、初始化；对象字段跨慢路径保持精确 roots，允许结果变量同时作为旧字段输入。
 

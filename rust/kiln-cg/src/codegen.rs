@@ -1011,23 +1011,41 @@ impl<'a, M: Module> FuncLowering<'a, M> {
         let first_local = kir::PREDEFINED_VARS.len();
         let mut may_hold_pointer = vec![false; first_local + f.vars.len()];
         may_hold_pointer[..first_local].fill(true);
+        let index = |var: Variable| var.as_u32() as usize;
+        let alias = |expr: &Expr| match expr {
+            Expr::Local(id) => self.indexed_vars.get(*id).map(|local| index(local.0)),
+            Expr::Var(name) => self.vars.get(name.as_str()).copied().map(index),
+            _ => None,
+        };
+        // A variable is immediate only if every assignment proves it.
+        // Record copies by source so a possible reference reaches every
+        // destination, including variables assigned along a loop backedge.
+        let no_copy = usize::MAX;
+        let mut first_copy = vec![no_copy; may_hold_pointer.len()];
+        let mut copies = Vec::new();
         let mark_name = |name: &str, may_hold_pointer: &mut [bool]| {
-            if let Some(var) = self.vars.get(name) {
-                may_hold_pointer[var.as_u32() as usize] = true;
+            if let Some(&var) = self.vars.get(name) {
+                may_hold_pointer[index(var)] = true;
             }
         };
-        // A mutable variable is immediate only if every assignment proves it.
-        // Parameters and exception payloads may hold arbitrary objects.
         for stmt in f.blocks.iter().flat_map(|block| &block.stmts) {
+            let assignment = match stmt {
+                Stmt::SetLocal(id, expr) => self.indexed_vars.get(*id)
+                    .map(|local| (index(local.0), expr)),
+                Stmt::Set(name, expr) => self.vars.get(name.as_str())
+                    .map(|&var| (index(var), expr)),
+                _ => None,
+            };
+            if let Some((dest, expr)) = assignment {
+                if let Some(src) = alias(expr) {
+                    copies.push((dest, first_copy[src]));
+                    first_copy[src] = copies.len() - 1;
+                } else if !definitely_fixnum_bits(expr) {
+                    may_hold_pointer[dest] = true;
+                }
+                continue;
+            }
             match stmt {
-                Stmt::SetLocal(id, expr) if !definitely_fixnum_bits(expr) => {
-                    if let Some(local) = self.indexed_vars.get(*id) {
-                        may_hold_pointer[local.0.as_u32() as usize] = true;
-                    }
-                }
-                Stmt::Set(name, expr) if !definitely_fixnum_bits(expr) => {
-                    mark_name(name, &mut may_hold_pointer);
-                }
                 Stmt::CallLisp { v0, nv, .. } => {
                     mark_name(v0, &mut may_hold_pointer);
                     mark_name(nv, &mut may_hold_pointer);
@@ -1042,6 +1060,22 @@ impl<'a, M: Module> FuncLowering<'a, M> {
                     mark_name(overflow, &mut may_hold_pointer);
                 }
                 _ => (),
+            }
+        }
+        let mut work: Vec<_> = may_hold_pointer.iter().enumerate()
+            .filter_map(|(id, &possible)| (possible && first_copy[id] != no_copy).then_some(id))
+            .collect();
+        while let Some(source) = work.pop() {
+            let mut copy = first_copy[source];
+            while copy != no_copy {
+                let (dest, next) = copies[copy];
+                if !may_hold_pointer[dest] {
+                    may_hold_pointer[dest] = true;
+                    if first_copy[dest] != no_copy {
+                        work.push(dest);
+                    }
+                }
+                copy = next;
             }
         }
         for (name, kind) in kir::PREDEFINED_VARS.iter().copied()

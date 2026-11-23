@@ -16,12 +16,31 @@ fn immediate_temporaries_need_stack_slots_only_when_debug_visible() {
     let source = r#"(module "immediate-roots"
       (init "init") (data "init" (words 258 (func "body")))
       (import-func "opaque" 0 0)
-      (func "body" (vars (temp obj)) (slots)
+      (func "body" (vars (temp obj) (copy obj) (saved obj)) (slots)
         (block entry
           (set temp (and a0 -2))
+          (set copy temp)
+          (set saved copy)
           (call-rt "opaque" () () nil)
-          (return temp 1)))
-      (func "mixed" (vars (maybe-object obj) (visible obj 0)) (slots) (debug 0)
+          (return saved 1)))
+      (func "rotate" (vars (left obj) (right obj) (saved obj) (remaining raw)) (slots)
+        (block entry
+          (set left (and a0 -2))
+          (set right (and a1 -2))
+          (set remaining nargs)
+          (jump check))
+        (block check
+          (br (eq remaining 0) done rotate))
+        (block rotate
+          (set saved left)
+          (set left right)
+          (set right saved)
+          (set remaining (sub remaining 1))
+          (jump check))
+        (block done
+          (call-rt "opaque" () () nil)
+          (return left 1)))
+      (func "mixed" (vars (maybe-object obj) (visible obj 0) (saved obj)) (slots) (debug 0)
         (block entry
           (set visible (fixnum-tag a1))
           (br (eq a0 0) integer object))
@@ -32,8 +51,9 @@ fn immediate_temporaries_need_stack_slots_only_when_debug_visible() {
           (set maybe-object a2)
           (jump join))
         (block join
+          (set saved maybe-object)
           (call-rt "opaque" () () nil (loc 0 1))
-          (return (xor maybe-object visible) 1))))"#;
+          (return (xor saved visible) 1))))"#;
     let input = kir::parse_module(&sexp::parse_one(source).unwrap()).unwrap();
     let output =
         codegen::compile(&mut module, &input, &codegen::Options { dump_clif: false }).unwrap();
