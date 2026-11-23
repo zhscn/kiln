@@ -123,7 +123,7 @@
                    (loop for i from 0 to (- n 1)
                          do (setf (aref dest i) (aref source i)))
                    dest))
-              '((:vector-ref-fixnum 10) (:vector-set-fixnum 10)))
+              '((:vector-ref-fixnum 10) (:vector-set-fixnum 10) (:fixnum-add-ovf 0)))
   (operations '(defun fixnum-oddp (n)
                  (declare (fixnum n) (optimize (speed 3)))
                  (oddp n)) '((:fixnum-evenp 1)))

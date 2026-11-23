@@ -653,9 +653,30 @@
           *mir-lir-condition-word* test))
   (boolean-value test))
 
+(defun mir-lir-vector-index-increment-p (instruction)
+  (let* ((name (mir-instruction-data instruction))
+         (operands (mir-instruction-operands instruction))
+         (index (cond ((eq name '1+) (svref operands 0))
+                      ((and (eq name '+) (= (length operands) 2))
+                       (cond ((mir-induction-integer-constant-p (svref operands 1) 1
+                                                               *mir-lir-definitions*)
+                              (svref operands 0))
+                             ((mir-induction-integer-constant-p (svref operands 0) 1
+                                                               *mir-lir-definitions*)
+                              (svref operands 1)))))))
+    ;; An in-bounds index incremented by one is at most the vector length,
+    ;; which fits in a fixnum on the supported targets.
+    (when index
+      (let ((origin (mir-lir-array-index-origin index)))
+        (or (and *mir-lir-index-bounds*
+                 (gethash origin *mir-lir-index-bounds*))
+            (and *mir-lir-inherited-index-bounds*
+                 (gethash origin *mir-lir-inherited-index-bounds*)))))))
+
 (defun mir-lir-fixnum-call (instruction args)
   (let* ((name (mir-instruction-data instruction)) (left (first args)) (right (second args))
-         (bounded (hir-fixnum-type-p (svref *mir-lir-types* (mir-instruction-result instruction)))))
+         (bounded (or (hir-fixnum-type-p (svref *mir-lir-types* (mir-instruction-result instruction)))
+                      (mir-lir-vector-index-increment-p instruction))))
     (cond ((and (eq name '+) (cddr args)) (mir-lir-fixnum-sum args bounded))
           ((member name '(+ - *))
            (if right
