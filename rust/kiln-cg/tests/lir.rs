@@ -21,11 +21,19 @@ fn reject(body: &str, message: &str) {
 
 #[test]
 fn cold_block_hint_survives_lowering() {
-    let text = source("(block entry (jump fallback)) (block fallback (cold) (return ()))");
+    let text = source(
+        "(block entry (jump fallback))
+         (block fallback (cold) (poll) (jump done))
+         (block done (return ()))",
+    );
     let module = compile(&text).unwrap();
     let body = module.funcs.iter().find(|f| f.name == "body").unwrap();
     assert!(!body.cold_blocks.contains(&body.block_entries[0].unwrap()));
-    assert!(body.cold_blocks.contains(&body.block_entries[1].unwrap()));
+    let cold = body.block_entries[1].unwrap();
+    let done = body.block_entries[2].unwrap();
+    assert!(done > cold + 1, "the poll must expand into several blocks");
+    assert!((cold..done).all(|index| body.cold_blocks.contains(&index)));
+    assert!(!body.cold_blocks.contains(&done));
     reject("(block entry (cold 1) (return ()))", "expected");
     reject("(block entry (set a (fixnum 12)) (cold) (return (a)))", "unknown instruction");
 }

@@ -1608,9 +1608,7 @@ pub(super) fn module(verified: &Verified<'_>) -> Result<kir::Module> {
             lower.block = format!("b{i}");
             let entry = lower.function.blocks.len();
             lower.function.block_entries[i] = Some(entry);
-            if block.cold {
-                lower.function.cold_blocks.push(entry);
-            }
+            let cold_before = lower.function.cold_blocks.len();
             if flow.polls[i] {
                 lower.poll(false)?;
             }
@@ -1619,6 +1617,13 @@ pub(super) fn module(verified: &Verified<'_>) -> Result<kir::Module> {
             }
             lower.terminator(&block.terminator, &flow.successors[i])?;
             lower.finish(String::new());
+            if block.cold {
+                // Every block emitted here is reachable only through the
+                // cold entry, including continuations created by expansion.
+                let cold = &mut lower.function.cold_blocks;
+                cold.truncate(cold_before);
+                cold.extend(entry..lower.function.blocks.len());
+            }
         }
         lower.dispatchers()?;
         result.funcs.push(lower.function);
