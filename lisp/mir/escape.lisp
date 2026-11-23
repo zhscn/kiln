@@ -52,14 +52,25 @@
             (dolist (id component) (setf cyclic (logior cyclic (ash 1 id))))))
         cyclic))))
 
+(defun mir-short-loop-test-p (function block)
+  (let ((ids (hir-buffer-view (mir-block-instructions block))))
+    (and (= (mir-terminator-kind (mir-block-terminator block)) 1)
+         (<= (length ids) 6)
+         (loop for id across ids
+               for instruction = (mir-at (mir-function-instructions function) id)
+               always (or (member (mir-instruction-kind instruction) '(0 9 10))
+                          (and (= (mir-instruction-kind instruction) 6)
+                               (member (mir-instruction-data instruction) '(not null = zerop))
+                               (not (mir-instruction-notinline instruction))))))))
+
 (defun mir-loop-poll-blocks (function)
-  "Select DFS back-edge targets: deleting them leaves an acyclic graph."
+  "Select polling blocks that intersect every DFS back edge."
   (mir-analysis function :loop-polls
     (lambda (function)
       (let* ((blocks (hir-buffer-view (mir-function-blocks function)))
              (states (make-array (length blocks) :initial-element 0))
              (next (make-array (length blocks) :initial-element 0))
-             (polls 0))
+             (polls 0) (deferred nil))
         ;; An explicit stack bounds host stack use for large generated CFGs.
         (dotimes (root (length blocks))
           (when (zerop (svref states root))
@@ -73,7 +84,15 @@
                       (incf (svref next id))
                       (case (svref states target)
                         (0 (setf (svref states target) 1) (push target stack))
-                        (1 (setf polls (logior polls (ash 1 target)))))))))))
+                        (1 (if (and (zerop (mir-terminator-kind (mir-block-terminator (svref blocks id))))
+                                      (mir-short-loop-test-p function (svref blocks target)))
+                                 (push (cons target id) deferred)
+                                 (setf polls (logior polls (ash 1 target))))))))))))
+        ;; A back edge is covered at either endpoint. An unconditional
+        ;; latch avoids polling when the initial test exits the loop.
+        (dolist (edge deferred)
+          (unless (logbitp (car edge) polls)
+            (setf polls (logior polls (ash 1 (cdr edge))))))
         polls))))
 
 (defstruct mir-parameter-summary (required 0) (maximum 0) (borrow 0) returns effects)
