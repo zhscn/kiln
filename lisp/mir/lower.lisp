@@ -1737,7 +1737,7 @@
                         (= upper (mir-primary-origin id *mir-lir-definitions*)))
                 return id))))
 
-(defun mir-lir-copyable-reverse-loop-p (blocks instructions members entry)
+(defun mir-lir-copyable-reverse-loop-cost (blocks instructions members entry)
   (and (<= (logcount members) 16)
        (zerop (mir-terminator-kind (mir-block-terminator (svref blocks entry))))
        (loop with cost = 0 for block across blocks
@@ -1752,7 +1752,7 @@
                                           (not (or (<= 27 kind 36) (= kind 40)))))
                                       (hir-buffer-view (mir-block-instructions block))))
                     (return nil))
-             finally (return t))))
+             finally (return cost))))
 
 (defun mir-lir-reverse-loop-bound (block instructions bounds entry members dominators)
   (let ((accesses nil))
@@ -1796,12 +1796,13 @@
                         (some (lambda (parameter) (gethash parameter *mir-lir-shift-guarded-indices*))
                               (mir-block-parameters block)))
                 do (multiple-value-bind (members entry) (mir-lir-natural-loop header incoming dominators)
-                     (when (and members
-                                (mir-lir-copyable-reverse-loop-p blocks instructions members (car entry)))
-                       (multiple-value-bind (bound value)
-                           (mir-lir-reverse-loop-bound block instructions (svref bound-inputs header)
-                                                       (car entry) members dominators)
-                         (when bound (return (values members (cdr entry) bound value)))))))))))
+                     (let ((cost (and members
+                                      (mir-lir-copyable-reverse-loop-cost blocks instructions members (car entry)))))
+                       (when cost
+                         (multiple-value-bind (bound value)
+                             (mir-lir-reverse-loop-bound block instructions (svref bound-inputs header)
+                                                         (car entry) members dominators)
+                           (when bound (return (values members (cdr entry) bound value cost))))))))))))
 
 (defun mir-lir-function-body (function &optional unit)
   (setf (kiln.kir::kfunc-direct-regions-p kiln.kir::*func*) t)
@@ -1872,6 +1873,7 @@
          (edge-blocks nil) (dispatches nil) (base-regions nil)
          (bound-inputs nil)
          (version-members nil) (version-entry nil) (version-bound nil) (version-value nil)
+         (version-cost nil)
          (version-labels nil) (version-guard nil)
          (arguments (make-array (mir-function-positional-count function))) (count (new-var :raw)))
     (multiple-value-setq (*mir-lir-doubles* *mir-lir-boxed*) (mir-lir-double-plan function predecessors))
@@ -1889,7 +1891,7 @@
                   (cons (new-var)
                         (if (integerp dimension) (constant-object dimension) (new-var))))))
         (setf bound-inputs (mir-lir-array-bound-inputs function blocks sources unit))
-        (multiple-value-setq (version-members version-entry version-bound version-value)
+        (multiple-value-setq (version-members version-entry version-bound version-value version-cost)
           (mir-lir-plan-reverse-loop function blocks bound-inputs))
         (when version-members
           (setf version-guard (new-block)
@@ -1916,7 +1918,7 @@
               (push region *mir-lir-stack-regions*) (push region *regions*))))))
     (setf base-regions *regions*)
     (jump (svref labels 0))
-    (labels ((emit-block (block labels)
+    (labels ((emit-block (block labels &optional backedge skip-header-poll)
              (start-block (svref labels (mir-block-id block)))
              (let ((term (mir-block-terminator block)))
                (setf *mir-lir-condition-word* nil
@@ -1926,7 +1928,8 @@
                                            *mir-lir-definitions*))))
              (let ((active (svref (mir-binding-analysis-inputs (mir-binding-regions function)) (mir-block-id block))))
                (setf *regions* (mir-lir-active-regions active base-regions)))
-             (when (or (zerop (mir-block-id block)) (logbitp (mir-block-id block) loop-polls))
+             (when (and (or (zerop (mir-block-id block)) (logbitp (mir-block-id block) loop-polls))
+                        (not (and skip-header-poll (= (mir-block-id block) (mir-edge-target version-entry)))))
                (emit-poll :stack (zerop (mir-block-id block))))
              (let* ((*mir-lir-list-tests* nil)
                     (*mir-lir-single-unpacked* nil)
@@ -1985,13 +1988,16 @@
                     (targets (make-array (length edges))))
                (loop for edge across edges for index from 0
                      for target = (mir-edge-target edge)
+                     for destination = (cond ((eq edge version-entry) version-guard)
+                                             ((and backedge (= target (mir-edge-target version-entry))) backedge)
+                                             (t (svref labels target)))
                      for landing-p = (and (= 5 (mir-terminator-kind term)) (= index 1))
                      do (setf (svref targets index)
                               (cond ((and (not landing-p) (member (mir-terminator-kind term) '(0 5)))
                                      (mir-lir-edge-copies function edge)
-                                     (if (eq edge version-entry) version-guard (svref labels target)))
+                                     destination)
                                     ((and (not landing-p) (not (mir-lir-edge-needs-copies-p function edge)))
-                                     (svref labels target))
+                                     destination)
                                     (t (let* ((label (new-block))
                                          (landing
                                            (when landing-p
@@ -2003,7 +2009,7 @@
                                                     (case (mir-instruction-kind landing)
                                                       (33 (mir-lir-cleanup-regions *regions*))
                                                       (36 *regions*) (otherwise (rest *regions*))) *regions*)
-                                                landing (svref labels target)) edge-blocks)
+                                                landing destination) edge-blocks)
                                     label)))))
                (case (mir-terminator-kind term)
                  (0 (jump (svref targets 0)))
@@ -2033,10 +2039,24 @@
           (start-block version-guard)
           (br `(:fixnum-uge ,(mir-lir-value version-value) ,length)
               (svref labels header) (svref version-labels header)))
-        (let ((*mir-lir-versioned-bound* version-bound))
+        (let* ((*mir-lir-versioned-bound* version-bound)
+               (header (mir-edge-target version-entry))
+               (second-labels (when (and (logbitp header loop-polls)
+                                         (<= (logcount version-members) 4) (<= version-cost 38))
+                                (copy-seq version-labels))))
+          (when second-labels
+            (dotimes (id (length blocks))
+              (when (logbitp id version-members)
+                (setf (svref second-labels id) (new-block)))))
           (loop for block across blocks for id = (mir-block-id block)
                 when (logbitp id version-members)
-                  do (emit-block block version-labels)))))
+                  do (emit-block block version-labels (and second-labels (svref second-labels header))))
+          (when second-labels
+            ;; A header backedge from this copy returns to the first copy's
+            ;; poll. Any cycles internal to either copy keep their polls.
+            (loop for block across blocks for id = (mir-block-id block)
+                  when (logbitp id version-members)
+                    do (emit-block block second-labels (svref version-labels header) t))))))
     (dolist (entry dispatches)
       (let ((*regions* (region-outer (car entry)))) (start-dispatch (car entry) (cdr entry))))
     (dolist (entry (nreverse edge-blocks))
