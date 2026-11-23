@@ -714,9 +714,10 @@
             (and *mir-lir-inherited-index-bounds*
                  (gethash origin *mir-lir-inherited-index-bounds*)))))))
 
-(defun mir-lir-fixnum-call (instruction args)
+(defun mir-lir-fixnum-call (instruction args declared-fixnum-result-p)
   (let* ((name (mir-instruction-data instruction)) (left (first args)) (right (second args))
-         (bounded (or (hir-fixnum-type-p (svref *mir-lir-types* (mir-instruction-result instruction)))
+         (bounded (or declared-fixnum-result-p
+                      (hir-fixnum-type-p (svref *mir-lir-types* (mir-instruction-result instruction)))
                       (mir-lir-vector-index-increment-p instruction))))
     (cond ((and (eq name '+) (cddr args)) (mir-lir-fixnum-sum args bounded))
           ((member name '(+ - *))
@@ -1330,7 +1331,7 @@
            (emit (list :set target (word-operand word))))))
     (otherwise (emit (list :set target (word-operand word))))))
 
-(defun mir-lir-instruction (instruction arguments argument-count)
+(defun mir-lir-instruction (instruction arguments argument-count &optional declared-fixnum-result-p)
   (let* ((*call-source* (mir-instruction-source instruction)) (*hir-policy* (mir-instruction-policy instruction))
          (kind (mir-instruction-kind instruction)) (result (mir-instruction-result instruction))
          (out (and result (mir-lir-value result))) (data (mir-instruction-data instruction))
@@ -1412,7 +1413,7 @@
           (mir-lir-save result value 1)
           (return-from mir-lir-instruction))))
     (when (mir-lir-fixnum-call-p instruction)
-      (mir-lir-save result (mir-lir-fixnum-call instruction args) 1)
+      (mir-lir-save result (mir-lir-fixnum-call instruction args declared-fixnum-result-p) 1)
       (return-from mir-lir-instruction))
     (when (and (= kind 6) (eq data 'mod))
       (let ((value (mir-lir-fixnum-mod instruction (first args))))
@@ -1954,6 +1955,27 @@
           do (setf (svref copy id) (new-block)))
     copy))
 
+(defun mir-lir-declared-fixnum-result-p (instruction instructions block position)
+  (when (and (= (mir-instruction-kind instruction) 6)
+             (member (mir-instruction-data instruction) '(+ - * 1+ 1-))
+             (zerop (hir-policy-quality (mir-instruction-policy instruction) :safety)))
+    ;; An immediately following declaration constrains this result before
+    ;; any other instruction can observe it. Keep overflow for checked code.
+    (flet ((following (offset)
+             (let ((index (+ position offset)))
+               (when (< index (length block))
+                 (mir-at instructions (svref block index))))))
+      (let ((next (following 1))
+            (result (mir-instruction-result instruction)))
+        (when (and next (= (mir-instruction-kind next) 10)
+                   (eql result (svref (mir-instruction-operands next) 0)))
+          (setf result (mir-instruction-result next)
+                next (following 2)))
+        (and next (= (mir-instruction-kind next) 11)
+             (eql result (svref (mir-instruction-operands next) 0))
+             (zerop (hir-policy-quality (mir-instruction-policy next) :safety))
+             (hir-fixnum-type-p (hir-declaration-type (mir-instruction-data next))))))))
+
 (defun mir-lir-function-body (function &optional unit)
   (setf (kiln.kir::kfunc-direct-regions-p kiln.kir::*func*) t)
   (let* ((*mir-lir-debug-bindings* (make-array (length (mir-function-bindings function)) :initial-element nil))
@@ -2099,8 +2121,10 @@
                     (*mir-lir-in-loop* (logbitp block-id cyclic))
                     (*mir-lir-inherited-index-bounds* (and bound-inputs (svref bound-inputs block-id)))
                     (*mir-lir-index-bounds* nil))
-               (loop for id across (hir-buffer-view (mir-block-instructions block))
-                     for instruction = (mir-at (mir-function-instructions function) id)
+               (loop with block-instructions = (hir-buffer-view (mir-block-instructions block))
+                     with instructions = (mir-function-instructions function)
+                     for id across block-instructions for position from 0
+                     for instruction = (mir-at instructions id)
                      unless (member (mir-instruction-kind instruction) '(31 33 36))
                        do (when (and *mir-lir-float-mode-cache*
                                      (not (or (member (mir-instruction-kind instruction) '(0 9 10))
@@ -2110,7 +2134,10 @@
                                               (mir-lir-double-call-p instruction)
                                               (nth-value 1 (mir-lir-array-access-plan instruction)))))
                             (setf *mir-lir-float-mode-cache* nil))
-                          (mir-lir-instruction instruction arguments count)
+                          (mir-lir-instruction
+                           instruction arguments count
+                           (mir-lir-declared-fixnum-result-p instruction instructions
+                                                              block-instructions position))
                           (let* ((result (mir-instruction-result instruction))
                                  (storage (and result *mir-lir-array-contents*
                                                (gethash result *mir-lir-array-contents*))))

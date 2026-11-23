@@ -29,3 +29,23 @@
   (print (eql (- 0 z) (- z))))
 (let ((x 0)) (print (incf x (setf x 1))) (print x))
 (let ((x 0)) (print (decf x (setf x 1))) (print x))
+
+(defun unchecked-declared-increment (n)
+  (declare (fixnum n) (optimize (speed 3) (safety 0)))
+  (let ((result (1+ n)))
+    (declare (fixnum result))
+    result))
+
+(defun checked-declared-increment (n)
+  (declare (fixnum n) (optimize (speed 3) (safety 3)))
+  (let ((result (1+ n)))
+    (declare (fixnum result))
+    result))
+
+(assert (= (unchecked-declared-increment (1- most-positive-fixnum))
+           most-positive-fixnum))
+(assert (= (checked-declared-increment (1- most-positive-fixnum))
+           most-positive-fixnum))
+(assert (handler-case (progn (checked-declared-increment most-positive-fixnum) nil)
+          (type-error (condition)
+            (= (type-error-datum condition) (1+ most-positive-fixnum)))))
