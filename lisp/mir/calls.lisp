@@ -291,13 +291,41 @@
       (when (>= expansions 2) (setf joined (hir-widen-integer-type joined))))
     (values joined expansions)))
 
-(defun mir-call-argument-types (instruction facts packets required &optional (maximum required))
+(defun mir-entry-vector-dimension-checks (function)
+  (mir-analysis function :entry-vector-dimension-checks
+    (lambda (function)
+      (let ((entry (mir-at (mir-function-blocks function) 0))
+            (definitions (mir-value-definitions function))
+            (checks nil))
+        (loop for id across (hir-buffer-view (mir-block-instructions entry))
+              for position from 0
+              for instruction = (mir-at (mir-function-instructions function) id)
+              ;; A handler can leave the entry before a constructor returns.
+              when (member (mir-instruction-kind instruction) '(30 32 34 35))
+                return nil
+              do (let ((origin (mir-checked-vector-dimension instruction definitions)))
+                   (when (and origin (not (assoc origin checks)))
+                     (push (cons origin position) checks)))
+              finally (return checks))))))
+
+(defun mir-checked-call-argument-type (id facts checks definitions prior)
+  (let ((type (svref facts id)))
+    (if (and checks (not (eq type :unseen))
+             (let ((check (assoc (mir-primary-origin id definitions) checks)))
+               (and check (or (null prior) (< (cdr check) prior)))))
+        (hir-type-intersection type (hir-integer-range 0 +hir-vector-max-length+))
+        type)))
+
+(defun mir-call-argument-types (instruction facts packets required
+                                &optional (maximum required) checks definitions prior)
   "Flatten call facts, or return :UNSEEN, :UNKNOWN or :WRONG-ARITY.
 :UNKNOWN also returns the fixed leading argument types as a second value."
   (let* ((args (mir-instruction-operands instruction)) (prefix (mir-call-prefix-count instruction)))
     (if (= (mir-instruction-kind instruction) 7)
         (if (and (<= required (1- (length args))) (or (null maximum) (<= (1- (length args)) maximum)))
-            (map 'simple-vector (lambda (id) (svref facts id)) (subseq args 1))
+            (map 'simple-vector
+                 (lambda (id) (mir-checked-call-argument-type id facts checks definitions prior))
+                 (subseq args 1))
             :wrong-arity)
         (let ((count prefix) (unknown nil))
           (loop for index from (1+ prefix) below (length args) for packet = (svref packets (svref args index))
@@ -468,10 +496,13 @@
                        (enqueue-users consumers)))))
                (merge-inputs (function facts packets known)
                  (let* ((id (mir-function-id function)) (reachable (mir-reachable-blocks function))
-                        (cell-points (svref (mir-cell-aliases-points cell-aliases) id)))
+                        (cell-points (svref (mir-cell-aliases-points cell-aliases) id))
+                        (checks (and (svref outgoing id) (mir-entry-vector-dimension-checks function)))
+                        (definitions (and checks (mir-value-definitions function))))
                    (loop for block across (hir-buffer-view (mir-function-blocks function))
                          when (logbitp (mir-block-id block) reachable) do
                      (loop for index across (hir-buffer-view (mir-block-instructions block))
+                           for instruction-position from 0
                            for instruction = (mir-at (mir-function-instructions function) index)
                            for args = (mir-instruction-operands instruction) do
                        (case (mir-instruction-kind instruction)
@@ -482,7 +513,9 @@
                                 (multiple-value-bind (arguments prefix)
                                     (mir-call-argument-types instruction facts packets
                                                              (mir-function-required (svref functions target))
-                                                             (mir-function-maximum (svref functions target)))
+                                                             (mir-function-maximum (svref functions target))
+                                                             checks definitions
+                                                             (and (zerop (mir-block-id block)) instruction-position))
                                   (when (or (vectorp arguments) (eq arguments :unknown))
                                     (dotimes (position (length row))
                                       (merge-fact row counts position

@@ -187,6 +187,15 @@
                                  candidates))))))))
     candidates))
 
+(defun mir-checked-vector-dimension (instruction definitions)
+  (let ((operands (mir-instruction-operands instruction)))
+    (when (and (= (mir-instruction-kind instruction) 6)
+               (eq (mir-instruction-data instruction) 'make-array)
+               (plusp (length operands))
+               (mir-specialized-vector-constructor-type
+                operands (mir-induction-limit-type (svref operands 0) definitions) definitions))
+      (mir-primary-origin (svref operands 0) definitions))))
+
 (defun mir-induction-array-limits (candidates values definitions reachable)
   (let ((witnesses (make-hash-table :test #'eql)))
     (dolist (candidate candidates)
@@ -197,18 +206,11 @@
           (setf (gethash limit witnesses) nil))))
     (when (plusp (hash-table-count witnesses))
       (loop for instruction across definitions
-            when (and instruction (= (mir-instruction-kind instruction) 6)
-                      (eq (mir-instruction-data instruction) 'make-array))
-              do (let ((operands (mir-instruction-operands instruction)))
-                   (when (plusp (length operands))
-                     (let* ((origin (mir-primary-origin (svref operands 0) definitions))
-                            (block (mir-value-block (svref values (mir-instruction-result instruction)))))
-                       (when (and (nth-value 1 (gethash origin witnesses))
-                                  (logbitp block reachable)
-                                  (mir-specialized-vector-constructor-type
-                                   operands (mir-induction-limit-type (svref operands 0) definitions)
-                                   definitions))
-                         (pushnew block (gethash origin witnesses))))))))
+            for origin = (and instruction (mir-checked-vector-dimension instruction definitions))
+            when (and origin (nth-value 1 (gethash origin witnesses)))
+              do (let ((block (mir-value-block (svref values (mir-instruction-result instruction)))))
+                   (when (logbitp block reachable)
+                     (pushnew block (gethash origin witnesses))))))
     witnesses))
 
 (defun mir-compute-induction-bounds (function blocks definitions reachable)
