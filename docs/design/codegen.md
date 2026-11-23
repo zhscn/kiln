@@ -44,6 +44,10 @@ python3 tools/ir-explorer.py bench/cl-bench/files/gabriel.lisp \
 - **cranelift-frontend 只能通过 API 使用。** 它负责从可变变量构建 SSA（`Variable`、`def_var`/`use_var`），以及在 safepoint 处为 GC 引用插入溢出和重载（user stack maps，C5）。直接写 CLIF 文本就绕过了它，Lisp 侧得自己构建 SSA、自己做溢出。
 - **布局与机器后端分层。** 内部 KIR 已确定 tag、偏移和调用序列。对象布局、参数和返回值传递、动态条目及 roots 均由 Rust 展开。kiln-cg 继续负责 Cranelift 调用、异常表、栈图、trampoline 和调试表。
 
+展开后的向量访问常把固定下标偏移留在缩放之前。生成机器码前，后端检查读写
+地址的 SSA 定义，将可表示的常量偏移移进内存指令的位移字段。地址按机器字
+宽度计算，加载和存储使用同一规则。常量分析只检查有限深度的加、减和左移。
+
 ## KIR 语法
 
 ```

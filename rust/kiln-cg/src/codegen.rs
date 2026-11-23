@@ -305,6 +305,7 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
         };
         lw.build(&mut func, &mut fctx, f)
             .map_err(|e| format!("func {}: {e}", f.name))?;
+        fold_scaled_address_offsets(&mut func);
         debug_ir.push(DebugFunction {
             locs: lw.call_locs,
             labels: lw.value_labels,
@@ -1751,6 +1752,94 @@ impl<'a, M: Module> FuncLowering<'a, M> {
     }
 }
 
+// Put constant index adjustments in the memory displacement. The arithmetic
+// address before and after the rewrite is the same modulo the machine word.
+fn fold_scaled_address_offsets(func: &mut ir::Function) {
+    use cranelift_codegen::cursor::{Cursor, FuncCursor};
+    use cranelift_codegen::ir::{InstructionData, Opcode};
+
+    fn definition(dfg: &ir::DataFlowGraph, value: Value) -> Option<ir::Inst> {
+        dfg.value_def(dfg.resolve_aliases(value)).inst()
+    }
+
+    fn constant(dfg: &ir::DataFlowGraph, value: Value, depth: u8) -> Option<i64> {
+        if dfg.value_type(value) != I64 {
+            return None;
+        }
+        let inst = definition(dfg, value)?;
+        match dfg.insts[inst] {
+            InstructionData::UnaryImm { opcode: Opcode::Iconst, imm } => Some(imm.into()),
+            InstructionData::Binary { opcode, args } if depth > 0 => {
+                let left = constant(dfg, args[0], depth - 1)?;
+                let right = constant(dfg, args[1], depth - 1)?;
+                match opcode {
+                    Opcode::Iadd => Some(left.wrapping_add(right)),
+                    Opcode::Isub => Some(left.wrapping_sub(right)),
+                    Opcode::Ishl => Some(left.wrapping_shl(right as u32)),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn scaled(dfg: &ir::DataFlowGraph, value: Value) -> Option<(Value, i64, i64)> {
+        if dfg.value_type(value) != I64 {
+            return None;
+        }
+        let InstructionData::Binary { opcode: Opcode::Ishl, args: [index, shift] } =
+            dfg.insts[definition(dfg, value)?] else { return None };
+        let shift = constant(dfg, shift, 0)?;
+        if !(1..=3).contains(&shift) { return None; }
+        let InstructionData::Binary { opcode, args: [base, delta] } =
+            dfg.insts[definition(dfg, index)?] else { return None };
+        let delta = match opcode {
+            Opcode::Iadd => constant(dfg, delta, 8)?,
+            Opcode::Isub => constant(dfg, delta, 8)?.wrapping_neg(),
+            _ => return None,
+        };
+        Some((base, shift, delta.wrapping_shl(shift as u32)))
+    }
+
+    let mut rewrites = Vec::new();
+    for block in func.layout.blocks() {
+        for inst in func.layout.block_insts(block) {
+            let (address, offset) = match func.dfg.insts[inst] {
+                InstructionData::Load { arg, offset, .. } => (arg, i64::from(offset)),
+                InstructionData::Store { args, offset, .. } => (args[1], i64::from(offset)),
+                _ => continue,
+            };
+            let Some(def) = definition(&func.dfg, address) else { continue };
+            let InstructionData::Binary { opcode: Opcode::Iadd, args } = func.dfg.insts[def]
+                else { continue };
+            let Some((base, (index, shift, delta))) = scaled(&func.dfg, args[1])
+                .map(|scaled| (args[0], scaled))
+                .or_else(|| scaled(&func.dfg, args[0]).map(|scaled| (args[1], scaled)))
+                else { continue };
+            if delta != 0 && let Ok(offset) = i32::try_from(offset.wrapping_add(delta)) {
+                rewrites.push((inst, base, index, shift, offset));
+            }
+        }
+    }
+    let mut cursor = FuncCursor::new(func);
+    for (inst, base, index, shift, offset) in rewrites {
+        cursor.goto_inst(inst);
+        let index = cursor.ins().ishl_imm_s(index, shift);
+        let address = cursor.ins().iadd(base, index);
+        match &mut cursor.func.dfg.insts[inst] {
+            InstructionData::Load { arg, offset: displacement, .. } => {
+                *arg = address;
+                *displacement = offset.into();
+            }
+            InstructionData::Store { args, offset: displacement, .. } => {
+                args[1] = address;
+                *displacement = offset.into();
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+
 fn trusted(_b: &mut FunctionBuilder) -> MemFlagsData {
     MemFlagsData::trusted()
 }
@@ -1832,4 +1921,44 @@ fn compile_parallel(
         }
     }
     Ok(out.into_iter().map(|c| c.unwrap()).collect())
+}
+
+#[cfg(test)]
+mod address_tests {
+    use super::*;
+
+    #[test]
+    fn scaled_index_offsets_fold_into_loads_and_stores() {
+        let mut func = ir::Function::new();
+        let mut fctx = FunctionBuilderContext::new();
+        let mut b = FunctionBuilder::new(&mut func, &mut fctx);
+        let entry = b.create_block();
+        let base = b.append_block_param(entry, I64);
+        let index = b.append_block_param(entry, I64);
+        b.switch_to_block(entry);
+        let delta = b.ins().iconst(I64, 2);
+        let adjusted = b.ins().isub(index, delta);
+        let scaled = b.ins().ishl_imm_s(adjusted, 2);
+        let address = b.ins().iadd(base, scaled);
+        let flags = MemFlagsData::new();
+        let value = b.ins().load(I64, flags, address, 3);
+        let store = b.ins().store(flags, value, address, 3);
+        let wide = b.ins().load(I64, flags, address, i32::MIN);
+        let load = b.func.dfg.value_def(value).inst().unwrap();
+        let wide = b.func.dfg.value_def(wide).inst().unwrap();
+        b.ins().return_(&[]);
+        b.seal_all_blocks();
+
+        fold_scaled_address_offsets(&mut func);
+        for inst in [load, store] {
+            let displacement = match func.dfg.insts[inst] {
+                ir::InstructionData::Load { offset, .. }
+                | ir::InstructionData::Store { offset, .. } => offset,
+                _ => unreachable!(),
+            };
+            assert_eq!(i32::from(displacement), -5);
+            assert_ne!(func.dfg.inst_args(inst).last(), Some(&address));
+        }
+        assert_eq!(func.dfg.inst_args(wide), &[address]);
+    }
 }
