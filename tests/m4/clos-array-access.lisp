@@ -286,3 +286,27 @@
 (dolist (n '(0 1 8 9 10 19))
   (assert (equal (coerce (copy-prefix-allocated n) 'list)
                  (make-list n :initial-element 7))))
+
+(defun shift-prefix-allocated (n)
+  (declare (fixnum n) (optimize (speed 3) (space 1) (debug 0)))
+  (let ((array (make-array n :element-type 'fixnum
+                          :initial-contents (loop for i below n collect i))))
+    (loop for i from 1 to (- n 1)
+          do (setf (aref array (- i 1)) (aref array i)))
+    array))
+
+(dolist (n '(0 1 2 8 9 10 19))
+  (assert (equal (coerce (shift-prefix-allocated n) 'list)
+                 (when (plusp n)
+                   (loop for i below n collect (min (1+ i) (1- n)))))))
+
+(defun shift-with-invalid-start (n)
+  (declare (fixnum n) (optimize (speed 3) (space 1) (debug 0)))
+  (let ((array (make-array n :element-type 'fixnum :initial-element 0)))
+    (loop for i from 0 to (- n 1)
+          do (setf (aref array (- i 1)) (aref array i)))
+    array))
+
+(assert (equalp #() (shift-with-invalid-start 0)))
+(assert (handler-case (progn (shift-with-invalid-start 1) nil)
+          (error () t)))

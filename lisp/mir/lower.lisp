@@ -20,6 +20,7 @@
 (defvar *mir-lir-index-bounds* nil)
 (defvar *mir-lir-inherited-index-bounds* nil)
 (defvar *mir-lir-shift-guarded-indices* nil)
+(defvar *mir-lir-positive-indices* nil)
 (defvar *mir-lir-value-owners*)
 (defvar *mir-lir-versioned-bound* nil)
 (defvar *mir-lir-in-loop* nil)
@@ -405,6 +406,17 @@
         (return-from mir-lir-array-branch-bounds (values facts accepted-edge))))
     (values facts nil)))
 
+(defun mir-lir-decremented-index (origin)
+  (when (and origin (not (minusp origin)))
+    (let ((definition (svref *mir-lir-definitions* origin)))
+      (when (and definition (= (mir-instruction-kind definition) 6)
+                 (eq (mir-instruction-data definition) '-)
+                 (not (mir-instruction-notinline definition))
+                 (= (length (mir-instruction-operands definition)) 2))
+        (let ((operands (mir-instruction-operands definition)))
+          (when (mir-induction-integer-constant-p (svref operands 1) 1 *mir-lir-definitions*)
+            (mir-primary-origin (svref operands 0) *mir-lir-definitions*)))))))
+
 (defun mir-lir-array-bound-inputs (function blocks sources unit)
   (let* ((inputs (make-array (length blocks) :initial-element :unseen))
          (generated (make-array (length blocks) :initial-element nil))
@@ -415,10 +427,13 @@
          (lengths (mir-lir-array-length-sources sources values pairs))
          (dominators (when (plusp (hash-table-count lengths))
                        (nth-value 1 (mir-cached-control-flow function))))
-         (pending (list 0)))
+         (pending (list 0))
+         (decremented-indices nil))
     (maphash (lambda (result access)
                (destructuring-bind (source index limit) access
                  (when (and index (gethash source *mir-lir-array-contents*))
+                   (let ((operand (mir-lir-decremented-index index)))
+                     (when operand (pushnew operand decremented-indices)))
                    (let* ((block (mir-value-block (svref values result)))
                           (fact (list index (unless limit source) limit)))
                      (setf (svref generated block)
@@ -457,14 +472,15 @@
                           (when (zerop (sbit queued target))
                             (setf (sbit queued target) 1)
                             (push target pending)))))
-    (map 'simple-vector
-         (lambda (facts)
-           (when (consp facts)
-             (let ((table (make-hash-table :test #'eql)))
-               (dolist (fact facts table)
-                 (destructuring-bind (index source limit) fact
-                   (push (cons source limit) (gethash index table)))))))
-         inputs)))
+    (values (map 'simple-vector
+                 (lambda (facts)
+                   (when (consp facts)
+                     (let ((table (make-hash-table :test #'eql)))
+                       (dolist (fact facts table)
+                         (destructuring-bind (index source limit) fact
+                           (push (cons source limit) (gethash index table)))))))
+                 inputs)
+            decremented-indices)))
 
 (defun mir-lir-emit-vector-access (vector index value index-type slow-fn &optional length doublep singlep)
   (emit-svref-fast-path
@@ -530,6 +546,12 @@
                 (mir-lir-array-index-proven-p source limit nil
                                               (gethash index *mir-lir-inherited-index-bounds*))))))
 
+(defun mir-lir-previous-array-index (origin)
+  (when *mir-lir-positive-indices*
+    (let ((index (mir-lir-decremented-index origin)))
+      (when (and index (gethash index *mir-lir-positive-indices*))
+        index))))
+
 (defun mir-lir-array-access-plan (instruction)
   (when *mir-lir-array-sources*
     (let* ((access (gethash (mir-instruction-result instruction) *mir-lir-array-sources*))
@@ -581,6 +603,7 @@
                 (upper (mir-lir-reverse-index-upper-bound origin (mir-instruction-result instruction))))
            (cond ((or (mir-lir-array-index-proven-p source limit index-type nil)
                       (mir-lir-array-index-checked-p origin source limit)
+                      (mir-lir-array-index-checked-p (mir-lir-previous-array-index origin) source limit)
                       (mir-lir-array-index-checked-p upper source limit)
                       (and upper *mir-lir-versioned-bound*
                            (eql upper (car *mir-lir-versioned-bound*))
@@ -1810,6 +1833,31 @@
                          do (push (cons id edge) (svref incoming (mir-edge-target edge)))))
         incoming))))
 
+(defun mir-lir-positive-loop-indices (function blocks polls candidates)
+  (when candidates
+    (multiple-value-bind (reachable dominators) (mir-cached-control-flow function)
+      (let ((incoming (mir-lir-loop-predecessors function blocks reachable))
+            (positive nil))
+        (dolist (index candidates positive)
+          (let* ((id (mir-value-block (svref *mir-lir-value-owners* index)))
+                 (position (and (logbitp id polls)
+                                (position index (mir-block-parameters (svref blocks id))))))
+            ;; Every external edge starts at one. A backedge advances this
+            ;; activation's index, so the index stays positive.
+            (when (and position
+                       (loop with initial = nil with stepped = nil
+                             for (source . edge) in (svref incoming id)
+                             for input = (svref (mir-edge-arguments edge) position)
+                             always
+                             (if (mir-block-dominates-p dominators id source)
+                                 (when (mir-induction-add-one-p input index *mir-lir-definitions*)
+                                   (setf stepped t))
+                                 (when (mir-induction-integer-constant-p input 1 *mir-lir-definitions*)
+                                   (setf initial t)))
+                             finally (return (and initial stepped))))
+              (unless positive (setf positive (make-hash-table :test #'eql)))
+              (setf (gethash index positive) t))))))))
+
 (defun mir-lir-plan-reverse-loop (function blocks bound-inputs)
   (when (and *mir-lir-shift-guarded-indices*
              (plusp (hash-table-count *mir-lir-shift-guarded-indices*)))
@@ -1851,14 +1899,15 @@
                                                      *mir-lir-definitions*))
                           (origin (gethash value *mir-lir-array-sources*))
                           (load (svref *mir-lir-definitions* value))
-                          (index (second dest)))
+                          (index (and origin (second origin))))
                      (and origin load (eq (mir-instruction-data load) 'aref)
                           (find index parameters)
-                          (= index (second origin))
+                          (or (= index (second dest))
+                              (eql index (mir-lir-previous-array-index (second dest))))
                           (checked-access-p origin index)
                           (checked-access-p dest index)))))))))
 
-(defun mir-lir-plan-copy-prefix (function blocks bounds polls reserved)
+(defun mir-lir-plan-copy-prefixes (function blocks bounds polls reserved)
   (let* ((instructions (mir-function-instructions function))
          (headers (loop for block across blocks for id = (mir-block-id block)
                         when (and (logbitp id polls)
@@ -1866,14 +1915,18 @@
                           collect id)))
     (when headers
       (multiple-value-bind (reachable dominators) (mir-cached-control-flow function)
-        (let ((incoming (mir-lir-loop-predecessors function blocks reachable)))
-          (dolist (header headers)
+        (let ((incoming (mir-lir-loop-predecessors function blocks reachable))
+              (plans nil))
+          (dolist (header headers (nreverse plans))
             (multiple-value-bind (members entry) (mir-lir-natural-loop header incoming dominators)
               (when (and members (<= (logcount members) 3)
                          (zerop (logand members (or reserved 0))))
                 (let ((cost (mir-lir-copyable-loop-cost blocks instructions members (car entry))))
-                  (when (and cost (<= 1 cost 24))
-                    (return (values members (cdr entry) (min 12 (floor 192 cost))))))))))))))
+                  (when (and cost (<= 1 cost 32))
+                    (push (list members (cdr entry) (min 12 (floor 192 cost))) plans)
+                    (setf reserved (logior members (or reserved 0))))))
+              (when (= (length plans) 2)
+                (return (nreverse plans))))))))))
 
 (defun mir-lir-new-loop-labels (labels members)
   (let ((copy (copy-seq labels)))
@@ -1908,6 +1961,7 @@
          (*mir-lir-definitions* (mir-value-definitions function))
          (*mir-lir-value-owners* (hir-buffer-view (mir-function-values function)))
          (*mir-lir-shift-guarded-indices* nil)
+         (*mir-lir-positive-indices* nil)
          (*mir-lir-versioned-bound* nil)
          (*mir-lir-value-facts* (mir-infer-value-facts function type-unit))
          (recursive-private-entry
@@ -1954,7 +2008,7 @@
          (version-members nil) (version-entry nil) (version-bound nil) (version-value nil)
          (version-cost nil)
          (version-labels nil) (version-guard nil)
-         (copy-members nil) (copy-entry nil) (copy-count nil) (copy-labels nil)
+         (copy-plans nil) (copy-entry-labels nil)
          (arguments (make-array (mir-function-positional-count function))) (count (new-var :raw)))
     (multiple-value-setq (*mir-lir-doubles* *mir-lir-boxed*) (mir-lir-double-plan function predecessors))
     (multiple-value-bind (owners sources) (mir-lir-plan-array-contents function)
@@ -1970,18 +2024,25 @@
             (setf (gethash owner *mir-lir-array-contents*)
                   (cons (new-var)
                         (if (integerp dimension) (constant-object dimension) (new-var))))))
-        (setf bound-inputs (mir-lir-array-bound-inputs function blocks sources unit))
+        (multiple-value-bind (bounds decremented-indices)
+            (mir-lir-array-bound-inputs function blocks sources unit)
+          (setf bound-inputs bounds
+                *mir-lir-positive-indices*
+                (mir-lir-positive-loop-indices function blocks loop-polls decremented-indices)))
         (multiple-value-setq (version-members version-entry version-bound version-value version-cost)
           (mir-lir-plan-reverse-loop function blocks bound-inputs))
         (when version-members
           (setf version-guard (new-block)
                 version-labels (mir-lir-new-loop-labels labels version-members)))
-        (multiple-value-setq (copy-members copy-entry copy-count)
-          (mir-lir-plan-copy-prefix function blocks bound-inputs loop-polls version-members))
-        (when copy-members
-          (setf copy-labels
-                (loop repeat copy-count collect
-                  (mir-lir-new-loop-labels labels copy-members))))))
+        (setf copy-plans (mir-lir-plan-copy-prefixes function blocks bound-inputs loop-polls version-members))
+        (when copy-plans
+          (setf copy-entry-labels (make-hash-table :test #'eq))
+          (loop for plan in copy-plans
+                for (members entry count) = plan
+                for copies = (loop repeat count collect (mir-lir-new-loop-labels labels members))
+                do (setf (third plan) copies
+                         (gethash entry copy-entry-labels)
+                         (svref (first copies) (mir-edge-target entry)))))))
     (dotimes (i (length arguments)) (setf (svref arguments i) (new-var)))
     (emit `(:receive-prefix ,(coerce arguments 'list) ,count))
     (when (and storage (not (zerop (mir-storage-analysis-rest storage))))
@@ -2072,7 +2133,7 @@
                (loop for edge across edges for index from 0
                      for target = (mir-edge-target edge)
                      for destination = (cond ((eq edge version-entry) version-guard)
-                                             ((eq edge copy-entry) (svref (first copy-labels) target))
+                                             ((and copy-entry-labels (gethash edge copy-entry-labels)))
                                              ((and backedge (= target (car backedge))) (cdr backedge))
                                              (t (svref labels target)))
                      for landing-p = (and (= 5 (mir-terminator-kind term)) (= index 1))
@@ -2147,10 +2208,10 @@
             ;; A header backedge from this copy returns to the first copy's
             ;; poll. Any cycles internal to either copy keep their polls.
             (emit-loop-copy version-members second-labels (cons header (svref version-labels header)) header))))
-      (when copy-members
-        (let ((header (mir-edge-target copy-entry)))
-          (loop for (copy next) on copy-labels
-                do (emit-loop-copy copy-members copy (cons header (svref (or next labels) header)) header)))))
+      (loop for (members entry copies) in copy-plans
+            for header = (mir-edge-target entry)
+            do (loop for (copy next) on copies
+                     do (emit-loop-copy members copy (cons header (svref (or next labels) header)) header))))
     (dolist (entry dispatches)
       (let ((*regions* (region-outer (car entry)))) (start-dispatch (car entry) (cdr entry))))
     (dolist (entry (nreverse edge-blocks))
