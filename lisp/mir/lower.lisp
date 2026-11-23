@@ -31,6 +31,7 @@
 (defvar *mir-lir-positive-indices* nil)
 (defvar *mir-lir-value-owners*)
 (defvar *mir-lir-versioned-bound* nil)
+(defvar *mir-lir-reverse-swap-test* nil)
 (defvar *mir-lir-in-loop* nil)
 (defvar *mir-lir-float-mode-cache* nil)
 (defvar *mir-lir-fused-reciprocal* nil)
@@ -890,7 +891,9 @@
                (mir-lir-condition-value
                 instruction
                 (if halved
-                    `(:fixnum-le-half ,(if (eq name '<=) left right) ,halved)
+                    (if (eql *mir-lir-reverse-swap-test* (mir-instruction-result instruction))
+                        `(:word-lt (:word-shift-left (:fixnum-untag ,left) 1) (:fixnum-untag ,halved))
+                        `(:fixnum-le-half ,(if (eq name '<=) left right) ,halved))
                     `(,(ecase name ((< minusp) :lt) ((> plusp) :gt) (<= :le) (>= :ge)
                                   ((= zerop) :eq) (/= :ne))
                       ,left ,(or right '(:fixnum-tag 0))))))))))
@@ -2235,6 +2238,90 @@
                                                          (car entry) members dominators)
                            (when bound (return (values members (cdr entry) bound value cost))))))))))))
 
+(defun mir-lir-reverse-swap-test (blocks instructions members header bound)
+  (let* ((term (mir-block-terminator (svref blocks header)))
+         (parameters (mir-block-parameters (svref blocks header)))
+         (definitions *mir-lir-definitions*)
+         (relation (and (= (mir-terminator-kind term) 1)
+                        (mir-shift-guard-relation term definitions)))
+         (z (car bound))
+         (array (cdr bound))
+         (index (and (= (length parameters) 1) (svref parameters 0))))
+    (when (and relation index (= (cdr relation) z)
+               (mir-induction-add-one-p (car relation) index definitions)
+               (logbitp (mir-edge-target (svref (mir-terminator-edges term) 0)) members)
+               (not (logbitp (mir-edge-target (svref (mir-terminator-edges term) 1)) members))
+               (eq (second (svref *mir-lir-types* array)) 'fixnum))
+      (let* ((test (mir-primary-origin (svref (mir-terminator-operands term) 0) definitions))
+             (comparison (svref definitions test))
+             (increment (svref definitions (car relation)))
+             (reads nil) (writes nil))
+        (unless (and (mir-lir-fixnum-call-p comparison)
+                     (mir-lir-fixnum-call-p increment)
+                     (mir-lir-fixnum-call-p
+                      (svref definitions
+                             (mir-primary-origin
+                              (svref (mir-instruction-operands comparison) 1) definitions))))
+          (return-from mir-lir-reverse-swap-test nil))
+        (loop for block across blocks
+              for id = (mir-block-id block)
+              when (logbitp id members)
+                do (unless (or (= id header) (= (mir-terminator-kind (mir-block-terminator block)) 0))
+                     (return-from mir-lir-reverse-swap-test nil))
+                   (loop for inst-id across (hir-buffer-view (mir-block-instructions block))
+                         for inst = (mir-at instructions inst-id)
+                         for kind = (mir-instruction-kind inst)
+                         for result = (mir-instruction-result inst)
+                         for access = (gethash result *mir-lir-array-sources*)
+                         do (cond ((member kind '(0 9 10)))
+                                  ((and (= kind 11)
+                                        (or (mir-check-proven-p inst *mir-lir-types*)
+                                            ;; The guarded index is at most half of a fixnum.
+                                            (and (eq (mir-instruction-data inst) 'fixnum)
+                                                 (= (car relation)
+                                                    (mir-primary-origin
+                                                     (svref (mir-instruction-operands inst) 0)
+                                                     definitions))))))
+                                  ((or (eq inst comparison) (eq inst increment)))
+                                  ((and (= id header) (= kind 6) (eq (mir-instruction-data inst) '-)
+                                        (mir-lir-fixnum-call-p inst)
+                                        (eql z (mir-lir-reverse-index-upper-bound result result))))
+                                  ((and (= id header) access (eql array (first access)))
+                                   (case (mir-lir-container-call inst)
+                                     (:specialized-array-read
+                                      (when writes (return-from mir-lir-reverse-swap-test nil))
+                                      (push (cons (second access) result) reads))
+                                     (:specialized-array-write
+                                      (push (cons (second access)
+                                                  (mir-primary-origin
+                                                   (svref (mir-instruction-operands inst) 0) definitions))
+                                            writes))
+                                     (otherwise (return-from mir-lir-reverse-swap-test nil))))
+                                  (t (return-from mir-lir-reverse-swap-test nil)))))
+        (when (and (= (length reads) 2) (= (length writes) 2)
+                   (let ((i (assoc index reads))
+                         (k (find-if (lambda (read)
+                                       (and (/= index (car read))
+                                            (eql z (mir-lir-reverse-index-upper-bound (car read) (cdr read)))))
+                                     reads)))
+                     (and i k (equal (cdr k) (cdr (assoc index writes)))
+                          (equal (cdr i) (cdr (assoc (car k) writes))))))
+          ;; An omitted iteration must not change any value read outside the loop.
+          (flet ((local-p (value)
+                   (logbitp (mir-value-block (svref *mir-lir-value-owners* value)) members)))
+            (when (loop for block across blocks
+                        for local = (logbitp (mir-block-id block) members)
+                        for tail = (mir-block-terminator block)
+                        always (and (or local
+                                        (and (notany #'local-p (mir-terminator-operands tail))
+                                             (loop for id across (hir-buffer-view (mir-block-instructions block))
+                                                   never (some #'local-p
+                                                               (mir-instruction-operands (mir-at instructions id))))))
+                                    (loop for edge across (mir-terminator-edges tail)
+                                          always (or (and local (logbitp (mir-edge-target edge) members))
+                                                     (notany #'local-p (mir-edge-arguments edge))))))
+              test)))))))
+
 (defun mir-lir-early-reverse-guard (function blocks entry bound value polls)
   "Locate a redundant initial comparison and the blocks it can bypass."
   (block plan
@@ -2501,6 +2588,7 @@
          (*mir-lir-shift-guarded-indices* nil)
          (*mir-lir-positive-indices* nil)
          (*mir-lir-versioned-bound* nil)
+         (*mir-lir-reverse-swap-test* nil)
          (*mir-lir-value-facts* (mir-infer-value-facts function type-unit))
          (recursive-private-entry
            (and unit (plusp (mir-function-internal-prefix function))
@@ -2551,7 +2639,7 @@
          (*mir-lir-length-arguments* nil)
          (version-members nil) (version-entry nil) (version-bound nil) (version-value nil)
          (version-cost nil)
-         (version-labels nil) (version-guard nil)
+         (version-labels nil) (version-guard nil) (reverse-swap-test nil)
          (early-guard nil) (early-path nil) (early-target nil)
          (copy-plans nil) (copy-entry-labels nil)
          (*mir-lir-emitting-function* (mir-function-id function))
@@ -2586,6 +2674,9 @@
         (multiple-value-setq (version-members version-entry version-bound version-value version-cost)
           (mir-lir-plan-reverse-loop function blocks bound-inputs))
         (when version-members
+          (setf reverse-swap-test
+                (mir-lir-reverse-swap-test blocks (mir-function-instructions function) version-members
+                                           (mir-edge-target version-entry) version-bound))
           (multiple-value-setq (early-guard early-path)
             (mir-lir-early-reverse-guard function blocks version-entry
                                          version-bound version-value loop-polls))
@@ -2806,12 +2897,14 @@
                   (start-block version-guard)
                   (br `(:fixnum-uge ,(mir-lir-value version-value) ,length)
                       (svref labels header) fast))))
-          (let ((*mir-lir-versioned-bound* version-bound))
+          (let ((*mir-lir-versioned-bound* version-bound)
+                (*mir-lir-reverse-swap-test* reverse-swap-test))
             ;; The header edges link successive copies before entering the
             ;; regular loop. Internal cycles still use the original polls.
             (loop for (copy next) on prefix-copies
                   do (emit-loop-copy version-members copy (cons header (svref (or next version-labels) header)) header))))
         (let* ((*mir-lir-versioned-bound* version-bound)
+               (*mir-lir-reverse-swap-test* reverse-swap-test)
                (header (mir-edge-target version-entry))
                (second-labels (when (and (logbitp header loop-polls)
                                          (<= (logcount version-members) 4) (<= version-cost 38))
