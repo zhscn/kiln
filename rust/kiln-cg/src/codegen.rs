@@ -989,7 +989,74 @@ struct FuncLowering<'a, M: Module> {
     call_locs: Vec<Option<Loc>>,
 }
 
+// Both heap pointer tags have the fixnum bit set. Prove that a word has
+// that bit clear from the operations that construct it.
+fn definitely_fixnum_bits(expr: &Expr) -> bool {
+    match expr {
+        Expr::Int(word) => kiln_rt::object::is_fixnum(*word as u64),
+        Expr::Shift(ShiftOp::Shl, _, count) => count & 63 != 0,
+        Expr::Bin(BinOp::And | BinOp::Mul, left, right) => {
+            definitely_fixnum_bits(left) || definitely_fixnum_bits(right)
+        }
+        Expr::Bin(BinOp::Add | BinOp::Sub | BinOp::Or | BinOp::Xor, left, right)
+        | Expr::Select(_, left, right) => {
+            definitely_fixnum_bits(left) && definitely_fixnum_bits(right)
+        }
+        _ => false,
+    }
+}
+
 impl<'a, M: Module> FuncLowering<'a, M> {
+    fn declare_stack_map_variables(&self, b: &mut FunctionBuilder, f: &kir::Func) {
+        let first_local = kir::PREDEFINED_VARS.len();
+        let mut may_hold_pointer = vec![false; first_local + f.vars.len()];
+        may_hold_pointer[..first_local].fill(true);
+        let mark_name = |name: &str, may_hold_pointer: &mut [bool]| {
+            if let Some(var) = self.vars.get(name) {
+                may_hold_pointer[var.as_u32() as usize] = true;
+            }
+        };
+        // A mutable variable is immediate only if every assignment proves it.
+        // Parameters and exception payloads may hold arbitrary objects.
+        for stmt in f.blocks.iter().flat_map(|block| &block.stmts) {
+            match stmt {
+                Stmt::SetLocal(id, expr) if !definitely_fixnum_bits(expr) => {
+                    if let Some(local) = self.indexed_vars.get(*id) {
+                        may_hold_pointer[local.0.as_u32() as usize] = true;
+                    }
+                }
+                Stmt::Set(name, expr) if !definitely_fixnum_bits(expr) => {
+                    mark_name(name, &mut may_hold_pointer);
+                }
+                Stmt::CallLisp { v0, nv, .. } => {
+                    mark_name(v0, &mut may_hold_pointer);
+                    mark_name(nv, &mut may_hold_pointer);
+                }
+                Stmt::CallRt { results, .. } => {
+                    for name in results {
+                        mark_name(name, &mut may_hold_pointer);
+                    }
+                }
+                Stmt::Ovf { result, overflow, .. } => {
+                    mark_name(result, &mut may_hold_pointer);
+                    mark_name(overflow, &mut may_hold_pointer);
+                }
+                _ => (),
+            }
+        }
+        for (name, kind) in kir::PREDEFINED_VARS.iter().copied()
+            .chain(f.vars.iter().map(|(name, kind)| (name.as_str(), *kind)))
+        {
+            let var = self.vars[name];
+            let debug_visible = self.labels.contains_key(name);
+            if (kind == VarKind::Obj && (may_hold_pointer[var.as_u32() as usize] || debug_visible))
+                || (kind == VarKind::F64 && debug_visible)
+            {
+                b.declare_var_needs_stack_map(var);
+            }
+        }
+    }
+
     fn build(&mut self, func: &mut ir::Function, fctx: &mut FunctionBuilderContext, f: &'a kir::Func) -> R<()> {
         let mut b = FunctionBuilder::new(func, fctx);
         let all_vars = kir::PREDEFINED_VARS
@@ -1005,15 +1072,13 @@ impl<'a, M: Module> FuncLowering<'a, M> {
                 VarKind::F64 => ir::types::F64,
                 _ => I64,
             });
-            if kind == VarKind::Obj || (kind == VarKind::F64 && self.labels.contains_key(&name)) {
-                b.declare_var_needs_stack_map(v);
-            }
             if index >= kir::PREDEFINED_VARS.len() {
                 self.indexed_vars.push((v, kind, self.labels.get(name).copied()));
             }
             self.vars.insert(name, v);
             self.var_kinds.insert(name, kind);
         }
+        self.declare_stack_map_variables(&mut b, f);
         for (name, size) in &f.slots {
             let ss = b.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, *size, 3));
             self.slots.insert(name.as_str(), ss);

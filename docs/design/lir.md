@@ -136,6 +136,11 @@ image 编译中的调试记录原本作为一个整体放在 literal 向量中�
 
 函数可声明 `(debug NAME FILE START END ((VAR NAME [cell])...))`，名称与文件使用常量字段语法，范围使用非负 32 位偏移。变量须已声明且表示为 `obj` 或 `f64`；cell 只用于对象变量。Rust 构造函数描述和变量名向量，按变量表示生成 cell 或 binary64 描述并标记 KIR 变量位置。描述中的 image literal 与普通常量字段共用安装期绑定。cell 与 binary64 描述引用运行环境的标准关键字符号，以保持 debugger 的标签身份。`call` 的 `loc` 优先于函数范围；变量值只在调用点存活时可见。
 
+对象变量在 safepoint 处存活时通常需要栈槽，以便 GC 扫描并更新引用。
+生成 Cranelift IR 前，后端扫描函数中的赋值。若变量的所有赋值都由常量或
+整数运算证明最低位为零，该变量始终持有 fixnum，无需为 safepoint 保留栈槽。
+调用结果和异常 payload 等来源仍按可能含有引用处理，调试器可见的变量仍保留位置。
+
 核心操作包括机器字计算与比较、对象同一性、fixnum 计算和装拆箱、字符装拆箱、binary64 计算及 double 拆箱、simple-vector 和字符串读取。操作表同时定义纯操作的名称、参数表示和结果表示。`test` 接收表示类名，对任意 Lisp 值安全；`field-ref` 和 `field-set` 使用 `cons.car`、`symbol.function` 等字段名。`alloc` 接收结果、对象种类、存储方式和字段列表，例如 `(alloc pair cons heap (head tail))`。目前支持 cons、double-float、complex 和普通实例的堆分配。Rust 保存所有字段后分配、初始化；对象字段跨慢路径保持精确 roots，允许结果变量同时作为旧字段输入。
 
 `(error CODE VALUE [(loc START END)])` 是可展开的终结操作。CODE 使用目标描述的语义错误码，VALUE 是对象变量。Rust 调用当前 `%runtime-error` 定义；定义尚不可用或意外返回时调用 fatal runtime 入口。验证器检查错误码、位置、对象表示与初始化，并将所有活动 handler 的异常边纳入 CFG。生产路径的 `signal-error` 与独立 LIR 共用此展开，Lisp 不再读取错误函数的代码入口或安排分派调用。
