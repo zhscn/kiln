@@ -316,6 +316,72 @@
         (hir-type-intersection type (hir-integer-range 0 +hir-vector-max-length+))
         type)))
 
+(defun mir-call-vector-dimension-pairs (arguments definitions entry-checks values)
+  (when (and arguments entry-checks)
+    (loop for origin across arguments for array-position from 0
+          for definition = (svref definitions origin)
+          for size = (and definition (mir-checked-vector-dimension definition definitions))
+          for size-position = (and size (position size arguments))
+          when (and size-position (assoc size entry-checks)
+                    (zerop (mir-value-block (svref values origin))))
+            collect (cons array-position size-position))))
+
+(defun mir-forwarded-vector-dimension-p (pair arguments definitions)
+  (flet ((forwarded (position)
+           (when (< position (length arguments))
+             (let ((definition (svref definitions (svref arguments position))))
+               (and definition (= (mir-instruction-kind definition) 1)
+                    (= (mir-instruction-data definition) position))))))
+    (and arguments (forwarded (car pair)) (forwarded (cdr pair)))))
+
+(defun mir-vector-call-lengths (unit)
+  (mir-unit-analysis unit :vector-call-lengths
+    (lambda (unit)
+      (let* ((functions (hir-buffer-view (mir-unit-functions unit)))
+             (flow (mir-infer-function-flow unit))
+             (sites (make-array (length functions) :initial-element nil))
+             (lengths (make-array (length functions) :initial-element nil)))
+        (loop for function across functions
+              for caller from 0
+              for known across (mir-function-flow-identities flow)
+              for outgoing across (mir-function-flow-outgoing flow)
+              when outgoing do
+                (let ((definitions (mir-value-definitions function))
+                      (entry-checks (mir-entry-vector-dimension-checks function))
+                      (values (hir-buffer-view (mir-function-values function)))
+                      (reachable (mir-reachable-blocks function)))
+                  (loop for block across (hir-buffer-view (mir-function-blocks function))
+                        when (logbitp (mir-block-id block) reachable) do
+                          (loop for id across (hir-buffer-view (mir-block-instructions block))
+                                for instruction = (mir-at (mir-function-instructions function) id)
+                                for kind = (mir-instruction-kind instruction)
+                                when (member kind '(7 15)) do
+                                  (let* ((args (mir-instruction-operands instruction))
+                                         (target (svref known (svref args 0))))
+                                    (when (and (integerp target)
+                                               (not (logbitp target (mir-function-flow-external flow)))
+                                               (plusp (mir-function-internal-prefix (svref functions target))))
+                                      (let* ((origins (and (= kind 7)
+                                                          (map 'simple-vector
+                                                               (lambda (id) (mir-primary-origin id definitions))
+                                                               (subseq args 1))))
+                                             (pairs (mir-call-vector-dimension-pairs origins definitions
+                                                                                    entry-checks values)))
+                                        (push (list caller origins definitions pairs) (svref sites target)))))))))
+        (dotimes (target (length functions))
+          (let ((calls (svref sites target)))
+            (dolist (call calls)
+              (dolist (pair (fourth call))
+                (when (every
+                       (lambda (site)
+                         (destructuring-bind (caller origins definitions pairs) site
+                           (or (member pair pairs :test #'equal)
+                               (and (= caller target)
+                                    (mir-forwarded-vector-dimension-p pair origins definitions)))))
+                       calls)
+                  (pushnew pair (svref lengths target) :test #'equal))))))
+        lengths))))
+
 (defun mir-call-argument-types (instruction facts packets required
                                 &optional (maximum required) checks definitions prior)
   "Flatten call facts, or return :UNSEEN, :UNKNOWN or :WRONG-ARITY.

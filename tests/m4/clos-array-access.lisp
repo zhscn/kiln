@@ -152,3 +152,15 @@
 
 (assert (zerop (length (fill-input-vector (fill-with-index 0)))))
 (assert (equalp (fill-input-vector (fill-with-index 3)) #(1d0 1d0 1d0)))
+
+(defun fill-private-array (size)
+  (declare (fixnum size) (optimize (speed 3) (safety 3)))
+  (let ((array (make-array size :element-type 'double-float)))
+    (flet ((fill-array ()
+             (dotimes (i size array)
+               (setf (aref array i) 2d0))))
+      (declare (notinline fill-array))
+      (fill-array))))
+
+(assert (zerop (length (fill-private-array 0))))
+(assert (equalp (fill-private-array 3) #(2d0 2d0 2d0)))
