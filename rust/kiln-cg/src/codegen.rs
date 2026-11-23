@@ -1360,7 +1360,15 @@ impl<'a, M: Module> FuncLowering<'a, M> {
             }
             Stmt::Store(a, off, v) => {
                 let addr = self.expr(b, a)?;
-                let val = self.expr(b, v)?;
+                // A binary64 local already has the bits required by a
+                // full-width store. Keep it in the floating-point register.
+                let val = match v {
+                    Expr::Var(name) if self.var_kinds.get(name.as_str()) == Some(&VarKind::F64) =>
+                        b.use_var(self.var(name)?),
+                    Expr::Local(id) if self.local(*id)?.1 == VarKind::F64 =>
+                        b.use_var(self.local(*id)?.0),
+                    _ => self.expr(b, v)?,
+                };
                 let mf = trusted(b);
                 b.ins().store(mf, val, addr, *off);
             }

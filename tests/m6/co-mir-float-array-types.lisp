@@ -72,6 +72,11 @@
            (optimize (speed 3) (safety 3)))
   (setf (aref array index) value))
 
+(let ((array (make-array 1 :element-type 'double-float)))
+  (dolist (bits '(#x8000000000000000 #x7ff8000000000042))
+    (write-float-with-index array 0 (kiln.sys:bits-double-float bits))
+    (assert (= (kiln.sys:double-float-bits (aref array 0)) bits))))
+
 (defun write-untyped-float-array (array index value)
   (declare ((simple-array double-float) array)
            (optimize (speed 3) (safety 3)))
