@@ -354,3 +354,15 @@
 (assert (= 14 (read-first-after-length-test 2 2 :at-least)))
 (assert (handler-case (progn (read-first-after-length-test 0 1 :unchecked-branch) nil)
           (error () t)))
+
+(defun read-last-after-length-join (n allow-empty)
+  (declare (fixnum n) (optimize (speed 3) (safety 3)))
+  (let ((array (make-array n :element-type 'fixnum :initial-element 7)))
+    (when (or allow-empty (<= 1 n))
+      (+ (aref array (- n 1)) (aref array 0)))))
+
+(assert (null (read-last-after-length-join 0 nil)))
+(assert (= 14 (read-last-after-length-join 1 nil)))
+(assert (= 14 (read-last-after-length-join 3 t)))
+(assert (handler-case (progn (read-last-after-length-join 0 t) nil)
+          (error () t)))

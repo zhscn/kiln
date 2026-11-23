@@ -25,6 +25,8 @@
 (defvar *mir-lir-condition-inverted*)
 (defvar *mir-lir-index-bounds* nil)
 (defvar *mir-lir-inherited-index-bounds* nil)
+(defvar *mir-lir-positive-values* nil)
+(defvar *mir-lir-length-arguments* nil)
 (defvar *mir-lir-shift-guarded-indices* nil)
 (defvar *mir-lir-positive-indices* nil)
 (defvar *mir-lir-value-owners*)
@@ -320,7 +322,7 @@
       ;; Reentering the storage owner's block can produce a different array.
       (setf facts (remove-if (lambda (fact)
                               (let ((source (second fact)))
-                                (and source (= target (mir-value-block (svref values source))))))
+                                (and (integerp source) (= target (mir-value-block (svref values source))))))
                             facts))
       (dolist (fact facts)
         (unless (and (not (minusp (first fact)))
@@ -399,8 +401,10 @@
 (defun mir-lir-array-nonempty-bounds (minimum size lengths values block dominators facts)
   (let ((range (hir-type-range (svref *mir-lir-types* minimum))))
     (if (and range (plusp (second range)))
-        (mir-lir-add-length-bound (lognot 0) (mir-primary-origin size *mir-lir-definitions*)
-                                  lengths values block dominators facts)
+        (let ((origin (mir-primary-origin size *mir-lir-definitions*)))
+          (when (gethash origin lengths)
+            (setf facts (mir-lir-add-array-bound (list origin :positive nil) facts)))
+          (mir-lir-add-length-bound (lognot 0) origin lengths values block dominators facts))
         facts)))
 
 (defun mir-lir-array-branch-bounds (term block lengths values dominators facts)
@@ -500,15 +504,31 @@
                           (when (zerop (sbit queued target))
                             (setf (sbit queued target) 1)
                             (push target pending)))))
-    (values (map 'simple-vector
-                 (lambda (facts)
-                   (when (consp facts)
-                     (let ((table (make-hash-table :test #'eql)))
-                       (dolist (fact facts table)
-                         (destructuring-bind (index source limit) fact
-                           (push (cons source limit) (gethash index table)))))))
-                 inputs)
-            decremented-indices)))
+    ;; Positivity shares the same join and SSA invalidation rules, but it
+    ;; does not prove an upper bound for an ordinary array index.
+    (let ((positive-inputs nil))
+      (loop for facts across inputs for id from 0
+            do (let ((bounds nil))
+                 (when (consp facts)
+                   (dolist (fact facts)
+                     (destructuring-bind (index source limit) fact
+                       (if (eq source :positive)
+                           (progn
+                             (unless positive-inputs
+                               (setf positive-inputs (make-array (length blocks) :initial-element 0)))
+                             (setf (svref positive-inputs id)
+                                   (logior (svref positive-inputs id) (ash 1 index))))
+                           (progn
+                             (unless bounds (setf bounds (make-hash-table :test #'eql)))
+                             (push (cons source limit) (gethash index bounds)))))))
+                 (setf (svref inputs id) bounds)))
+      (values inputs decremented-indices positive-inputs lengths))))
+
+(defun mir-lir-positive-decrement (origin)
+  (when (and *mir-lir-positive-values* (plusp *mir-lir-positive-values*))
+    (let ((input (mir-lir-decremented-index origin)))
+      (when (and input (logbitp input *mir-lir-positive-values*))
+        input))))
 
 (defun mir-lir-emit-vector-access (vector index value index-type slow-fn &optional length doublep singlep)
   (emit-svref-fast-path
@@ -631,6 +651,8 @@
                 (upper (mir-lir-reverse-index-upper-bound origin (mir-instruction-result instruction))))
            (cond ((or (mir-lir-array-index-proven-p source limit index-type nil)
                       (mir-lir-array-index-checked-p origin source limit)
+                      (let ((input (mir-lir-positive-decrement origin)))
+                        (and input (member source (gethash input *mir-lir-length-arguments*))))
                       (mir-lir-array-index-checked-p (mir-lir-previous-array-index origin) source limit)
                       (mir-lir-array-index-checked-p upper source limit)
                       (and upper *mir-lir-versioned-bound*
@@ -809,6 +831,7 @@
 (defun mir-lir-fixnum-call (instruction args declared-fixnum-result-p)
   (let* ((name (mir-instruction-data instruction)) (left (first args)) (right (second args))
          (bounded (or declared-fixnum-result-p
+                      (and (eq name '-) (mir-lir-positive-decrement (mir-instruction-result instruction)))
                       (hir-fixnum-type-p (svref *mir-lir-types* (mir-instruction-result instruction)))
                       (mir-lir-vector-index-increment-p instruction))))
     (cond ((and (eq name '+) (cddr args)) (mir-lir-fixnum-sum args bounded))
@@ -2303,7 +2326,8 @@
          (loop-polls (mir-loop-poll-blocks function))
          (labels (map 'simple-vector (lambda (block) (declare (ignore block)) (new-block)) blocks))
          (edge-blocks nil) (dispatches nil) (base-regions nil)
-         (bound-inputs nil)
+         (bound-inputs nil) (positive-inputs nil)
+         (*mir-lir-length-arguments* nil)
          (version-members nil) (version-entry nil) (version-bound nil) (version-value nil)
          (version-cost nil)
          (version-labels nil) (version-guard nil)
@@ -2331,9 +2355,11 @@
             (setf (gethash owner *mir-lir-array-contents*)
                   (cons (new-var)
                         (if (integerp dimension) (constant-object dimension) (new-var))))))
-        (multiple-value-bind (bounds decremented-indices)
+        (multiple-value-bind (bounds decremented-indices positives lengths)
             (mir-lir-array-bound-inputs function blocks sources unit)
           (setf bound-inputs bounds
+                positive-inputs positives
+                *mir-lir-length-arguments* lengths
                 *mir-lir-positive-indices*
                 (mir-lir-positive-loop-indices function blocks loop-polls decremented-indices)))
         (multiple-value-setq (version-members version-entry version-bound version-value version-cost)
@@ -2410,6 +2436,7 @@
                     (block-id (mir-block-id block))
                     (*mir-lir-in-loop* (logbitp block-id cyclic))
                     (*mir-lir-inherited-index-bounds* (and bound-inputs (svref bound-inputs block-id)))
+                    (*mir-lir-positive-values* (and positive-inputs (svref positive-inputs block-id)))
                     (*mir-lir-index-bounds* nil))
                (loop with block-instructions = (hir-buffer-view (mir-block-instructions block))
                      with instructions = (mir-function-instructions function)
