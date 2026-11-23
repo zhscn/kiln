@@ -641,8 +641,13 @@ if needed (not a safepoint)."
                          (case name (+ 'kiln.kernel::two-arg-+)
                                     (- 'kiln.kernel::two-arg--)
                                     (* 'kiln.kernel::two-arg-*)) a b)))
-        (when check-overflow-result (funcall check-overflow-result r))
-        (jump done) (start-block done) r)))
+        (if check-overflow-result
+            (progn
+              (funcall check-overflow-result r)
+              (emit '(:trap)))
+            (jump done))
+        (start-block done)
+        r)))
 
 ;;; Allocation
 

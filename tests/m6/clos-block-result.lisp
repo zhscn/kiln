@@ -82,3 +82,17 @@
             (type-error (condition)
               (and (eq (type-error-expected-type condition) 'fixnum)
                    (= (type-error-datum condition) (* a 2)))))))
+
+(defun checked-product-with-cleanup (a b cleanup)
+  (declare (fixnum a b) (optimize (speed 3) (safety 3)))
+  (unwind-protect (the fixnum (* a b))
+    (funcall cleanup)))
+
+(let ((cleaned nil))
+  (assert (handler-case
+              (progn (checked-product-with-cleanup
+                      most-positive-fixnum 2 (lambda () (setf cleaned t)))
+                     nil)
+            (type-error (condition)
+              (and cleaned
+                   (= (type-error-datum condition) (* most-positive-fixnum 2)))))))
