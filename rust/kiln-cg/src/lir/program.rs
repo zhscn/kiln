@@ -301,6 +301,7 @@ operations! {
     FixnumEq => ("fixnum-eq", [Obj,Obj], Word),
     FixnumLt => ("fixnum-lt", [Obj,Obj], Word),
     FixnumLe => ("fixnum-le", [Obj,Obj], Word),
+    FixnumLeHalf => ("fixnum-le-half", [Obj, Obj], Word),
     FixnumGt => ("fixnum-gt", [Obj,Obj], Word),
     FixnumGe => ("fixnum-ge", [Obj,Obj], Word),
     FixnumUge => ("fixnum-uge", [Obj,Obj], Word),

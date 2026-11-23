@@ -975,6 +975,7 @@ fn fixnum_integer_operations_preserve_kir() {
         ("(or a0 a1)", "(fixnum-logior a0 a1)"),
         ("(xor a0 a1)", "(fixnum-logxor a0 a1)"),
         ("(le a0 a1)", "(fixnum-le a0 a1)"),
+        ("(le a0 (sar a1 1))", "(fixnum-le-half a0 a1)"),
         ("(lt a0 a1)", "(fixnum-lt a0 a1)"),
         ("(gt a0 a1)", "(fixnum-gt a0 a1)"),
         ("(ge a0 a1)", "(fixnum-ge a0 a1)"),

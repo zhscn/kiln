@@ -377,6 +377,13 @@ pub fn fixnum_operation(op: &str, a: Expr, b: Option<Expr>) -> Result<Expr, Stri
         "fixnum-ge" => Expr::Cmp(CmpOp::Ge, Box::new(a), Box::new(b()?)),
         "fixnum-eq" => Expr::Cmp(CmpOp::Eq, Box::new(a), Box::new(b()?)),
         "fixnum-le" => Expr::Cmp(CmpOp::Le, Box::new(a), Box::new(b()?)),
+        // A tagged fixnum is even. Comparing it with the shifted word
+        // gives the same answer before or after clearing that word's low bit.
+        "fixnum-le-half" => Expr::Cmp(
+            CmpOp::Le,
+            Box::new(a),
+            Box::new(fixnum_untag(b()?)),
+        ),
         "fixnum-shift-left" => bin(BinOp::Shlv, a, fixnum_untag(b()?)),
         "fixnum-shift-right" => bin(
             BinOp::And,

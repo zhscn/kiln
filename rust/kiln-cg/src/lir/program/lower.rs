@@ -710,7 +710,7 @@ impl Lowerer<'_> {
             FixnumUge => compare(CmpOp::Uge, a, b()),
             FixnumUnsigned => layout::fixnum_unsigned_bits(a),
             FixnumAnd | FixnumOr | FixnumXor | FixnumDiv | FixnumRem | FixnumEq | FixnumLt
-            | FixnumLe | FixnumGt | FixnumGe | FixnumShl | FixnumSar => layout::fixnum_operation(
+            | FixnumLe | FixnumLeHalf | FixnumGt | FixnumGe | FixnumShl | FixnumSar => layout::fixnum_operation(
                 match op {
                     FixnumAnd => "fixnum-logand",
                     FixnumOr => "fixnum-logior",
@@ -720,6 +720,7 @@ impl Lowerer<'_> {
                     FixnumEq => "fixnum-eq",
                     FixnumLt => "fixnum-lt",
                     FixnumLe => "fixnum-le",
+                    FixnumLeHalf => "fixnum-le-half",
                     FixnumGt => "fixnum-gt",
                     FixnumGe => "fixnum-ge",
                     FixnumShl => "fixnum-shift-left",

@@ -2382,6 +2382,7 @@ fn parse_expr(s: &Sexp) -> R<Expr> {
         }
         "fixnum-quotient" | "fixnum-remainder" | "fixnum-logand" | "fixnum-logior"
         | "fixnum-logxor" | "fixnum-lt" | "fixnum-gt" | "fixnum-ge" | "fixnum-eq" | "fixnum-le"
+        | "fixnum-le-half"
         | "fixnum-shift-left" | "fixnum-shift-right" => {
             arity(h, r, 2)?;
             return crate::lir::fixnum_operation(h, parse_expr(&r[0])?, Some(parse_expr(&r[1])?));

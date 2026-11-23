@@ -828,6 +828,16 @@
             (and *mir-lir-inherited-index-bounds*
                  (gethash origin *mir-lir-inherited-index-bounds*)))))))
 
+(defun mir-lir-fixnum-halved-input (id)
+  (let ((definition (svref *mir-lir-definitions*
+                           (mir-primary-origin id *mir-lir-definitions*))))
+    (when (and definition
+               (eq (mir-instruction-data definition) 'ash)
+               (mir-lir-fixnum-call-p definition))
+      (let ((operands (mir-instruction-operands definition)))
+        (when (eql 1 (hir-constant-right-shift (svref *mir-lir-types* (svref operands 1))))
+          (mir-lir-value (svref operands 0)))))))
+
 (defun mir-lir-fixnum-call (instruction args declared-fixnum-result-p checked-result)
   (let* ((name (mir-instruction-data instruction)) (left (first args)) (right (second args))
          (bounded (or declared-fixnum-result-p
@@ -855,11 +865,16 @@
                  (copy-to-var `(:fixnum-shift-right ,left (:fixnum-tag ,shift))))))
           ((member name '(logand logior logxor))
            (copy-to-var `(,(ecase name (logand :and) (logior :or) (logxor :xor)) ,left ,right)))
-          (t (mir-lir-condition-value
-              instruction
-              `(,(ecase name ((< minusp) :lt) ((> plusp) :gt) (<= :le) (>= :ge)
-                            ((= zerop) :eq) (/= :ne))
-                ,left ,(or right '(:fixnum-tag 0))))))))
+          (t (let ((halved (case name
+                             (<= (mir-lir-fixnum-halved-input (svref (mir-instruction-operands instruction) 1)))
+                             (>= (mir-lir-fixnum-halved-input (svref (mir-instruction-operands instruction) 0))))))
+               (mir-lir-condition-value
+                instruction
+                (if halved
+                    `(:fixnum-le-half ,(if (eq name '<=) left right) ,halved)
+                    `(,(ecase name ((< minusp) :lt) ((> plusp) :gt) (<= :le) (>= :ge)
+                                  ((= zerop) :eq) (/= :ne))
+                      ,left ,(or right '(:fixnum-tag 0))))))))))
 
 (defun mir-lir-bignum-side (type)
   (cond ((hir-nonnegative-integer-type-p type) :above)

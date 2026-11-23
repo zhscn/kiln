@@ -30,6 +30,18 @@
 (assert (equal (reverse-indices 7) '(7 6 5 4)))
 (assert (equal (reverse-indices 8) '(8 7 6 5 4)))
 
+(defun compare-with-half (i n)
+  (declare (fixnum i n) (optimize (speed 3)))
+  (values (<= i (ash n -1)) (>= (ash n -1) i)))
+
+(dolist (n (list most-negative-fixnum (1+ most-negative-fixnum)
+                 -5 -4 -1 0 1 4 5 most-positive-fixnum))
+  (let ((half (ash n -1)))
+    (dolist (i (list (1- half) half (1+ half) most-negative-fixnum most-positive-fixnum))
+      (multiple-value-bind (forward reverse) (compare-with-half i n)
+        (assert (eql forward (<= i half)))
+        (assert (eql forward reverse))))))
+
 (defun reverse-index-from-negative (z)
   (declare (fixnum z) (optimize (speed 3)))
   (loop for i from -1 to (ash z -1)
