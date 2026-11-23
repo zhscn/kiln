@@ -1970,6 +1970,77 @@
                                                          (car entry) members dominators)
                            (when bound (return (values members (cdr entry) bound value cost))))))))))))
 
+(defun mir-lir-early-reverse-guard (function blocks entry bound value polls)
+  "Locate a redundant initial comparison and the blocks it can bypass."
+  (block plan
+    (let* ((header (mir-edge-target entry))
+           (parameters (mir-block-parameters (svref blocks header)))
+           (upper (car bound))
+           (definitions *mir-lir-definitions*)
+           (instructions (mir-function-instructions function)))
+      (unless (and (= (length parameters) 1)
+                   (eq (mir-value-representation (svref *mir-lir-value-owners* (svref parameters 0))) :obj)
+                   (mir-induction-integer-constant-p
+                    (svref (mir-edge-arguments entry) 0) 0 definitions))
+        (return-from plan nil))
+      (multiple-value-bind (reachable dominators) (mir-cached-control-flow function)
+        (let* ((incoming (mir-lir-loop-predecessors function blocks reachable))
+               (source (car (rassoc entry (svref incoming header) :test #'eq)))
+               (path 0)
+               (skipped-values 0)
+               (guard
+                 (when source
+                   (loop repeat 5
+                       for block = (svref blocks source)
+                       for term = (mir-block-terminator block)
+                       for kind = (mir-terminator-kind term)
+                       for relation = (and (= kind 1) (mir-shift-guard-relation term definitions))
+                       do (when (or (zerop source) (logbitp source polls) (logbitp source path))
+                            (return-from plan nil))
+                          (setf path (logior path (ash 1 source)))
+                          (loop for id across (hir-buffer-view (mir-block-instructions block))
+                                for inst = (mir-at instructions id)
+                                for result = (mir-instruction-result inst)
+                                unless (and result
+                                            (or (member (mir-instruction-kind inst) '(0 9 10))
+                                                (and (= (mir-instruction-kind inst) 11)
+                                                     (mir-check-proven-p inst *mir-lir-types*))
+                                                (and relation (= (mir-instruction-kind inst) 6)
+                                                     (= result (mir-primary-origin
+                                                                (svref (mir-terminator-operands term) 0)
+                                                                definitions))
+                                                     (not (mir-instruction-notinline inst)))))
+                                  do (return-from plan nil)
+                                do (setf skipped-values (logior skipped-values (ash 1 result))))
+                          (cond ((and relation (= (cdr relation) upper)
+                                      (eq entry (svref (mir-terminator-edges term) 0))
+                                      (mir-induction-integer-constant-p (car relation) 0 definitions))
+                                 (return source))
+                                ((and (= kind 0) (zerop (length (mir-block-parameters block)))
+                                      (consp (svref incoming source)) (null (cdr (svref incoming source))))
+                                 (setf entry (cdar (svref incoming source))
+                                       source (caar (svref incoming source))))
+                                (t (return-from plan nil)))))))
+          ;; The array storage and the fixnum operand must already exist.
+          ;; Skipping the path must not leave a use outside it uninitialized.
+          (when (and guard
+                     (loop for id in (list value (cdr bound))
+                           for owner = (mir-value-block (svref *mir-lir-value-owners* id))
+                           always (and (/= owner guard)
+                                       (mir-block-dominates-p dominators owner guard)))
+                     (loop for block across blocks for id = (mir-block-id block)
+                           always (or (logbitp id path)
+                                      (and (loop for index across (hir-buffer-view (mir-block-instructions block))
+                                               always (notany (lambda (id) (logbitp id skipped-values))
+                                                              (mir-instruction-operands (mir-at instructions index))))
+                                         (let ((term (mir-block-terminator block)))
+                                           (and (notany (lambda (id) (logbitp id skipped-values))
+                                                        (mir-terminator-operands term))
+                                                (loop for edge across (mir-terminator-edges term)
+                                                      always (notany (lambda (id) (logbitp id skipped-values))
+                                                                     (mir-edge-arguments edge)))))))))
+            (values guard path)))))))
+
 (defun mir-lir-copy-loop-header-p (block instructions bounds)
   (let ((policy (mir-terminator-policy (mir-block-terminator block)))
         (parameters (mir-block-parameters block)))
@@ -2120,6 +2191,7 @@
          (version-members nil) (version-entry nil) (version-bound nil) (version-value nil)
          (version-cost nil)
          (version-labels nil) (version-guard nil)
+         (early-guard nil) (early-path nil) (early-target nil)
          (copy-plans nil) (copy-entry-labels nil)
          (*mir-lir-emitting-function* (mir-function-id function))
          (incoming-backing
@@ -2150,9 +2222,15 @@
         (multiple-value-setq (version-members version-entry version-bound version-value version-cost)
           (mir-lir-plan-reverse-loop function blocks bound-inputs))
         (when version-members
-          (setf version-guard (new-block)
+          (multiple-value-setq (early-guard early-path)
+            (mir-lir-early-reverse-guard function blocks version-entry
+                                         version-bound version-value loop-polls))
+          (setf early-target (and early-guard (new-block))
+                version-guard (unless early-guard (new-block))
                 version-labels (mir-lir-new-loop-labels labels version-members)))
-        (setf copy-plans (mir-lir-plan-copy-prefixes function blocks bound-inputs loop-polls version-members))
+        (setf copy-plans
+              (mir-lir-plan-copy-prefixes function blocks bound-inputs loop-polls
+                                          (logior (or version-members 0) (or early-path 0))))
         (when copy-plans
           (setf copy-entry-labels (make-hash-table :test #'eq))
           (loop for plan in copy-plans
@@ -2201,6 +2279,11 @@
                  (mir-lir-branch-condition term)))
              (let ((active (svref (mir-binding-analysis-inputs (mir-binding-regions function)) (mir-block-id block))))
                (setf *regions* (mir-lir-active-regions active base-regions)))
+             (when (eql early-guard (mir-block-id block))
+               (let ((fallback (new-block))
+                     (length (cdr (gethash (cdr version-bound) *mir-lir-array-contents*))))
+                 (br `(:fixnum-uge ,(mir-lir-value version-value) ,length) fallback early-target)
+                 (start-block fallback)))
              (when (and (or (zerop (mir-block-id block)) (logbitp (mir-block-id block) loop-polls))
                         (not (eql skip-header-poll (mir-block-id block))))
                (emit-poll :stack (zerop (mir-block-id block))))
@@ -2269,7 +2352,7 @@
                     (targets (make-array (length edges))))
                (loop for edge across edges for index from 0
                      for target = (mir-edge-target edge)
-                     for destination = (cond ((eq edge version-entry) version-guard)
+                     for destination = (cond ((and version-guard (eq edge version-entry)) version-guard)
                                              ((and copy-entry-labels (gethash edge copy-entry-labels)))
                                              ((and backedge (= target (car backedge))) (cdr backedge))
                                              (t (svref labels target)))
@@ -2329,9 +2412,16 @@
                             (<= version-cost 38))
                    (loop repeat 5 collect
                      (mir-lir-new-loop-labels labels version-members)))))
-          (start-block version-guard)
-          (br `(:fixnum-uge ,(mir-lir-value version-value) ,length)
-              (svref labels header) (svref (or (first prefix-copies) version-labels) header))
+          (let ((fast (svref (or (first prefix-copies) version-labels) header)))
+            (if early-target
+                (let ((index (svref (mir-block-parameters (svref blocks header)) 0)))
+                  (start-block early-target)
+                  (kiln.kir::emit-lir-assignment (mir-lir-value index) (constant-object 0))
+                  (jump fast))
+                (progn
+                  (start-block version-guard)
+                  (br `(:fixnum-uge ,(mir-lir-value version-value) ,length)
+                      (svref labels header) fast))))
           (let ((*mir-lir-versioned-bound* version-bound))
             ;; The header edges link successive copies before entering the
             ;; regular loop. Internal cycles still use the original polls.

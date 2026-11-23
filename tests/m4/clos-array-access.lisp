@@ -275,6 +275,10 @@
   (assert (handler-case (progn (reverse-prefix-unrolled array 2) nil) (error () t)))
   (assert (equalp array #(2 3))))
 
+(let ((empty (make-array 0 :element-type 'fixnum)))
+  (assert (eq empty (reverse-prefix-unrolled empty -1)))
+  (assert (handler-case (progn (reverse-prefix-unrolled empty 0) nil) (error () t))))
+
 (defun copy-prefix-allocated (n)
   (declare (fixnum n) (optimize (speed 3) (space 1) (debug 0)))
   (let ((source (make-array n :element-type 'fixnum :initial-element 7))
