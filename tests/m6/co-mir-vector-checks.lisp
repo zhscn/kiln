@@ -73,3 +73,34 @@
        (left (kiln.sys:bits-double-float #x4008000000000000))
        (right (kiln.sys:bits-double-float #x4008000000000000)))
   (assert (eq right (find-eql-from-end item (vector left right)))))
+
+(defun search-operand-order (array)
+  (declare (simple-vector array) (optimize (speed 3) (space 1)))
+  (let ((events nil))
+    (let ((result (position (progn (push :item events) 1)
+                            (progn (push :vector events) array)
+                            :from-end (progn (push :direction events) t)
+                            :test (progn (push :test events) #'eq))))
+      (values result (reverse events)))))
+
+(multiple-value-bind (index events) (search-operand-order #(1 0 1))
+  (assert (= index 2))
+  (assert (equal events '(:item :vector :direction :test))))
+
+(defun search-with-callback (array)
+  (declare (simple-vector array) (optimize (speed 3) (space 1)))
+  (let ((events nil))
+    (let ((result (position 1 array :from-end t
+                            :key (lambda (element)
+                                   (push element events)
+                                   (car element)))))
+      (values result (reverse events)))))
+
+(multiple-value-bind (index events) (search-with-callback #((1 . :left) (1 . :right) (2 . :miss)))
+  (assert (= index 1))
+  (assert (equal events '((2 . :miss) (1 . :right)))))
+
+(let ((evaluated nil) (array (vector 1 0 1)))
+  (declare (simple-vector array))
+  (assert (= 0 (position 1 array :from-end nil :from-end (setf evaluated t))))
+  (assert evaluated))
