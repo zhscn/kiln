@@ -386,6 +386,9 @@
   (assert (zerop (length (reciprocal-array-sums 0 input))))
   (assert (handler-case (progn (reciprocal-array-sums 1 input) nil)
             (type-error () t))))
+(let ((input (make-array 1 :element-type 'double-float :initial-element 1d0)))
+  (assert (handler-case (progn (reciprocal-array-sums 2 input) nil)
+            (type-error () t))))
 (let ((input (make-array 2 :element-type 'double-float
                         :initial-element most-positive-double-float)))
   (assert (handler-case (progn (reciprocal-array-sums 2 input) nil)

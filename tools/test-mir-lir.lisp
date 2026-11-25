@@ -288,7 +288,7 @@
                                (* (/ (float (+ (truncate (the fixnum (* diagonal next)) 2) i 1) 0d0))
                                   (aref input j))))))
                    output))
-              '((:or 1) (:f64-div 2)))
+              '((:poll-test 1) (:or 2) (:f64-div 3)))
   (operations '(defun double-array-sum (array)
                  (declare ((simple-array double-float (2)) array)
                           (optimize (speed 3) (safety 3)))

@@ -629,26 +629,27 @@ if needed (not a safepoint)."
   (emit (list (ecase name (+ :fixnum-add-ovf) (- :fixnum-sub-ovf) (* :fixnum-mul-ovf))
               result overflow a b)))
 
-(defun emit-fixnum-arithmetic (name a b bounded &optional check-overflow-result cold)
+(defun emit-fixnum-arithmetic (name a b bounded &optional check-overflow-result cold bailout)
   (if bounded
       (copy-to-var (case name
                      (+ `(:fixnum-add ,a ,b)) (- `(:fixnum-sub ,a ,b))
                      (* `(:fixnum-mul ,a ,b))))
       ;; Input types do not prove that the result fits. Keep the overflow
       ;; edge and its arbitrary-precision result.
-      (let ((r (new-var)) (ovf (new-var :raw)) (slow (new-block cold)) (done (new-block)))
+      (let ((r (new-var)) (ovf (new-var :raw)) (slow (or bailout (new-block cold))) (done (new-block)))
         (emit-fixnum-overflow-operation name r ovf a b)
         (br ovf slow done)
-        (start-block slow)
-        (emit `(:set ,r ,(emit-slow-call
-                         (case name (+ 'kiln.kernel::two-arg-+)
-                                    (- 'kiln.kernel::two-arg--)
-                                    (* 'kiln.kernel::two-arg-*)) a b)))
-        (if check-overflow-result
-            (progn
-              (funcall check-overflow-result r)
-              (emit '(:trap)))
-            (jump done))
+        (unless bailout
+          (start-block slow)
+          (emit `(:set ,r ,(emit-slow-call
+                           (case name (+ 'kiln.kernel::two-arg-+)
+                                      (- 'kiln.kernel::two-arg--)
+                                      (* 'kiln.kernel::two-arg-*)) a b)))
+          (if check-overflow-result
+              (progn
+                (funcall check-overflow-result r)
+                (emit '(:trap)))
+              (jump done)))
         (start-block done)
         r)))
 
