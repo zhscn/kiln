@@ -4,6 +4,61 @@ use cranelift_module::default_libcall_names;
 use kiln_cg::{codegen, kir, sexp};
 
 #[test]
+fn binary64_nonfinite_classification_uses_only_exponent_bits() {
+    let patterns = [
+        (0.0f64, false),
+        (-0.0, false),
+        (f64::from_bits(1), false),
+        (f64::MAX, false),
+        (f64::MIN, false),
+        (f64::INFINITY, true),
+        (f64::NEG_INFINITY, true),
+        (f64::NAN, true),
+        (f64::from_bits(0xfff8_0000_0000_0001), true),
+        (f64::from_bits(0x7ff0_0000_0000_0001), true),
+        (f64::from_bits(0xfff0_0000_0000_0001), true),
+    ];
+    let words = patterns.iter()
+        .map(|(value, _)| (value.to_bits() as i64).to_string())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let blocks = patterns.iter()
+        .enumerate()
+        .map(|(index, (_, nonfinite))| {
+            let next = format!("check{}", index + 1);
+            let (yes, no) = if *nonfinite { (next.as_str(), "bad") } else { ("bad", next.as_str()) };
+            format!(
+                "(block check{index} (set value (load (addr \"patterns\") {})) \
+                 (br (f64-nonfinite value) {yes} {no}))",
+                index * 8
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let source = format!(
+        r#"(module "classification"
+          (init "init")
+          (data "init" (words 258 (func "body")))
+          (data "patterns" (words {words}))
+          (func "body" (vars (value f64)) (slots)
+            {blocks}
+            (block check{} (return 0 1))
+            (block bad (trap))))"#,
+        patterns.len()
+    );
+    let path = std::env::temp_dir().join(format!("kiln-f64-classify-{}.kir", std::process::id()));
+    std::fs::write(&path, source).unwrap();
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_kiln-cg"))
+        .arg("jit")
+        .arg(&path)
+        .env("KILN_VERIFY", "1")
+        .output()
+        .unwrap();
+    std::fs::remove_file(path).unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+}
+
+#[test]
 fn binary64_bit_patterns_compile_with_verification() {
     let mut flags = settings::builder();
     flags.set("enable_verifier", "true").unwrap();

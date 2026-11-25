@@ -124,6 +124,8 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
     let timing = std::env::var_os("KILN_TIME").is_some();
     let declarations_start = timing.then(std::time::Instant::now);
     let sysv = module.isa().default_call_conv();
+    let has_simd_bit_test = module.isa().isa_flags().iter()
+        .any(|flag| flag.name == "has_sse41" && flag.as_bool() == Some(true));
     let lisp_sig = lisp_signature(CallConv::Tail);
     let mut names: HashMap<&str, Ref> = HashMap::new();
 
@@ -285,6 +287,7 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
         func.signature = lisp_sig.clone();
         let mut lw = FuncLowering {
             module,
+            has_simd_bit_test,
             names: &names,
             imports: &imports,
             lisp_sig: &lisp_sig,
@@ -967,6 +970,7 @@ pub fn emit_module_info<M: Module>(module: &mut M, out: &Output) -> R<()> {
 
 struct FuncLowering<'a, M: Module> {
     module: &'a mut M,
+    has_simd_bit_test: bool,
     names: &'a HashMap<&'a str, Ref>,
     imports: &'a Imports<'a>,
     lisp_sig: &'a Signature,
@@ -1666,12 +1670,24 @@ impl<'a, M: Module> FuncLowering<'a, M> {
             }
             Expr::F64Nonfinite(input) => {
                 let value = self.float_expr(b, input)?;
-                let bits = b.ins().bitcast(I64, MemFlagsData::new(), value);
-                // Drop the sign, then sign-extend the exponent. An all-ones
-                // exponent classifies both infinities and every NaN payload.
-                let signless = b.ins().ishl_imm_s(bits, 1);
-                let exponent = b.ins().sshr_imm_s(signless, 53);
-                let nonfinite = b.ins().icmp_imm_s(IntCC::Equal, exponent, -1);
+                let nonfinite = if self.has_simd_bit_test {
+                    // Test whether any exponent bit is missing. Cranelift
+                    // lowers this to PTEST without moving the result to a GPR.
+                    let vector = b.ins().splat(ir::types::F64X2, value);
+                    let vector = b.ins().bitcast(ir::types::I64X2, MemFlagsData::new(), vector);
+                    let mask = (0x7ff0_0000_0000_0000u128).to_le_bytes();
+                    let constant = b.func.dfg.constants.insert(ir::ConstantData::from(mask.as_slice()));
+                    let exponent_mask = b.ins().vconst(ir::types::I64X2, constant);
+                    let missing_bits = b.ins().band_not(exponent_mask, vector);
+                    let any = b.ins().vany_true(missing_bits);
+                    b.ins().icmp_imm_s(IntCC::Equal, any, 0)
+                } else {
+                    // Drop the sign and fraction, leaving the sign-extended exponent.
+                    let bits = b.ins().bitcast(I64, MemFlagsData::new(), value);
+                    let signless = b.ins().ishl_imm_s(bits, 1);
+                    let exponent = b.ins().sshr_imm_s(signless, 53);
+                    b.ins().icmp_imm_s(IntCC::Equal, exponent, -1)
+                };
                 b.ins().uextend(I64, nonfinite)
             }
             Expr::Bin(BinOp::F64Compare, x, y) => {
