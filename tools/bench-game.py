@@ -25,6 +25,7 @@ CASES = {
 
 
 FASTA_CONSUMERS = {'knucleotide', 'revcomp', 'regexredux'}
+HOT_SIZES = {'fannkuchredux': 10, 'spectralnorm': 2000}
 PPCRE_FILES = (
     'packages', 'specials', 'util', 'errors', 'charset', 'charmap', 'chartest',
     'lexer', 'parser', 'regex-class', 'regex-class-util', 'convert', 'optimize',
@@ -86,6 +87,27 @@ def source_for(source, size, name, ppcre_dir=None):
                     source, flags=re.IGNORECASE)
     return (f'(defparameter *game-argv* \'("bench" "{size or 0}"))\n'
             + source + '\n(in-package :cl-user)\n(main)\n')
+
+
+def hot_source(program, samples):
+    return program.removesuffix('(main)\n') + f"""
+(main)
+(dotimes (i {samples})
+  #+sbcl (sb-ext:gc :full t)
+  #+kiln (kiln.sys:%gc)
+  (let ((start (get-internal-real-time)))
+    (main)
+    (let ((elapsed (- (get-internal-real-time) start)))
+      (format *error-output* "bench-time ~D ~D~%"
+              elapsed internal-time-units-per-second))))
+"""
+
+
+def hot_seconds(log, count):
+    timings = re.findall(rb'^bench-time (\d+) ([1-9]\d*)\r?$', log, re.MULTILINE)
+    if len(timings) != count:
+        raise ValueError(f'expected {count} in-process timings, found {len(timings)}')
+    return [int(ticks) / int(units) for ticks, units in timings]
 
 
 def checked(command, log, root, env):
@@ -173,6 +195,8 @@ def main():
     parser.add_argument('--no-build', action='store_true')
     parser.add_argument('--snapshot', action='store_true',
                         help='build kiln executables with preinitialized heap snapshots')
+    parser.add_argument('--hot', type=int, metavar='SAMPLES',
+                        help='time repeated array kernels within each process after one warmup')
     parser.add_argument('--pipeline', choices=('mir',),
                         default=os.environ.get('KILN_BUILD_PIPELINE', 'mir'))
     parser.add_argument('--runs', type=int, default=3)
@@ -190,8 +214,17 @@ def main():
     if any(name not in CASES for name in args.cases):
         parser.error('unknown benchmark')
     selected = [name for name in CASES if not args.cases or name in args.cases]
+    if args.hot is not None:
+        if args.hot < 1 or args.snapshot:
+            parser.error('--hot needs a positive sample count and cannot use --snapshot')
+        if not args.cases:
+            selected = list(HOT_SIZES)
+        if any(name not in HOT_SIZES for name in selected):
+            parser.error('--hot supports only the two array kernels')
+        build_stamp += f'+hot-{args.hot}'
     output = (args.output or root / 'build' /
-              ('bench-game-snapshot' if args.snapshot else 'bench-game')).resolve()
+              ('bench-game-hot' if args.hot else
+               'bench-game-snapshot' if args.snapshot else 'bench-game')).resolve()
     output.mkdir(parents=True, exist_ok=True)
     results = {}
     if ('regexredux' in selected and args.cl_ppcre_dir is None
@@ -215,6 +248,8 @@ def main():
                                     else []) + selected))
     for name in build_names:
         filename, size = CASES[name]
+        if args.hot:
+            size = HOT_SIZES[name]
         directory = output / name
         directory.mkdir(exist_ok=True)
         source = root / 'bench/benchmarksgame' / filename
@@ -232,6 +267,8 @@ def main():
             stamp.write_text('building\n')
             try:
                 program = source_for(source.read_text(), size, name, args.cl_ppcre_dir)
+                if args.hot:
+                    program = hot_source(program, args.hot)
                 (directory / 'program.lisp').write_text(program)
                 build_case(root, directory, env, args.pipeline, args.snapshot, args.timeout)
             except (OSError, ValueError) as error:
@@ -270,8 +307,14 @@ def main():
                 if run['status'] != 'OK':
                     status = f'{implementation.upper()}-{run["status"]}'
                     break
+                try:
+                    timings = (hot_seconds((directory / f'{implementation}-{index}.err').read_bytes(),
+                                           args.hot) if args.hot else [run['seconds']])
+                except ValueError as error:
+                    status = f'{implementation.upper()}-INVALID-TIMING ({error})'
+                    break
                 if index >= args.warmup:
-                    samples[implementation].append(run['seconds'])
+                    samples[implementation].extend(timings)
             if status != 'OK':
                 break
             if ((directory / f'kiln-{index}.out').read_bytes() !=
@@ -280,6 +323,8 @@ def main():
                 break
         record = {'status': status, 'samples': samples, 'source': filename, 'size': size,
                   'pipeline': args.pipeline, 'snapshot': args.snapshot}
+        if args.hot:
+            record['samples_per_process'] = args.hot
         if status == 'OK':
             record.update({impl: statistics.median(values) for impl, values in samples.items()})
             record['ratio'] = record['kiln'] / record['sbcl']

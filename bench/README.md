@@ -60,6 +60,13 @@ includes loading that heap, running `main` and writing its output. SBCL still
 loads the same benchmark FASL in each process. Results record whether kiln used
 a snapshot, and `--no-build` requires the matching launch mode.
 
+Use `python3 tools/bench-game.py --hot 8 --runs 4 --warmup 0` to measure
+`fannkuchredux` at n = 10 and `spectralnorm` at n = 2000 in warmed processes.
+Each process runs the program once to warm up, then collects garbage outside
+the timed region before each measured invocation. The reported median pools
+the in-process samples, and the driver compares all output from each paired
+process. Results are written to `build/bench-game-hot/` by default.
+
 `--pipeline mir` selects the compiler used for the modules and benchmark
 source; its default follows `KILN_BUILD_PIPELINE`, falling back to MIR. Use
 separate output directories for comparisons. `--no-build` rejects a pipeline
