@@ -21,11 +21,11 @@
 )
 
 (defun find-fixnum-in-simple-vector (item array)
-  (declare (fixnum item) (simple-vector array) (optimize (speed 3)))
+  (declare (fixnum item) (simple-vector array) (optimize (speed 3) (space 1)))
   (find item array))
 
 (defun position-fixnum-in-simple-vector (item array)
-  (declare (fixnum item) (simple-vector array) (optimize (speed 3)))
+  (declare (fixnum item) (simple-vector array) (optimize (speed 3) (space 1)))
   (position item array :test #'eql))
 
 (let ((array (vector -3d0 "other" -3 -3)))
@@ -33,3 +33,23 @@
   (assert (eql 2 (position-fixnum-in-simple-vector -3 array)))
   (assert (null (find-fixnum-in-simple-vector 4 array)))
   (assert (null (position-fixnum-in-simple-vector 4 #()))))
+
+(dotimes (length 10)
+  (let ((array (make-array length :initial-element 0)))
+    (assert (null (position-fixnum-in-simple-vector 1 array)))
+    (dotimes (i length)
+      (setf (aref array i) 1)
+      (when (< (1+ i) length)
+        (setf (aref array (1+ i)) 1))
+      (assert (eql i (position-fixnum-in-simple-vector 1 array)))
+      (assert (eql 1 (find-fixnum-in-simple-vector 1 array)))
+      (setf (aref array i) 0))))
+
+(defun find-eql-in-simple-vector (item array)
+  (declare (simple-vector array) (optimize (speed 3) (space 1)))
+  (find item array))
+
+(let* ((item (kiln.sys:bits-double-float #x4008000000000000))
+       (element (kiln.sys:bits-double-float #x4008000000000000))
+       (array (vector 3 element)))
+  (assert (eq element (find-eql-in-simple-vector item array))))
