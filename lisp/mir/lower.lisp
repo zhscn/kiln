@@ -165,7 +165,11 @@
                (>= (length operands) 2)
                (eq (svref *mir-lir-types* (svref operands 1)) 'simple-vector)
                (>= (hir-policy-quality policy :speed) (hir-policy-quality policy :space)))
-      (mir-simple-search-test instruction *mir-lir-definitions*))))
+      (let ((test (mir-simple-search-test instruction *mir-lir-definitions*))
+            (item-type (svref *mir-lir-types* (svref operands 0))))
+        (if (and (eq test 'eql) (hir-fixnum-type-p item-type))
+            'eq
+            test)))))
 
 (defun mir-lir-vector-search (name test item vector)
   (let* ((length (copy-to-var `(:vector-length ,vector) :raw))

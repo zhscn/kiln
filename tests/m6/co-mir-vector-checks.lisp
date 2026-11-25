@@ -19,3 +19,17 @@
                (nonnegative-vector-write vector 2 (progn (setq evaluated t) :bad))
              (error () evaluated))))
 )
+
+(defun find-fixnum-in-simple-vector (item array)
+  (declare (fixnum item) (simple-vector array) (optimize (speed 3)))
+  (find item array))
+
+(defun position-fixnum-in-simple-vector (item array)
+  (declare (fixnum item) (simple-vector array) (optimize (speed 3)))
+  (position item array :test #'eql))
+
+(let ((array (vector -3d0 "other" -3 -3)))
+  (assert (eql -3 (find-fixnum-in-simple-vector -3 array)))
+  (assert (eql 2 (position-fixnum-in-simple-vector -3 array)))
+  (assert (null (find-fixnum-in-simple-vector 4 array)))
+  (assert (null (position-fixnum-in-simple-vector 4 #()))))
