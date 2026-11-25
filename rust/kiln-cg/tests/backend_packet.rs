@@ -476,12 +476,19 @@ fn poll_tests_preserve_entry_and_loop_checks() {
             "(module \"poll\" (init \"init\") (data \"init\" (words 2 (func \"body\"))) (func \"body\" (vars (p raw) (q raw)) (slots) (block b {body} (return a0 1))))"
         )
     };
-    let old = module("(set p (lt (fp) (load ctx 80))) (set q (load ctx 0))");
+    let old = module("(set p (lt (fp) (load ctx 80)))");
     let new = module("(set p (poll-test entry)) (set q (poll-test loop))");
     let old = kiln_cg::kir::parse_module(&sexp::parse_one(&old).unwrap()).unwrap();
     let new = sexp::parse_one(&new).unwrap();
     let new = packet::load(&packet::encode(&new, packet::schema::KIR_PAYLOAD).unwrap()).unwrap();
-    assert_eq!(format!("{old:?}"), format!("{new:?}"));
+    assert_eq!(
+        format!("{:?}", old.funcs[0].blocks[0].stmts[0]),
+        format!("{:?}", new.funcs[0].blocks[0].stmts[0])
+    );
+    assert!(matches!(
+        &new.funcs[0].blocks[0].stmts[1],
+        kiln_cg::kir::Stmt::Set(name, kiln_cg::kir::Expr::PollFlag) if name == "q"
+    ));
     let invalid = module("(set p (poll-test missing))");
     assert!(kiln_cg::kir::parse_module(&sexp::parse_one(&invalid).unwrap()).is_err());
 }

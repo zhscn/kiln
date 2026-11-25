@@ -404,6 +404,10 @@ fn block(xs: Nodes) -> Result<Block> {
                     symbol(args.at(2))?,
                 ))
             }
+            "poll-branch" => {
+                arity(name, args, 2)?;
+                Some(Terminator::PollBranch(symbol(args.at(0))?, symbol(args.at(1))?))
+            }
             "switch" => {
                 if args.len() < 2 {
                     return Err("LIR: switch needs value and default".into());

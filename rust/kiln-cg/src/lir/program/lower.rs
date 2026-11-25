@@ -1359,6 +1359,11 @@ impl Lowerer<'_> {
             Terminator::Branch(cond, _, _) => vec![Stmt::BranchBlocks(
                 self.value(cond), successors[0], successors[1],
             )],
+            Terminator::PollBranch(_, _) => vec![Stmt::BranchBlocks(
+                layout::poll_test("loop")?,
+                successors[0],
+                successors[1],
+            )],
             Terminator::Switch(value, _, cases) => vec![Stmt::SwitchBlocks(
                 self.value(value),
                 successors[0],

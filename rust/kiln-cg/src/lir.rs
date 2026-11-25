@@ -436,10 +436,7 @@ pub fn poll_test(kind: &str) -> Result<Expr, String> {
                 core::mem::offset_of!(Context, stack_limit) as i32,
             )),
         )),
-        "loop" => Ok(Expr::Load(
-            Box::new(context()),
-            core::mem::offset_of!(Context, poll_flag) as i32,
-        )),
+        "loop" => Ok(Expr::PollFlag),
         _ => Err(format!("unknown poll test {kind}")),
     }
 }

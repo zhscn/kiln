@@ -108,7 +108,7 @@ pub unsafe fn error_with(_ctx: *mut Context, code: u64, obj: u64) -> ! {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn kiln_rt_poll(ctx: *mut Context, entry: usize, fp: usize) -> u64 {
     unsafe {
-        (*ctx).poll_flag = 0;
+        (*ctx).poll_flag.store(0, std::sync::atomic::Ordering::Relaxed);
         (*ctx).stack_limit = (*ctx).stack_real_limit;
     }
     crate::profile::poll(ctx, entry, fp);

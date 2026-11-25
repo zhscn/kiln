@@ -428,6 +428,9 @@ one (bindings have none)."
   "Polls for pending runtime work and stack exhaustion."
   (emit `(:poll ,(if stack :entry :loop) ,(handler))))
 
+(defun emit-poll-branch (pending clear)
+  (emit (list :poll-branch (bname pending) (bname clear))))
+
 (defun pop-entry (region)
   (if (eq (region-kind region) :stack-roots)
       (emit `(:stack-roots-leave ,(region-slot region)))

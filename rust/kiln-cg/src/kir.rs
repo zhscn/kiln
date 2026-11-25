@@ -175,6 +175,7 @@ pub enum Expr {
     Load(Box<Expr>, i32),
     /// Zero-extended 32-bit load.
     Load32(Box<Expr>, i32),
+    PollFlag,
     Addr(String, i64),
     Fp,
     Slot(String),

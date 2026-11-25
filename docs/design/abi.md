@@ -187,6 +187,13 @@ HIR 前端转换 lambda list 之后（`lisp/hir/convert.lisp`），每个 `&opti
 
 参数全在寄存器里的函数（位置参数不超过 3 个，没有 `&rest`、`&key`）在读参数之前就做入口检查，慢路径不是调用，而是带着同样的 self 和参数尾调用共享函数 `kiln_poll_retry`：它把 `nargs` 之外的参数寄存器清零（GC 不会看到垃圾），调用 `kiln_rt_poll`，需要时发出栈耗尽，然后再尾调用回这个函数。这样函数自己的命中路径上没有调用，参数不必为 safepoint 存到栈上（Cranelift 把跨 safepoint 存活的引用在定义处存进栈槽）。
 
+热循环可以用 LIR 的 `(poll-branch pending clear)` 读取同一个标志，让
+`clear` 回到循环，避免寄存器中的中间值跨越慢调用。收到请求时跳到
+`pending`，该块可以先写回中间状态，再用显式 `poll` 处理请求。后端要求
+`pending` 块包含显式 `poll`，并在验证循环覆盖时只略过 `clear` 边。
+块中先于标志读取发生的异常退出仍参与循环覆盖检查。
+循环检查使用原子读取。即使循环体没有调用或内存写入，每次检查也会重新读取标志。
+
 **栈耗尽**：函数入口的帧指针低于真正的界限（`stack_real_limit`）时，慢路径报告栈耗尽。`kiln_rt_poll` 返回 1 表示栈耗尽，入口随后调用 `kiln.kernel::%stack-exhausted`，它发出 `kiln.sys:stack-exhausted`（`storage-condition` 的子类，不是 `error`，和 SBCL 一样）。
 
 内核导出 `%stack-exhausted` 的静态 symbol 对象，Rust 后端生成的 LIR poll 慢路径通过该对象的函数格调用当前定义。运行期编译和文件编译使用同一符号链接约定；导出名由 runtime 的 `STACK_EXHAUSTED_SYMBOL` 定义。

@@ -1772,6 +1772,14 @@ impl<'a, M: Module> FuncLowering<'a, M> {
                 let mf = trusted(b);
                 b.ins().uload32(mf, a, *off)
             }
+            Expr::PollFlag => {
+                let ctx = Self::word_value(b, self.var("ctx")?);
+                let offset = core::mem::offset_of!(kiln_rt::context::Context, poll_flag) as i64;
+                let address = b.ins().iadd_imm_s(ctx, offset);
+                // A poll requester can update this flag while the loop runs.
+                let flags = trusted(b);
+                b.ins().atomic_load(I64, flags, address)
+            }
             Expr::Addr(name, addend) => {
                 let mut addend = *addend;
                 let base = match self.names.get(name.as_str()) {

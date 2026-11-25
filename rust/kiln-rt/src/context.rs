@@ -15,7 +15,7 @@ pub struct Context {
     /// Offset 0. Nonzero means a poll point must call the slow path (C4).
     /// Set with `request_poll`, which also raises `stack_limit` so that
     /// function entries, which only compare with it, take the slow path.
-    pub poll_flag: u64,
+    pub poll_flag: std::sync::atomic::AtomicU64,
     /// Offset 8. Innermost dynamic-environment entry, or null.
     pub dynenv: *mut DynEntry,
     /// Offset 16. Frame pointer of the `kiln_enter` frame that started the
@@ -74,7 +74,7 @@ const _: () = assert!(core::mem::offset_of!(Context, alloc_limit) == 72);
 impl Context {
     pub fn new() -> Box<Context> {
         let mut ctx = Box::new(Context {
-            poll_flag: 0,
+            poll_flag: std::sync::atomic::AtomicU64::new(0),
             dynenv: core::ptr::null_mut(),
             stack_base_fp: 0,
             safepoint_fp: 0,
@@ -103,7 +103,7 @@ impl Context {
     /// Sets the stack limit; `stack_limit` keeps a pending poll request.
     pub fn set_stack_limit(&mut self, limit: usize) {
         self.stack_real_limit = limit;
-        let pending = unsafe { core::ptr::read_volatile(&raw const self.poll_flag) } != 0;
+        let pending = self.poll_flag.load(std::sync::atomic::Ordering::Relaxed) != 0;
         self.stack_limit = if pending { isize::MAX as usize } else { limit };
     }
 }
@@ -116,7 +116,7 @@ impl Context {
 /// `ctx` must be valid.
 pub unsafe fn request_poll(ctx: *mut Context) {
     unsafe {
-        core::ptr::write_volatile(&raw mut (*ctx).poll_flag, 1);
+        (*ctx).poll_flag.store(1, std::sync::atomic::Ordering::Relaxed);
         core::ptr::write_volatile(&raw mut (*ctx).stack_limit, isize::MAX as usize);
     }
 }

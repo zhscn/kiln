@@ -571,7 +571,7 @@ fn terminator(term: &Terminator, types: &Types<'_>, f: &Function) -> Result<()> 
 fn successors(term: &Terminator) -> Vec<&str> {
     match term {
         Terminator::Jump(target) => vec![target],
-        Terminator::Branch(_, yes, no) => vec![yes, no],
+        Terminator::Branch(_, yes, no) | Terminator::PollBranch(yes, no) => vec![yes, no],
         Terminator::Switch(_, default, cases) => std::iter::once(default.as_str())
             .chain(cases.iter().map(|(_, target)| target.as_str()))
             .collect(),
@@ -581,7 +581,12 @@ fn successors(term: &Terminator) -> Vec<&str> {
 
 // Removing all DFS back edges leaves a DAG. Polling their targets therefore
 // covers every cycle, even when a strongly connected component has many entries.
-fn loop_polls(flow: &RegionFlow, normal: &[Vec<usize>], explicit: &[bool]) -> Vec<bool> {
+fn loop_polls(
+    flow: &RegionFlow,
+    normal: &[Vec<usize>],
+    explicit: &[bool],
+    blocks: &[Block],
+) -> Vec<bool> {
     let mut color = vec![0; flow.graph.len()];
     let mut polls = vec![false; flow.graph.len()];
     let mut stack = Vec::new();
@@ -602,6 +607,11 @@ fn loop_polls(flow: &RegionFlow, normal: &[Vec<usize>], explicit: &[bool]) -> Ve
             }
             let target = flow.graph[*node][*next];
             *next += 1;
+            // The second edge is taken only when the poll flag is clear.
+            // The pending edge and any exceptional exits still need coverage.
+            if *next == 2 && matches!(blocks[*node].terminator, Terminator::PollBranch(..)) {
+                continue;
+            }
             match color[target] {
                 0 => {
                     color[target] = 1;
@@ -1347,9 +1357,14 @@ fn function(f: &Function, module: &Module, functions: &FunctionIndex<'_>) -> Res
     let explicit: Vec<_> = f.blocks.iter()
         .map(|block| block.instructions.iter().any(|inst| matches!(inst, Instruction::Poll)))
         .collect();
+    for (block, edges) in f.blocks.iter().zip(&normal) {
+        if matches!(block.terminator, Terminator::PollBranch(..)) && !explicit[edges[0]] {
+            return Err("poll-branch pending target must contain a poll".into());
+        }
+    }
     let regions = loop {
         let flow = region_flow(f, &normal, &blocks, &polls)?;
-        let selected = loop_polls(&flow, &normal, &explicit);
+        let selected = loop_polls(&flow, &normal, &explicit, &f.blocks);
         let mut changed = false;
         for (old, new) in polls.iter_mut().zip(selected) {
             if new && !*old {

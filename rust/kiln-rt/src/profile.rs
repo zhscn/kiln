@@ -301,10 +301,10 @@ mod tests {
             start(&mut *ctx, MODE_CPU, 50);
             std::thread::sleep(Duration::from_millis(1));
             stop();
-            ctx.poll_flag = 0;
+            ctx.poll_flag.store(0, Ordering::Relaxed);
             ctx.stack_limit = 0;
             std::thread::sleep(Duration::from_millis(1));
-            assert_eq!(ctx.poll_flag, 0);
+            assert_eq!(ctx.poll_flag.load(Ordering::Relaxed), 0);
             assert_eq!(ctx.stack_limit, 0);
         }
         start(&mut *ctx, MODE_CPU, 10_000_000);

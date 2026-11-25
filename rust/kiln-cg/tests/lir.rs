@@ -705,6 +705,82 @@ fn explicit_polls_cover_only_cycles_that_pass_through_them() {
 }
 
 #[test]
+fn poll_branch_covers_the_clear_edge_and_services_the_pending_edge() {
+    use kiln_cg::kir::{Expr, Stmt};
+    let module = compile(&source(
+        "(block entry (jump fast))
+         (block fast (poll-branch pending fast))
+         (block pending (cold) (poll) (jump other))
+         (block other (jump other))",
+    ))
+    .unwrap();
+    let function = &module.funcs[0];
+    let fast = &function.blocks[function.block_entries[1].unwrap()];
+    assert!(matches!(
+        fast.stmts.as_slice(),
+        [Stmt::BranchBlocks(Expr::PollFlag, 2, 1)]
+    ));
+    let poll_calls = function.blocks.iter().flat_map(|block| &block.stmts)
+        .filter(|stmt| matches!(stmt, Stmt::CallRt { name, .. } if name == "kiln_rt_poll"))
+        .count();
+    assert_eq!(poll_calls, 3, "entry, pending poll, and uncovered cycle");
+    reject(
+        "(block entry (poll-branch pending entry))
+         (block pending (jump entry))",
+        "poll-branch pending target must contain a poll",
+    );
+}
+
+#[test]
+fn poll_branch_dispatches_on_the_runtime_flag() {
+    let temp = Temp::new();
+    let worker = temp.write(
+        "worker.lir",
+        r#"(lir-module "worker" (init "worker-init")
+          (function "worker-init" (receive 0) (vars)
+            (block entry (return ())))
+          (function "worker" (receive 0) (vars (answer obj))
+            (block entry (poll-branch pending clear))
+            (block pending (poll) (set answer (fixnum 1)) (return (answer)))
+            (block clear (set answer (fixnum 0)) (return (answer)))))"#,
+    );
+    let flag = core::mem::offset_of!(kiln_rt::context::Context, poll_flag);
+    let driver = temp.write(
+        "driver.kir",
+        format!(
+            r#"(module "driver" (init "driver-object")
+              (data "driver-object" (static-function "driver"))
+              (data "failure-object" (static-function "failure"))
+              (data "kiln_sym_KILN_2E_KERNEL_3A__25_STACK_2D_EXHAUSTED"
+                (static-symbol 0 0 (object-data "failure-object" general) 0 0 0))
+              (func "failure" (block entry (trap)))
+              (func "kiln_undefined_function" (block entry (trap)))
+              (func "kiln_undefined_setf_function" (block entry (trap)))
+              (func "driver" (vars (f obj) (v obj) (n raw))
+                (block entry
+                  (set f (object-address "_kiln_lir_object_worker" general))
+                  (invoke v n f () nil)
+                  (br (eq v (fixnum-tag 0)) request fail))
+                (block request
+                  (store ctx {flag} 1)
+                  (invoke v n f () nil)
+                  (br (eq v (fixnum-tag 1)) cleared fail))
+                (block cleared (br (eq (load ctx {flag}) 0) done fail))
+                (block done (return v 1))
+                (block fail (trap))))"#,
+        ),
+    );
+    let output = Command::new(env!("CARGO_BIN_EXE_kiln-cg"))
+        .arg("jit")
+        .arg(worker)
+        .arg(driver)
+        .env("KILN_VERIFY", "1")
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+}
+
+#[test]
 fn unwind_before_explicit_poll_can_require_its_own_poll() {
     let module = compile(&source(
         r#"(region r catch nil land)

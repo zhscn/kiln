@@ -60,6 +60,7 @@
                     (when landing (edge landing))))
                  (:jump (edge (second statement)))
                  (:br (edge (third statement)) (edge (fourth statement)))
+                 (:poll-branch (edge (second statement)) (edge (third statement)))
                  (:switch
                   (edge (third statement))
                   (dolist (arm (fourth statement)) (edge (second arm))))))
@@ -190,6 +191,7 @@
                       (pop active)))
                    (:jump (edge (second statement) active))
                    (:br (edge (third statement) active) (edge (fourth statement) active))
+                   (:poll-branch (edge (second statement) active) (edge (third statement) active))
                    (:switch
                     (edge (third statement) active)
                     (dolist (arm (fourth statement)) (edge (second arm) active)))))))

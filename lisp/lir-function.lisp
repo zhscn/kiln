@@ -399,6 +399,7 @@
          (lir-emit state `(:cell-set ,index ,(lir-operand state (second args) :obj)))))
       (:jump (lir-emit state statement))
       (:br (lir-emit state `(:branch ,(lir-operand state (first args) :word) ,@(rest args))))
+      (:poll-branch (lir-emit state statement))
       (:switch (lir-emit state `(:switch ,(lir-operand state (first args) :word) ,(second args) ,@(third args))))
       (:return
        (let ((view (gethash (second args) (lir-function-views state))))

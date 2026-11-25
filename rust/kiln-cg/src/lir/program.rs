@@ -561,6 +561,7 @@ pub enum Terminator {
     },
     Jump(String),
     Branch(String, String, String),
+    PollBranch(String, String),
     Switch(String, String, Vec<(i64, String)>),
     Return(Vec<String>),
     ReturnMv(String),

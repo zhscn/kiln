@@ -210,7 +210,7 @@ dropped (they are unreachable)."
     (unless (kblock-terminated b)
       (push stmt (kblock-stmts b))
       (case (first stmt)
-        ((:jump :br :switch :return :tail-call-lisp :tail-invoke :forward-incoming :signal-error :fatal-error :unwind-values :continue-unwind :trap)
+        ((:jump :br :poll-branch :switch :return :tail-call-lisp :tail-invoke :forward-incoming :signal-error :fatal-error :unwind-values :continue-unwind :trap)
          (setf (kblock-terminated b) t)))))
   (values))
 
@@ -247,6 +247,7 @@ entry block current. Unterminated blocks end with a trap."
 
 (defun diagnostic-statement (statement)
   (case (first statement)
+    (:poll-branch (cons :br (cons '(:poll-test :loop) (rest statement))))
     (:lir-store (rest statement))
     (:lir-field-set
      (list :field-store (fifth statement) (third statement) (fourth statement)))
