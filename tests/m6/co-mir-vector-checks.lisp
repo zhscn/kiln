@@ -53,3 +53,23 @@
        (element (kiln.sys:bits-double-float #x4008000000000000))
        (array (vector 3 element)))
   (assert (eq element (find-eql-in-simple-vector item array))))
+
+(defun position-from-end (item array)
+  (declare (fixnum item) (simple-vector array) (optimize (speed 3) (space 1)))
+  (position item array :key nil :from-end t :start 0 :end nil :test #'eql))
+
+(defun find-eql-from-end (item array)
+  (declare (simple-vector array) (optimize (speed 3) (space 1)))
+  (find item array :from-end t))
+
+(dotimes (length 11)
+  (let ((array (make-array length :initial-element 0)))
+    (assert (null (position-from-end 1 array)))
+    (dotimes (i length)
+      (setf (aref array i) 1)
+      (assert (eql i (position-from-end 1 array))))))
+
+(let* ((item (kiln.sys:bits-double-float #x4008000000000000))
+       (left (kiln.sys:bits-double-float #x4008000000000000))
+       (right (kiln.sys:bits-double-float #x4008000000000000)))
+  (assert (eq right (find-eql-from-end item (vector left right)))))
