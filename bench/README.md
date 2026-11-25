@@ -26,6 +26,15 @@ uses the monotonic clock provided by `get-internal-real-time`.
 The driver rounds elapsed clock ticks per invocation to the nearest microsecond
 with integer arithmetic and prints milliseconds with three decimal places.
 
+The timed region follows initialization, a full GC, and benchmark setup.
+With SemiSpace, collections during initialization can leave either allocation
+space partly backed by physical pages. For allocation-heavy cases, this can
+move page-fault costs into or out of the timed region. Keep the GC plan and
+heap size fixed across versions. To diagnose a timing shift, compare
+`KILN_GC_STATS=PATH` traces and use `/usr/bin/time -f '%R %M'` to compare minor
+faults and peak RSS between a benchmark run and a `BENCH_LIST=1` run of the same
+executable.
+
 The CLOS cases share class, method and instance definitions. Each selected CLOS
 case runs its preceding CLOS cases in the same process, including when selecting
 a single case by name. The comparison table lists timings for the requested
