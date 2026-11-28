@@ -1216,13 +1216,19 @@ Returns the module and the vector of its literals."
         (*symbol-data-names* (make-hash-table :test 'eq))
         (*uninterned-symbols* (make-hash-table :test 'eq))
         (*uninterned-count* 0))
-    (compile-toplevel-function asts)
     (when image
-      (let ((literals (emit-literal-words))
-            (init (kiln.kir::kir-name "kiln_toplevel_" *module-label*)))
-        (module-data (kiln.kir::kir-name init "_fobj") `(:static-function ,init))
-        (module-init (kiln.kir::kir-name init "_fobj"))
-        (return-from compile-module (values *module* literals))))
+      (let* ((init (kiln.kir::kir-name "kiln_toplevel_" *module-label*))
+             (fobj (kiln.kir::kir-name init "_fobj"))
+             (single-form (and (consp asts) (null (cdr asts)))))
+        ;; A single form can use its chunk directly as the initializer.
+        (if single-form
+            (compile-toplevel-chunk init asts)
+            (compile-toplevel-function asts))
+        (let ((literals (emit-literal-words)))
+          (unless single-form (module-data fobj `(:static-function ,init)))
+          (module-init fobj)
+          (return-from compile-module (values *module* literals)))))
+    (compile-toplevel-function asts)
     ;; Sorted by name: the order of a package's symbols differs between
     ;; images.
     (dolist (sym (sort (copy-list extra-symbols) #'string< :key #'symbol-name))
