@@ -579,7 +579,7 @@
          (flow (mir-infer-function-flow unit))
          (identities (mir-function-flow-identities flow))
          (external (mir-function-flow-external flow))
-         (outgoing (make-array count :initial-element nil))
+         (outgoing (mir-function-flow-outgoing flow))
          (summaries (make-array count :initial-element :unseen))
          (changes (make-array count :initial-element 0))
          (value-summaries (make-array count :initial-element :unseen))
@@ -607,7 +607,33 @@
          (cell-types (make-array (mir-cell-aliases-count cell-aliases) :initial-element :unseen))
          (cell-changes (make-array (length cell-types) :initial-element 0))
          (types (make-array count)) (packets (make-array count)))
-    (setf outgoing (mir-function-flow-outgoing flow))
+    ;; With unknown entry arguments, no captured values, cells, or known
+    ;; calls, the unit has no facts to propagate between function rows.
+    (when (and (zerop (length cell-types)) (every #'null outgoing)
+               (every (lambda (row) (zerop (length row))) capture-inputs)
+               (every (lambda (row) (every (lambda (value) (eq value t)) row)) inputs))
+      (loop for function across functions for id from 0
+            do (multiple-value-bind (facts packet-facts)
+                   (mir-compute-types function :functions (svref identities id)
+                                      :inputs (svref inputs id) :captures (svref capture-inputs id)
+                                      :cell-types cell-types
+                                      :cell-points (svref (mir-cell-aliases-points cell-aliases) id)
+                                      :finalize nil)
+                 (let ((primary (mir-return-type function facts))
+                       (values (mir-return-values function packet-facts)))
+                   (when (eq primary :unseen) (setf primary t))
+                   (when (eq values :unseen) (setf values (mir-unknown-values primary)))
+                   (setf (svref summaries id) primary (svref value-summaries id) values))
+                 (dotimes (value (length facts))
+                   (when (eq (svref facts value) :unseen) (setf (svref facts value) t)))
+                 (setf (svref types id) facts (svref packets id) packet-facts)))
+      (return-from mir-compute-calls
+        (make-mir-call-analysis :identities identities :outgoing outgoing
+                                :components (loop for id below count collect (list id))
+                                :external external :inputs inputs :capture-inputs capture-inputs
+                                :cell-types cell-types :cell-aliases cell-aliases
+                                :summaries summaries :value-summaries value-summaries
+                                :types types :packets packets)))
     (let ((components (mir-strong-components outgoing))
           (callers (make-array count :initial-element 0))
           (cell-readers (make-array (length cell-types) :initial-element 0))
