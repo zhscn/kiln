@@ -121,23 +121,24 @@ returns its values."
    (lambda (session) (native-eval-in-session form session))))
 
 (defun native-eval-in-session (form session)
-  (let ((name (kiln.kir::kir-name "eval-" (incf *native-compile-count*))))
-    (multiple-value-bind (module literals)
-        (handler-bind ((undefined-function-warning
-                         (lambda (condition)
-                           (kiln.kernel::note-compilation-unit-functions
-                            (undefined-function-names condition))
-                           (muffle-warning condition))))
-          (compile-module (front-end-forms `((setq *eval-values* (multiple-value-list ,form)))
-                                           session)
-                          name :session session :image t))
-      (let ((init (cached-toplevel-init name module literals (compilation-debug-literals module)
-                                       (kiln.kir::kmodule-replayable-p module))))
-        (unless init
-          (error "kiln-cg could not compile ~S." form))
-        (let ((*eval-values* nil))
-          (funcall init)
-          (values-list *eval-values*))))))
+  ;; Each image module has its own linkage namespace. Stable local names
+  ;; let the encoded packet serve as its own cache and dependency key.
+  (multiple-value-bind (module literals)
+      (handler-bind ((undefined-function-warning
+                       (lambda (condition)
+                         (kiln.kernel::note-compilation-unit-functions
+                          (undefined-function-names condition))
+                         (muffle-warning condition))))
+        (compile-module (front-end-forms `((setq *eval-values* (multiple-value-list ,form)))
+                                         session)
+                        "image-eval" :session session :image t))
+    (let ((init (cached-toplevel-init module literals (compilation-debug-literals module)
+                                     (kiln.kir::kmodule-replayable-p module))))
+      (unless init
+        (error "kiln-cg could not compile ~S." form))
+      (let ((*eval-values* nil))
+        (funcall init)
+        (values-list *eval-values*)))))
 
 (defun native-eval-body (forms)
   (if (null forms)

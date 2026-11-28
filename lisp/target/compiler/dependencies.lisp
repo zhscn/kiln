@@ -108,18 +108,8 @@ compiled for it (NOTE-COMPILED-CODE).")
   "UPDATE-DEFINITION: (NAME . FINGERPRINT) once the definition NAME has
 been evaluated again.")
 
-(defun replace-all (string old new)
-  (with-output-to-string (out)
-    (loop with start = 0
-          for position = (search old string :start2 start)
-          do (write-string string out :start start :end (or position (length string)))
-          while position
-          do (write-string new out)
-             (setf start (+ position (length old))))))
-
-(defun note-compiled-code (module-name packet literals)
+(defun note-compiled-code (packet literals)
   "Records canonical backend bytes and literal identities for this definition."
-  (declare (ignore module-name))
   (when *unit-fingerprint*
     (push (cons packet literals) (cdr *unit-fingerprint*))))
 
@@ -145,10 +135,19 @@ gensyms of a macro expansion)?"
 (defun same-fingerprint-p (a b)
   (and (= (length a) (length b))
        (every (lambda (x y)
-                (and (equalp (car x) (car y))
+                (and (compilation-packet-equal-p (car x) (car y))
                      (= (length (cdr x)) (length (cdr y)))
                      (every (lambda (p q) (similar-literal-p p q 100)) (cdr x) (cdr y))))
               a b)))
+
+(defun compilation-packet-equal-p (a b)
+  (declare (simple-vector a b))
+  (or (eq a b)
+      (let ((size (the fixnum (kiln.sys:%primop :length a))))
+        (and (eql size (kiln.sys:%primop :length b))
+             (loop for index of-type fixnum below size
+                   always (eq (kiln.sys:%primop :svref-unchecked a index)
+                              (kiln.sys:%primop :svref-unchecked b index)))))))
 
 (defun remove-dependent-unit (key unit)
   (let ((units (delete unit (gethash key *dependents*) :test #'eq :count 1)))
