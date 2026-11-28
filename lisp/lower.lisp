@@ -56,8 +56,8 @@ identity: its label has that number, not its name, so two of the same name
 stay two symbols. A name ending in digits (a gensym's) gets that number
 instead: the host's own gensyms (SBCL's PCL makes some while compiling)
 shift the counter, so the numbers differ between hosts."
-  (or (gethash sym *uninterned-symbols*)
-      (setf (gethash sym *uninterned-symbols*)
+  (or (compiler-eq-ref *uninterned-symbols* sym)
+      (setf (compiler-eq-ref *uninterned-symbols* sym)
             (let* ((index (incf *uninterned-count*))
                    (name (symbol-name sym))
                    (end (position-if-not #'digit-char-p name :from-end t)))
@@ -1214,7 +1214,7 @@ Returns the module and the vector of its literals."
         (*pending-conses* (unless image (make-hash-table :test 'eq)))
         (*module-symbols* '())
         (*symbol-data-names* (unless image (make-hash-table :test 'eq)))
-        (*uninterned-symbols* (make-hash-table :test 'eq))
+        (*uninterned-symbols* (make-compiler-eq-table))
         (*uninterned-count* 0))
     (when image
       (let* ((init (kiln.kir::kir-name "kiln_toplevel_" *module-label*))
