@@ -313,6 +313,8 @@
 
 (defun mir-select-stack-cells (unit plans aliases)
   "Keep cells off the stack when a heap environment captures them."
+  (when (zerop (mir-cell-aliases-count aliases))
+    (return-from mir-select-stack-cells plans))
   (let* ((functions (hir-buffer-view (mir-unit-functions unit)))
          (packed (mir-packed-array-environments unit))
          (identities (and packed (mir-function-flow-identities (mir-infer-function-flow unit))))
@@ -371,7 +373,9 @@
 (defun mir-infer-storage (unit)
   (mir-unit-analysis unit :storage
     (lambda (unit)
-      (let* ((calls (mir-infer-calls unit)) (borrows (mir-infer-borrows unit))
+      (let* ((calls (mir-infer-calls unit))
+             (borrows (when (some #'identity (mir-call-analysis-outgoing calls))
+                        (mir-infer-borrows unit)))
              (functions (hir-buffer-view (mir-unit-functions unit)))
              (plans (map 'simple-vector
                          (lambda (function)

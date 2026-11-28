@@ -40,17 +40,18 @@
                   do (merge-origin parameter (svref origins argument)))))))
     origins))
 
-(defun mir-scalar-policy-p (function)
+(defun mir-scalar-replacement-candidate-p (function)
   (and (< (hir-policy-quality (mir-function-policy function) :debug) 2)
-       (every (lambda (instruction) (< (hir-policy-quality (mir-instruction-policy instruction) :debug) 2))
-              (hir-buffer-view (mir-function-instructions function)))))
+       (loop with allocation = nil
+             for instruction across (hir-buffer-view (mir-function-instructions function))
+             when (or (>= (hir-policy-quality (mir-instruction-policy instruction) :debug) 2)
+                      (member (mir-instruction-kind instruction) '(30 32 34 35)))
+               do (return nil)
+             when (mir-cons-allocation-p instruction) do (setf allocation t)
+             finally (return allocation))))
 
 (defun mir-scalar-candidates (function proof origins types packets)
   "Require every use to forward a virtual object or access its definite fields."
-  (unless (and (mir-scalar-policy-p function)
-               (not (find-if (lambda (instruction) (member (mir-instruction-kind instruction) '(30 32 34 35)))
-                             (hir-buffer-view (mir-function-instructions function)))))
-    (return-from mir-scalar-candidates nil))
   (let ((candidates (mir-storage-analysis-stack proof))
         (points (mir-storage-analysis-points proof)))
     (labels ((allowed (instruction index origin)
@@ -143,7 +144,8 @@
 
 (defun mir-scalar-replace (unit)
   (let ((transformations nil))
-    (loop for function across (hir-buffer-view (mir-unit-functions unit)) when (mir-scalar-policy-p function) do
+    (loop for function across (hir-buffer-view (mir-unit-functions unit))
+          when (mir-scalar-replacement-candidate-p function) do
       (let* ((calls (mir-infer-calls unit)) (id (mir-function-id function))
              (packets (svref (mir-call-analysis-packets calls) id))
              (origins (mir-cons-origins function packets))
