@@ -240,6 +240,14 @@ AOT 启动模块和独立 JIT 模块提供。运行中的 image 已经有这个�
 program、packet 和 literal 向量必须作为普通活跃对象进入栈图。Rust 不在 GC 后
 读取旧请求地址。内部 panic 沿 panic=abort 策略结束进程，不转换成可恢复诊断。
 
+`kiln_rt_prepare_file_code(ctx, packets, entries, fp)` 批量准备文件初始化代码。
+`packets` 是 LIR octet 向量的 simple-vector，`entries` 由调用方分配，包含每个
+载荷的两个槽。成功时填入绑定函数和预期 literal 数量，并返回 NIL。失败沿用编译诊断
+向量。准备期间不调用 Lisp。各组 literal 槽先登记为 GC roots，绑定函数随后在
+Lisp 调用约定下写入这一组的 literal，并返回真正的初始化函数。每个绑定函数由
+加载器调用一次，参数是一个长度匹配的 simple-vector。加载器按文件原有顺序创建
+对象、绑定 literal 并运行初始化函数。
+
 ## 进程环境查询
 
 通用 `sys` 服务的操作 24 接收零起始的命令行参数索引 `a`，将该参数的原始

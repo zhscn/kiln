@@ -55,7 +55,11 @@
 
 (defun require-init (result operation)
   "Return an installed init function or signal a structured backend condition."
-  (when (functionp result) (return-from require-init result))
+  (if (functionp result)
+      result
+      (signal-backend-compilation-error result operation)))
+
+(defun signal-backend-compilation-error (result operation)
   (labels ((protocol-error ()
              (error 'backend-error :operation operation :stage :protocol
                     :message "Malformed backend compilation result.")))

@@ -36,6 +36,7 @@ operations! {
     EncodePacket => ("encode-packet","kiln_rt_encode_packet",2,true),
     CompileProgram => ("compile-program","kiln_rt_compile_program",3,true),
     CompilePacket => ("compile-packet","kiln_rt_compile_packet",2,true),
+    PrepareFileCode => ("prepare-file-code","kiln_rt_prepare_file_code",2,true),
     SaveImage => ("save-image","kiln_rt_save_image",3,false),
     Frame => ("frame","kiln_rt_frame",3,false),
     FloatDecimal => ("float-decimal","kiln_rt_float_decimal",2,false),

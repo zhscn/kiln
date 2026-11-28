@@ -26,6 +26,7 @@ struct Lowerer<'a> {
     function: kir::Func,
     constants: &'a [Expr],
     cells: String,
+    literals: &'a str,
     rest_roots: Vec<String>,
     names: HashMap<&'a str, (String, usize)>,
     landing_blocks: &'a [Option<usize>],
@@ -611,7 +612,7 @@ impl Lowerer<'_> {
             FramePointer => Expr::Fp,
             ArgumentCount => var("nargs"),
             Argument(i) => var(format!("arg{i}")),
-            Literal(i) => layout::cells::load(layout::cells::LITERALS.into(), *i)?,
+            Literal(i) => layout::cells::load(self.literals.into(), *i)?,
             Function(name) => object(object_label(name)),
             Capture(index) => layout::closure_ref(var("self"), *index as i64)?,
             Field(field, object) => layout::field_load(field.id(), self.value(object))?,
@@ -1395,7 +1396,7 @@ impl Lowerer<'_> {
     }
 }
 
-pub(super) fn module(verified: &Verified<'_>) -> Result<kir::Module> {
+pub(super) fn module(verified: &Verified<'_>, literal_table: &str) -> Result<kir::Module> {
     let source = verified.module;
     let mut imports = HashSet::new();
     let mut result = kir::Module {
@@ -1448,7 +1449,7 @@ pub(super) fn module(verified: &Verified<'_>) -> Result<kir::Module> {
         });
     }
     if source.literals != 0 {
-        layout::cells::literals(&mut result, source.literals)?;
+        layout::cells::named_literals(&mut result, literal_table, source.literals)?;
     }
 
     let constants = super::constants::lower(source, &mut result, &mut imports)?;
@@ -1466,6 +1467,7 @@ pub(super) fn module(verified: &Verified<'_>) -> Result<kir::Module> {
         let mut lower = Lowerer {
             constants: &constants,
             cells: super::constants::cell_label(source),
+            literals: literal_table,
             rest_roots: vec![],
             function: kir::Func {
                 name: f.name.clone(),

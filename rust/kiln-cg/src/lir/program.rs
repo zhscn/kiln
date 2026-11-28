@@ -596,7 +596,11 @@ impl Module {
 
 impl Verified<'_> {
     pub fn lower(&self) -> Result<kir::Module> {
-        lower::module(self)
+        self.lower_with_literal_table(super::cells::LITERALS)
+    }
+
+    pub(crate) fn lower_with_literal_table(&self, name: &str) -> Result<kir::Module> {
+        lower::module(self, name)
     }
 }
 

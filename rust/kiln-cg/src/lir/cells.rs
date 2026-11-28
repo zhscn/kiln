@@ -33,10 +33,14 @@ pub fn declare(module: &mut Module, name: String, words: Vec<Word>) -> Result<()
     Ok(())
 }
 pub fn literals(module: &mut Module, count: usize) -> Result<(), String> {
+    named_literals(module, LITERALS, count)
+}
+
+pub fn named_literals(module: &mut Module, name: &str, count: usize) -> Result<(), String> {
     if count != 0 {
         offset(count - 1)?;
     }
-    declare(module, LITERALS.into(), vec![Word::Int(0); count])?;
+    declare(module, name.into(), vec![Word::Int(0); count])?;
     // An empty table still has an address for image installation.
     if count == 0 {
         let Some(Data {

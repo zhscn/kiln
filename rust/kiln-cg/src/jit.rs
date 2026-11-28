@@ -1,6 +1,8 @@
 //! In-memory compilation: whole programs (`kiln-cg jit`) and code compiled
 //! into a running image (`kiln_rt_jit`).
 
+mod file_code;
+
 use crate::codegen::{self, DebugInfo, Options, Output, Ref};
 use crate::kir;
 use cranelift_codegen::isa::OwnedTargetIsa;
@@ -173,6 +175,10 @@ fn prepare(kir: &kir::Module, opts: &Options, memory: Memory) -> Result<Prepared
     builder.symbol(
         "kiln_rt_compile_program",
         kiln_rt_compile_program as *const u8,
+    );
+    builder.symbol(
+        "kiln_rt_prepare_file_code",
+        file_code::kiln_rt_prepare_file_code as *const u8,
     );
     builder.symbol(
         "kiln_rt_encode_packet",
@@ -492,6 +498,39 @@ pub unsafe extern "C" fn kiln_rt_compile_program(
     unsafe { compilation_result(ctx, fp, result) }
 }
 
+fn validate_literal_bindings(kir: &kir::Module, table: &str, count: usize) -> Result<(), String> {
+    if let Some(data) = kir.data.iter().find(|data| data.name == table) {
+        if !matches!(&data.contents, kir::DataContents::Words(words) if words.len() == count) {
+            return Err("literal vector does not match the module's literal words".into());
+        }
+    } else if count != 0 {
+        return Err("missing literal words".into());
+    }
+    let roots: std::collections::HashSet<_> = kir.roots
+        .iter()
+        .map(|(name, index)| (name.as_str(), *index))
+        .collect();
+    if (0..count).any(|index| !roots.contains(&(table, index as u32))) {
+        return Err("literal word has no static root".into());
+    }
+    if !kir.literal_patches.is_empty() {
+        let data: std::collections::HashMap<_, _> =
+            kir.data.iter().map(|data| (data.name.as_str(), data)).collect();
+        for (name, word, literal) in &kir.literal_patches {
+            let target = data.get(name.as_str()).ok_or("literal patch has no data")?;
+            if *literal >= count
+                || !matches!(&target.contents, kir::DataContents::Words(words) if (*word as usize) < words.len())
+            {
+                return Err("literal patch out of range".into());
+            }
+            if !roots.contains(&(name.as_str(), *word)) {
+                return Err("literal patch has no static root".into());
+            }
+        }
+    }
+    Ok(())
+}
+
 unsafe fn install_module(
     kir: &kir::Module,
     literals: u64,
@@ -503,39 +542,7 @@ unsafe fn install_module(
     if kir.inits.len() != 1 {
         return Err("image compilation requires exactly one init function".into());
     }
-    // Validate the literal table before code or roots are registered.
-    if let Some(data) = kir.data.iter().find(|d| d.name == LITERALS_NAME) {
-        if !matches!(&data.contents, kir::DataContents::Words(words) if words.len() == n) {
-            return Err("literal vector does not match the module's literal words".into());
-        }
-        let roots: std::collections::HashSet<_> = kir
-            .roots
-            .iter()
-            .filter(|(name, _)| name == LITERALS_NAME)
-            .map(|(_, index)| *index as usize)
-            .collect();
-        if (0..n).any(|index| !roots.contains(&index)) {
-            return Err("literal word has no static root".into());
-        }
-    } else if n != 0 {
-        return Err("missing literal words".into());
-    }
-    let patch_data: std::collections::HashMap<_, _> =
-        kir.data.iter().map(|d| (d.name.as_str(), d)).collect();
-    let patch_roots: std::collections::HashSet<_> = kir.roots.iter().cloned().collect();
-    for (name, word, literal) in &kir.literal_patches {
-        let data = patch_data
-            .get(name.as_str())
-            .ok_or("literal patch has no data")?;
-        if *literal >= n
-            || !matches!(&data.contents, kir::DataContents::Words(words) if (*word as usize) < words.len())
-        {
-            return Err("literal patch out of range".into());
-        }
-        if !patch_roots.contains(&(name.clone(), *word)) {
-            return Err("literal patch has no static root".into());
-        }
-    }
+    validate_literal_bindings(kir, LITERALS_NAME, n)?;
     let prepared = prepare(kir, &Options { dump_clif: false }, Memory::Shared)?;
     let loaded = &prepared;
     let n = header_length(unsafe { header(literals) });

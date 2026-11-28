@@ -26,6 +26,7 @@ fn compute_target_fingerprint() -> u64 {
         include_bytes!("../../kiln-rt/src/lib.rs").as_slice(),
         include_bytes!("packet_schema.rs").as_slice(),
         include_bytes!("jit.rs").as_slice(),
+        include_bytes!("jit/file_code.rs").as_slice(),
         include_bytes!("packet_heap.rs").as_slice(),
         include_bytes!("lir/program/verify.rs").as_slice(),
         include_bytes!("lir/program/lower.rs").as_slice(),

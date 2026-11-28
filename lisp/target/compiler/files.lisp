@@ -17,6 +17,24 @@
   (proclaim declaration)
   (finish-file-initializer declaration))
 
+(defun prepare-file-code (packets)
+  (let* ((entries (make-array (* 2 (length packets))))
+         (result (with-compilation-phase (:backend)
+                   (kiln.sys:%primop :prepare-file-code packets entries))))
+    (when result
+      (kiln.lir::signal-backend-compilation-error result :prepare-file-code))
+    entries))
+
+(defun run-file-code (entries index literals)
+  (let* ((offset (* 2 index))
+         (binder (svref entries offset)))
+    (unless (and (typep literals 'simple-vector)
+                 (= (length literals) (svref entries (1+ offset))))
+      (error "FASL literal vector does not match its initializer."))
+    (let ((init (funcall binder literals)))
+      (funcall init)
+      (finish-file-initializer init))))
+
 (defun file-proclamation-argument (body)
   ;; A quoted declaration already contains everything the load-time call needs.
   (when (and (= (hir-node-kind body) 7) (eq (hir-node-a body) 'proclaim)

@@ -1059,6 +1059,9 @@ and slots), zero-filled."
 ;;; Indexed backend request; PACKET and LITERALS remain caller roots.
 (define-primop :compile-packet (packet literals)
   (emit-runtime-op :compile-packet (list packet literals)))
+
+(define-primop :prepare-file-code (packets entries)
+  (emit-runtime-op :prepare-file-code (list packets entries)))
 ;;; Writes a heap image (kiln_rt_save_image): PATH is a simple
 ;;; vector of octets, TOPLEVEL the function an executable started from
 ;;; the image calls, EXECUTABLE true to write a copy of the executable

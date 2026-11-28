@@ -274,6 +274,16 @@
       (intern name (or (find-package package) (error "Missing FASL package ~S." package)))
       (make-symbol name)))
 
+(defun fasl-read-packet-bytes (stream)
+  (let* ((size (fasl-read-uint stream))
+         (input (fasl-input-stream-or-self stream)))
+    (unless (<= size kiln.kir::+packet-max-bytes+)
+      (error "FASL packet is too large."))
+    (let ((bytes (make-simple-vector size)))
+      (unless (= (read-sequence bytes input) size)
+        (error 'end-of-file :stream input))
+      bytes)))
+
 (defun fasl-read-record (stream frames)
   (declare (simple-vector frames))
   ;; Each pending pair takes two slots. A negative tag means its first
@@ -301,11 +311,7 @@
                    (incf top 2)
                    nil)
                   (5 (code-char (fasl-read-uint stream)))
-                  (6 (let ((bytes (make-array (fasl-read-uint stream)))
-                           (input (fasl-input-stream-or-self stream)))
-                       (unless (= (read-sequence bytes input) (length bytes))
-                         (error 'end-of-file :stream input))
-                       bytes))
+                  (6 (fasl-read-packet-bytes stream))
                   (t (error "Invalid FASL record encoding."))))))
       (unless need-value
         (when (zerop top) (return (values value frames)))
@@ -328,21 +334,45 @@
 (defvar *fasl-record-kinds*
   #(:symbol :integer :character :single-bits :double-bits :float :ratio :complex
     :package :pathname :string :cons :set-cons :array :set-array :hash-table
-    :set-hash-table :create :initialize :run :proclaim))
+    :set-hash-table :create :initialize :run :proclaim :prepare-code))
+
+(defconstant +fasl-code-batch-size+ 256)
+
+(defun fasl-write-kind (kind stream)
+  (fasl-write-octet (or (position kind *fasl-record-kinds* :test #'eq)
+                       (error "Unknown FASL operation ~S." kind))
+                    stream))
+
+(defun fasl-write-code-batch (records count stream)
+  (fasl-write-kind :prepare-code stream)
+  (fasl-write-uint count stream)
+  (loop for record in records
+        when (eq (first record) :run)
+          do (let ((packet (second record)))
+               (fasl-write-uint (length packet) stream)
+               (fasl-write-octet-vector packet stream))
+             (when (zerop (decf count)) (return))))
 
 (defun fasl-write-records (unit stream)
-  (dolist (byte '(137 75 70 65 83 5)) (fasl-write-octet byte stream))
+  (dolist (byte '(137 75 70 65 83 6)) (fasl-write-octet byte stream))
   (fasl-write-uint (first unit) stream)
-  (fasl-write-uint (length (second unit)) stream)
-  (let ((pending (make-simple-vector 64)))
-    (dolist (record (second unit))
-      (fasl-write-octet (or (position (car record) *fasl-record-kinds* :test #'eq)
-                           (error "Unknown FASL operation ~S." (car record)))
-                        stream)
-      (case (car record)
-        ((:cons :set-cons :proclaim)
-         (dolist (index (cdr record)) (fasl-write-uint index stream)))
-        (otherwise (fasl-write-data (cdr record) stream pending))))))
+  (multiple-value-bind (records runs)
+      (loop for record in (second unit)
+            count t into records count (eq (first record) :run) into runs
+            finally (return (values records runs)))
+    (fasl-write-uint (+ records (ceiling runs +fasl-code-batch-size+)) stream)
+    (let ((pending (make-simple-vector 64)) (remaining 0))
+      (loop for tail on (second unit) for record = (first tail) for kind = (first record)
+            do (when (and (eq kind :run) (zerop remaining))
+                 (setf remaining (min runs +fasl-code-batch-size+))
+                 (decf runs remaining)
+                 (fasl-write-code-batch tail remaining stream))
+               (fasl-write-kind kind stream)
+               (case kind
+                 (:run (fasl-write-uint (third record) stream) (decf remaining))
+                 ((:cons :set-cons :proclaim)
+                  (dolist (index (cdr record)) (fasl-write-uint index stream)))
+                 (otherwise (fasl-write-data (cdr record) stream pending)))))))
 
 (defun write-native-fasl (unit stream)
   (if (fasl-binary-file-stream-p stream)
@@ -355,7 +385,7 @@
   (dolist (byte '(137 75 70 65 83))
     (unless (= (fasl-read-octet stream) byte) (error "Invalid native FASL header.")))
   (let ((version (fasl-read-octet stream)))
-    (unless (member version '(2 3 4 5))
+    (unless (member version '(2 3 4 5 6))
       (error "Unsupported native FASL version ~D." version))
     version))
 
@@ -371,8 +401,16 @@
     (values (cons kind fields) storage)))
 
 (defun fasl-read-proclamation-index (stream version)
-  (unless (= version 5) (error "Invalid FASL proclamation opcode."))
+  (unless (>= version 5) (error "Invalid FASL proclamation opcode."))
   (fasl-read-uint stream))
+
+(defun fasl-read-code-batch (stream version)
+  (unless (>= version 6) (error "Invalid FASL code batch opcode."))
+  (let ((count (fasl-read-uint stream)))
+    (unless (<= 1 count +fasl-code-batch-size+) (error "Invalid FASL code batch size."))
+    (let ((packets (make-simple-vector count)))
+      (dotimes (index count packets)
+        (setf (svref packets index) (fasl-read-packet-bytes stream))))))
 
 (defun fasl-read-file-record (stream frames version)
   (if (= version 2)
@@ -388,6 +426,10 @@
                        frames))
               (:proclaim (values (list :proclaim (fasl-read-proclamation-index stream version))
                                   frames))
+              (:prepare-code (values (list :prepare-code (fasl-read-code-batch stream version)) frames))
+              (:run (if (>= version 6)
+                        (values (list :run (fasl-read-uint stream)) frames)
+                        (fasl-read-tagged-record kind stream frames)))
               (otherwise (fasl-read-tagged-record kind stream frames)))))))
 
 (defun fasl-allocate-cons (index)
@@ -444,7 +486,8 @@
                      stream))
          (version (fasl-read-header stream))
          (*fasl-load-objects* (make-array (fasl-read-uint stream)))
-        (frames (make-simple-vector 128)))
+         (frames (make-simple-vector 128))
+         (entries nil) (count 0) (next 0))
     (dotimes (i (fasl-read-uint stream))
       (if (>= version 4)
           (let ((kind (fasl-read-kind stream)))
@@ -456,11 +499,27 @@
               (:proclaim
                (funcall 'kiln.compiler::load-file-proclamation
                         (fasl-reference (fasl-read-proclamation-index stream version))))
+              (:prepare-code
+               (unless (= next count) (error "Unrun FASL code batch."))
+               (let ((packets (fasl-read-code-batch stream version)))
+                 (setf entries (funcall 'kiln.compiler::prepare-file-code packets)
+                       count (length packets) next 0)))
+              (:run
+               (if (>= version 6)
+                   (progn
+                     (unless (< next count) (error "FASL initializer lacks prepared code."))
+                     (funcall 'kiln.compiler::run-file-code entries next
+                              (fasl-reference (fasl-read-uint stream)))
+                     (incf next))
+                   (multiple-value-bind (record storage) (fasl-read-tagged-record kind stream frames)
+                     (setf frames storage)
+                     (execute-fasl-record record))))
               (otherwise
                (multiple-value-bind (record storage) (fasl-read-tagged-record kind stream frames)
                  (setf frames storage)
                  (execute-fasl-record record)))))
           (multiple-value-bind (record storage) (fasl-read-file-record stream frames version)
             (setf frames storage)
-            (execute-fasl-record record)))))
+            (execute-fasl-record record))))
+    (unless (= next count) (error "Unrun FASL code batch.")))
   t)

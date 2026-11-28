@@ -56,6 +56,23 @@ nil
          (print (list *compile-file-pathname* *compile-file-truename*)))
     (when (probe-file source) (delete-file source))
     (when (probe-file output) (delete-file output))))
+
+(let* ((source "build/test/co-fasl-batches.lisp")
+       (output (compile-file-pathname source))
+       (count (+ 3 kiln.kernel::+fasl-code-batch-size+)))
+  (unwind-protect
+       (progn
+         (with-open-file (stream source :direction :output :if-exists :supersede)
+           (dotimes (index count)
+             (prin1 `(push ,index *fasl-events*) stream)
+             (terpri stream)))
+         (assert (compile-file source :verbose nil :print nil))
+         (dotimes (load-count 2)
+           (let ((*fasl-events* nil))
+             (assert (load output :verbose nil :print nil))
+             (assert (equal *fasl-events* (loop for i downfrom (1- count) to 0 collect i))))))
+    (when (probe-file source) (delete-file source))
+    (when (probe-file output) (delete-file output))))
 (let* ((source "build/test/co-fasl-package.lisp")
        (output (compile-file-pathname source)))
   (unwind-protect
