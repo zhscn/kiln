@@ -536,12 +536,25 @@
       (multiple-value-bind (types packets) (mir-compute-types function)
         (cons types packets)))))
 
+(defun mir-unit-local-types-p (unit)
+  (mir-unit-analysis unit :local-types
+    (lambda (unit)
+      ;; Each function can derive its own types when there are only
+      ;; named calls and there is no captured state or cell aliasing.
+      (loop for function across (hir-buffer-view (mir-unit-functions unit))
+            always
+            (and (zerop (length (mir-function-captures function)))
+                 (zerop (mir-function-internal-prefix function))
+                 (notany (lambda (instruction)
+                           (member (mir-instruction-kind instruction) '(7 15 19 20 21)))
+                         (hir-buffer-view (mir-function-instructions function))))))))
+
 (defun mir-local-analysis-only-p (unit function)
-  ;; A singleton without references to a unit-local entry has no internal
-  ;; call edges. Named calls still use the normal local transfer functions.
-  (and unit (= (hir-buffer-count (mir-unit-functions unit)) 1)
-       (notany (lambda (instruction) (member (mir-instruction-kind instruction) '(5 23)))
-               (hir-buffer-view (mir-function-instructions function)))))
+  (and unit
+       (if (= (hir-buffer-count (mir-unit-functions unit)) 1)
+           (notany (lambda (instruction) (member (mir-instruction-kind instruction) '(5 23)))
+                   (hir-buffer-view (mir-function-instructions function)))
+           (mir-unit-local-types-p unit))))
 
 (defun mir-infer-types (function &optional unit)
   "Return SSA types, using local call summaries when UNIT is supplied."

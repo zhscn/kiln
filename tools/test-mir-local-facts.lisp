@@ -25,3 +25,17 @@
              (assert (not (eq types new-types))))))
     (setf (symbol-function 'mir-compute-types) original)))
 (format t "Local primary and bundle facts share one solve and invalidate together.~%")
+
+(let* ((forms (front-end-forms '((list (lambda (x) (values x 1)) (lambda () 2)))))
+       (unit (hir-to-mir (toplevel-form-ast (first forms)))))
+  (assert (mir-unit-local-types-p unit))
+  (loop for function across (hir-vector (mir-unit-functions unit))
+        do (assert (equalp (mir-infer-types function unit) (mir-infer-types function)))
+           (assert (equalp (mir-infer-value-facts function unit)
+                           (mir-infer-value-facts function)))))
+
+(dolist (form '((flet ((helper (x) x)) (helper 1))
+                (let ((x (some-value))) (lambda () x))))
+  (let* ((forms (front-end-forms (list form)))
+         (unit (hir-to-mir (toplevel-form-ast (first forms)))))
+    (assert (not (mir-unit-local-types-p unit)))))

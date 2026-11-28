@@ -3281,7 +3281,8 @@
          (storage (when (and unit (mir-storage-candidate-p function))
                     (if (and local-only (notany (lambda (instruction) (= (mir-instruction-kind instruction) 19))
                                   (hir-buffer-view (mir-function-instructions function))))
-                        (mir-compute-storage function *mir-lir-types* *mir-lir-value-facts*)
+                        (mir-compute-storage function *mir-lir-types* *mir-lir-value-facts*
+                                             :functions *mir-lir-functions*)
                         (svref (mir-infer-storage unit) (mir-function-id function)))))
          (*mir-lir-carriers* (mir-bundle-carriers function))
          (*mir-lir-bundle-demand* (mir-bundle-plan-demand (mir-bundle-plan function)))

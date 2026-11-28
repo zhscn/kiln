@@ -398,7 +398,7 @@
   (mir-unit-analysis unit :packed-array-environments
     (lambda (unit)
       (let ((functions (hir-buffer-view (mir-unit-functions unit))))
-        (when (> (length functions) 1)
+        (when (and (> (length functions) 1) (not (mir-unit-local-types-p unit)))
           (let* ((flow (mir-infer-function-flow unit))
                  (pairs (when (plusp (mir-function-flow-recursive flow))
                           (mir-vector-call-lengths unit)))
