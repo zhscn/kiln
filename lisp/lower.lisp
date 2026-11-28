@@ -120,15 +120,15 @@ so local names carry the module's name; shared ones (symbols) do not."
 ;;; the table layout, roots, and installation.
 
 (defvar *image-literals* nil
-  "When compiling into the running image: a hash table from literal objects
-to their indices in the literal words; else NIL.")
+  "When compiling into the running image: an identity table from literal
+objects to their indices in the literal words; else NIL.")
 
 (defvar *image-literal-objects*)        ; the literals, newest first
 (defvar *image-literal-count*)
 
 (defun literal-word (x)
-  `(:literal ,(or (gethash x *image-literals*)
-                  (setf (gethash x *image-literals*)
+  `(:literal ,(or (compiler-eq-ref *image-literals* x)
+                  (setf (compiler-eq-ref *image-literals* x)
                         (prog1 *image-literal-count*
                           (push x *image-literal-objects*)
                           (incf *image-literal-count*))))))
@@ -1203,17 +1203,17 @@ Returns the module and the vector of its literals."
         (*module* (let ((module (make-kmodule module-name)))
                     (setf (kiln.kir::kmodule-capture-shapes-complete-p module) t)
                     module))
-        (*image-literals* (and image (make-hash-table :test 'eq)))
+        (*image-literals* (and image (make-compiler-eq-table)))
         (*image-literal-objects* '())
         (*image-literal-count* 0)
         (*module-label* (mangle module-name))
         (*counter* 0)
-        (*constants* (make-hash-table :test 'eql))
-        (*string-constants* (make-hash-table :test 'equal))
-        (*cons-words* (make-hash-table :test 'equal))
-        (*pending-conses* (make-hash-table :test 'eq))
+        (*constants* (unless image (make-hash-table :test 'eql)))
+        (*string-constants* (unless image (make-hash-table :test 'equal)))
+        (*cons-words* (unless image (make-hash-table :test 'equal)))
+        (*pending-conses* (unless image (make-hash-table :test 'eq)))
         (*module-symbols* '())
-        (*symbol-data-names* (make-hash-table :test 'eq))
+        (*symbol-data-names* (unless image (make-hash-table :test 'eq)))
         (*uninterned-symbols* (make-hash-table :test 'eq))
         (*uninterned-count* 0))
     (when image
