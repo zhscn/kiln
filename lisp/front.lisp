@@ -464,6 +464,55 @@ host's: an #+SBCL branch must not be read into kiln code).")
 (defclass source-reader-client (#+kiln eclector.reader::kiln-client
                                eclector.concrete-syntax-tree::cst-client) ())
 
+#+kiln
+(defun read-buffered-source-token (stream readtable)
+  ;; ECLECTOR has already put the first character back. Inspect the rest
+  ;; in place and commit only when the whole unescaped token is buffered.
+  (let* ((state (cyclosis::file-state stream))
+         (first (cyclosis::previous-char stream)))
+    (when (and first (<= 32 (char-code first) 127)
+               (eq t (cyclosis::buffer-state-utf-8-characters state))
+               (zerop (cyclosis::buffer-state-out-end state))
+               (eq (class-of readtable) (find-class 'eclector.readtable.simple::readtable)))
+      (let ((syntax (eclector.readtable.simple::ascii-syntax-types readtable))
+            (bytes (cyclosis::buffer-state-buffer state))
+            (start (cyclosis::buffer-state-in-start state))
+            (end (cyclosis::buffer-state-in-end state)))
+        (declare (simple-vector syntax bytes) (fixnum start end))
+        (when (eq :constituent (svref syntax (char-code first)))
+          (loop for position of-type fixnum from start below end
+                for code = (the fixnum (svref bytes position))
+                do (when (>= code 128) (return nil))
+                   (case (svref syntax code)
+                     ((:whitespace :terminating-macro)
+                      (let* ((length (1+ (- position start)))
+                             (token (make-string length))
+                             (cursor (cyclosis::input-cursor stream))
+                             (column (+ (caar cursor) length)))
+                        (setf (schar token 0) first)
+                        (loop for index of-type fixnum from start below position
+                              for destination of-type fixnum from 1
+                              do (setf (schar token destination) (code-char (svref bytes index))))
+                        (setf (cyclosis::buffer-state-in-start state) position
+                              (cyclosis::previous-char stream) nil
+                              (caar cursor) column
+                              (caadr cursor) (1- column)
+                              (cdadr cursor) (cdar cursor))
+                        (return token)))
+                     (:constituent (when (< code 32) (return nil)))
+                     (otherwise (return nil)))))))))
+
+#+kiln
+(defmethod eclector.reader:read-token
+    ((client source-reader-client) (stream cyclosis::kiln-file-stream) eof-error-p eof-value)
+  (declare (ignore eof-error-p eof-value))
+  (let ((token (unless (eclector.reader:state-value client 'cl:*read-suppress*)
+                 (read-buffered-source-token
+                  stream (eclector.reader:state-value client 'cl:*readtable*)))))
+    (if token
+        (eclector.reader:interpret-token client stream token nil)
+        (call-next-method))))
+
 (defmethod eclector.reader:evaluate-expression ((client source-reader-client) expression)
   (compile-time-eval expression))
 
