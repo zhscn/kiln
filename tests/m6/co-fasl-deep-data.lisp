@@ -42,3 +42,26 @@
     (when (probe-file buffered) (delete-file buffered))
     (when (probe-file reference) (delete-file reference))))
 (print :deep-fasl-records)
+
+(defvar *fasl-string-result*)
+(let ((path "build/test/fasl-buffered-string.fasl")
+      (string (make-string 20000 :initial-element #\a)))
+  (unwind-protect
+       (progn
+         (loop for i from 61 below (length string) by 127
+               do (setf (schar string i) (code-char (if (evenp i) 955 30028))))
+         (setf (schar string 8190) (code-char 128578))
+         (with-open-file (stream path :direction :output :if-exists :supersede
+                                      :element-type '(unsigned-byte 8))
+           (kiln.kernel::write-native-fasl
+            (list 1 (list (list :string 0 string)
+                          '(:initialize (setq *fasl-string-result* (kiln.kernel::fasl-reference 0)))))
+            stream))
+         (load path :verbose nil)
+         (assert (string= string *fasl-string-result*))
+         (let ((first *fasl-string-result*))
+           (with-open-file (stream path :element-type '(unsigned-byte 8))
+             (load stream :verbose nil))
+           (assert (string= string *fasl-string-result*))
+           (assert (not (eq first *fasl-string-result*)))))
+    (when (probe-file path) (delete-file path))))
