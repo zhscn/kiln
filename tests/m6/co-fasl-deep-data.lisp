@@ -17,4 +17,24 @@
       (assert (equalp #(0 127 128 255) (sixth result)))
       (assert (eq :end (read-byte stream nil :end)))))
   (delete-file "build/test/deep-record.bin"))
+(let ((buffered "build/test/fasl-buffered.bin")
+      (reference "build/test/fasl-reference.bin")
+      (unit (list 1 (list (list :string 0 (make-string 5000 :initial-element #\λ))
+                          (list :run #(0 127 128 255) 0)
+                          (list :character 0 #\Newline)))))
+  (unwind-protect
+       (progn
+         (with-open-file (stream buffered :direction :output :if-exists :supersede
+                                          :element-type '(unsigned-byte 8))
+           (kiln.kernel::write-native-fasl unit stream))
+         (with-open-file (stream reference :direction :output :if-exists :supersede
+                                           :element-type '(unsigned-byte 8))
+           (kiln.kernel::fasl-write-records unit stream))
+         (with-open-file (left buffered :element-type '(unsigned-byte 8))
+           (with-open-file (right reference :element-type '(unsigned-byte 8))
+             (loop for byte = (read-byte left nil nil)
+                   do (assert (eql byte (read-byte right nil nil)))
+                   while byte))))
+    (when (probe-file buffered) (delete-file buffered))
+    (when (probe-file reference) (delete-file reference))))
 (print :deep-fasl-records)
