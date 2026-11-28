@@ -186,7 +186,7 @@ fn prepare(kir: &kir::Module, opts: &Options, memory: Memory) -> Result<Prepared
         kiln_rt::exported(name).map(|a| a as *const u8)
     }));
     let mut module = JITModule::new(builder);
-    let out = codegen::compile(&mut module, kir, opts)?;
+    let out = codegen::compile_with_entry(&mut module, kir, opts, matches!(memory, Memory::Own(_)))?;
     module.finalize_definitions().map_err(|e| e.to_string())?;
     Ok(Prepared {
         module,

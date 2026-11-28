@@ -57,7 +57,7 @@ pub enum DebugInfo {
 }
 
 pub struct Output {
-    pub enter: FuncId,
+    pub enter: Option<FuncId>,
     pub inits: Vec<DataRef>,
     pub callsites: Vec<CallSiteInfo>,
     pub stackmaps: Vec<StackMapInfo>,
@@ -121,6 +121,15 @@ struct Imports<'a> {
 }
 
 pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> R<Output> {
+    compile_with_entry(module, kir, opts, true)
+}
+
+pub(crate) fn compile_with_entry<M: Module>(
+    module: &mut M,
+    kir: &kir::Module,
+    opts: &Options,
+    standalone: bool,
+) -> R<Output> {
     let timing = std::env::var_os("KILN_TIME").is_some();
     let declarations_start = timing.then(std::time::Instant::now);
     let sysv = module.isa().default_call_conv();
@@ -142,13 +151,6 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
             .map_err(err)?;
         names.insert(f.name.as_str(), Ref::Func(id));
         imports.by_name.insert(&f.name, f);
-        if f.unwinds {
-            let tsig = word_signature(CallConv::Tail, f.params, f.returns);
-            let tid = module
-                .declare_function(&trampoline_name(&f.name), Linkage::Local, &tsig)
-                .map_err(err)?;
-            imports.trampolines.insert(&f.name, tid);
-        }
     }
     let grow_values = "kiln_rt_grow_values";
     if !names.contains_key(grow_values) {
@@ -216,11 +218,6 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
         names.insert(f.name.as_str(), Ref::Func(id));
         func_ids.push(id);
     }
-    let enter_sig = word_signature(sysv, 5, 1);
-    let enter = module
-        .declare_function(ENTER_NAME, Linkage::Export, &enter_sig)
-        .map_err(err)?;
-
     let mut desc = DataDescription::new();
     let mut objects = kir.data.iter().zip(&data_refs).peekable();
     let mut data_relocs = HashMap::new();
@@ -289,7 +286,7 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
             module,
             has_simd_bit_test,
             names: &names,
-            imports: &imports,
+            imports: &mut imports,
             lisp_sig: &lisp_sig,
             vars: HashMap::new(),
             indexed_vars: Vec::with_capacity(f.vars.len()),
@@ -375,10 +372,9 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
 
     // Trampolines for unwinding runtime functions.
     for f in &kir.import_funcs {
-        if !f.unwinds {
+        let Some(&tid) = imports.trampolines.get(f.name.as_str()) else {
             continue;
-        }
-        let tid = imports.trampolines[f.name.as_str()];
+        };
         let Ref::Func(target) = names[f.name.as_str()] else {
             unreachable!()
         };
@@ -405,34 +401,11 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
         module.clear_context(&mut ctx);
     }
 
-    // Entry trampoline: System V → Lisp convention.
-    ctx.func.signature = enter_sig;
-    {
-        let mut b = FunctionBuilder::new(&mut ctx.func, &mut fctx);
-        let blk = b.create_block();
-        b.append_block_params_for_function_params(blk);
-        b.switch_to_block(blk);
-        let p = b.block_params(blk).to_vec();
-        // Record this frame as the base of the Lisp frames for the GC stack
-        // walk, restoring the previous base afterwards.
-        let off = kiln_rt::context::CTX_STACK_BASE_FP;
-        let mf = MemFlagsData::trusted();
-        let old_base = b.ins().load(I64, mf, p[0], off);
-        let fp = b.ins().get_frame_pointer(I64);
-        b.ins().store(mf, fp, p[0], off);
-        let zero = b.ins().iconst(I64, 0);
-        let mut args = vec![p[0], p[1], p[3], p[4]];
-        args.extend((1..kir::REG_ARGS).map(|_| zero));
-        let sigref = b.import_signature(lisp_sig.clone());
-        let call = b.ins().call_indirect(sigref, p[2], &args);
-        let v0 = b.inst_results(call)[0];
-        b.ins().store(mf, old_base, p[0], off);
-        b.ins().return_(&[v0]);
-        b.seal_all_blocks();
-        b.finalize(module.target_config());
-    }
-    module.define_function(enter, &mut ctx).map_err(|e| format!("{e:?}"))?;
-    module.clear_context(&mut ctx);
+    let enter = if standalone {
+        Some(emit_entry_trampoline(module, &mut ctx, &mut fctx, &lisp_sig)?)
+    } else {
+        None
+    };
 
     let mut inits = Vec::new();
     for name in &kir.inits {
@@ -474,6 +447,46 @@ pub fn compile<M: Module>(module: &mut M, kir: &kir::Module, opts: &Options) -> 
         data,
         debug,
     })
+}
+
+fn emit_entry_trampoline<M: Module>(
+    module: &mut M,
+    ctx: &mut Context,
+    fctx: &mut FunctionBuilderContext,
+    lisp_sig: &Signature,
+) -> R<FuncId> {
+    // Entry trampoline: System V → Lisp convention.
+    let enter_sig = word_signature(module.isa().default_call_conv(), 5, 1);
+    let enter = module
+        .declare_function(ENTER_NAME, Linkage::Export, &enter_sig)
+        .map_err(err)?;
+    ctx.func.signature = enter_sig;
+    {
+        let mut b = FunctionBuilder::new(&mut ctx.func, fctx);
+        let blk = b.create_block();
+        b.append_block_params_for_function_params(blk);
+        b.switch_to_block(blk);
+        let p = b.block_params(blk).to_vec();
+        // Record this frame as the base of the Lisp frames for the GC stack
+        // walk, restoring the previous base afterwards.
+        let off = kiln_rt::context::CTX_STACK_BASE_FP;
+        let mf = MemFlagsData::trusted();
+        let old_base = b.ins().load(I64, mf, p[0], off);
+        let fp = b.ins().get_frame_pointer(I64);
+        b.ins().store(mf, fp, p[0], off);
+        let zero = b.ins().iconst(I64, 0);
+        let mut args = vec![p[0], p[1], p[3], p[4]];
+        args.extend((1..kir::REG_ARGS).map(|_| zero));
+        let sigref = b.import_signature(lisp_sig.clone());
+        let call = b.ins().call_indirect(sigref, p[2], &args);
+        let v0 = b.inst_results(call)[0];
+        b.ins().store(mf, old_base, p[0], off);
+        b.ins().return_(&[v0]);
+        b.seal_all_blocks();
+        b.finalize(module.target_config());
+    }
+    module.define_function(enter, ctx).map_err(|e| format!("{e:?}"))?;
+    Ok(enter)
 }
 
 /// For each call of a function (in the order of `call_locs`), the source
@@ -960,7 +973,8 @@ pub fn emit_module_info<M: Module>(module: &mut M, out: &Output) -> R<()> {
     desc.define(bytes.into_boxed_slice());
     let gv = module.declare_data_in_data(maps, &mut desc);
     desc.write_data_addr(40, gv, 0);
-    let fr = module.declare_func_in_data(out.enter, &mut desc);
+    let enter = out.enter.ok_or("standalone module has no entry trampoline")?;
+    let fr = module.declare_func_in_data(enter, &mut desc);
     desc.write_function_addr(0, fr);
     let gv = module.declare_data_in_data(table, &mut desc);
     desc.write_data_addr(24, gv, 0);
@@ -968,11 +982,11 @@ pub fn emit_module_info<M: Module>(module: &mut M, out: &Output) -> R<()> {
     Ok(())
 }
 
-struct FuncLowering<'a, M: Module> {
+struct FuncLowering<'a, 'source, M: Module> {
     module: &'a mut M,
     has_simd_bit_test: bool,
     names: &'a HashMap<&'a str, Ref>,
-    imports: &'a Imports<'a>,
+    imports: &'a mut Imports<'source>,
     lisp_sig: &'a Signature,
     vars: HashMap<&'a str, Variable>,
     indexed_vars: Vec<(Variable, VarKind, Option<u32>)>,
@@ -1039,7 +1053,7 @@ fn fixnum_bit_inputs(
     }
 }
 
-impl<'a, M: Module> FuncLowering<'a, M> {
+impl<'a, M: Module> FuncLowering<'a, '_, M> {
     fn declare_stack_map_variables(&self, b: &mut FunctionBuilder, f: &kir::Func) {
         let first_local = kir::PREDEFINED_VARS.len();
         let mut may_hold_pointer = vec![false; first_local + f.vars.len()];
@@ -1524,7 +1538,17 @@ impl<'a, M: Module> FuncLowering<'a, M> {
                 }
                 let vals = args.iter().map(|a| self.expr(b, a)).collect::<R<Vec<_>>>()?;
                 let (id, handler) = if imp.unwinds {
-                    (self.imports.trampolines[name.as_str()], handler.as_deref())
+                    let id = match self.imports.trampolines.entry(imp.name.as_str()) {
+                        std::collections::hash_map::Entry::Occupied(entry) => *entry.get(),
+                        std::collections::hash_map::Entry::Vacant(entry) => {
+                            let sig = word_signature(CallConv::Tail, imp.params, imp.returns);
+                            let id = self.module
+                                .declare_function(&trampoline_name(&imp.name), Linkage::Local, &sig)
+                                .map_err(err)?;
+                            *entry.insert(id)
+                        }
+                    };
+                    (id, handler.as_deref())
                 } else {
                     let Ref::Func(id) = self.names[name.as_str()] else { unreachable!() };
                     (id, None)

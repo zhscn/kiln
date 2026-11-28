@@ -86,7 +86,8 @@ fn run_jit(kir: &kir::Module, opts: &Options) -> Result<i32, String> {
             .map_err(|e| format!("{path}: {e}"))?;
     }
     let inits = loaded.inits();
-    let enter = loaded.module.get_finalized_function(loaded.out.enter);
+    let enter = loaded.out.enter.ok_or("standalone module has no entry trampoline")?;
+    let enter = loaded.module.get_finalized_function(enter);
     // The tables are registered already (jit::load); the others are
     // empty (slices made from them need non-null pointers).
     let none = std::ptr::NonNull::dangling().as_ptr();

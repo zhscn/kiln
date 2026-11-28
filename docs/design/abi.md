@@ -158,6 +158,10 @@ HIR 前端转换 lambda list 之后（`lisp/hir/convert.lisp`），每个 `&opti
 
 分配、`kiln_rt_poll` 和所有可能 signal 的 runtime 函数都是 `unwinds`。**凡是可能展开的 native 调用，都经过 `tail` trampoline**，这和 C6 的 FFI trampoline 是同一套机制。
 
+后端只为模块实际调用的 runtime 函数生成展开跳板。System V 进入 Lisp 的入口跳板由
+AOT 启动模块和独立 JIT 模块提供。运行中的 image 已经有这个入口，后来安装的模块直接
+从 Lisp 调用各自的初始化函数。
+
 ### 本地退出
 
 `return-from` 和 `go` 在同一个函数里时直接跳转。跳转前按从内到外的顺序弹出经过的条目，遇到 unwind-protect 就把 cleanup 内联执行，遇到绑定就恢复旧值。来自闭包的退出见 [lowering.md](lowering.md)。
