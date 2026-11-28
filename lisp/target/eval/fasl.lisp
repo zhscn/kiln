@@ -139,11 +139,16 @@
          (fasl-flush))))
     index))
 
+(defun fasl-emit-initializer (operation)
+  (fasl-flush)
+  (when *fasl-pending* (error 'fasl-creation-cycle))
+  (fasl-emit operation nil nil))
+
 (defun fasl-add-module (kir literals)
-  (let ((index (fasl-intern literals)))
-    (fasl-flush)
-    (when *fasl-pending* (error 'fasl-creation-cycle))
-    (fasl-emit (list :run kir index) nil nil)))
+  (fasl-emit-initializer (list :run kir (fasl-intern literals))))
+
+(defun fasl-add-proclamation (declaration)
+  (fasl-emit-initializer (list :proclaim (fasl-intern declaration))))
 
 ;;; The binary envelope only encodes record data: integers, characters,
 ;;; strings, symbols and lists. Arbitrary objects use indexed graph records.
@@ -323,10 +328,10 @@
 (defvar *fasl-record-kinds*
   #(:symbol :integer :character :single-bits :double-bits :float :ratio :complex
     :package :pathname :string :cons :set-cons :array :set-array :hash-table
-    :set-hash-table :create :initialize :run))
+    :set-hash-table :create :initialize :run :proclaim))
 
 (defun fasl-write-records (unit stream)
-  (dolist (byte '(137 75 70 65 83 4)) (fasl-write-octet byte stream))
+  (dolist (byte '(137 75 70 65 83 5)) (fasl-write-octet byte stream))
   (fasl-write-uint (first unit) stream)
   (fasl-write-uint (length (second unit)) stream)
   (let ((pending (make-simple-vector 64)))
@@ -335,7 +340,7 @@
                            (error "Unknown FASL operation ~S." (car record)))
                         stream)
       (case (car record)
-        ((:cons :set-cons)
+        ((:cons :set-cons :proclaim)
          (dolist (index (cdr record)) (fasl-write-uint index stream)))
         (otherwise (fasl-write-data (cdr record) stream pending))))))
 
@@ -350,7 +355,7 @@
   (dolist (byte '(137 75 70 65 83))
     (unless (= (fasl-read-octet stream) byte) (error "Invalid native FASL header.")))
   (let ((version (fasl-read-octet stream)))
-    (unless (member version '(2 3 4))
+    (unless (member version '(2 3 4 5))
       (error "Unsupported native FASL version ~D." version))
     version))
 
@@ -365,6 +370,10 @@
   (multiple-value-bind (fields storage) (fasl-read-record stream frames)
     (values (cons kind fields) storage)))
 
+(defun fasl-read-proclamation-index (stream version)
+  (unless (= version 5) (error "Invalid FASL proclamation opcode."))
+  (fasl-read-uint stream))
+
 (defun fasl-read-file-record (stream frames version)
   (if (= version 2)
       (fasl-read-record stream frames)
@@ -377,6 +386,8 @@
                (values (list :set-cons (fasl-read-uint stream) (fasl-read-uint stream)
                              (fasl-read-uint stream))
                        frames))
+              (:proclaim (values (list :proclaim (fasl-read-proclamation-index stream version))
+                                  frames))
               (otherwise (fasl-read-tagged-record kind stream frames)))))))
 
 (defun fasl-allocate-cons (index)
@@ -435,13 +446,16 @@
          (*fasl-load-objects* (make-array (fasl-read-uint stream)))
         (frames (make-simple-vector 128)))
     (dotimes (i (fasl-read-uint stream))
-      (if (= version 4)
+      (if (>= version 4)
           (let ((kind (fasl-read-kind stream)))
             (case kind
               (:cons (fasl-allocate-cons (fasl-read-uint stream)))
               (:set-cons
                (fasl-initialize-cons (fasl-read-uint stream) (fasl-read-uint stream)
                                      (fasl-read-uint stream)))
+              (:proclaim
+               (funcall 'kiln.compiler::load-file-proclamation
+                        (fasl-reference (fasl-read-proclamation-index stream version))))
               (otherwise
                (multiple-value-bind (record storage) (fasl-read-tagged-record kind stream frames)
                  (setf frames storage)

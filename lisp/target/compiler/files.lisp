@@ -2,13 +2,27 @@
 
 (in-package #:kiln.compiler)
 
+(defun finish-file-initializer (initializer)
+  (import-source-definitions)
+  (when *load-print* (format t "~&;; ~S loaded~%" initializer))
+  (values))
+
 (defun load-native-file (packet literals)
   (let ((init (with-compilation-phase (:backend)
                         (kiln.lir:require-init (kiln.sys:%primop :compile-packet packet literals) :compile-packet))))
     (funcall init)
-    (import-source-definitions)
-    (when *load-print* (format t "~&;; ~S loaded~%" init)))
-  (values))
+    (finish-file-initializer init)))
+
+(defun load-file-proclamation (declaration)
+  (proclaim declaration)
+  (finish-file-initializer declaration))
+
+(defun file-proclamation-argument (body)
+  ;; A quoted declaration already contains everything the load-time call needs.
+  (when (and (= (hir-node-kind body) 7) (eq (hir-node-a body) 'proclaim)
+             (= (length (hir-node-b body)) 1))
+    (let ((argument (svref (hir-node-b body) 0)))
+      (when (= (hir-node-kind argument) 0) argument))))
 
 (defun native-file-unit (input external-format print)
   (let* ((session (make-session))
@@ -29,13 +43,16 @@
     ;; Initializers precede the literals of the next top-level form, so a
     ;; package created by one form exists when later symbols are interned.
     (dolist (form (front-end (list input) session))
-      (let ((body (hir-fun-body (toplevel-form-ast form))))
+      (let* ((body (hir-fun-body (toplevel-form-ast form)))
+             (proclamation (file-proclamation-argument body)))
         (cond
           ((and (= (hir-node-kind body) 0) (symbolp (hir-node-a body)))
            ;; The front end has handled compile-time effects. Keep the
            ;; symbol's load-time interning in order with the initializers.
            (when (hir-node-a body)
              (kiln.kernel::fasl-intern (hir-node-a body))))
+          (proclamation
+           (kiln.kernel::fasl-add-proclamation (hir-node-a proclamation)))
           (t
            (let ((name (kiln.kir::kir-name "file-" (incf *native-compile-count*))))
              (multiple-value-bind (module literals)
