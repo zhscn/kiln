@@ -6,6 +6,7 @@
 (define-condition fasl-creation-cycle (program-error) ())
 (defvar *fasl-ids*)
 (defvar *fasl-ready*)
+(declaim (type simple-vector *fasl-ready*))
 (defvar *fasl-count*)
 (defvar *fasl-records*)
 (defvar *fasl-pending*)
@@ -16,11 +17,19 @@
 (defun fasl-reference (index)
   (svref *fasl-load-objects* index))
 
+(defun fasl-dependencies-ready-p (dependencies)
+  (let ((ready *fasl-ready*))
+    (declare (simple-vector ready))
+    (dolist (token dependencies t)
+      (unless (svref ready token) (return nil)))))
+
 (defun fasl-emit (operation dependencies tokens)
-  (if (every (lambda (token) (gethash token *fasl-ready*)) dependencies)
+  (if (fasl-dependencies-ready-p dependencies)
       (progn
         (push operation *fasl-records*)
-        (dolist (token tokens) (setf (gethash token *fasl-ready*) t)))
+        (let ((ready *fasl-ready*))
+          (declare (simple-vector ready))
+          (dolist (token tokens) (setf (svref ready token) t))))
       (push (list operation dependencies tokens) *fasl-pending*)))
 
 (defun fasl-flush ()
@@ -29,7 +38,7 @@
            (let ((pending *fasl-pending*))
              (setf *fasl-pending* nil)
              (dolist (entry pending)
-               (if (every (lambda (token) (gethash token *fasl-ready*)) (second entry))
+               (if (fasl-dependencies-ready-p (second entry))
                    (progn
                      (setf progress t)
                      (fasl-emit (first entry) nil (third entry)))
@@ -67,14 +76,18 @@
       (values (walk form) dependencies))))
 
 (defun fasl-intern (object)
-  (multiple-value-bind (old found) (gethash object *fasl-ids*)
+  (multiple-value-bind (old found) (kiln.compiler::compiler-eq-ref *fasl-ids* object)
     (when found
       (when (and *fasl-creation-p* (gethash object *fasl-creating*))
         (error 'fasl-creation-cycle))
       (return-from fasl-intern old)))
   (let* ((index (prog1 *fasl-count* (incf *fasl-count*)))
          (allocated (* index 2)) (complete (1+ allocated)))
-    (setf (gethash object *fasl-ids*) index)
+    (when (>= complete (length *fasl-ready*))
+      (let ((larger (make-simple-vector (* 2 (length *fasl-ready*)))))
+        (replace larger *fasl-ready*)
+        (setf *fasl-ready* larger)))
+    (setf (kiln.compiler::compiler-eq-ref *fasl-ids* object) index)
     (flet ((value (kind &rest fields)
              (fasl-emit (list* kind index fields) nil (list allocated complete))))
       (cond
@@ -481,8 +494,13 @@
                       (make-array dimensions :element-type type :adjustable adjustable
                                   :fill-pointer fill :displaced-to (and target (fasl-reference target))
                                   :displaced-index-offset offset))))
-      (:set-array (loop for element in (first fields) for i from 0
-                        do (setf (row-major-aref (fasl-reference index) i) (fasl-reference element))))
+      (:set-array
+       (let ((array (fasl-reference index)))
+         (if (simple-vector-p array)
+             (loop for element in (first fields) for i of-type fixnum from 0
+                   do (setf (svref array i) (fasl-reference element)))
+             (loop for element in (first fields) for i from 0
+                   do (setf (row-major-aref array i) (fasl-reference element))))))
       (:hash-table (setf (svref *fasl-load-objects* index)
                          (make-hash-table :test (first fields) :size (max 1 (second fields)))))
       (:set-hash-table (dolist (entry (first fields))
