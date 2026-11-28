@@ -241,12 +241,20 @@ program、packet 和 literal 向量必须作为普通活跃对象进入栈图。
 读取旧请求地址。内部 panic 沿 panic=abort 策略结束进程，不转换成可恢复诊断。
 
 `kiln_rt_prepare_file_code(ctx, packets, entries, fp)` 批量准备文件初始化代码。
-`packets` 是 LIR octet 向量的 simple-vector，`entries` 由调用方分配，包含每个
+`packets` 是 LIR 载荷的 simple-vector，每个载荷使用八位组 simple-vector 或
+内部字节存储。`entries` 由调用方分配，包含每个
 载荷的两个槽。成功时填入绑定函数和预期 literal 数量，并返回 NIL。失败沿用编译诊断
 向量。准备期间不调用 Lisp。各组 literal 槽先登记为 GC roots，绑定函数随后在
 Lisp 调用约定下写入这一组的 literal，并返回真正的初始化函数。每个绑定函数由
 加载器调用一次，参数是一个长度匹配的 simple-vector。加载器按文件原有顺序创建
 对象、绑定 literal 并运行初始化函数。
+
+内部字节存储的 kind 为 15，头字长度以字节为单位。字节紧随头字，整个对象补齐到
+八字节。GC 和快照扫描器只读取头字，不把载荷解释成 Lisp 引用。
+`kiln_rt_alloc_byte_packet(ctx, size, fp)` 分配这个对象，可触发 safepoint。
+`kiln_rt_read_byte_packet(ctx, fd, packet, prefix, start, count)` 先复制已经缓冲的
+前缀八位组，再从描述符读满剩余区间或到达 EOF。它返回实际写入的字节数或负的
+系统错误码，通过非 safepoint 调用。调用者维护缓冲区的起始位置和文件位置。
 
 ## 进程环境查询
 

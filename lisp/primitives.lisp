@@ -1031,6 +1031,12 @@ and slots), zero-filled."
   (emit-runtime-op :fd-write (list fd vector start end)))
 (define-primop :fd-read (fd vector start end)
   (emit-runtime-op :fd-read (list fd vector start end)))
+
+(define-primop :alloc-byte-packet (size)
+  (emit-runtime-op :alloc-byte-packet (list size)))
+
+(define-primop :read-byte-packet (fd packet prefix start count)
+  (emit-runtime-op :read-byte-packet (list fd packet prefix start count)))
 ;;; File system calls (pathnames and file streams): OP selects
 ;;; the call (rtfun.rs, kiln_rt_sys); the result is a fixnum, minus errno
 ;;; on failure.

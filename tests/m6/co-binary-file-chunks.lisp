@@ -64,4 +64,14 @@
            (assert (handler-case (progn (kiln.kernel::fasl-read-data in) nil)
                      (end-of-file () t)))))
     (when (probe-file path) (delete-file path))))
+(let ((path "build/test/truncated-code-batch.fasl"))
+  (unwind-protect
+       (progn
+         (with-open-file (out path :direction :output :if-exists :supersede
+                                  :element-type '(unsigned-byte 8))
+           ;; One code-batch record with a truncated four-byte packet.
+           (write-sequence #(137 75 70 65 83 6 0 1 21 1 4 0) out))
+         (assert (handler-case (progn (load path :verbose nil) nil)
+                   (end-of-file () t))))
+    (when (probe-file path) (delete-file path))))
 (print :binary-file-chunks)

@@ -7,9 +7,10 @@ use super::{
 use crate::{codegen::Options, kir, lir, packet};
 use kiln_rt::context::Context;
 use kiln_rt::object::{
-    HASH_SHIFT, KIND_MASK, KIND_SIMPLE_VECTOR, TAG_GENERAL, TAG_MASK, fixnum_value, header,
-    header_length, is_fixnum, is_general, nil, untag,
+    HASH_SHIFT, KIND_BYTE_PACKET, KIND_MASK, KIND_SIMPLE_VECTOR, TAG_GENERAL, TAG_MASK,
+    fixnum_value, header, header_length, is_fixnum, is_general, nil, untag,
 };
+use std::borrow::Cow;
 use std::sync::{Arc, Mutex};
 
 const CACHE_BYTES: usize = 8 * 1024 * 1024;
@@ -31,6 +32,40 @@ fn vector(word: u64) -> Result<(usize, *mut u64), String> {
         header_length(unsafe { header(word) }),
         (untag(word) + 8) as *mut u64,
     ))
+}
+
+// Packet objects remain in the caller's roots. The caller holds this borrow
+// only within synchronous preparation, before any diagnostic can safepoint.
+unsafe fn packet_bytes(word: &u64) -> Result<Cow<'_, [u8]>, String> {
+    if !is_general(*word) {
+        return Err("expected packet octets".into());
+    }
+    let header = unsafe { header(*word) };
+    let length = header_length(header);
+    if length > packet::schema::MAX_BYTES as usize {
+        return Err("file code packet is too large".into());
+    }
+    let data = untag(*word) + 8;
+    match header & KIND_MASK {
+        KIND_BYTE_PACKET => Ok(Cow::Borrowed(unsafe {
+            std::slice::from_raw_parts(data as *const u8, length)
+        })),
+        KIND_SIMPLE_VECTOR => {
+            let words = unsafe { std::slice::from_raw_parts(data as *const u64, length) };
+            let bytes = words
+                .iter()
+                .map(|&word| {
+                    if !is_fixnum(word) {
+                        return Err("file code packet contains a non-octet".into());
+                    }
+                    u8::try_from(fixnum_value(word))
+                        .map_err(|_| "file code packet contains a non-octet".into())
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            Ok(Cow::Owned(bytes))
+        }
+        _ => Err("expected packet octets".into()),
+    }
 }
 
 fn eq(lhs: kir::Expr, rhs: i64) -> kir::Expr {
@@ -152,24 +187,10 @@ fn prepare_file_code(packets: u64, entries: u64) -> Result<u64, CompilationError
         return Ok(nil());
     }
     let packet_words = unsafe { std::slice::from_raw_parts(packets, count) };
-    let mut bytes = Vec::with_capacity(count);
-    for &word in packet_words {
-        let (length, words) = vector(word).map_err(request)?;
-        if length > packet::schema::MAX_BYTES as usize {
-            return Err(request("file code packet is too large".into()));
-        }
-        let packet = unsafe { std::slice::from_raw_parts(words, length) }
-            .iter()
-            .map(|&word| {
-                if !is_fixnum(word) {
-                    return Err(request("file code packet contains a non-octet".into()));
-                }
-                u8::try_from(fixnum_value(word))
-                    .map_err(|_| request("file code packet contains a non-octet".into()))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        bytes.push(packet);
-    }
+    let bytes = packet_words
+        .iter()
+        .map(|word| unsafe { packet_bytes(word) }.map_err(request))
+        .collect::<Result<Vec<_>, _>>()?;
     let (prepared, literal_counts) = file_code(bytes)?;
     if std::env::var_os("KILN_PERF_MAP").is_some() {
         super::append_perf_map(&prepared.module);
@@ -190,7 +211,7 @@ fn prepare_file_code(packets: u64, entries: u64) -> Result<u64, CompilationError
     Ok(nil())
 }
 
-fn file_code(packets: Vec<Vec<u8>>) -> Result<(Prepared, Arc<[usize]>), CompilationError> {
+fn file_code(packets: Vec<Cow<'_, [u8]>>) -> Result<(Prepared, Arc<[usize]>), CompilationError> {
     let request = |e| CompilationError::new(CompilationStage::Request, e);
     let program = |e| CompilationError::new(CompilationStage::Program, e);
     let install = |e| CompilationError::new(CompilationStage::Install, e);
@@ -198,7 +219,13 @@ fn file_code(packets: Vec<Vec<u8>>) -> Result<(Prepared, Arc<[usize]>), Compilat
         let cache = CACHE.lock().unwrap();
         cache
             .as_ref()
-            .filter(|entry| entry.packets == packets)
+            .filter(|entry| {
+                entry
+                    .packets
+                    .iter()
+                    .map(Vec::as_slice)
+                    .eq(packets.iter().map(Cow::as_ref))
+            })
             .cloned()
     };
     if let Some(entry) = cached {
@@ -226,7 +253,7 @@ fn file_code(packets: Vec<Vec<u8>>) -> Result<(Prepared, Arc<[usize]>), Compilat
     let merged = kir::merge(modules).map_err(program)?;
     let options = Options { dump_clif: false };
     let literal_counts: Arc<[usize]> = literal_counts.into();
-    let packet_bytes = packets.iter().map(Vec::len).sum::<usize>();
+    let packet_bytes = packets.iter().map(|packet| packet.len()).sum::<usize>();
     if packet_bytes > CACHE_BYTES {
         let prepared = prepare(&merged, &options, Memory::Shared).map_err(install)?;
         return Ok((prepared, literal_counts));
@@ -234,7 +261,7 @@ fn file_code(packets: Vec<Vec<u8>>) -> Result<(Prepared, Arc<[usize]>), Compilat
     let (prepared, template) = CodeTemplate::compile(&merged).map_err(install)?;
     if packet_bytes + template.payload_bytes() <= CACHE_BYTES {
         *CACHE.lock().unwrap() = Some(Arc::new(CachedFileCode {
-            packets,
+            packets: packets.into_iter().map(Cow::into_owned).collect(),
             template,
             literal_counts: literal_counts.clone(),
         }));

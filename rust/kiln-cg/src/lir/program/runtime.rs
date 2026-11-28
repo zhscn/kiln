@@ -29,6 +29,8 @@ operations! {
     IdentityHash => ("identity-hash","kiln_rt_identity_hash",1,false),
     FdWrite => ("fd-write","kiln_rt_fd_write",4,false),
     FdRead => ("fd-read","kiln_rt_fd_read",4,false),
+    AllocBytePacket => ("alloc-byte-packet","kiln_rt_alloc_byte_packet",1,true),
+    ReadBytePacket => ("read-byte-packet","kiln_rt_read_byte_packet",5,false),
     System => ("sys","kiln_rt_sys",4,false),
     WriteKir => ("write-kir","kiln_rt_write_kir",2,false),
     Jit => ("jit","kiln_rt_jit",2,false),

@@ -153,7 +153,7 @@ pub fn lisp_fields(h: u64) -> (usize, usize) {
         // name, package, function, value, TLS index (a fixnum), plist,
         // setf function
         KIND_SYMBOL => (8, 7),
-        KIND_STRING | KIND_BIGNUM | KIND_DOUBLE | KIND_DOUBLE_STORAGE => (8, 0),
+        KIND_STRING | KIND_BIGNUM | KIND_DOUBLE | KIND_DOUBLE_STORAGE | KIND_BYTE_PACKET => (8, 0),
         KIND_RATIO | KIND_COMPLEX => (8, 2),
         KIND_INSTANCE => (8, 1),
         KIND_STRUCTURE_INSTANCE => (8, 1 + header_length(h)),

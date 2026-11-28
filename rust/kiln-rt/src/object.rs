@@ -46,6 +46,8 @@ pub const KIND_COMPLEX: u64 = 12;
 pub const KIND_STRUCTURE_INSTANCE: u64 = 13;
 /// Internal array backing store: [header (length << 8), binary64 words...].
 pub const KIND_DOUBLE_STORAGE: u64 = 14;
+/// Internal packet storage: [header (byte length << 8), octets...], padded to 8 bytes.
+pub const KIND_BYTE_PACKET: u64 = 15;
 
 /// Immediates: low 3 bits 0b011, bits 3..8 the immediate kind, payload
 /// from bit 8.
@@ -238,6 +240,7 @@ pub fn object_bytes(header: u64) -> usize {
         KIND_SIMPLE_VECTOR | KIND_DOUBLE_STORAGE => 8 + 8 * header_length(header),
         KIND_SYMBOL => SYMBOL_BYTES,
         KIND_STRING => 8 + (4 * header_length(header)).next_multiple_of(8),
+        KIND_BYTE_PACKET => 8 + header_length(header).next_multiple_of(8),
         KIND_BIGNUM => 8 + 8 * header_length(header),
         KIND_RATIO | KIND_COMPLEX => 24,
         KIND_DOUBLE => 16,

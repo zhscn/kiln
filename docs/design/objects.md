@@ -50,6 +50,7 @@
 | 12 | complex | `[header, 实部, 虚部]` | — | 实部、虚部 |
 | 13 | structure-instance | `[header, layout, 槽...]` | 槽数 | layout 和全部槽 |
 | 14 | 内部双精度数组存储 | `[header, binary64 元素...]` | 元素个数 | 否 |
+| 15 | 内部 LIR 字节存储 | `[header, 八位组...]`，补齐到 8 字节 | 字节数 | 否 |
 
 超过当前 plan 普通分配上限的对象，`kiln_rt_alloc` 改用 MMTk 的 large object space。
 

@@ -252,6 +252,20 @@
       (+ start (stream-read-octets stream sequence start end))
       (call-next-method)))
 
+(defun stream-read-byte-packet (stream size)
+  (flush-file-buffer stream)
+  (let* ((packet (kiln.sys:%primop :alloc-byte-packet size))
+         (start (in-start stream))
+         (prefix (min size (- (in-end stream) start))))
+    (unless packet (error 'stream-error :stream stream))
+    (let ((read (check-sys stream
+                           (kiln.sys:%primop :read-byte-packet (descriptor stream)
+                                            packet (file-buffer stream) start prefix))))
+      (incf (in-start stream) prefix)
+      (when (os-position stream) (incf (os-position stream) (- read prefix)))
+      (unless (= read size) (error 'end-of-file :stream stream))
+      packet)))
+
 (defmethod stream-write-sequence ((stream kiln-file-stream) sequence
                                  &optional (start 0) end)
   (if (and (vectorp sequence)

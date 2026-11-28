@@ -264,6 +264,104 @@ pub unsafe extern "C" fn kiln_rt_fd_read(
     (n as u64) << 1
 }
 
+/// Allocate pointer-free storage for an octet packet.
+/// # Safety
+/// The caller must pass its safepoint trampoline's frame pointer.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kiln_rt_alloc_byte_packet(ctx: *mut Context, size: u64, fp: usize) -> u64 {
+    use crate::object::{
+        KIND_BYTE_PACKET, LENGTH_MASK, LENGTH_SHIFT, TAG_GENERAL, fixnum_value, is_fixnum, nil,
+    };
+    if !is_fixnum(size) || fixnum_value(size) as u64 > LENGTH_MASK {
+        return nil();
+    }
+    let size = fixnum_value(size) as u64;
+    let payload = size.next_multiple_of(8);
+    let address = unsafe {
+        crate::gc::kiln_rt_alloc(
+            ctx,
+            8 + payload,
+            KIND_BYTE_PACKET | (size << LENGTH_SHIFT),
+            fp,
+        )
+    };
+    unsafe { std::ptr::write_bytes((address + 8) as *mut u8, 0, payload as usize) };
+    address + TAG_GENERAL
+}
+
+/// Copy buffered input, then read the remaining octets into private packet storage.
+/// # Safety
+/// Inputs must be valid tagged Lisp values. This entry cannot safepoint.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kiln_rt_read_byte_packet(
+    _ctx: *mut Context,
+    fd: u64,
+    packet: u64,
+    prefix: u64,
+    start: u64,
+    count: u64,
+) -> u64 {
+    use crate::object::{
+        KIND_BYTE_PACKET, KIND_MASK, KIND_SIMPLE_VECTOR, fixnum_value, header, header_length,
+        is_fixnum, is_general, untag,
+    };
+    let errno = |code: i32| ((-(code as i64)) as u64) << 1;
+    if !is_fixnum(fd)
+        || !is_fixnum(start)
+        || !is_fixnum(count)
+        || !is_general(packet)
+        || unsafe { header(packet) } & KIND_MASK != KIND_BYTE_PACKET
+        || !is_general(prefix)
+        || unsafe { header(prefix) } & KIND_MASK != KIND_SIMPLE_VECTOR
+    {
+        return errno(libc::EINVAL);
+    }
+    let size = header_length(unsafe { header(packet) });
+    let prefix_size = header_length(unsafe { header(prefix) });
+    let start = fixnum_value(start) as usize;
+    let count = fixnum_value(count) as usize;
+    if count > size || start.checked_add(count).is_none_or(|end| end > prefix_size) {
+        return errno(libc::EINVAL);
+    }
+    let output = unsafe { std::slice::from_raw_parts_mut((untag(packet) + 8) as *mut u8, size) };
+    let input = unsafe {
+        std::slice::from_raw_parts(((untag(prefix) + 8) as *const u64).add(start), count)
+    };
+    for (destination, &word) in output[..count].iter_mut().zip(input) {
+        if !is_fixnum(word) {
+            return errno(libc::EINVAL);
+        }
+        let Ok(byte) = u8::try_from(fixnum_value(word)) else {
+            return errno(libc::EINVAL);
+        };
+        *destination = byte;
+    }
+    let mut cursor = count;
+    while cursor != size {
+        let n = unsafe {
+            libc::read(
+                fixnum_value(fd) as libc::c_int,
+                output[cursor..].as_mut_ptr().cast(),
+                size - cursor,
+            )
+        };
+        if n == 0 {
+            break;
+        }
+        if n < 0 {
+            let code = std::io::Error::last_os_error()
+                .raw_os_error()
+                .unwrap_or(libc::EIO);
+            if code == libc::EINTR {
+                continue;
+            }
+            return errno(code);
+        }
+        cursor += n as usize;
+    }
+    (cursor as u64) << 1
+}
+
 /// The octets of `vec`, a simple vector of fixnums (an encoded file name).
 ///
 /// # Safety
