@@ -87,29 +87,6 @@
           (member (case test (eq 'kiln.kernel::%member-eq) (eql 'kiln.kernel::%member-eql)))
           (assoc (case test (eq 'kiln.kernel::%assoc-eq) (eql 'kiln.kernel::%assoc-eql))))))))
 
-(defun mir-specialize-sequence-calls (unit)
-  (let ((transformations nil))
-    (loop for function across (hir-buffer-view (mir-unit-functions unit)) do
-      (let ((definitions (mir-value-definitions function))
-            (reachable (mir-reachable-blocks function)) (selected nil))
-        (loop for block across (hir-buffer-view (mir-function-blocks function))
-              when (logbitp (mir-block-id block) reachable) do
-          (loop for id across (hir-buffer-view (mir-block-instructions block))
-                for instruction = (mir-at (mir-function-instructions function) id)
-                for helper = (mir-sequence-call-helper instruction definitions)
-                when helper do (push (cons instruction helper) selected)))
-        (when selected
-          (push (cons function
-            (lambda (function)
-              (declare (ignore function))
-              ;; Operand producers remain in place, including evaluation of the test.
-              (dolist (entry selected)
-                (setf (mir-instruction-data (car entry)) (cdr entry)
-                      (mir-instruction-operands (car entry))
-                      (subseq (mir-instruction-operands (car entry)) 0 2))))) transformations))))
-    (mir-run-passes unit (nreverse transformations) :changes '(:instructions)))
-  unit)
-
 (defun mir-value-call-plan (instruction definitions)
   "Simplify constant comparisons and APPEND's fixed argument contract."
   (when (and (= (mir-instruction-kind instruction) 6)
@@ -136,23 +113,34 @@
                  (unless (and (eq target name) (= length count))
                    (cons target (coerce kept 'simple-vector))))))))))
 
-(defun mir-specialize-value-calls (unit)
+(defun mir-specialize-direct-calls (unit)
+  ;; These call rewrites only change the selected instruction's name and
+  ;; arguments. Both sets of plans can use the same value definitions.
   (let ((transformations nil))
     (loop for function across (hir-buffer-view (mir-unit-functions unit)) do
-      (let ((definitions (mir-value-definitions function))
+      (let ((definitions nil)
             (reachable (mir-reachable-blocks function)) (selected nil))
         (loop for block across (hir-buffer-view (mir-function-blocks function))
               when (logbitp (mir-block-id block) reachable) do
           (loop for id across (hir-buffer-view (mir-block-instructions block))
                 for instruction = (mir-at (mir-function-instructions function) id)
-                for plan = (mir-value-call-plan instruction definitions)
-                when plan do (push (list instruction (car plan) (cdr plan)) selected)))
+                for name = (mir-instruction-data instruction)
+                when (and (= (mir-instruction-kind instruction) 6)
+                          (member name '(eql append member assoc)))
+                  do (unless definitions (setf definitions (mir-value-definitions function)))
+                     (let ((plan (case name
+                                   ((eql append) (mir-value-call-plan instruction definitions))
+                                   (otherwise
+                                    (let ((helper (mir-sequence-call-helper instruction definitions)))
+                                      (when helper
+                                        (cons helper (subseq (mir-instruction-operands instruction) 0 2))))))))
+                       (when plan (push (cons instruction plan) selected)))))
         (when selected
           (push (cons function
             (lambda (function)
               (declare (ignore function))
               (dolist (entry selected)
                 (setf (mir-instruction-data (car entry)) (cadr entry)
-                      (mir-instruction-operands (car entry)) (third entry))))) transformations))))
+                      (mir-instruction-operands (car entry)) (cddr entry))))) transformations))))
     (mir-run-passes unit (nreverse transformations) :changes '(:instructions)))
   unit)
