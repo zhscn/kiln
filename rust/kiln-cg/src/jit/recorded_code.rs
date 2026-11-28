@@ -1,9 +1,45 @@
 //! Relocatable code in a process-local cache. Each use creates fresh data.
+use super::{Memory, Prepared, new_module};
+use crate::{
+    codegen::{self, Options, Output},
+    kir,
+};
 use cranelift_codegen::{Context, ir::Signature, isa::TargetIsa};
 use cranelift_jit::JITModule;
 use cranelift_module::{
     DataDescription, DataId, FuncId, Linkage, Module, ModuleDeclarations, ModuleReloc, ModuleResult,
 };
+use std::sync::Arc;
+
+pub(super) struct CodeTemplate {
+    code: RecordedCode,
+    output: Arc<Output>,
+}
+
+impl CodeTemplate {
+    pub(super) fn compile(module: &kir::Module) -> Result<(Prepared, Self), String> {
+        let mut recording = Recording::new(new_module(&Memory::Shared)?);
+        let output = Arc::new(codegen::compile_with_entry(
+            &mut recording,
+            module,
+            &Options { dump_clif: false },
+            false,
+        )?);
+        let (module, code) = recording.finish();
+        let prepared = Prepared::finalize(module, output.clone(), Memory::Shared)?;
+        Ok((prepared, Self { code, output }))
+    }
+
+    pub(super) fn prepare(&self) -> Result<Prepared, String> {
+        let mut module = new_module(&Memory::Shared)?;
+        self.code.replay(&mut module)?;
+        Prepared::finalize(module, self.output.clone(), Memory::Shared)
+    }
+
+    pub(super) fn payload_bytes(&self) -> usize {
+        self.code.payload_bytes()
+    }
+}
 
 struct FunctionBody {
     id: FuncId,

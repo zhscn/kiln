@@ -1,13 +1,10 @@
 //! Prepare a batch of file initializers before their literal objects exist.
-use super::recorded_code::{RecordedCode, Recording};
+use super::recorded_code::CodeTemplate;
 use super::{
-    CompilationError, CompilationStage, Memory, Prepared, compilation_result, new_module, prepare,
+    CompilationError, CompilationStage, Memory, Prepared, compilation_result, prepare,
     validate_literal_bindings,
 };
-use crate::{
-    codegen::{self, Options, Output},
-    kir, lir, packet,
-};
+use crate::{codegen::Options, kir, lir, packet};
 use kiln_rt::context::Context;
 use kiln_rt::object::{
     HASH_SHIFT, KIND_MASK, KIND_SIMPLE_VECTOR, TAG_GENERAL, TAG_MASK, fixnum_value, header,
@@ -19,8 +16,7 @@ const CACHE_BYTES: usize = 8 * 1024 * 1024;
 
 struct CachedFileCode {
     packets: Vec<Vec<u8>>,
-    code: RecordedCode,
-    output: Arc<Output>,
+    template: CodeTemplate,
     literal_counts: Arc<[usize]>,
 }
 
@@ -206,11 +202,10 @@ fn file_code(packets: Vec<Vec<u8>>) -> Result<(Prepared, Arc<[usize]>), Compilat
             .cloned()
     };
     if let Some(entry) = cached {
-        let mut module = new_module(&Memory::Shared).map_err(install)?;
-        entry.code.replay(&mut module).map_err(install)?;
-        let prepared =
-            Prepared::finalize(module, entry.output.clone(), Memory::Shared).map_err(install)?;
-        return Ok((prepared, entry.literal_counts.clone()));
+        return Ok((
+            entry.template.prepare().map_err(install)?,
+            entry.literal_counts.clone(),
+        ));
     }
     let mut modules = Vec::with_capacity(packets.len());
     let mut literal_counts = Vec::with_capacity(packets.len());
@@ -236,17 +231,11 @@ fn file_code(packets: Vec<Vec<u8>>) -> Result<(Prepared, Arc<[usize]>), Compilat
         let prepared = prepare(&merged, &options, Memory::Shared).map_err(install)?;
         return Ok((prepared, literal_counts));
     }
-    let mut recorder = Recording::new(new_module(&Memory::Shared).map_err(install)?);
-    let output = Arc::new(
-        codegen::compile_with_entry(&mut recorder, &merged, &options, false).map_err(install)?,
-    );
-    let (module, code) = recorder.finish();
-    let prepared = Prepared::finalize(module, output.clone(), Memory::Shared).map_err(install)?;
-    if packet_bytes + code.payload_bytes() <= CACHE_BYTES {
+    let (prepared, template) = CodeTemplate::compile(&merged).map_err(install)?;
+    if packet_bytes + template.payload_bytes() <= CACHE_BYTES {
         *CACHE.lock().unwrap() = Some(Arc::new(CachedFileCode {
             packets,
-            code,
-            output,
+            template,
             literal_counts: literal_counts.clone(),
         }));
     }

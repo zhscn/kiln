@@ -1,6 +1,7 @@
 //! In-memory compilation: whole programs (`kiln-cg jit`) and code compiled
 //! into a running image (`kiln_rt_jit`).
 
+mod eval_code;
 mod file_code;
 mod recorded_code;
 
@@ -445,6 +446,17 @@ unsafe fn compile_packet(packet: u64, literals: u64) -> Result<u64, CompilationE
             .collect::<Result<Vec<_>, _>>()
     };
     let bytes = request().map_err(|e| CompilationError::new(CompilationStage::Request, e))?;
+    let size = bytes.len();
+    let install_error = |e| CompilationError::new(CompilationStage::Install, e);
+    let count = header_length(unsafe { header(literals) });
+    if let Some(entry) = eval_code::lookup(&bytes) {
+        if count != entry.literal_count {
+            return Err(install_error("literal vector does not match the module's literal words".into()));
+        }
+        let prepared = entry.template.prepare().map_err(install_error)?;
+        return unsafe { install_prepared(prepared, &entry.patches, literals, Some(size), t) }
+            .map_err(install_error);
+    }
     let decoded = crate::packet::validate(&bytes)
         .map_err(|e| CompilationError::new(CompilationStage::Request, e))?;
     if decoded.language != crate::packet::schema::LIR_PAYLOAD {
@@ -453,12 +465,20 @@ unsafe fn compile_packet(packet: u64, literals: u64) -> Result<u64, CompilationE
     }
     let module = crate::lir::program::parse_packet(decoded)
         .map_err(|e| CompilationError::new(CompilationStage::Program, e))?;
-    let size = bytes.len();
-    drop(bytes);
+    let record = module.name == "image-eval" && size <= eval_code::CACHE_BYTES;
     let kir = module.verify().and_then(|verified| verified.lower())
         .map_err(|e| CompilationError::new(CompilationStage::Program, e))?;
-    unsafe { install_module(&kir, literals, Some(size), t) }
-        .map_err(|e| CompilationError::new(CompilationStage::Install, e))
+    if record {
+        validate_literal_bindings(&kir, LITERALS_NAME, count).map_err(install_error)?;
+        let (prepared, template) = recorded_code::CodeTemplate::compile(&kir).map_err(install_error)?;
+        let init = unsafe { install_prepared(prepared, &kir.literal_patches, literals, Some(size), t) }
+            .map_err(install_error)?;
+        eval_code::remember(bytes, template, count, kir.literal_patches);
+        Ok(init)
+    } else {
+        drop(bytes);
+        unsafe { install_module(&kir, literals, Some(size), t) }.map_err(install_error)
+    }
 }
 
 /// Snapshot a single-use production program before compilation and installation.
@@ -543,15 +563,27 @@ unsafe fn install_module(
     input_size: Option<usize>,
     t: std::time::Instant,
 ) -> Result<u64, String> {
-    use kiln_rt::object::{header, header_length, untag};
+    use kiln_rt::object::{header, header_length};
     let n = header_length(unsafe { header(literals) });
     if kir.inits.len() != 1 {
         return Err("image compilation requires exactly one init function".into());
     }
     validate_literal_bindings(kir, LITERALS_NAME, n)?;
     let prepared = prepare(kir, &Options { dump_clif: false }, Memory::Shared)?;
+    unsafe { install_prepared(prepared, &kir.literal_patches, literals, input_size, t) }
+}
+
+unsafe fn install_prepared(
+    prepared: Prepared,
+    literal_patches: &[(String, u32, usize)],
+    literals: u64,
+    input_size: Option<usize>,
+    t: std::time::Instant,
+) -> Result<u64, String> {
+    use kiln_rt::object::{header, header_length, untag};
     let loaded = &prepared;
     let n = header_length(unsafe { header(literals) });
+    let elements = (untag(literals) + 8) as *const u64;
     if n > 0 {
         let id = loaded
             .out
@@ -563,12 +595,9 @@ unsafe fn install_module(
         if id.size < n * 8 {
             return Err("more literals than literal words".into());
         }
-        let elements = (untag(literals) + 8) as *const u64;
-        for i in 0..n {
-            unsafe { *(words as *mut u64).add(i) = *elements.add(i) };
-        }
+        unsafe { std::ptr::copy_nonoverlapping(elements, words as *mut u64, n) };
     }
-    for (name, word, literal) in &kir.literal_patches {
+    for (name, word, literal) in literal_patches {
         let id = loaded
             .out
             .data
@@ -576,7 +605,6 @@ unsafe fn install_module(
             .ok_or("missing literal patch data")?;
         let (words, _) = loaded.module.get_finalized_data(id.id);
         let words = words.wrapping_add(id.offset as usize);
-        let elements = (untag(literals) + 8) as *const u64;
         unsafe { *(words as *mut u64).add(*word as usize) = *elements.add(*literal) };
     }
     let init = *loaded.out.inits.first().ok_or("no init function")?;
