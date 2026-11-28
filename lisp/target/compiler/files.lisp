@@ -45,37 +45,54 @@
 (defconstant +file-artifact-limit+ 256)
 (defconstant +file-artifact-packet-bytes+ (* 8 1024 1024))
 
+(defstruct (file-literal-reference (:constructor file-literal-reference (index)))
+  (index 0 :type fixnum))
+
+(defun copy-file-literal-template (bindings indices program-objects)
+  (compilation-reusable-bindings
+   bindings indices
+   (lambda (object)
+     (multiple-value-bind (index present) (compiler-eq-ref program-objects object)
+       (when present (file-literal-reference index))))))
+
+(defun bind-file-literal-template (entry program-values)
+  (compilation-reusable-bindings
+   (svref entry 2) (svref entry 3)
+   (lambda (object)
+     (when (file-literal-reference-p object)
+       (svref (hir-buffer-data program-values) (file-literal-reference-index object))))))
+
 (defun add-native-file-artifact (form session ordinal previous artifacts remaining)
-  (let* ((slot (and artifacts (< ordinal +file-artifact-limit+) ordinal))
-         (key (and slot (plusp remaining) (compilation-hir-key form)))
-         (old (and key previous (svref previous slot))))
-    (labels ((retain (entry)
-               (let ((size (kiln.sys:%primop :length (svref entry 1))))
-                 (when (<= size remaining)
-                   (setf (svref artifacts slot) entry)
-                   (decf remaining size)))))
-      (cond
-        ((and old (compilation-hir-key-match-p key (svref old 0))
-              (eql (svref key 0) *lowering-version*))
-         (kiln.kernel::fasl-add-module
-          (svref old 1) (compilation-reusable-bindings (svref old 2) (svref old 3)))
-         (retain old))
-        (t
-         ;; Packets in one batch share a linkage namespace. The ordinal
-         ;; keeps their names distinct and stable across file compilations.
-         (multiple-value-bind (module literals)
-             (compile-module (list form) (kiln.kir::kir-name "file-" ordinal) :session session :image t)
-           (multiple-value-bind (program bindings) (kiln.lir:module-program module literals)
-             (let ((packet (kiln.lir::encode-image-program program)))
-               (when (and key (kiln.kir::kmodule-replayable-p module)
-                          (eql (svref key 0) *lowering-version*)
-                          (<= (kiln.sys:%primop :length packet) remaining))
-                 (let* ((indices (append (compilation-debug-literals module)
-                                         (loop for i from (length literals) below (length bindings) collect i)))
-                        (template (compilation-reusable-bindings bindings indices)))
-                   (when template (retain (vector key packet template indices)))))
-               (kiln.kernel::fasl-add-module packet bindings)))))))
-    remaining))
+  (let ((slot (and artifacts (< ordinal +file-artifact-limit+) ordinal)))
+    (multiple-value-bind (key program-objects program-values)
+        (when (and slot (plusp remaining)) (compilation-hir-key form t))
+      (let ((old (and key previous (svref previous slot))))
+        (labels ((retain (entry)
+                   (let ((size (kiln.sys:%primop :length (svref entry 1))))
+                     (when (<= size remaining)
+                       (setf (svref artifacts slot) entry)
+                       (decf remaining size)))))
+          (cond
+            ((and old (compilation-hir-key-match-p key (svref old 0))
+                  (eql (svref key 0) *lowering-version*))
+             (kiln.kernel::fasl-add-module (svref old 1) (bind-file-literal-template old program-values))
+             (retain old))
+            (t
+             ;; The ordinal keeps packet names distinct within a batch
+             ;; and stable across compilations of the same file.
+             (multiple-value-bind (module literals)
+                 (compile-module (list form) (kiln.kir::kir-name "file-" ordinal) :session session :image t)
+               (multiple-value-bind (program bindings) (kiln.lir:module-program module literals)
+                 (let ((packet (kiln.lir::encode-image-program program)))
+                   (when (and key (kiln.kir::kmodule-replayable-p module)
+                              (eql (svref key 0) *lowering-version*)
+                              (<= (kiln.sys:%primop :length packet) remaining))
+                     (let ((indices (append (compilation-debug-literals module)
+                                            (loop for i from (length literals) below (length bindings) collect i))))
+                       (let ((template (copy-file-literal-template bindings indices program-objects)))
+                         (when template (retain (vector key packet template indices))))))
+                   (kiln.kernel::fasl-add-module packet bindings))))))))
+    remaining)))
 
 (defun native-file-unit (input external-format print)
   (let* ((previous (and *file-compilation-artifacts*

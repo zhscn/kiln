@@ -49,10 +49,10 @@ Native code already registered with the runtime follows the runtime's lifetime."
 (defun compilation-hir-atom-p (object)
   (or (symbolp object) (numberp object) (characterp object)))
 
-(defun compilation-hir-key (form)
+(defun compilation-hir-key (form &optional file-p)
   ;; Record syntax edges by number so lexical owners and exits can refer
-  ;; back to their definitions. Global names and program literals keep
-  ;; their exact identity.
+  ;; back to their definitions. File compilation also records the shape
+  ;; of quoted data so replay can bind this compilation's literal objects.
   (catch 'unsupported-compilation-key
     (let ((*toplevel* form)
           (version *lowering-version*)
@@ -61,13 +61,34 @@ Native code already registered with the runtime follows the runtime's lifetime."
           (lexical-names (make-compiler-eq-table))
           (next-lexical-name 0)
           (records (make-hir-buffer))
-          (literals (make-hir-buffer)))
+          (literals (make-hir-buffer))
+          (program-objects (when file-p (make-compiler-eq-table)))
+          (program-values (when file-p (make-hir-buffer)))
+          (program-budget 32768)
+          (program-records (when file-p (make-hir-buffer))))
       (labels ((literal (object)
-                 (unless (compilation-hir-atom-p object)
-                   (throw 'unsupported-compilation-key nil))
-                 (let ((index (hir-buffer-count literals)))
-                   (hir-push object literals)
-                   (list :literal index)))
+                 (cond
+                   ((compilation-hir-atom-p object)
+                    (let ((index (hir-buffer-count literals)))
+                      (hir-push object literals)
+                      (list :literal index)))
+                   ((and file-p (or (consp object) (simple-vector-p object) (simple-string-p object)))
+                    (multiple-value-bind (index present) (compiler-eq-ref program-objects object)
+                      (unless present
+                        (setf index (hir-buffer-count program-values))
+                        (decf program-budget (if (consp object) 2 (length object)))
+                        (when (or (>= index 4096) (minusp program-budget))
+                          (throw 'unsupported-compilation-key nil))
+                        (setf (compiler-eq-ref program-objects object) index)
+                        (hir-push object program-values)
+                        (hir-push nil program-records)
+                        (setf (svref (hir-buffer-data program-records) index)
+                              (typecase object
+                                (cons (vector :cons (literal (car object)) (literal (cdr object))))
+                                (simple-vector (vector :vector (map 'simple-vector #'literal object)))
+                                (simple-string (vector :string (array-element-type object) (copy-seq object))))))
+                      (list :program-ref index)))
+                   (t (throw 'unsupported-compilation-key nil))))
                (lexical-name (name)
                  (if (and name (symbolp name) (null (symbol-package name)))
                      (list :lexical (or (compiler-eq-ref lexical-names name)
@@ -130,7 +151,9 @@ Native code already registered with the runtime follows the runtime's lifetime."
         (let ((source (vector (visit (toplevel-form-file form) t) (visit (toplevel-form-source form))
                               (visit (toplevel-form-definition form)))))
           (visit (toplevel-form-ast form))
-          (vector version source (hir-vector records) (hir-vector literals)))))))
+          (values (vector version source (hir-vector records) (hir-vector literals)
+                          (and file-p (hir-vector program-records)))
+                  program-objects program-values))))))
 
 (defun compilation-hir-key-match-p (a b)
   (labels ((same (left right)
@@ -145,44 +168,49 @@ Native code already registered with the runtime follows the runtime's lifetime."
                          (loop for index below (length left)
                                always (same (svref left index) (svref right index)))))
                    (string (and (stringp right) (string= left right)))))))
-    (and (= (length b) 4)
+    (and (= (length b) 5)
          (eql (svref a 0) (svref b 0))
          (= (length (svref a 2)) (length (svref b 2)))
          (= (length (svref a 3)) (length (svref b 3)))
          (same (svref a 1) (svref b 1))
          (every #'eq (svref a 3) (svref b 3))
-         (same (svref a 2) (svref b 2)))))
+         (same (svref a 2) (svref b 2))
+         (same (svref a 4) (svref b 4)))))
 
-(defun compilation-reusable-bindings (bindings debug-indices)
+(defun compilation-reusable-bindings (bindings debug-indices &optional substitute)
   ;; Debug objects can escape through frame inspection. Keep a private
   ;; copy with the same aliases for matching or binding a new initializer.
   (catch 'unsupported-compilation-key
     (let ((copy (copy-seq bindings))
           (objects (make-compiler-eq-table)))
       (labels ((copy-debug (object)
-                 (if (compilation-hir-atom-p object)
-                     object
-                     (or (compiler-eq-ref objects object)
-                         (typecase object
-                           (cons
-                            (let ((cell (cons nil nil)))
-                              (setf (compiler-eq-ref objects object) cell
-                                    (car cell) (copy-debug (car object))
-                                    (cdr cell) (copy-debug (cdr object)))
-                              cell))
-                           (simple-vector
-                            (let ((vector (make-array (length object))))
-                              (setf (compiler-eq-ref objects object) vector)
-                              (dotimes (i (length object) vector)
-                                (setf (svref vector i) (copy-debug (svref object i))))))
-                           (string (setf (compiler-eq-ref objects object) (copy-seq object)))
-                           (t (throw 'unsupported-compilation-key nil)))))))
+                 (or (and substitute (funcall substitute object))
+                     (if (compilation-hir-atom-p object)
+                         object
+                         (or (compiler-eq-ref objects object)
+                             (typecase object
+                               (cons
+                                (let ((cell (cons nil nil)))
+                                  (setf (compiler-eq-ref objects object) cell
+                                        (car cell) (copy-debug (car object))
+                                        (cdr cell) (copy-debug (cdr object)))
+                                  cell))
+                               (simple-vector
+                                (let ((vector (make-array (length object))))
+                                  (setf (compiler-eq-ref objects object) vector)
+                                  (dotimes (i (length object) vector)
+                                    (setf (svref vector i) (copy-debug (svref object i))))))
+                               (string (setf (compiler-eq-ref objects object) (copy-seq object)))
+                               (t (throw 'unsupported-compilation-key nil))))))))
         (dotimes (i (length copy) copy)
           (let ((object (svref copy i)))
-            (if (member i debug-indices)
-                (setf (svref copy i) (copy-debug object))
-                (unless (compilation-hir-atom-p object)
-                  (throw 'unsupported-compilation-key nil)))))))))
+            (setf (svref copy i)
+                  (if (member i debug-indices)
+                      (copy-debug object)
+                      (or (and substitute (funcall substitute object))
+                          (if (compilation-hir-atom-p object)
+                              object
+                              (throw 'unsupported-compilation-key nil)))))))))))
 
 ;;; Entry: package, readtable, packet, literals, versions, init, HIR replay.
 (defun cached-toplevel-packet-init (packet literals debug-literals replayable-p replay)

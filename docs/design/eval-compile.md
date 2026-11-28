@@ -153,9 +153,11 @@ FASL 加载需要 compiler 模块及 Cranelift；保存的是 LIR，机器码在
 
 `compile-file` 每次读取源码并执行编译期处理。同一输入再次编译时，可按表单顺序匹配
 上次成功写入 FASL 的 HIR，复用相应的 LIR 和 literal 模板，再构建本次的 FASL
-对象图。匹配比较展开后的结构、全局符号和程序 literal 身份、策略、源码位置及降级
-版本。含可变程序字面量或不可重放状态的表单每次降级。缓存只保留最近一次成功编译
-的文件，至多 256 项及 8 MiB 的 LIR，随 `kiln.sys:clear-compilation-cache` 清空。
+对象图。匹配比较展开后的结构、全局符号和原子程序 literal 的身份、策略、源码位置及降级
+版本。引用对象中的 cons、simple-vector 和 simple-string 按内容及共享关系匹配。
+缓存模板保存图中的编号，重放时绑定本次编译读入的对象，并交给原有 FASL 对象图
+处理流程。无法建立这种映射或含不可重放状态的表单每次降级。缓存只保留最近一次
+成功编译的文件，至多 256 项及 8 MiB 的 LIR，随 `kiln.sys:clear-compilation-cache` 清空。
 
 ## 并行文件编译
 
