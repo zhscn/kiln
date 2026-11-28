@@ -29,11 +29,19 @@
     ;; Initializers precede the literals of the next top-level form, so a
     ;; package created by one form exists when later symbols are interned.
     (dolist (form (front-end (list input) session))
-      (let ((name (kiln.kir::kir-name "file-" (incf *native-compile-count*))))
-        (multiple-value-bind (module literals)
-            (compile-module (list form) name :session session :image t)
-          (multiple-value-bind (packet bindings) (kiln.lir:module-packet module literals)
-            (kiln.kernel::fasl-add-module packet bindings)))))
+      (let ((body (hir-fun-body (toplevel-form-ast form))))
+        (cond
+          ((and (= (hir-node-kind body) 0) (symbolp (hir-node-a body)))
+           ;; The front end has handled compile-time effects. Keep the
+           ;; symbol's load-time interning in order with the initializers.
+           (when (hir-node-a body)
+             (kiln.kernel::fasl-intern (hir-node-a body))))
+          (t
+           (let ((name (kiln.kir::kir-name "file-" (incf *native-compile-count*))))
+             (multiple-value-bind (module literals)
+                 (compile-module (list form) name :session session :image t)
+               (multiple-value-bind (packet bindings) (kiln.lir:module-packet module literals)
+                 (kiln.kernel::fasl-add-module packet bindings))))))))
     (list kiln.kernel::*fasl-count* (nreverse kiln.kernel::*fasl-records*))))
 
 (defun cl:compile-file (input-file &key (output-file nil output-file-p)

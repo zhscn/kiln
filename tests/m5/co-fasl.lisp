@@ -16,6 +16,8 @@
 (defun fasl-sum (x) (fasl-plus x))
 (defun fasl-constant () '#1=(shared . #1#))
 (defun fasl-paths () (list #.*compile-file-pathname* #.*compile-file-truename*))
+nil
+'fasl-unused-literal
 (values 101 202)
 " stream))
          (dolist (name '(fasl-sum fasl-constant fasl-paths)) (fmakunbound name))
@@ -26,7 +28,9 @@
                         (second result) (third result))))
          (print *fasl-events*)
          (print (fboundp 'fasl-sum))
+         (assert (unintern (find-symbol "FASL-UNUSED-LITERAL" "CL-USER") "CL-USER"))
          (print (load output :verbose nil :print nil))
+         (assert (eq :internal (nth-value 1 (find-symbol "FASL-UNUSED-LITERAL" "CL-USER"))))
          (print *fasl-events*)
          (print (funcall 'fasl-sum 25))
          (let ((object (funcall 'fasl-constant)))
