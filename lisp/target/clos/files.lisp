@@ -205,27 +205,42 @@
         known)))
 
 (defmethod stream-read-octets ((stream kiln-file-stream) octets &optional (start 0) end)
-  (let ((end (or end (length octets)))
-        (buffer (file-buffer stream))
-        (i start))
+  (let* ((end (or end (length octets)))
+         (buffer (file-buffer stream))
+         (direct (and (simple-vector-p octets)
+                      (kiln.kernel::fixnump start) (kiln.kernel::fixnump end)
+                      (<= 0 start end (length octets))))
+         (i start))
     (flush-file-buffer stream)
     (loop while (< i end)
-          do (when (= (in-start stream) (in-end stream))
-               (let ((n (check-sys stream
-                                   (kiln.sys:%primop :fd-read (descriptor stream) buffer
-                                                     0 +file-buffer-size+))))
-                 (setf (in-start stream) 0 (in-end stream) n)
-                 (when (os-position stream) (incf (os-position stream) n))
-                 (when (zerop n) (return))))
-             (let* ((head (in-start stream))
-                    (n (min (- end i) (- (in-end stream) head))))
-               (if (simple-vector-p octets)
-                   (dotimes (k n)
-                     (setf (svref octets (+ i k)) (svref buffer (+ head k))))
-                   (dotimes (k n)
-                     (setf (aref octets (+ i k)) (svref buffer (+ head k)))))
-               (incf (in-start stream) n)
-               (incf i n)))
+          do (cond
+               ((and direct (= (in-start stream) (in-end stream))
+                     (>= (- end i) +file-buffer-size+))
+                ;; Consume buffered input first. A native read can then unpack
+                ;; octets directly into the caller's validated vector span.
+                (let* ((limit (min end (+ i (* 8 +file-buffer-size+))))
+                       (n (check-sys stream (kiln.sys:%primop :fd-read (descriptor stream)
+                                                             octets i limit))))
+                  (when (zerop n) (return))
+                  (when (os-position stream) (incf (os-position stream) n))
+                  (incf i n)))
+               (t
+                (when (= (in-start stream) (in-end stream))
+                  (let ((n (check-sys stream
+                                      (kiln.sys:%primop :fd-read (descriptor stream) buffer
+                                                        0 +file-buffer-size+))))
+                    (setf (in-start stream) 0 (in-end stream) n)
+                    (when (os-position stream) (incf (os-position stream) n))
+                    (when (zerop n) (return))))
+                (let* ((head (in-start stream))
+                       (n (min (- end i) (- (in-end stream) head))))
+                  (if (simple-vector-p octets)
+                      (dotimes (k n)
+                        (setf (svref octets (+ i k)) (svref buffer (+ head k))))
+                      (dotimes (k n)
+                        (setf (aref octets (+ i k)) (svref buffer (+ head k)))))
+                  (incf (in-start stream) n)
+                  (incf i n)))))
     (- i start)))
 
 (defmethod stream-read-sequence ((stream kiln-file-stream) sequence
