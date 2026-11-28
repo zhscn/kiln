@@ -2,6 +2,44 @@
 use crate::{packet, sexp::Sexp};
 use kiln_rt::context::Context;
 use kiln_rt::object::{self, *};
+use std::borrow::Cow;
+
+/// Read a compact packet directly, or validate and collect tagged octets.
+///
+/// # Safety
+/// The caller must keep the packet live and must not reach a safepoint
+/// before the returned borrow ends.
+pub(crate) unsafe fn packet_octets(word: &u64) -> Result<Cow<'_, [u8]>, String> {
+    if !is_general(*word) {
+        return Err("expected packet octets".into());
+    }
+    let header = unsafe { header(*word) };
+    let length = header_length(header);
+    if length > packet::schema::MAX_BYTES as usize {
+        return Err("request packet is too large".into());
+    }
+    let data = untag(*word) + 8;
+    match header & KIND_MASK {
+        KIND_BYTE_PACKET => Ok(Cow::Borrowed(unsafe {
+            std::slice::from_raw_parts(data as *const u8, length)
+        })),
+        KIND_SIMPLE_VECTOR => {
+            let words = unsafe { std::slice::from_raw_parts(data as *const u64, length) };
+            let bytes = words
+                .iter()
+                .map(|&word| {
+                    if !is_fixnum(word) {
+                        return Err("request packet contains a non-octet".into());
+                    }
+                    u8::try_from(fixnum_value(word))
+                        .map_err(|_| "request packet contains a non-octet".into())
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            Ok(Cow::Owned(bytes))
+        }
+        _ => Err("expected packet octets".into()),
+    }
+}
 
 fn charge(remaining: &mut usize, bytes: usize) -> Result<(), String> {
     *remaining = remaining
@@ -178,6 +216,30 @@ pub unsafe extern "C" fn kiln_rt_encode_packet(
     language: u64,
     fp: usize,
 ) -> u64 {
+    unsafe { encode_lisp_packet(ctx, program, language, fp, false) }
+}
+
+/// Encode a whole program into packed, pointer-free Lisp storage.
+///
+/// # Safety
+/// The caller must use a safepoint trampoline and valid Lisp arguments.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kiln_rt_encode_byte_packet(
+    ctx: *mut Context,
+    program: u64,
+    language: u64,
+    fp: usize,
+) -> u64 {
+    unsafe { encode_lisp_packet(ctx, program, language, fp, true) }
+}
+
+unsafe fn encode_lisp_packet(
+    ctx: *mut Context,
+    program: u64,
+    language: u64,
+    fp: usize,
+    compact: bool,
+) -> u64 {
     let result = (|| {
         if !is_fixnum(language) {
             return Err("packet language must be a fixnum".to_string());
@@ -187,6 +249,20 @@ pub unsafe extern "C" fn kiln_rt_encode_packet(
         unsafe { encode_heap(program, language) }
     })();
     match result {
+        Ok(bytes) if compact => unsafe {
+            let length = bytes.len() as u64;
+            let payload = length.next_multiple_of(8);
+            let address = kiln_rt::gc::kiln_rt_alloc(
+                ctx,
+                8 + payload,
+                KIND_BYTE_PACKET | (length << LENGTH_SHIFT),
+                fp,
+            );
+            let data = (address + 8) as *mut u8;
+            data.copy_from_nonoverlapping(bytes.as_ptr(), bytes.len());
+            data.add(bytes.len()).write_bytes(0, (payload - length) as usize);
+            address + TAG_GENERAL
+        },
         Ok(bytes) => unsafe {
             let n = bytes.len();
             let address = kiln_rt::gc::kiln_rt_alloc(

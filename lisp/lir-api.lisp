@@ -17,6 +17,14 @@
   (kiln.compiler::with-compilation-phase (:lir-encode)
     (kiln.kir::encode-backend-packet (require-program program) kiln.kir::+packet-lir-payload+)))
 
+#+kiln
+(defun encode-image-program (program)
+  (kiln.compiler::with-compilation-phase (:lir-encode)
+    (let ((packet (kiln.sys:%primop :encode-byte-packet
+                                  (require-program program) kiln.kir::+packet-lir-payload+)))
+      (unless packet (error "Cannot encode backend program."))
+      packet)))
+
 (defun module-packet (module &optional literals)
   (multiple-value-bind (program bindings) (module-program module literals)
     (values (encode-program program) bindings)))

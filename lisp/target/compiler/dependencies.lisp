@@ -141,13 +141,7 @@ gensyms of a macro expansion)?"
               a b)))
 
 (defun compilation-packet-equal-p (a b)
-  (declare (simple-vector a b))
-  (or (eq a b)
-      (let ((size (the fixnum (kiln.sys:%primop :length a))))
-        (and (eql size (kiln.sys:%primop :length b))
-             (loop for index of-type fixnum below size
-                   always (eq (kiln.sys:%primop :svref-unchecked a index)
-                              (kiln.sys:%primop :svref-unchecked b index)))))))
+  (or (eq a b) (kiln.sys:%primop :byte-packets-equal a b)))
 
 (defun remove-dependent-unit (key unit)
   (let ((units (delete unit (gethash key *dependents*) :test #'eq :count 1)))

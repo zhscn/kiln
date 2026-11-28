@@ -251,6 +251,10 @@ Lisp 调用约定下写入这一组的 literal，并返回真正的初始化函�
 
 内部字节存储的 kind 为 15，头字长度以字节为单位。字节紧随头字，整个对象补齐到
 八字节。GC 和快照扫描器只读取头字，不把载荷解释成 Lisp 引用。
+`kiln_rt_encode_byte_packet(ctx, program, language, fp)` 将后端请求编码为内部字节
+对象，分配前完成对 Lisp 输入的遍历。`kiln_rt_compile_packet` 同时接收内部字节对象
+和八位组 simple-vector。`kiln_rt_byte_packets_equal(ctx, left, right)` 比较两个
+内部字节对象的长度和内容，返回 Lisp 布尔值，期间不分配或进入 safepoint。
 `kiln_rt_alloc_byte_packet(ctx, size, fp)` 分配这个对象，可触发 safepoint。
 `kiln_rt_read_byte_packet(ctx, fd, packet, prefix, start, count)` 先复制已经缓冲的
 前缀八位组，再从描述符读满剩余区间或到达 EOF。它返回实际写入的字节数或负的

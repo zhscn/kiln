@@ -188,6 +188,10 @@ fn new_module(memory: &Memory) -> Result<JITModule, String> {
         crate::packet_heap::kiln_rt_encode_packet as *const u8,
     );
     builder.symbol(
+        "kiln_rt_encode_byte_packet",
+        crate::packet_heap::kiln_rt_encode_byte_packet as *const u8,
+    );
+    builder.symbol(
         "kiln_rt_write_packet",
         crate::packet_heap::kiln_rt_write_packet as *const u8,
     );
@@ -417,35 +421,13 @@ pub unsafe extern "C" fn kiln_rt_compile_packet(
 }
 
 unsafe fn compile_packet(packet: u64, literals: u64) -> Result<u64, CompilationError> {
-    use kiln_rt::object::{
-        KIND_MASK, KIND_SIMPLE_VECTOR, fixnum_value, header, header_length, is_fixnum, is_general,
-        untag,
-    };
+    use kiln_rt::object::{KIND_MASK, KIND_SIMPLE_VECTOR, header, header_length, is_general};
     let t = std::time::Instant::now();
-    let request = || {
-        if !is_general(packet) || unsafe { header(packet) } & KIND_MASK != KIND_SIMPLE_VECTOR {
-            return Err("request must be a simple vector of octets".to_string());
-        }
-        if !is_general(literals) || unsafe { header(literals) } & KIND_MASK != KIND_SIMPLE_VECTOR {
-            return Err("literals must be a simple vector".to_string());
-        }
-        let n = header_length(unsafe { header(packet) });
-        if n > crate::packet::schema::MAX_BYTES as usize {
-            return Err("request too large".into());
-        }
-        let words = unsafe { std::slice::from_raw_parts((untag(packet) + 8) as *const u64, n) };
-        words
-            .iter()
-            .map(|&word| {
-                if !is_fixnum(word) {
-                    return Err("request contains a non-octet".to_string());
-                }
-                u8::try_from(fixnum_value(word))
-                    .map_err(|_| "request contains a non-octet".to_string())
-            })
-            .collect::<Result<Vec<_>, _>>()
-    };
-    let bytes = request().map_err(|e| CompilationError::new(CompilationStage::Request, e))?;
+    if !is_general(literals) || unsafe { header(literals) } & KIND_MASK != KIND_SIMPLE_VECTOR {
+        return Err(CompilationError::new(CompilationStage::Request, "literals must be a simple vector"));
+    }
+    let bytes = unsafe { crate::packet_heap::packet_octets(&packet) }
+        .map_err(|error| CompilationError::new(CompilationStage::Request, error))?;
     let size = bytes.len();
     let install_error = |e| CompilationError::new(CompilationStage::Install, e);
     let count = header_length(unsafe { header(literals) });
@@ -473,7 +455,7 @@ unsafe fn compile_packet(packet: u64, literals: u64) -> Result<u64, CompilationE
         let (prepared, template) = recorded_code::CodeTemplate::compile(&kir).map_err(install_error)?;
         let init = unsafe { install_prepared(prepared, &kir.literal_patches, literals, Some(size), t) }
             .map_err(install_error)?;
-        eval_code::remember(bytes, template, count, kir.literal_patches);
+        eval_code::remember(bytes.into_owned(), template, count, kir.literal_patches);
         Ok(init)
     } else {
         drop(bytes);

@@ -236,6 +236,7 @@ pub fn symbols() -> Vec<(&'static str, *const u8)> {
         ("kiln_rt_fd_write", rtfun::kiln_rt_fd_write as *const u8),
         ("kiln_rt_fd_read", rtfun::kiln_rt_fd_read as *const u8),
         ("kiln_rt_alloc_byte_packet", rtfun::kiln_rt_alloc_byte_packet as *const u8),
+        ("kiln_rt_byte_packets_equal", rtfun::kiln_rt_byte_packets_equal as *const u8),
         ("kiln_rt_read_byte_packet", rtfun::kiln_rt_read_byte_packet as *const u8),
         (
             "kiln_rt_float_decimal",

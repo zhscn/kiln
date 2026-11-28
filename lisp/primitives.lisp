@@ -1037,6 +1037,9 @@ and slots), zero-filled."
 
 (define-primop :read-byte-packet (fd packet prefix start count)
   (emit-runtime-op :read-byte-packet (list fd packet prefix start count)))
+
+(define-primop :byte-packets-equal (left right)
+  (emit-runtime-op :byte-packets-equal (list left right)))
 ;;; File system calls (pathnames and file streams): OP selects
 ;;; the call (rtfun.rs, kiln_rt_sys); the result is a fixnum, minus errno
 ;;; on failure.
@@ -1059,6 +1062,9 @@ and slots), zero-filled."
 ;;; Snapshot compiler records before the result allocation can move objects.
 (define-primop :encode-packet (program language)
   (emit-runtime-op :encode-packet (list program language)))
+
+(define-primop :encode-byte-packet (program language)
+  (emit-runtime-op :encode-byte-packet (list program language)))
 ;;; Single-use image program: copy records without a serialized intermediate.
 (define-primop :compile-program (program literals target)
   (emit-runtime-op :compile-program (list program literals target)))

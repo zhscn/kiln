@@ -289,6 +289,29 @@ pub unsafe extern "C" fn kiln_rt_alloc_byte_packet(ctx: *mut Context, size: u64,
     address + TAG_GENERAL
 }
 
+/// Compare the exact contents of two private byte packets.
+/// # Safety
+/// Both arguments must be valid Lisp values. This operation cannot safepoint.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kiln_rt_byte_packets_equal(_ctx: *mut Context, left: u64, right: u64) -> u64 {
+    use crate::object::{KIND_BYTE_PACKET, KIND_MASK, header, header_length, is_general, nil, t, untag};
+    if !is_general(left) || !is_general(right) {
+        return nil();
+    }
+    let left_header = unsafe { header(left) };
+    let right_header = unsafe { header(right) };
+    let length = header_length(left_header);
+    if left_header & KIND_MASK != KIND_BYTE_PACKET
+        || right_header & KIND_MASK != KIND_BYTE_PACKET
+        || length != header_length(right_header)
+    {
+        return nil();
+    }
+    let left = unsafe { std::slice::from_raw_parts((untag(left) + 8) as *const u8, length) };
+    let right = unsafe { std::slice::from_raw_parts((untag(right) + 8) as *const u8, length) };
+    if left == right { t() } else { nil() }
+}
+
 /// Copy buffered input, then read the remaining octets into private packet storage.
 /// # Safety
 /// Inputs must be valid tagged Lisp values. This entry cannot safepoint.

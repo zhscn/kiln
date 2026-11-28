@@ -35,7 +35,9 @@ Rust 的运行期入口使用 `packet::load_lir` 或 `compile_lir_program`，拒
 32 位无符号元素，UTF-8 池使用 8 位无符号元素。遍历完成后按编号顺序写出，
 流式文件输出不再额外物化整份请求的 octet 向量。
 
-宿主使用可移植 Lisp 编码器，image 使用批量 native 编码器，两者输出同一 schema。native 编码在无 safepoint 的窗口直接构造 Rust 自有记录，对原子使用临时对象身份缓存；记录和字节完成、缓存释放后才分配结果向量；分配通过带帧指针的 safepoint trampoline，调用者的其他对象保持为精确 roots。ASCII 标识符统一转小写，UTF-8 字符串保留原内容；非 ASCII 标识符不做大小写转换。需要保留字节时使用 simple-vector octets，编译入口批量复制为 native bytes 后解码。编译失败返回有界诊断向量，由 Lisp 解码为结构化 condition；独立产物 handle 未公开，Rust panic 遵守工作区的 abort 配置。此载体每个 octet 占一个 Lisp 槽，不能把它称为紧凑的原生字节数组；后续可优化载体而保持 wire schema。请求快照、降级和成功安装期间没有 Lisp 分配；失败诊断可以分配，因此两个编译服务声明为 safepoint，单 mutator 下由调用帧保护后续仍需使用的对象；尚不支持并发 mutator 的 native 状态切换。
+宿主使用可移植 Lisp 编码器，image 使用批量 native 编码器，两者输出同一 schema。native 编码在无 safepoint 的窗口直接构造 Rust 自有记录，对原子使用临时对象身份缓存。记录和字节完成、缓存释放后才通过 safepoint trampoline 分配 Lisp 结果，调用者的其他对象保持为精确 roots。ASCII 标识符统一转小写，UTF-8 字符串保留原内容。
+
+运行期求值用内部字节对象保留编码结果，编译器入口在同一次调用中借用其字节，缓存比较直接读取字节内容。公开的 Lisp 编码接口仍返回 simple-vector 八位组，编译入口先复制和验证这些八位组。请求快照、降级和成功安装期间不分配 Lisp 对象。失败诊断可以分配，由 Lisp 解码为结构化 condition。调用帧保护后续仍需使用的对象，Rust 在分配诊断前结束请求借用。当前 native 状态切换按单 mutator 运行，Rust panic 沿用工作区的 abort 配置。
 
 生产构建、自举、REPL 和基准的 `.lir` 输出使用二进制封套，旧 `.kir` 文件及 `kiln_rt_jit` 文本入口保留用于迁移对照。原生 `compile` 使用 `:compile-program`，一次性程序不物化字节向量；`eval` 的缓存载荷和旧 FASL 使用 `:compile-packet`。缓存和定义指纹采用规范化记录字节。FASL 记录数据的标签 6 保存 packet octets。加载器支持封套版本 2 至 6。
 

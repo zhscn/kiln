@@ -56,7 +56,7 @@ Native code already registered with the runtime follows the runtime's lifetime."
                                  (loop for index from (length literals) below (length bindings)
                                        collect index))
           literals bindings)
-    (let* ((packet (kiln.lir:encode-program program))
+    (let* ((packet (kiln.lir::encode-image-program program))
            (entry (when (and replayable-p (plusp kiln.sys:*compilation-cache-limit*))
                     (find-if (lambda (entry)
                                (and (eq (svref entry 0) *package*)

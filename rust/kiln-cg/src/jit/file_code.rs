@@ -4,11 +4,11 @@ use super::{
     CompilationError, CompilationStage, Memory, Prepared, compilation_result, prepare,
     validate_literal_bindings,
 };
-use crate::{codegen::Options, kir, lir, packet};
+use crate::{codegen::Options, kir, lir, packet, packet_heap::packet_octets};
 use kiln_rt::context::Context;
 use kiln_rt::object::{
-    HASH_SHIFT, KIND_BYTE_PACKET, KIND_MASK, KIND_SIMPLE_VECTOR, TAG_GENERAL, TAG_MASK,
-    fixnum_value, header, header_length, is_fixnum, is_general, nil, untag,
+    HASH_SHIFT, KIND_MASK, KIND_SIMPLE_VECTOR, TAG_GENERAL, TAG_MASK, header, header_length,
+    is_general, nil, untag,
 };
 use std::borrow::Cow;
 use std::sync::{Arc, Mutex};
@@ -32,40 +32,6 @@ fn vector(word: u64) -> Result<(usize, *mut u64), String> {
         header_length(unsafe { header(word) }),
         (untag(word) + 8) as *mut u64,
     ))
-}
-
-// Packet objects remain in the caller's roots. The caller holds this borrow
-// only within synchronous preparation, before any diagnostic can safepoint.
-unsafe fn packet_bytes(word: &u64) -> Result<Cow<'_, [u8]>, String> {
-    if !is_general(*word) {
-        return Err("expected packet octets".into());
-    }
-    let header = unsafe { header(*word) };
-    let length = header_length(header);
-    if length > packet::schema::MAX_BYTES as usize {
-        return Err("file code packet is too large".into());
-    }
-    let data = untag(*word) + 8;
-    match header & KIND_MASK {
-        KIND_BYTE_PACKET => Ok(Cow::Borrowed(unsafe {
-            std::slice::from_raw_parts(data as *const u8, length)
-        })),
-        KIND_SIMPLE_VECTOR => {
-            let words = unsafe { std::slice::from_raw_parts(data as *const u64, length) };
-            let bytes = words
-                .iter()
-                .map(|&word| {
-                    if !is_fixnum(word) {
-                        return Err("file code packet contains a non-octet".into());
-                    }
-                    u8::try_from(fixnum_value(word))
-                        .map_err(|_| "file code packet contains a non-octet".into())
-                })
-                .collect::<Result<Vec<_>, String>>()?;
-            Ok(Cow::Owned(bytes))
-        }
-        _ => Err("expected packet octets".into()),
-    }
 }
 
 fn eq(lhs: kir::Expr, rhs: i64) -> kir::Expr {
@@ -189,7 +155,7 @@ fn prepare_file_code(packets: u64, entries: u64) -> Result<u64, CompilationError
     let packet_words = unsafe { std::slice::from_raw_parts(packets, count) };
     let bytes = packet_words
         .iter()
-        .map(|word| unsafe { packet_bytes(word) }.map_err(request))
+        .map(|word| unsafe { packet_octets(word) }.map_err(request))
         .collect::<Result<Vec<_>, _>>()?;
     let (prepared, literal_counts) = file_code(bytes)?;
     if std::env::var_os("KILN_PERF_MAP").is_some() {

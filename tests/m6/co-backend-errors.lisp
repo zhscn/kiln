@@ -12,6 +12,16 @@
 (let ((packet (kiln.lir:encode-program '(:lir-module "bad"))))
   (format t "~S~%" (kiln.lir:backend-error-stage
     (backend-test-error (kiln.sys:%primop :compile-packet packet #()) :compile-packet))))
+(let* ((program '(:lir-module "bad"))
+       (packet (kiln.lir::encode-image-program program)))
+  (assert (kiln.compiler::compilation-packet-equal-p
+           packet (kiln.lir::encode-image-program program)))
+  (assert (not (kiln.compiler::compilation-packet-equal-p
+                packet (kiln.lir::encode-image-program '(:lir-module "bay")))))
+  (assert (eq :program
+              (kiln.lir:backend-error-stage
+               (backend-test-error
+                (kiln.sys:%primop :compile-packet packet #()) :compile-packet)))))
 (format t "~S~%" (kiln.lir:backend-error-stage
   (backend-test-error
     (kiln.sys:%primop :compile-program
