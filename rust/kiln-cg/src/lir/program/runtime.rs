@@ -38,6 +38,7 @@ operations! {
     WritePacket => ("write-packet","kiln_rt_write_packet",2,false),
     EncodePacket => ("encode-packet","kiln_rt_encode_packet",2,true),
     EncodeBytePacket => ("encode-byte-packet","kiln_rt_encode_byte_packet",2,true),
+    PacketVector => ("packet-vector","kiln_rt_packet_vector",1,true),
     CompileProgram => ("compile-program","kiln_rt_compile_program",3,true),
     CompilePacket => ("compile-packet","kiln_rt_compile_packet",2,true),
     PrepareFileCode => ("prepare-file-code","kiln_rt_prepare_file_code",2,true),

@@ -1065,6 +1065,9 @@ and slots), zero-filled."
 
 (define-primop :encode-byte-packet (program language)
   (emit-runtime-op :encode-byte-packet (list program language)))
+
+(define-primop :packet-vector (packet)
+  (emit-runtime-op :packet-vector (list packet)))
 ;;; Single-use image program: copy records without a serialized intermediate.
 (define-primop :compile-program (program literals target)
   (emit-runtime-op :compile-program (list program literals target)))

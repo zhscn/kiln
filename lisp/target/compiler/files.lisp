@@ -75,8 +75,9 @@
            (let ((name (kiln.kir::kir-name "file-" (incf *native-compile-count*))))
              (multiple-value-bind (module literals)
                  (compile-module (list form) name :session session :image t)
-               (multiple-value-bind (packet bindings) (kiln.lir:module-packet module literals)
-                 (kiln.kernel::fasl-add-module packet bindings))))))))
+               (multiple-value-bind (program bindings) (kiln.lir:module-program module literals)
+                 (kiln.kernel::fasl-add-module (kiln.lir::encode-image-program program)
+                                              bindings))))))))
     (list kiln.kernel::*fasl-count* (nreverse kiln.kernel::*fasl-records*))))
 
 (defun cl:compile-file (input-file &key (output-file nil output-file-p)

@@ -183,13 +183,11 @@ pub unsafe extern "C" fn kiln_rt_identity_hash(_ctx: *mut Context, obj: u64) -> 
     hash << 1
 }
 
-/// Writes the octets `vec[start..end]` to the file descriptor `fd`: `vec`
-/// is a simple vector of fixnums (the contents of an `(unsigned-byte 8)`
-/// vector). Returns the number of octets written (a fixnum),
-/// or -1 on error.
+/// Write an octet range from a simple-vector or private byte packet.
+/// Returns the number of octets written, or -1 on error, as a fixnum.
 ///
 /// # Safety
-/// `vec` must be a simple vector of fixnums with `start <= end <= length`.
+/// Inputs must be valid Lisp values. This entry cannot safepoint.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn kiln_rt_fd_write(
     _ctx: *mut Context,
@@ -198,12 +196,33 @@ pub unsafe extern "C" fn kiln_rt_fd_write(
     start: u64,
     end: u64,
 ) -> u64 {
-    use crate::object::{fixnum_value, untag};
+    use crate::object::{
+        KIND_BYTE_PACKET, KIND_MASK, KIND_SIMPLE_VECTOR, fixnum_value, header, header_length,
+        is_fixnum, is_general, untag,
+    };
+    use std::borrow::Cow;
+
+    let failure = (-1i64 as u64) << 1;
+    if !is_fixnum(fd) || !is_fixnum(start) || !is_fixnum(end) || !is_general(vec) {
+        return failure;
+    }
     let (start, end) = (fixnum_value(start) as usize, fixnum_value(end) as usize);
-    let elements = (untag(vec) + 8) as *const u64;
-    let bytes: Vec<u8> = (start..end)
-        .map(|i| fixnum_value(unsafe { *elements.add(i) }) as u8)
-        .collect();
+    let header = unsafe { header(vec) };
+    if start > end || end > header_length(header) {
+        return failure;
+    }
+    let data = untag(vec) + 8;
+    let bytes: Cow<'_, [u8]> = match header & KIND_MASK {
+        KIND_BYTE_PACKET => Cow::Borrowed(unsafe {
+            std::slice::from_raw_parts((data as *const u8).add(start), end - start)
+        }),
+        KIND_SIMPLE_VECTOR => {
+            let elements = (data as *const u64).wrapping_add(start);
+            let words = unsafe { std::slice::from_raw_parts(elements, end - start) };
+            Cow::Owned(words.iter().map(|&word| fixnum_value(word) as u8).collect())
+        }
+        _ => return failure,
+    };
     let mut written = 0;
     while written < bytes.len() {
         let n = unsafe {
@@ -217,7 +236,10 @@ pub unsafe extern "C" fn kiln_rt_fd_write(
             if std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {
                 continue;
             }
-            return (-1i64 as u64) << 1;
+            return failure;
+        }
+        if n == 0 {
+            return failure;
         }
         written += n as usize;
     }

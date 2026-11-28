@@ -192,6 +192,10 @@ fn new_module(memory: &Memory) -> Result<JITModule, String> {
         crate::packet_heap::kiln_rt_encode_byte_packet as *const u8,
     );
     builder.symbol(
+        "kiln_rt_packet_vector",
+        crate::packet_heap::kiln_rt_packet_vector as *const u8,
+    );
+    builder.symbol(
         "kiln_rt_write_packet",
         crate::packet_heap::kiln_rt_write_packet as *const u8,
     );

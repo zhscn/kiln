@@ -252,6 +252,14 @@
       (+ start (stream-read-octets stream sequence start end))
       (call-next-method)))
 
+(defun stream-write-byte-packet (stream packet size)
+  (when (< (in-start stream) (in-end stream))
+    (discard-file-input stream))
+  (flush-file-buffer stream)
+  (note-written stream
+                (check-sys stream
+                           (kiln.sys:%primop :fd-write (descriptor stream) packet 0 size))))
+
 (defun stream-read-byte-packet (stream size)
   (flush-file-buffer stream)
   (let* ((packet (kiln.sys:%primop :alloc-byte-packet size))

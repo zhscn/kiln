@@ -255,6 +255,9 @@ Lisp 调用约定下写入这一组的 literal，并返回真正的初始化函�
 对象，分配前完成对 Lisp 输入的遍历。`kiln_rt_compile_packet` 同时接收内部字节对象
 和八位组 simple-vector。`kiln_rt_byte_packets_equal(ctx, left, right)` 比较两个
 内部字节对象的长度和内容，返回 Lisp 布尔值，期间不分配或进入 safepoint。
+`kiln_rt_fd_write(ctx, fd, packet, start, end)` 可把内部字节对象的区间直接写入文件
+描述符。通用流需要八位组向量时，`kiln_rt_packet_vector(ctx, packet, fp)` 先复制
+字节，再通过 safepoint 分配 simple-vector。
 `kiln_rt_alloc_byte_packet(ctx, size, fp)` 分配这个对象，可触发 safepoint。
 `kiln_rt_read_byte_packet(ctx, fd, packet, prefix, start, count)` 先复制已经缓冲的
 前缀八位组，再从描述符读满剩余区间或到达 EOF。它返回实际写入的字节数或负的

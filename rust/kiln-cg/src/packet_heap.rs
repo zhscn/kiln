@@ -233,6 +233,40 @@ pub unsafe extern "C" fn kiln_rt_encode_byte_packet(
     unsafe { encode_lisp_packet(ctx, program, language, fp, true) }
 }
 
+unsafe fn tag_octets(ctx: *mut Context, bytes: Vec<u8>, fp: usize) -> u64 {
+    let length = bytes.len() as u64;
+    let address = unsafe {
+        kiln_rt::gc::kiln_rt_alloc(
+            ctx,
+            (length + 1) * 8,
+            KIND_SIMPLE_VECTOR | (length << LENGTH_SHIFT),
+            fp,
+        )
+    };
+    let words = (address + 8) as *mut u64;
+    for (index, byte) in bytes.into_iter().enumerate() {
+        unsafe { words.add(index).write(u64::from(byte) << 1) };
+    }
+    address + TAG_GENERAL
+}
+
+/// Convert a private packet to ordinary Lisp octets for a generic stream.
+///
+/// # Safety
+/// The caller must use a safepoint trampoline and valid Lisp arguments.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kiln_rt_packet_vector(
+    ctx: *mut Context,
+    packet: u64,
+    fp: usize,
+) -> u64 {
+    let Ok(bytes) = (unsafe { packet_octets(&packet) }) else {
+        return object::nil();
+    };
+    let bytes = bytes.into_owned();
+    unsafe { tag_octets(ctx, bytes, fp) }
+}
+
 unsafe fn encode_lisp_packet(
     ctx: *mut Context,
     program: u64,
@@ -263,20 +297,7 @@ unsafe fn encode_lisp_packet(
             data.add(bytes.len()).write_bytes(0, (payload - length) as usize);
             address + TAG_GENERAL
         },
-        Ok(bytes) => unsafe {
-            let n = bytes.len();
-            let address = kiln_rt::gc::kiln_rt_alloc(
-                ctx,
-                (n as u64 + 1) * 8,
-                KIND_SIMPLE_VECTOR | ((n as u64) << LENGTH_SHIFT),
-                fp,
-            );
-            let words = (address + 8) as *mut u64;
-            for (i, byte) in bytes.into_iter().enumerate() {
-                *words.add(i) = u64::from(byte) << 1;
-            }
-            address + TAG_GENERAL
-        },
+        Ok(bytes) => unsafe { tag_octets(ctx, bytes, fp) },
         Err(error) => {
             eprintln!("kiln_rt_encode_packet: {error}");
             object::nil()

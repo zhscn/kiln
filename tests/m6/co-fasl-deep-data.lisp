@@ -17,11 +17,15 @@
       (assert (equalp #(0 127 128 255) (sixth result)))
       (assert (eq :end (read-byte stream nil :end)))))
   (delete-file "build/test/deep-record.bin"))
-(let ((buffered "build/test/fasl-buffered.bin")
-      (reference "build/test/fasl-reference.bin")
-      (unit (list 1 (list (list :string 0 (make-string 5000 :initial-element #\λ))
-                          (list :run #(0 127 128 255) 0)
-                          (list :character 0 #\Newline)))))
+(let* ((buffered "build/test/fasl-buffered.bin")
+       (reference "build/test/fasl-reference.bin")
+       (program '(:lir-module "packed-write"))
+       (packet (kiln.lir::encode-image-program program))
+       (unit (list 1 (list (list :string 0 (make-string 5000 :initial-element #\λ))
+                           (list :run #(0 127 128 255) 0)
+                           (list :run packet 0)
+                           (list :character 0 #\Newline)))))
+  (assert (equalp (kiln.lir:encode-program program) (kiln.sys:%primop :packet-vector packet)))
   (unwind-protect
        (progn
          (with-open-file (stream buffered :direction :output :if-exists :supersede
