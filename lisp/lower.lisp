@@ -91,6 +91,9 @@ shift the counter, so the numbers differ between hosts."
 (defvar *primops* (make-hash-table :test 'eq)
   "Keyword -> function of the list of argument operands (primitives.lisp).")
 
+(defvar *lowering-version* 0
+  "Version of the implementation that produces LIR from prepared HIR.")
+
 (defvar *regions* '())                  ; dynamic-extent regions (REGION below)
 
 (defvar *module-label*)                 ; mangled module name

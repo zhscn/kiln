@@ -255,8 +255,20 @@ values. A definition within FORM's expansion is a unit of its own."
   "While UPDATE-DEFINITION evaluates a definition again: a cons whose cdr
 collects the keys that change.")
 
+(defvar *lowering-definition-packages*
+  (remove nil (mapcar #'find-package
+                      '(:common-lisp :kiln.compiler :kiln.lir :kiln.kir :kiln.eval
+                        :kiln.kernel :kiln.sys :alexandria :ctype :clostrophilia :regalia))))
+
 (defun note-redefinition (key)
   "*REDEFINITION-HOOK*: the definition KEY changed."
+  (let* ((kind (first key))
+         (name (second key))
+         (symbol (if (consp name) (second name) name)))
+    (when (or (member kind '(:class :methods :initialization))
+              (and (symbolp symbol)
+                   (member (symbol-package symbol) *lowering-definition-packages*)))
+      (incf *lowering-version*)))
   (import-source-definitions)
   (let ((outputs *unit-outputs*))
     (when (and outputs (not (member key (cdr outputs) :test #'equal)))

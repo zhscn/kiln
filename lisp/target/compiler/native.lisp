@@ -120,25 +120,39 @@ returns its values."
   (call-with-image-session
    (lambda (session) (native-eval-in-session form session))))
 
+(defun compile-toplevel-init (forms session)
+  (let* ((key (when (and *updating-definitions* *eval-definition*
+                        (consp *eval-form*) (eq (first *eval-form*) 'defun)
+                        (equal (car *eval-definition*) (first *updating-definitions*))
+                        (plusp kiln.sys:*compilation-cache-limit*)
+                        (null *compiler-stage-observer*)
+                        (null kiln.kernel::*deferred-assumption-keys*)
+                        (consp forms) (null (cdr forms)))
+                (compilation-hir-key (first forms))))
+         (entry (find-toplevel-replay key)))
+    (if entry
+        (replay-toplevel-init entry)
+        ;; Each image module has its own linkage namespace. Stable local
+        ;; names let the encoded packet serve as its dependency key.
+        (multiple-value-bind (module literals)
+            (compile-module forms "image-eval" :session session :image t)
+          (cached-toplevel-init module literals (compilation-debug-literals module)
+                                (kiln.kir::kmodule-replayable-p module) key)))))
+
 (defun native-eval-in-session (form session)
-  ;; Each image module has its own linkage namespace. Stable local names
-  ;; let the encoded packet serve as its own cache and dependency key.
-  (multiple-value-bind (module literals)
-      (handler-bind ((undefined-function-warning
-                       (lambda (condition)
-                         (kiln.kernel::note-compilation-unit-functions
-                          (undefined-function-names condition))
-                         (muffle-warning condition))))
-        (compile-module (front-end-forms `((setq *eval-values* (multiple-value-list ,form)))
-                                         session)
-                        "image-eval" :session session :image t))
-    (let ((init (cached-toplevel-init module literals (compilation-debug-literals module)
-                                     (kiln.kir::kmodule-replayable-p module))))
-      (unless init
-        (error "kiln-cg could not compile ~S." form))
-      (let ((*eval-values* nil))
-        (funcall init)
-        (values-list *eval-values*)))))
+  (let ((init (handler-bind ((undefined-function-warning
+                               (lambda (condition)
+                                 (kiln.kernel::note-compilation-unit-functions
+                                  (undefined-function-names condition))
+                                 (muffle-warning condition))))
+                (compile-toplevel-init
+                 (front-end-forms `((setq *eval-values* (multiple-value-list ,form))) session)
+                 session))))
+    (unless init
+      (error "kiln-cg could not compile ~S." form))
+    (let ((*eval-values* nil))
+      (funcall init)
+      (values-list *eval-values*))))
 
 (defun native-eval-body (forms)
   (if (null forms)

@@ -12,24 +12,27 @@
 (defmacro define-primitive (name lambda-list &body body)
   "Defines a primitive with a fixed number of arguments."
   (let ((vals (gensym "VALS")))
-    `(setf (gethash ',name *primitives*)
-           (lambda (,vals)
-             (unless (= (length ,vals) ,(length lambda-list))
-               (hir-error "~S called with ~D arguments, takes ~D"
-                     ',name (length ,vals) ,(length lambda-list)))
-             (destructuring-bind ,lambda-list ,vals ,@body)))))
+    `(prog1 (setf (gethash ',name *primitives*)
+                  (lambda (,vals)
+                    (unless (= (length ,vals) ,(length lambda-list))
+                      (hir-error "~S called with ~D arguments, takes ~D"
+                                 ',name (length ,vals) ,(length lambda-list)))
+                    (destructuring-bind ,lambda-list ,vals ,@body)))
+       (incf *lowering-version*))))
 
 (defmacro define-nary-primitive (name (vals) &body body)
-  `(setf (gethash ',name *primitives*) (lambda (,vals) ,@body)))
+  `(prog1 (setf (gethash ',name *primitives*) (lambda (,vals) ,@body))
+     (incf *lowering-version*)))
 
 (defmacro define-primop (name lambda-list &body body)
   (let ((vals (gensym "VALS")))
-    `(setf (gethash ,name *primops*)
-           (lambda (,vals)
-             (unless (= (length ,vals) ,(length lambda-list))
-               (hir-error "primop ~S called with ~D arguments, takes ~D"
-                     ,name (length ,vals) ,(length lambda-list)))
-             (destructuring-bind ,lambda-list ,vals ,@body)))))
+    `(prog1 (setf (gethash ,name *primops*)
+                  (lambda (,vals)
+                    (unless (= (length ,vals) ,(length lambda-list))
+                      (hir-error "primop ~S called with ~D arguments, takes ~D"
+                                 ,name (length ,vals) ,(length lambda-list)))
+                    (destructuring-bind ,lambda-list ,vals ,@body)))
+       (incf *lowering-version*))))
 
 ;;; Arithmetic. Fixnums are open-coded; other numbers, and fixnum
 ;;; overflow, take the slow path: a call to the kernel's two-argument
