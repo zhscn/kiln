@@ -4,13 +4,15 @@
 
 (defvar kiln.sys:*compilation-cache-limit* 64)
 (defvar *toplevel-compilation-cache* '())
+(defvar *file-compilation-artifacts* nil)
 (defvar *compilation-cache-hits* 0)
 (defvar *compilation-cache-misses* 0)
 
 (defun kiln.sys:clear-compilation-cache ()
-  "Drops cache references to top-level artifacts and resets cache counters.
+  "Drops cached compiler artifacts and resets cache counters.
 Native code already registered with the runtime follows the runtime's lifetime."
   (setf *toplevel-compilation-cache* '()
+        *file-compilation-artifacts* nil
         *compilation-cache-hits* 0 *compilation-cache-misses* 0)
   nil)
 
@@ -76,7 +78,7 @@ Native code already registered with the runtime follows the runtime's lifetime."
                  (typecase object
                    (hir-node
                     (let ((kind (hir-node-kind object)))
-                      (vector :node kind (hir-node-source object)
+                      (vector :node kind (visit (hir-node-source object) t)
                               (hir-node-policy object) (visit (hir-node-origin object) t)
                               (if (zerop kind) (literal (hir-node-a object)) (visit (hir-node-a object)))
                               (visit (hir-node-b object)) (visit (hir-node-c object)) (visit (hir-node-d object)))))
@@ -85,7 +87,7 @@ Native code already registered with the runtime follows the runtime's lifetime."
                             (visit (hir-fun-lambda-list object)) (visit (hir-fun-body object))
                             (visit (hir-fun-parameter-specials object)) (visit (hir-fun-free object))
                             (visit (hir-fun-exits object)) (visit (hir-fun-vars object)) (hir-fun-binding-count object)
-                            (hir-fun-policy object) (hir-fun-source object) (visit (hir-fun-origin object) t)
+                            (hir-fun-policy object) (visit (hir-fun-source object) t) (visit (hir-fun-origin object) t)
                             (visit (hir-fun-binding object)) (visit (hir-fun-load-time-values object))))
                    (hir-var
                     (vector :variable (lexical-name (hir-var-name object)) (visit (hir-var-owner object))
@@ -114,7 +116,7 @@ Native code already registered with the runtime follows the runtime's lifetime."
                        ((or (numberp object) (characterp object)) object)
                        ((stringp object)
                         (unless source-data (throw 'unsupported-compilation-key nil))
-                        object)
+                        (copy-seq object))
                        (t
                         (let ((table (if source-data source-objects objects)))
                           (multiple-value-bind (index present) (compiler-eq-ref table object)
@@ -128,15 +130,28 @@ Native code already registered with the runtime follows the runtime's lifetime."
         (let ((source (vector (visit (toplevel-form-file form) t) (visit (toplevel-form-source form))
                               (visit (toplevel-form-definition form)))))
           (visit (toplevel-form-ast form))
-          (vector version
-                  (second (encode-source-form (vector source (hir-vector records))))
-                  (hir-vector literals)))))))
+          (vector version source (hir-vector records) (hir-vector literals)))))))
 
 (defun compilation-hir-key-match-p (a b)
-  (and (eql (svref a 0) (svref b 0))
-       (string= (svref a 1) (svref b 1))
-       (= (length (svref a 2)) (length (svref b 2)))
-       (every #'eql (svref a 2) (svref b 2))))
+  (labels ((same (left right)
+             (or (eql left right)
+                 (typecase left
+                   (cons (and (consp right)
+                              (same (car left) (car right))
+                              (same (cdr left) (cdr right))))
+                   (simple-vector
+                    (and (simple-vector-p right)
+                         (= (length left) (length right))
+                         (loop for index below (length left)
+                               always (same (svref left index) (svref right index)))))
+                   (string (and (stringp right) (string= left right)))))))
+    (and (= (length b) 4)
+         (eql (svref a 0) (svref b 0))
+         (= (length (svref a 2)) (length (svref b 2)))
+         (= (length (svref a 3)) (length (svref b 3)))
+         (same (svref a 1) (svref b 1))
+         (every #'eq (svref a 3) (svref b 3))
+         (same (svref a 2) (svref b 2)))))
 
 (defun compilation-reusable-bindings (bindings debug-indices)
   ;; Debug objects can escape through frame inspection. Keep a private

@@ -148,7 +148,14 @@ FASL 加载需要 compiler 模块及 Cranelift；保存的是 LIR，机器码在
 
 ## 顶层编译缓存
 
-原生 `eval` 和 `load` 保留最近使用的顶层原生产物。每次重放宏展开、前端和降级，只在规范化 LIR、literal 身份及依赖版本相同时复用机器码；命中后仍执行该顶层形式。缓存默认至多 64 项，可通过 `kiln.sys:*compilation-cache-limit*`、`clear-compilation-cache` 和 `compilation-cache-statistics` 管理。调试元数据按结构比较，程序 literal 保持身份。详细协议见 [specialization.md](specialization.md)。
+原生 `eval` 每次执行宏展开。依赖重编译可用展开后的 HIR 匹配 LIR，初始化函数
+仍检查依赖版本并执行本次求值。初始化函数缓存的管理见 [specialization.md](specialization.md)。
+
+`compile-file` 每次读取源码并执行编译期处理。同一输入再次编译时，可按表单顺序匹配
+上次成功写入 FASL 的 HIR，复用相应的 LIR 和 literal 模板，再构建本次的 FASL
+对象图。匹配比较展开后的结构、全局符号和程序 literal 身份、策略、源码位置及降级
+版本。含可变程序字面量或不可重放状态的表单每次降级。缓存只保留最近一次成功编译
+的文件，至多 256 项及 8 MiB 的 LIR，随 `kiln.sys:clear-compilation-cache` 清空。
 
 ## 并行文件编译
 

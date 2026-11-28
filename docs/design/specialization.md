@@ -77,11 +77,11 @@
 
 ## 顶层编译产物缓存
 
-`lisp/target/compiler/cache.lisp` 缓存原生 `eval` / `load` 中每个顶层编译单元的初始化函数。每次仍执行宏展开、前端和降级，重放编译期效果，再判断是否能复用已生成的机器码；每次命中仍运行初始化函数，求值的副作用和返回值照常发生。
+`lisp/target/compiler/cache.lisp` 缓存原生 `eval` 中顶层编译单元的初始化函数。每次执行宏展开和 HIR 转换。依赖重编译匹配已有 HIR 时，可以复用 LIR；其他求值在降级后比较 LIR。每次命中仍执行初始化函数，产生本次求值的副作用和返回值。
 
-匹配条件是当前包、readtable、去掉编号模块名的 KIR、literal 和已记录的依赖版本格。程序 literal 按 `eql` 保留身份，不能把两个内容相同而身份不同的引用对象混用；编译器新建的调试记录按结构比较。依赖格必须保持身份和版本，退役或重定义会使旧条目失效。宏根据外部状态产生不同代码时，KIR 或 literal 的差异也会导致未命中。含 `load-time-value` 单元的模块每次独立编译，保持旧函数所引用的 load-time cell 独立。
+初始化函数匹配当前包、readtable、规范化 LIR、程序 literal 及依赖版本。编译器生成的调试记录按结构比较，程序 literal 保留身份。依赖格的身份或版本变化时重新安装初始化函数。含 `load-time-value` 单元的模块独立编译，保持各次求值的 load-time cell 独立。
 
-缓存按最近使用顺序保留至多 `kiln.sys:*compilation-cache-limit*` 项，默认 64；0 表示禁用并清除缓存引用。`kiln.sys:clear-compilation-cache` 清空条目和统计，`kiln.sys:compilation-cache-statistics` 返回命中数、未命中数和条目数。淘汰只释放缓存持有的引用，运行时注册的代码和 literal root 仍遵循现有代码生命周期。前端和降级的结果尚未跨调用复用。
+初始化函数缓存按最近使用顺序保留至多 `kiln.sys:*compilation-cache-limit*` 项，默认 64。设为 0 可禁用编译缓存。`kiln.sys:clear-compilation-cache` 清空缓存和统计，`kiln.sys:compilation-cache-statistics` 返回初始化函数缓存的命中数、未命中数和条目数。淘汰只释放缓存持有的引用，运行时注册的代码和 literal root 仍遵循现有代码生命周期。
 
 ## 调用点特化
 
