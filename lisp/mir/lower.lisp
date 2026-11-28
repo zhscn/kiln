@@ -3716,7 +3716,7 @@ Inspect mutable payloads synchronously. The callback must not edit them.")
     (observe-mir-pass unit mir-scalar-replace)
     (observe-mir-pass unit mir-simplify-block-parameters)))
 
-(defun mir-lower-toplevel (hir)
+(defun mir-lower-toplevel (hir &optional initializer)
   (with-compilation-phase (:mir-lir)
     (when *compiler-stage-observer*
       (funcall *compiler-stage-observer* :hir hir nil))
@@ -3731,8 +3731,12 @@ Inspect mutable payloads synchronously. The callback must not edit them.")
            (*mir-lir-load-time-cells* (map 'simple-vector
                                           (lambda (id) (declare (ignore id)) (fresh-label "kiln_mir_ltv_"))
                                           (mir-unit-load-time-functions unit)))
-           (*mir-lir-labels* (map 'simple-vector (lambda (function) (declare (ignore function))
-                                                  (fresh-label "kiln_mir_")) functions)))
+           (direct (and initializer (zerop (length *mir-lir-load-time-cells*))))
+           (*mir-lir-labels*
+             (let ((labels (make-array (length functions))))
+               (dotimes (id (length functions) labels)
+                 (setf (svref labels id)
+                       (if (and direct (zerop id)) initializer (fresh-label "kiln_mir_")))))))
       (when *compiler-stage-observer*
         (funcall *compiler-stage-observer* :labels (cons functions *mir-lir-labels*) nil))
       (when (plusp (length *mir-lir-load-time-cells*))
@@ -3752,7 +3756,25 @@ Inspect mutable payloads synchronously. The callback must not edit them.")
       (loop for label across *mir-lir-labels* for function across functions
             when (zerop (length (mir-function-captures function)))
             do (module-data (kiln.kir::kir-name label "_fobj") `(:static-function ,label)))
-      (loop for id across (mir-unit-load-time-functions unit) for cell across *mir-lir-load-time-cells*
-            for object = (copy-to-var `(:object-address ,(kiln.kir::kir-name (svref *mir-lir-labels* id) "_fobj") :general))
-            do (emit `(:cell-set ,cell ,(emit-lisp-call object nil))))
-      (emit-lisp-call (copy-to-var `(:object-address ,(kiln.kir::kir-name (svref *mir-lir-labels* 0) "_fobj") :general)) nil))))
+      (unless direct
+        (flet ((invoke-forms ()
+                 (loop for id across (mir-unit-load-time-functions unit)
+                       for cell across *mir-lir-load-time-cells*
+                       for object = (copy-to-var
+                                     `(:object-address ,(kiln.kir::kir-name (svref *mir-lir-labels* id) "_fobj")
+                                                       :general))
+                       do (emit `(:cell-set ,cell ,(emit-lisp-call object nil))))
+                 (emit-lisp-call
+                  (copy-to-var `(:object-address ,(kiln.kir::kir-name (svref *mir-lir-labels* 0) "_fobj")
+                                                :general))
+                  nil)))
+          (if initializer
+              (let ((*regions* nil) (*debug-vars* nil) (*debug-var-count* 0))
+                (with-function (initializer)
+                  (let ((*self* (copy-to-var :self)))
+                    (emit-poll)
+                    (invoke-forms)
+                    (emit `(:return ,(nil-value) 1)))
+                  (set-function-debug '(:top-level-form) nil))
+                (module-data (kiln.kir::kir-name initializer "_fobj") `(:static-function ,initializer)))
+              (invoke-forms)))))))

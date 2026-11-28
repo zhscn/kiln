@@ -1220,9 +1220,9 @@ Returns the module and the vector of its literals."
       (let* ((init (kiln.kir::kir-name "kiln_toplevel_" *module-label*))
              (fobj (kiln.kir::kir-name init "_fobj"))
              (single-form (and (consp asts) (null (cdr asts)))))
-        ;; A single form can use its chunk directly as the initializer.
         (if single-form
-            (compile-toplevel-chunk init asts)
+            (let ((*toplevel* (first asts)))
+              (mir-lower-toplevel (toplevel-form-ast *toplevel*) init))
             (compile-toplevel-function asts))
         (let ((literals (emit-literal-words)))
           (unless single-form (module-data fobj `(:static-function ,init)))
