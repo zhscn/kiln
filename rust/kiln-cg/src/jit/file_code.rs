@@ -1,14 +1,31 @@
 //! Prepare a batch of file initializers before their literal objects exist.
+use super::recorded_code::{RecordedCode, Recording};
 use super::{
-    CompilationError, CompilationStage, Memory, compilation_result, prepare,
+    CompilationError, CompilationStage, Memory, Prepared, compilation_result, new_module, prepare,
     validate_literal_bindings,
 };
-use crate::{codegen::Options, kir, lir, packet};
+use crate::{
+    codegen::{self, Options, Output},
+    kir, lir, packet,
+};
 use kiln_rt::context::Context;
 use kiln_rt::object::{
     HASH_SHIFT, KIND_MASK, KIND_SIMPLE_VECTOR, TAG_GENERAL, TAG_MASK, fixnum_value, header,
     header_length, is_fixnum, is_general, nil, untag,
 };
+use std::sync::{Arc, Mutex};
+
+const CACHE_BYTES: usize = 8 * 1024 * 1024;
+
+struct CachedFileCode {
+    packets: Vec<Vec<u8>>,
+    code: RecordedCode,
+    output: Arc<Output>,
+    literal_counts: Arc<[usize]>,
+}
+
+// The latest small batch can be reloaded into fresh code and literal slots.
+static CACHE: Mutex<Option<Arc<CachedFileCode>>> = Mutex::new(None);
 
 fn vector(word: u64) -> Result<(usize, *mut u64), String> {
     if !is_general(word) || unsafe { header(word) } & KIND_MASK != KIND_SIMPLE_VECTOR {
@@ -130,8 +147,6 @@ pub(crate) unsafe extern "C" fn kiln_rt_prepare_file_code(
 
 fn prepare_file_code(packets: u64, entries: u64) -> Result<u64, CompilationError> {
     let request = |e| CompilationError::new(CompilationStage::Request, e);
-    let program = |e| CompilationError::new(CompilationStage::Program, e);
-    let install = |e| CompilationError::new(CompilationStage::Install, e);
     let (count, packets) = vector(packets).map_err(request)?;
     let (entry_count, entries) = vector(entries).map_err(request)?;
     if count.checked_mul(2) != Some(entry_count) || packets == entries {
@@ -141,14 +156,13 @@ fn prepare_file_code(packets: u64, entries: u64) -> Result<u64, CompilationError
         return Ok(nil());
     }
     let packet_words = unsafe { std::slice::from_raw_parts(packets, count) };
-    let mut modules = Vec::with_capacity(count);
-    let mut literal_counts = Vec::with_capacity(count);
-    for (ordinal, &word) in packet_words.iter().enumerate() {
+    let mut bytes = Vec::with_capacity(count);
+    for &word in packet_words {
         let (length, words) = vector(word).map_err(request)?;
         if length > packet::schema::MAX_BYTES as usize {
             return Err(request("file code packet is too large".into()));
         }
-        let bytes = unsafe { std::slice::from_raw_parts(words, length) }
+        let packet = unsafe { std::slice::from_raw_parts(words, length) }
             .iter()
             .map(|&word| {
                 if !is_fixnum(word) {
@@ -158,7 +172,50 @@ fn prepare_file_code(packets: u64, entries: u64) -> Result<u64, CompilationError
                     .map_err(|_| request("file code packet contains a non-octet".into()))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let packet = packet::validate(&bytes).map_err(request)?;
+        bytes.push(packet);
+    }
+    let (prepared, literal_counts) = file_code(bytes)?;
+    if std::env::var_os("KILN_PERF_MAP").is_some() {
+        super::append_perf_map(&prepared.module);
+    }
+    let loaded = prepared.publish();
+    for (index, (binder, &count)) in loaded
+        .inits()
+        .into_iter()
+        .zip(literal_counts.iter())
+        .enumerate()
+    {
+        unsafe {
+            entries.add(index * 2).write(binder);
+            entries.add(index * 2 + 1).write((count as u64) << 1);
+        }
+    }
+    std::mem::forget(loaded);
+    Ok(nil())
+}
+
+fn file_code(packets: Vec<Vec<u8>>) -> Result<(Prepared, Arc<[usize]>), CompilationError> {
+    let request = |e| CompilationError::new(CompilationStage::Request, e);
+    let program = |e| CompilationError::new(CompilationStage::Program, e);
+    let install = |e| CompilationError::new(CompilationStage::Install, e);
+    let cached = {
+        let cache = CACHE.lock().unwrap();
+        cache
+            .as_ref()
+            .filter(|entry| entry.packets == packets)
+            .cloned()
+    };
+    if let Some(entry) = cached {
+        let mut module = new_module(&Memory::Shared).map_err(install)?;
+        entry.code.replay(&mut module).map_err(install)?;
+        let prepared =
+            Prepared::finalize(module, entry.output.clone(), Memory::Shared).map_err(install)?;
+        return Ok((prepared, entry.literal_counts.clone()));
+    }
+    let mut modules = Vec::with_capacity(packets.len());
+    let mut literal_counts = Vec::with_capacity(packets.len());
+    for (ordinal, bytes) in packets.iter().enumerate() {
+        let packet = packet::validate(bytes).map_err(request)?;
         if packet.language != packet::schema::LIR_PAYLOAD {
             return Err(request("file code requires production LIR".into()));
         }
@@ -172,18 +229,26 @@ fn prepare_file_code(packets: u64, entries: u64) -> Result<u64, CompilationError
         literal_counts.push(source.literals);
     }
     let merged = kir::merge(modules).map_err(program)?;
-    let prepared =
-        prepare(&merged, &Options { dump_clif: false }, Memory::Shared).map_err(install)?;
-    if std::env::var_os("KILN_PERF_MAP").is_some() {
-        super::append_perf_map(&prepared.module);
+    let options = Options { dump_clif: false };
+    let literal_counts: Arc<[usize]> = literal_counts.into();
+    let packet_bytes = packets.iter().map(Vec::len).sum::<usize>();
+    if packet_bytes > CACHE_BYTES {
+        let prepared = prepare(&merged, &options, Memory::Shared).map_err(install)?;
+        return Ok((prepared, literal_counts));
     }
-    let loaded = prepared.publish();
-    for (index, (binder, count)) in loaded.inits().into_iter().zip(literal_counts).enumerate() {
-        unsafe {
-            entries.add(index * 2).write(binder);
-            entries.add(index * 2 + 1).write((count as u64) << 1);
-        }
+    let mut recorder = Recording::new(new_module(&Memory::Shared).map_err(install)?);
+    let output = Arc::new(
+        codegen::compile_with_entry(&mut recorder, &merged, &options, false).map_err(install)?,
+    );
+    let (module, code) = recorder.finish();
+    let prepared = Prepared::finalize(module, output.clone(), Memory::Shared).map_err(install)?;
+    if packet_bytes + code.payload_bytes() <= CACHE_BYTES {
+        *CACHE.lock().unwrap() = Some(Arc::new(CachedFileCode {
+            packets,
+            code,
+            output,
+            literal_counts: literal_counts.clone(),
+        }));
     }
-    std::mem::forget(loaded);
-    Ok(nil())
+    Ok((prepared, literal_counts))
 }

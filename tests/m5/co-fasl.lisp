@@ -16,6 +16,7 @@
 (defmacro fasl-plus (x) `(+ ,x 17))
 (defun fasl-sum (x) (fasl-plus x))
 (defun fasl-constant () '#1=(shared . #1#))
+(defun fasl-per-load () (load-time-value (cons nil nil)))
 (defun fasl-paths () (list #.*compile-file-pathname* #.*compile-file-truename*))
 nil
 'fasl-unused-literal
@@ -45,8 +46,11 @@ nil
                         (eq object (funcall 'fasl-constant)))))
          (print (equal (funcall 'fasl-paths)
                        (list (merge-pathnames source) (truename source))))
-         (with-open-file (stream output :element-type '(unsigned-byte 8))
-           (print (load stream :verbose nil :print nil)))
+         (let* ((previous (fdefinition 'fasl-per-load)) (literal (funcall previous)))
+           (with-open-file (stream output :element-type '(unsigned-byte 8))
+             (print (load stream :verbose nil :print nil)))
+           (assert (eq literal (funcall previous)))
+           (assert (not (eq literal (funcall 'fasl-per-load)))))
          (print *fasl-events*)
          (print (list *compile-file-pathname* *compile-file-truename*))
          (print (not (string= "" (with-output-to-string (*standard-output*)

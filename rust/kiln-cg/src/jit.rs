@@ -2,6 +2,7 @@
 //! into a running image (`kiln_rt_jit`).
 
 mod file_code;
+mod recorded_code;
 
 use crate::codegen::{self, DebugInfo, Options, Output, Ref};
 use crate::kir;
@@ -11,6 +12,7 @@ use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::default_libcall_names;
 use kiln_rt::context::Context;
 use kiln_rt::unwind::CallSiteRecord;
+use std::sync::Arc;
 
 /// The non-PIC ISA, made once: code compiled into a running image is
 /// compiled with it, module by module.
@@ -137,13 +139,13 @@ impl cranelift_jit::JITMemoryProvider for SharedArena {
 #[non_exhaustive]
 pub struct Loaded {
     pub module: JITModule,
-    pub out: Output,
+    pub out: Arc<Output>,
 }
 
 /// Owns code and native metadata that have not entered runtime registries.
 struct Prepared {
     module: JITModule,
-    out: Output,
+    out: Arc<Output>,
     memory: Memory,
 }
 
@@ -155,11 +157,11 @@ pub fn load(kir: &kir::Module, opts: &Options, memory: Memory) -> Result<Loaded,
     Ok(prepare(kir, opts, memory)?.publish())
 }
 
-fn prepare(kir: &kir::Module, opts: &Options, memory: Memory) -> Result<Prepared, String> {
+fn new_module(memory: &Memory) -> Result<JITModule, String> {
     let mut builder = JITBuilder::with_isa(jit_isa()?, default_libcall_names());
     match memory {
         Memory::Own(reserve) => builder.memory_provider(Box::new(
-            cranelift_jit::ArenaMemoryProvider::new_with_size(reserve)
+            cranelift_jit::ArenaMemoryProvider::new_with_size(*reserve)
                 .map_err(|e| format!("cannot reserve the JIT's memory: {e}"))?,
         )),
         Memory::Shared => builder.memory_provider(Box::new(SharedArena)),
@@ -191,17 +193,21 @@ fn prepare(kir: &kir::Module, opts: &Options, memory: Memory) -> Result<Prepared
     builder.symbol_lookup_fn(Box::new(|name| {
         kiln_rt::exported(name).map(|a| a as *const u8)
     }));
-    let mut module = JITModule::new(builder);
-    let out = codegen::compile_with_entry(&mut module, kir, opts, matches!(memory, Memory::Own(_)))?;
-    module.finalize_definitions().map_err(|e| e.to_string())?;
-    Ok(Prepared {
-        module,
-        out,
-        memory,
-    })
+    Ok(JITModule::new(builder))
+}
+
+fn prepare(kir: &kir::Module, opts: &Options, memory: Memory) -> Result<Prepared, String> {
+    let mut module = new_module(&memory)?;
+    let out = Arc::new(codegen::compile_with_entry(&mut module, kir, opts, matches!(memory, Memory::Own(_)))?);
+    Prepared::finalize(module, out, memory)
 }
 
 impl Prepared {
+    fn finalize(mut module: JITModule, out: Arc<Output>, memory: Memory) -> Result<Self, String> {
+        module.finalize_definitions().map_err(|e| e.to_string())?;
+        Ok(Self { module, out, memory })
+    }
+
     fn publish(self) -> Loaded {
         let Self {
             module,
