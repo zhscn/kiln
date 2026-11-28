@@ -9,10 +9,22 @@
 
 (define-condition source-redefinition-warning (style-warning simple-condition) ())
 
-(defun prepare-source-definition (record)
+(defun normalized-source-file (file cache)
+  (let ((defaults *default-pathname-defaults*))
+    (if (and cache (equal file (svref cache 0)) (eq defaults (svref cache 1)))
+        (copy-seq (svref cache 2))
+        (let ((name (namestring (merge-pathnames file defaults))))
+          (when cache
+            (setf (svref cache 0) (if (stringp file) (copy-seq file) file)
+                  (svref cache 1) defaults
+                  (svref cache 2) (copy-seq name)))
+          name))))
+
+(defun prepare-source-definition (record &optional file-cache)
   "Normalize and diagnose a source record before changing the definition tables."
-  (when (getf record :file)
-    (setf (getf record :file) (namestring (merge-pathnames (getf record :file)))))
+  (let ((file (getf record :file)))
+    (when file
+      (setf (getf record :file) (normalized-source-file file file-cache))))
   (let* ((dspec (getf record :dspec))
          (old (gethash dspec *source-definitions*)))
     (when (and kiln.sys:*warn-on-cross-file-redefinition* old
@@ -43,16 +55,19 @@
       (funcall *source-definition-record-observer* record))))
 
 (defun import-source-definitions ()
-  (unless *importing-source-definitions*
+  (unless (or *importing-source-definitions*
+              (and *source-definitions-initialized* (null kiln.kernel::*source-definition-batches*)))
     (let ((*importing-source-definitions* t)
           (kiln.sys:*warn-on-cross-file-redefinition*
             (and *source-definitions-initialized* kiln.sys:*warn-on-cross-file-redefinition*))
-          (batches (reverse kiln.kernel::*source-definition-batches*)))
+          (batches (reverse kiln.kernel::*source-definition-batches*))
+          (file-cache (make-array 3 :initial-element nil)))
       (setf kiln.kernel::*source-definition-batches* nil
             *source-definitions-initialized* t)
       (dolist (batch batches)
         (dolist (record batch)
-          (record-source-definition record)
+          (prepare-source-definition record file-cache)
+          (record-source-definition record :prepared t)
           (when (and (fboundp 'register-definition-unit) (getf record :keys))
             (let ((*package* (or (find-package (getf record :package)) *package*))
                   (*source-file* (getf record :file))
