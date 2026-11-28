@@ -89,7 +89,11 @@
         (setf *fasl-ready* larger)))
     (setf (kiln.compiler::compiler-eq-ref *fasl-ids* object) index)
     (flet ((value (kind &rest fields)
-             (fasl-emit (list* kind index fields) nil (list allocated complete))))
+             ;; Literal atoms can be emitted as soon as they have an ID.
+             ;; Publish readiness directly instead of building a token list.
+             (push (list* kind index fields) *fasl-records*)
+             (setf (svref *fasl-ready* allocated) t
+                   (svref *fasl-ready* complete) t)))
       (cond
         ((symbolp object)
          (value :symbol (symbol-name object)
@@ -109,6 +113,10 @@
         ((packagep object) (value :package (package-name object)))
         ((pathnamep object)
          (value :pathname (namestring object)))
+        ((%primop :stringp object)
+         ;; Snapshot native string contents at discovery, as for the
+         ;; array records. The string's graph ID still preserves aliases.
+         (value :string (copy-seq object)))
         ((consp object)
          (fasl-emit (list :cons index) nil (list allocated))
          (let ((a (fasl-intern (car object))) (d (fasl-intern (cdr object))))
@@ -186,7 +194,7 @@
 
 (declaim (inline fasl-write-octet))
 (defun fasl-write-octet (byte output)
-  (if (typep output 'fasl-output)
+  (if (fasl-output-p output)
       (let ((count (fasl-output-count output)))
         (when (= count +fasl-output-chunk-size+)
           (fasl-flush-output output)
@@ -196,7 +204,7 @@
       (write-byte byte output)))
 
 (defun fasl-write-octet-vector (bytes output)
-  (cond ((typep output 'fasl-output)
+  (cond ((fasl-output-p output)
          (fasl-flush-output output)
          (cyclosis:stream-write-octets (fasl-output-stream output) bytes))
         ((fasl-binary-file-stream-p output)
@@ -204,9 +212,14 @@
         (t (write-sequence bytes output))))
 
 (defun fasl-write-uint (integer stream)
-  (loop while (>= integer 128)
-        do (fasl-write-octet (logior 128 (logand integer 127)) stream)
-           (setf integer (ash integer -7)))
+  (if (kiln.sys:%primop :fixnump integer)
+      (loop while (>= (the fixnum integer) 128)
+            do (fasl-write-octet
+                (%primop :fixnum-logior 128 (%primop :fixnum-logand integer 127)) stream)
+               (setf integer (%primop :fixnum-shift-right integer 7)))
+      (loop while (>= integer 128)
+            do (fasl-write-octet (logior 128 (logand integer 127)) stream)
+               (setf integer (ash integer -7))))
   (fasl-write-octet integer stream))
 
 (defstruct fasl-input
@@ -215,7 +228,7 @@
 
 (declaim (inline fasl-read-octet))
 (defun fasl-read-octet (input)
-  (if (typep input 'fasl-input)
+  (if (fasl-input-p input)
       (let* ((state (fasl-input-buffer-state input))
              (start (cyclosis::buffer-state-in-start state))
              (end (cyclosis::buffer-state-in-end state)))
@@ -227,16 +240,28 @@
       (read-byte input)))
 
 (defun fasl-input-stream-or-self (input)
-  (if (typep input 'fasl-input) (fasl-input-stream input) input))
+  (if (fasl-input-p input) (fasl-input-stream input) input))
 
 (defun fasl-read-uint (stream)
   (let ((first (fasl-read-octet stream)))
     (if (< first 128)
         first
-        (loop with result = (logand first 127)
-              for shift from 7 by 7 for byte = (fasl-read-octet stream)
-              do (incf result (ash (logand byte 127) shift))
-              when (< byte 128) return result))))
+        (let ((result (logand first 127)) (start 7))
+          ;; The first eight octets carry at most 56 bits. Later octets
+          ;; may finish a bignum, so retain full integer arithmetic there.
+          (when (fasl-input-p stream)
+            (loop for shift of-type fixnum from 7 below 56 by 7
+                  for byte = (fasl-read-octet stream)
+                  do (setf result
+                           (%primop :fixnum-logior result
+                                    (%primop :fixnum-shift-left
+                                             (%primop :fixnum-logand byte 127) shift)))
+                     (when (%primop :fixnum-index-below byte 128)
+                       (return-from fasl-read-uint result)))
+            (setf start 56))
+          (loop for shift from start by 7 for byte = (fasl-read-octet stream)
+                do (incf result (ash (logand byte 127) shift))
+                when (< byte 128) return result)))))
 
 (defun fasl-write-data (object stream &optional (pending (make-simple-vector 64)))
   (declare (simple-vector pending))
