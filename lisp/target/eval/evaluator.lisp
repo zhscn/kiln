@@ -76,7 +76,7 @@
 
 (defun load (filespec &key (verbose *load-verbose*) (print *load-print*)
                            (if-does-not-exist t) (external-format :default))
-  (labels ((load-stream (stream pathname truename binaryp)
+  (labels ((load-stream (stream pathname truename binaryp &optional owned-stream)
              (let ((*package* *package*)
                    (*readtable* *readtable*)
                    (*load-pathname* pathname)
@@ -85,7 +85,7 @@
                (when (and verbose (not pathname))
                  (format t "~&; loading from stream~%"))
                (if binaryp
-                   (load-native-fasl stream :verbose verbose)
+                   (load-native-fasl stream :verbose verbose :owned-stream owned-stream)
                    (loop with eof = (list nil)
                          for cst = (let ((eclector.base:*client* *load-source-reader-client*))
                                      (eclector.concrete-syntax-tree:read stream nil eof))
@@ -115,6 +115,6 @@
             (when verbose (format t "~&; loading ~A~%" merged))
             (when (fasl-stream-p stream)
               (file-position stream 0)
-              (return-from load (load-stream stream merged truename t))))
+              (return-from load (load-stream stream merged truename t t))))
           (with-open-file (stream merged :external-format external-format)
             (load-stream stream merged truename nil))))))

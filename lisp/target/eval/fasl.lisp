@@ -191,12 +191,32 @@
            (setf integer (ash integer -7)))
   (fasl-write-octet integer stream))
 
+(defstruct fasl-input
+  stream
+  buffer-state)
+
+(declaim (inline fasl-read-octet))
+(defun fasl-read-octet (input)
+  (if (typep input 'fasl-input)
+      (let* ((state (fasl-input-buffer-state input))
+             (start (cyclosis::buffer-state-in-start state))
+             (end (cyclosis::buffer-state-in-end state)))
+        (if (and (%primop :fixnum-index-below start end)
+                 (eql 0 (cyclosis::buffer-state-out-end state)))
+            (prog1 (%primop :svref-unchecked (cyclosis::buffer-state-buffer state) start)
+              (setf (cyclosis::buffer-state-in-start state) (%primop :fixnum+ start 1)))
+            (read-byte (fasl-input-stream input))))
+      (read-byte input)))
+
+(defun fasl-input-stream-or-self (input)
+  (if (typep input 'fasl-input) (fasl-input-stream input) input))
+
 (defun fasl-read-uint (stream)
-  (let ((first (read-byte stream)))
+  (let ((first (fasl-read-octet stream)))
     (if (< first 128)
         first
         (loop with result = (logand first 127)
-              for shift from 7 by 7 for byte = (read-byte stream)
+              for shift from 7 by 7 for byte = (fasl-read-octet stream)
               do (incf result (ash (logand byte 127) shift))
               when (< byte 128) return result))))
 
@@ -258,7 +278,7 @@
     (loop
       (when need-value
         (setf need-value nil)
-        (let ((tag (read-byte stream)))
+        (let ((tag (fasl-read-octet stream)))
           (setf value
                 (case tag
                   (0 nil)
@@ -276,9 +296,10 @@
                    (incf top 2)
                    nil)
                   (5 (code-char (fasl-read-uint stream)))
-                  (6 (let ((bytes (make-array (fasl-read-uint stream))))
-                       (unless (= (read-sequence bytes stream) (length bytes))
-                         (error 'end-of-file :stream stream))
+                  (6 (let ((bytes (make-array (fasl-read-uint stream)))
+                           (input (fasl-input-stream-or-self stream)))
+                       (unless (= (read-sequence bytes input) (length bytes))
+                         (error 'end-of-file :stream input))
                        bytes))
                   (t (error "Invalid FASL record encoding."))))))
       (unless need-value
@@ -327,15 +348,15 @@
 
 (defun fasl-read-header (stream)
   (dolist (byte '(137 75 70 65 83))
-    (unless (= (read-byte stream) byte) (error "Invalid native FASL header.")))
-  (let ((version (read-byte stream)))
+    (unless (= (fasl-read-octet stream) byte) (error "Invalid native FASL header.")))
+  (let ((version (fasl-read-octet stream)))
     (unless (member version '(2 3 4))
       (error "Unsupported native FASL version ~D." version))
     version))
 
 (declaim (inline fasl-read-kind))
 (defun fasl-read-kind (stream)
-  (let ((code (read-byte stream)))
+  (let ((code (fasl-read-octet stream)))
     (unless (<= 0 code (1- (length *fasl-record-kinds*)))
       (error "Unknown FASL opcode ~D." code))
     (svref *fasl-record-kinds* code)))
@@ -405,9 +426,12 @@
       (:run (funcall 'kiln.compiler::load-native-file index (fasl-reference (first fields))))
       (t (error "Unknown FASL operation ~S." kind)))))
 
-(defun load-native-fasl (stream &key verbose)
+(defun load-native-fasl (stream &key verbose owned-stream)
   (declare (ignore verbose))
-  (let* ((version (fasl-read-header stream))
+  (let* ((stream (if (and owned-stream (fasl-binary-file-stream-p stream))
+                     (make-fasl-input :stream stream :buffer-state (cyclosis::file-state stream))
+                     stream))
+         (version (fasl-read-header stream))
          (*fasl-load-objects* (make-array (fasl-read-uint stream)))
         (frames (make-simple-vector 128)))
     (dotimes (i (fasl-read-uint stream))
